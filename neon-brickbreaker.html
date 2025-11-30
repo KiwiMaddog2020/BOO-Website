@@ -38,6 +38,10 @@
             padding-bottom: 8px;
             max-width: 100%;
             transform: translateZ(0);
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
         
         /* Fixed-height container for button to prevent layout shift */
@@ -198,6 +202,29 @@
         let score = 0;
         let lives = 3;
         let level = 1;
+        
+        // Life loss pause state
+        let lifeLostPause = false;
+        let lifeLostPauseEnd = 0;
+        
+        // Boss state
+        let bossPhase = false; // True when fighting bosses
+        let bosses = []; // Array of boss objects
+        let bossesDropping = false; // True during drop animation
+        let bossDropProgress = 0; // 0 to 1 for smooth drop
+        let bossHitCooldownEnd = 0; // Global cooldown timer for boss damage
+        const bossConfig = {
+            width: 50,
+            height: 25,
+            speed: 2.5,
+            dropDistance: 20,
+            dropSpeed: 0.08, // How fast the drop animation plays (0-1 per frame)
+            hitsRequired: 3,
+            hitCooldown: 200, // Milliseconds between allowed hits
+            colors: ['#ff0066', '#ff3300', '#ff00ff', '#00ffcc', '#ffcc00'], // Different colors per boss
+            pointsPerHit: 30,
+            pointsPerKill: 0
+        };
 
         // Power-up state
         let activePowerUps = {
@@ -257,9 +284,9 @@
             x: 320,
             y: 447,
             radius: 7,
-            speed: 5.4,
-            dx: 5.4,
-            dy: -5.4,
+            speed: 5.75,
+            dx: 5.75,
+            dy: -5.75,
             color: '#fff'
         };
 
@@ -411,6 +438,200 @@
                     brickIndex++;
                 }
             }
+        }
+
+        // ========== BOSS SYSTEM ==========
+        function createBosses() {
+            bosses = [];
+            const numBosses = level; // Level 1 = 1 boss, Level 2 = 2 bosses, etc.
+            const spacing = canvas.width / (numBosses + 1);
+            
+            for (let i = 0; i < numBosses; i++) {
+                bosses.push({
+                    x: spacing * (i + 1) - bossConfig.width / 2,
+                    y: 50,
+                    width: bossConfig.width,
+                    height: bossConfig.height,
+                    hits: 0,
+                    alive: true,
+                    direction: 1, // 1 = right, -1 = left
+                    color: bossConfig.colors[i % bossConfig.colors.length]
+                });
+            }
+            bossPhase = true;
+        }
+        
+        function drawBosses() {
+            if (!bossPhase) return;
+            
+            bosses.forEach(boss => {
+                if (!boss.alive) return;
+                
+                // Draw boss body with glow
+                ctx.beginPath();
+                ctx.roundRect(boss.x, boss.y, boss.width, boss.height, 8);
+                ctx.fillStyle = boss.color;
+                ctx.shadowColor = boss.color;
+                ctx.shadowBlur = 20;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                
+                // Draw hit indicator (3 dots showing remaining health)
+                const hitsRemaining = bossConfig.hitsRequired - boss.hits;
+                const dotSpacing = boss.width / 4;
+                for (let i = 0; i < hitsRemaining; i++) {
+                    ctx.beginPath();
+                    ctx.arc(boss.x + dotSpacing * (i + 1), boss.y + boss.height / 2, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fff';
+                    ctx.fill();
+                }
+                
+                // Draw menacing eyes
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(boss.x + 15, boss.y + 10, 5, 0, Math.PI * 2);
+                ctx.arc(boss.x + boss.width - 15, boss.y + 10, 5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+        
+        function moveBosses() {
+            if (!bossPhase || bosses.length === 0) return;
+            
+            // If currently dropping, animate the drop
+            if (bossesDropping) {
+                bossDropProgress += bossConfig.dropSpeed;
+                
+                if (bossDropProgress >= 1) {
+                    // Drop complete
+                    bossDropProgress = 0;
+                    bossesDropping = false;
+                    
+                    // Finalize positions and flip direction
+                    bosses.forEach(boss => {
+                        if (!boss.alive) return;
+                        boss.y = boss.targetY;
+                        boss.direction *= -1;
+                    });
+                } else {
+                    // Smooth easing for drop animation
+                    const easeProgress = 1 - Math.pow(1 - bossDropProgress, 2); // Ease out quad
+                    bosses.forEach(boss => {
+                        if (!boss.alive) return;
+                        boss.y = boss.startY + (boss.targetY - boss.startY) * easeProgress;
+                    });
+                }
+                return; // Don't move horizontally while dropping
+            }
+            
+            // Check if any boss needs to change direction
+            let needsDrop = false;
+            bosses.forEach(boss => {
+                if (!boss.alive) return;
+                
+                // Check if boss hits edge
+                if (boss.direction === 1 && boss.x + boss.width >= canvas.width - 10) {
+                    needsDrop = true;
+                } else if (boss.direction === -1 && boss.x <= 10) {
+                    needsDrop = true;
+                }
+            });
+            
+            // Start drop animation
+            if (needsDrop) {
+                bossesDropping = true;
+                bossDropProgress = 0;
+                bosses.forEach(boss => {
+                    if (!boss.alive) return;
+                    boss.startY = boss.y;
+                    boss.targetY = boss.y + bossConfig.dropDistance;
+                });
+            } else {
+                // Normal horizontal movement
+                bosses.forEach(boss => {
+                    if (!boss.alive) return;
+                    boss.x += bossConfig.speed * boss.direction;
+                });
+            }
+            
+            // Check if bosses reached the bottom (game over condition)
+            bosses.forEach(boss => {
+                if (boss.alive && boss.y + boss.height >= paddle.y - 20) {
+                    lives--;
+                    livesEl.textContent = lives;
+                    if (lives <= 0) {
+                        gameOver();
+                    } else {
+                        // Reset bosses to top and show life lost message
+                        showLifeLostMessage();
+                        resetBossPositions();
+                    }
+                }
+            });
+        }
+        
+        function resetBossPositions() {
+            const numBosses = bosses.filter(b => b.alive).length;
+            const aliveBosses = bosses.filter(b => b.alive);
+            const spacing = canvas.width / (numBosses + 1);
+            
+            // Reset drop animation state
+            bossesDropping = false;
+            bossDropProgress = 0;
+            
+            aliveBosses.forEach((boss, i) => {
+                boss.x = spacing * (i + 1) - boss.width / 2;
+                boss.y = 50;
+                boss.direction = 1;
+            });
+        }
+        
+        function checkBossCollisions() {
+            if (!bossPhase) return;
+            
+            // Check if we're still in cooldown
+            const now = performance.now();
+            if (now < bossHitCooldownEnd) return;
+            
+            balls.forEach(ball => {
+                bosses.forEach(boss => {
+                    if (!boss.alive) return;
+                    
+                    // Double-check cooldown (in case multiple balls)
+                    if (performance.now() < bossHitCooldownEnd) return;
+                    
+                    // Simple rectangle collision
+                    if (ball.x + ball.radius > boss.x &&
+                        ball.x - ball.radius < boss.x + boss.width &&
+                        ball.y + ball.radius > boss.y &&
+                        ball.y - ball.radius < boss.y + boss.height) {
+                        
+                        // Set cooldown
+                        bossHitCooldownEnd = performance.now() + bossConfig.hitCooldown;
+                        
+                        // Bounce the ball
+                        ball.dy = Math.abs(ball.dy); // Always bounce down
+                        
+                        // Damage the boss
+                        boss.hits++;
+                        score += bossConfig.pointsPerHit;
+                        scoreEl.textContent = score;
+                        
+                        // Check if boss is destroyed
+                        if (boss.hits >= bossConfig.hitsRequired) {
+                            boss.alive = false;
+                            score += bossConfig.pointsPerKill;
+                            scoreEl.textContent = score;
+                        }
+                        
+                        // Check if all bosses defeated
+                        if (bosses.every(b => !b.alive)) {
+                            bossPhase = false;
+                            nextLevel();
+                        }
+                    }
+                });
+            });
         }
 
         function drawPaddle() {
@@ -634,55 +855,57 @@
                     }
                 }
 
-                // Brick collision
-                for (let row = 0; row < brickConfig.rows; row++) {
-                    if (levelChanged) break;
-                    for (let col = 0; col < brickConfig.cols; col++) {
+                // Brick collision - only during brick phase
+                if (!bossPhase) {
+                    for (let row = 0; row < brickConfig.rows; row++) {
                         if (levelChanged) break;
-                        const brick = bricks[row][col];
-                        if (brick.alive) {
-                            // Check collision with ball radius on all sides
-                            if (ball.x + ball.radius > brick.x &&
-                                ball.x - ball.radius < brick.x + brickConfig.width &&
-                                ball.y + ball.radius > brick.y &&
-                                ball.y - ball.radius < brick.y + brickConfig.height) {
-                                
-                                // Only bounce if crusher is not active
-                                if (!activePowerUps.crusher.active) {
-                                    // Determine which side was hit for proper bounce direction
-                                    const overlapLeft = (ball.x + ball.radius) - brick.x;
-                                    const overlapRight = (brick.x + brickConfig.width) - (ball.x - ball.radius);
-                                    const overlapTop = (ball.y + ball.radius) - brick.y;
-                                    const overlapBottom = (brick.y + brickConfig.height) - (ball.y - ball.radius);
+                        for (let col = 0; col < brickConfig.cols; col++) {
+                            if (levelChanged) break;
+                            const brick = bricks[row][col];
+                            if (brick.alive) {
+                                // Check collision with ball radius on all sides
+                                if (ball.x + ball.radius > brick.x &&
+                                    ball.x - ball.radius < brick.x + brickConfig.width &&
+                                    ball.y + ball.radius > brick.y &&
+                                    ball.y - ball.radius < brick.y + brickConfig.height) {
                                     
-                                    const minOverlapX = Math.min(overlapLeft, overlapRight);
-                                    const minOverlapY = Math.min(overlapTop, overlapBottom);
-                                    
-                                    if (minOverlapX < minOverlapY) {
-                                        ball.dx *= -1;
-                                    } else {
-                                        ball.dy *= -1;
+                                    // Only bounce if crusher is not active
+                                    if (!activePowerUps.crusher.active) {
+                                        // Determine which side was hit for proper bounce direction
+                                        const overlapLeft = (ball.x + ball.radius) - brick.x;
+                                        const overlapRight = (brick.x + brickConfig.width) - (ball.x - ball.radius);
+                                        const overlapTop = (ball.y + ball.radius) - brick.y;
+                                        const overlapBottom = (brick.y + brickConfig.height) - (ball.y - ball.radius);
+                                        
+                                        const minOverlapX = Math.min(overlapLeft, overlapRight);
+                                        const minOverlapY = Math.min(overlapTop, overlapBottom);
+                                        
+                                        if (minOverlapX < minOverlapY) {
+                                            ball.dx *= -1;
+                                        } else {
+                                            ball.dy *= -1;
+                                        }
                                     }
-                                }
-                                
-                                brick.alive = false;
-                                score += 1;
-                                scoreEl.textContent = score;
-                                
-                                // Activate power-up if brick had one
-                                if (brick.powerUp) {
-                                    activatePowerUp(brick.powerUp.type);
-                                }
-                                
-                                // Activate debuff if brick had one
-                                if (brick.debuff) {
-                                    activatePowerUp(brick.debuff.type);
-                                }
+                                    
+                                    brick.alive = false;
+                                    score += 1;
+                                    scoreEl.textContent = score;
+                                    
+                                    // Activate power-up if brick had one
+                                    if (brick.powerUp) {
+                                        activatePowerUp(brick.powerUp.type);
+                                    }
+                                    
+                                    // Activate debuff if brick had one
+                                    if (brick.debuff) {
+                                        activatePowerUp(brick.debuff.type);
+                                    }
 
-                                // Check win
-                                if (checkWin()) {
-                                    nextLevel();
-                                    levelChanged = true;
+                                    // Check win - triggers boss phase
+                                    if (checkWin() && !bossPhase) {
+                                        startBossPhase();
+                                        levelChanged = true;
+                                    }
                                 }
                             }
                         }
@@ -691,6 +914,12 @@
             });
             
             if (levelChanged) return;
+            
+            // Boss phase logic
+            if (bossPhase) {
+                moveBosses();
+                checkBossCollisions();
+            }
             
             // Remove balls that fell off screen (in reverse order to maintain indices)
             ballsToRemove.sort((a, b) => b - a).forEach(index => {
@@ -704,9 +933,32 @@
                 if (lives <= 0) {
                     gameOver();
                 } else {
-                    resetBall();
+                    showLifeLostMessage();
                 }
             }
+        }
+
+        // Show life lost message and pause briefly
+        function showLifeLostMessage() {
+            lifeLostPause = true;
+            lifeLostPauseEnd = performance.now() + 1275; // 1.275 second pause (15% shorter)
+        }
+        
+        function drawLifeLostMessage() {
+            if (!lifeLostPause) return;
+            
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Magenta text (matches game over)
+            ctx.font = 'bold 36px Arial';
+            ctx.fillStyle = '#f0f';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#f0f';
+            ctx.shadowBlur = 20;
+            ctx.fillText(`${lives} ${lives === 1 ? 'Life' : 'Lives'}`, canvas.width / 2, canvas.height / 2);
+            ctx.shadowBlur = 0;
         }
 
         function checkWin() {
@@ -716,6 +968,14 @@
                 }
             }
             return true;
+        }
+        
+        function startBossPhase() {
+            // Brief pause before bosses appear
+            setTimeout(() => {
+                createBosses();
+                resetBall();
+            }, 500);
         }
 
         function activatePowerUp(type) {
@@ -877,6 +1137,12 @@
             level++;
             levelEl.textContent = level;
             
+            // Clear boss state for new level
+            bossPhase = false;
+            bosses = [];
+            bossesDropping = false;
+            bossDropProgress = 0;
+            
             // Progressive difficulty - slower ramp early, faster later
             if (level <= 3) {
                 ballTemplate.speed += 0.4;  // Gentle increase for first 3 levels
@@ -941,9 +1207,21 @@
             ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            drawBricks();
+            // Draw bricks only if not in boss phase
+            if (!bossPhase) {
+                drawBricks();
+            }
+            
+            // Draw bosses if in boss phase
+            if (bossPhase) {
+                drawBosses();
+            }
+            
             drawPaddle();
             drawBall();
+            
+            // Draw life lost message overlay (on top of everything)
+            drawLifeLostMessage();
         }
 
         // Delta time for consistent game speed
@@ -964,6 +1242,18 @@
                 lastFrameTime = currentTime - (deltaTime % frameInterval);
                 frameTime = currentTime; // Set once per frame for all functions to use
                 
+                // Check if life lost pause is over
+                if (lifeLostPause) {
+                    if (currentTime >= lifeLostPauseEnd) {
+                        lifeLostPause = false;
+                        resetBall();
+                    }
+                    // During pause, still draw but don't update game logic
+                    draw();
+                    requestAnimationFrame(update);
+                    return;
+                }
+                
                 movePaddle();
                 updatePaddleAnimation();
                 moveBall();
@@ -983,7 +1273,16 @@
             score = 0;
             lives = 3;
             level = 1;
-            ballTemplate.speed = 5.4;
+            ballTemplate.speed = 5.75; // Initial speed (5% slower)
+            
+            // Reset boss phase
+            bossPhase = false;
+            bosses = [];
+            bossesDropping = false;
+            bossDropProgress = 0;
+            
+            // Reset life lost pause
+            lifeLostPause = false;
             
             // Activate mouse control when starting game
             mouseControlActive = true;
@@ -1089,8 +1388,14 @@
 
         canvas.addEventListener('touchstart', handleTouch, { passive: false });
         canvas.addEventListener('touchmove', handleTouch, { passive: false });
-        document.addEventListener('touchstart', handleTouch, { passive: false });
-        document.addEventListener('touchmove', handleTouch, { passive: false });
+        
+        // Prevent page scrolling when touching game container
+        gameContainer.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+        gameContainer.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+        }, { passive: false });
 
         // Start button - support both click and touch
         startBtn.addEventListener('click', startGame);
