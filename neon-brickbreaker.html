@@ -155,8 +155,15 @@
             padding: 0 10px;
             margin: 0;
         }
+        
+        /* Show desktop instructions by default, hide mobile */
+        .desktop-instructions { display: block; }
+        .mobile-instructions { display: none; }
 
         @media (max-width: 800px) {
+            /* Hide desktop instructions, show mobile */
+            .desktop-instructions { display: none; }
+            .mobile-instructions { display: block; }
             .hud {
                 gap: 20px;
                 font-size: 16px;
@@ -181,7 +188,8 @@
         <div class="button-container">
             <button id="startBtn">Start Game</button>
         </div>
-        <p class="message">Use ← → arrow keys, mouse, or touch to move the paddle</p>
+        <p class="message desktop-instructions">Use ← → arrow keys or mouse to move paddle</p>
+        <p class="message mobile-instructions">Touch to move paddle</p>
     </div>
 
     <script>
@@ -234,6 +242,12 @@
         // Life loss pause state
         let lifeLostPause = false;
         let lifeLostPauseEnd = 0;
+        
+        // Boss phase transition pause states
+        let bossSpawnPause = false;
+        let bossSpawnPauseEnd = 0;
+        let levelTransitionPause = false;
+        let levelTransitionPauseEnd = 0;
         
         // Boss state
         let bossPhase = false; // True when fighting bosses
@@ -517,14 +531,34 @@
                 ctx.shadowColor = isFlashing ? '#ffffff' : boss.color;
                 ctx.fill();
                 
-                // Draw hit indicator (3 dots showing remaining health) - positioned like teeth
+                // Draw hit indicator (3 teeth showing remaining health)
+                // Order: left tooth removed first, then right, then center last
                 const hitsRemaining = bossConfig.hitsRequired - boss.hits;
                 const dotSpacing = boss.width / 4;
                 ctx.shadowBlur = 0;
                 ctx.fillStyle = '#fff';
-                for (let j = 0; j < hitsRemaining; j++) {
+                
+                // Teeth removal order: left first, right second, center last
+                // At 0 hits (3 remaining): show left, right, center
+                // At 1 hit (2 remaining): hide left, show right and center
+                // At 2 hits (1 remaining): hide left and right, show only center
+                
+                // Draw center tooth (position 2) - always shown unless dead
+                if (hitsRemaining >= 1) {
                     ctx.beginPath();
-                    ctx.arc(boss.x + dotSpacing * (j + 1), boss.y + boss.height, 4, 0, Math.PI * 2);
+                    ctx.arc(boss.x + dotSpacing * 2, boss.y + boss.height, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                // Draw right tooth (position 3) - shown if 2+ hits remaining
+                if (hitsRemaining >= 2) {
+                    ctx.beginPath();
+                    ctx.arc(boss.x + dotSpacing * 3, boss.y + boss.height, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                // Draw left tooth (position 1) - only shown if all 3 hits remaining
+                if (hitsRemaining >= 3) {
+                    ctx.beginPath();
+                    ctx.arc(boss.x + dotSpacing * 1, boss.y + boss.height, 4, 0, Math.PI * 2);
                     ctx.fill();
                 }
                 
@@ -673,7 +707,7 @@
                         // Check if all bosses defeated
                         if (bosses.every(b => !b.alive)) {
                             bossPhase = false;
-                            nextLevel();
+                            startLevelTransition();
                         }
                     }
                 });
@@ -1057,11 +1091,49 @@
         }
         
         function startBossPhase() {
-            // Brief pause before bosses appear
-            setTimeout(() => {
-                createBosses();
-                resetBall();
-            }, 500);
+            // Pause before bosses appear
+            bossSpawnPause = true;
+            bossSpawnPauseEnd = performance.now() + 1200; // 1.2 second pause
+        }
+        
+        function startLevelTransition() {
+            // Pause after boss defeat before next level
+            levelTransitionPause = true;
+            levelTransitionPauseEnd = performance.now() + 1200; // 1.2 second pause
+        }
+        
+        function drawBossSpawnMessage() {
+            if (!bossSpawnPause) return;
+            
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Warning text - same pink as start button
+            ctx.font = 'bold 36px Arial';
+            ctx.fillStyle = '#f0f';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#f0f';
+            ctx.shadowBlur = 20;
+            ctx.fillText('BOSS INCOMING!', canvas.width / 2, canvas.height / 2);
+            ctx.shadowBlur = 0;
+        }
+        
+        function drawLevelTransitionMessage() {
+            if (!levelTransitionPause) return;
+            
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Victory text - same cyan as paddle
+            ctx.font = 'bold 36px Arial';
+            ctx.fillStyle = '#0ff';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#0ff';
+            ctx.shadowBlur = 20;
+            ctx.fillText(`LEVEL ${level} CLEAR!`, canvas.width / 2, canvas.height / 2);
+            ctx.shadowBlur = 0;
         }
 
         function activatePowerUp(type) {
@@ -1346,6 +1418,33 @@
                 return;
             }
             
+            // Check if boss spawn pause is over
+            if (bossSpawnPause) {
+                if (currentTime >= bossSpawnPauseEnd) {
+                    bossSpawnPause = false;
+                    createBosses();
+                    resetBall();
+                }
+                // During pause, still draw but don't update game logic
+                draw();
+                drawBossSpawnMessage();
+                requestAnimationFrame(update);
+                return;
+            }
+            
+            // Check if level transition pause is over
+            if (levelTransitionPause) {
+                if (currentTime >= levelTransitionPauseEnd) {
+                    levelTransitionPause = false;
+                    nextLevel();
+                }
+                // During pause, still draw but don't update game logic
+                draw();
+                drawLevelTransitionMessage();
+                requestAnimationFrame(update);
+                return;
+            }
+            
             movePaddle();
             updatePaddleAnimation();
             moveBall();
@@ -1372,8 +1471,10 @@
             bossesDropping = false;
             bossDropProgress = 0;
             
-            // Reset life lost pause
+            // Reset all pause states
             lifeLostPause = false;
+            bossSpawnPause = false;
+            levelTransitionPause = false;
             
             // Activate mouse control when starting game
             mouseControlActive = true;
