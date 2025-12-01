@@ -293,8 +293,11 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 100;
+            z-index: 500; /* Above all other elements */
             font-family: Arial, sans-serif;
+            /* Allow touch interactions */
+            touch-action: manipulation;
+            pointer-events: auto;
         }
         
         .upgrade-overlay.active {
@@ -342,6 +345,11 @@
             overflow: hidden;
             transition: all 0.3s ease;
             box-shadow: 0 0 20px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(0, 0, 0, 0.3);
+            /* Mobile touch improvements */
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
         }
         
         .upgrade-slot::before {
@@ -377,12 +385,21 @@
         .upgrade-slot.revealed {
             border-color: #0ff;
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.4), inset 0 0 20px rgba(0, 255, 255, 0.1);
+            pointer-events: auto;
+            cursor: pointer;
         }
         
         .upgrade-slot.revealed:hover {
             transform: translateY(-8px) scale(1.05);
             border-color: #f0f;
             box-shadow: 0 0 40px rgba(255, 0, 255, 0.6), 0 10px 40px rgba(0, 0, 0, 0.4);
+        }
+        
+        /* Touch/active state for mobile */
+        .upgrade-slot.revealed:active {
+            transform: scale(0.95);
+            border-color: #0f0;
+            box-shadow: 0 0 40px rgba(0, 255, 0, 0.6);
         }
         
         .upgrade-slot.selected {
@@ -2038,6 +2055,27 @@
             document.getElementById('slot3')
         ];
         
+        // Event delegation for upgrade selection (robust iOS support)
+        upgradeOverlay.addEventListener('click', (e) => {
+            if (!upgradeSelectionActive) return;
+            const slot = e.target.closest('.upgrade-slot.revealed');
+            if (slot) {
+                const index = slots.indexOf(slot);
+                if (index !== -1) selectUpgrade(index);
+            }
+        });
+        
+        // Touch event delegation (iOS Safari needs this)
+        upgradeOverlay.addEventListener('touchend', (e) => {
+            if (!upgradeSelectionActive) return;
+            const slot = e.target.closest('.upgrade-slot.revealed');
+            if (slot) {
+                e.preventDefault();
+                const index = slots.indexOf(slot);
+                if (index !== -1) selectUpgrade(index);
+            }
+        }, { passive: false });
+        
         function showUpgradeSelector() {
             upgradeSelectionActive = true;
             
@@ -2090,8 +2128,15 @@
                     slot.querySelector('.upgrade-name').textContent = choice.name;
                     slot.querySelector('.upgrade-desc').textContent = choice.desc;
                     
-                    // Add click handler
+                    // Add click handler for desktop
                     slot.onclick = () => selectUpgrade(index);
+                    
+                    // Add touch handler for mobile (iOS Safari needs this)
+                    slot.ontouchend = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        selectUpgrade(index);
+                    };
                 }, stopTime);
             });
         }
@@ -2119,12 +2164,13 @@
                 upgradeOverlay.classList.remove('active');
                 upgradeSelectionActive = false;
                 
-                // Reset slot styles
+                // Reset slot styles and clear all handlers
                 slots.forEach(slot => {
                     slot.style.opacity = '';
                     slot.style.pointerEvents = '';
                     slot.classList.remove('selected');
                     slot.onclick = null;
+                    slot.ontouchend = null;
                 });
                 
                 // Now show level clear message
@@ -2678,6 +2724,9 @@
 
         // Touch input for mobile
         function handleTouch(e) {
+            // Don't handle paddle movement during upgrade selection
+            if (upgradeSelectionActive) return;
+            
             e.preventDefault();
             if (e.touches.length === 0) return;
             const rect = canvas.getBoundingClientRect();
@@ -2695,11 +2744,20 @@
         // Extended paddle touch zone - maps touch X to paddle position
         const paddleTouchZone = document.getElementById('paddleTouchZone');
         function handleTouchZone(e) {
-            // Check if touch is on button or button container - let those through
+            // Don't handle paddle movement during upgrade selection
+            if (upgradeSelectionActive) return;
+            
+            // Check if touch is on interactive elements - let those through
             const touch = e.touches[0];
             const target = document.elementFromPoint(touch.clientX, touch.clientY);
-            if (target && (target.id === 'startBtn' || target.closest('.button-container') || target.closest('#startBtn'))) {
-                return; // Don't handle - let button get the event
+            if (target && (
+                target.id === 'startBtn' || 
+                target.closest('.button-container') || 
+                target.closest('#startBtn') ||
+                target.closest('.upgrade-overlay') ||
+                target.closest('.upgrade-slot')
+            )) {
+                return; // Don't handle - let interactive element get the event
             }
             
             e.preventDefault();
@@ -2722,13 +2780,20 @@
         
         // Prevent page scrolling when touching game container (but NOT on button)
         gameContainer.addEventListener('touchstart', (e) => {
-            // Allow button clicks through
-            if (e.target.id === 'startBtn' || e.target.closest('.button-container')) {
-                return; // Don't prevent default on button
+            // Allow button clicks and upgrade selection through
+            if (e.target.id === 'startBtn' || 
+                e.target.closest('.button-container') ||
+                e.target.closest('.upgrade-overlay') ||
+                e.target.closest('.upgrade-slot')) {
+                return; // Don't prevent default on interactive elements
             }
             e.preventDefault();
         }, { passive: false });
         gameContainer.addEventListener('touchmove', (e) => {
+            // Allow touch move on upgrade overlay
+            if (e.target.closest('.upgrade-overlay')) {
+                return;
+            }
             e.preventDefault();
         }, { passive: false });
 
