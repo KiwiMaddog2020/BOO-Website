@@ -189,26 +189,24 @@
             }
         }
         
-        /* Hide both by default, then show appropriate one via media queries */
-        .desktop-instructions { display: none; }
+        /* Instruction visibility based on input type */
+        .desktop-instructions { display: block; }
         .mobile-instructions { display: none; }
         
-        /* Desktop: show keyboard/mouse instructions (screens wider than 800px with hover capability) */
-        @media (min-width: 801px) {
-            .desktop-instructions { display: block !important; }
-            .mobile-instructions { display: none !important; }
+        /* Touch devices: show touch instructions */
+        @media (hover: none), (pointer: coarse) {
+            .desktop-instructions { display: none !important; }
+            .mobile-instructions { display: block !important; }
         }
         
-        /* Also show desktop instructions on any device with hover (catches desktop with narrow windows) */
+        /* Desktop with mouse: show keyboard/mouse instructions (overrides touch rules) */
         @media (hover: hover) and (pointer: fine) {
             .desktop-instructions { display: block !important; }
             .mobile-instructions { display: none !important; }
         }
-
-        /* Mobile: show touch instructions (narrow screens OR touch devices) */
+        
+        /* Mobile layout adjustments (separate from instruction visibility) */
         @media (max-width: 800px) {
-            .desktop-instructions { display: none !important; }
-            .mobile-instructions { display: block !important; }
             .hud {
                 gap: 20px;
                 font-size: 16px;
@@ -221,12 +219,6 @@
             .game-container {
                 padding-bottom: 12px;
             }
-        }
-        
-        /* Touch devices always get touch instructions (overrides width-based rules) */
-        @media (hover: none) and (pointer: coarse) {
-            .desktop-instructions { display: none !important; }
-            .mobile-instructions { display: block !important; }
         }
         
         /* ========== UPGRADE SELECTOR OVERLAY ========== */
@@ -611,7 +603,7 @@
         
         // Debuff types
         const debuffTypes = [
-            { type: 'smallPaddle', color: '#8800aa', symbol: '☠' }
+            { type: 'smallPaddle', color: '#888888', symbol: '☠' }  // Grey skull brick
         ];
 
         // Paddle
@@ -1164,7 +1156,7 @@
             if (activePowerUps.bigPaddle.active) {
                 paddleColor = '#00cc66'; // green
             } else if (activePowerUps.smallPaddle.active) {
-                paddleColor = '#8800aa'; // purple for debuff
+                paddleColor = '#888888'; // grey for debuff
             }
             
             ctx.beginPath();
@@ -1220,6 +1212,10 @@
             const brickW = brickConfig.width;
             const brickH = brickConfig.height;
             
+            // Calculate glimmer position for sweep effect (cycles every 1.5 seconds)
+            const glimmerCycle = (frameTime % 1500) / 1500;
+            const glimmerX = glimmerCycle * (brickW + 20) - 10; // Sweep from left to right
+            
             // Draw all regular bricks first (batched by similar state)
             ctx.shadowBlur = shadowSettings.brick;
             for (let row = 0; row < brickConfig.rows; row++) {
@@ -1252,6 +1248,43 @@
             }
             ctx.globalAlpha = 1;
             ctx.shadowBlur = 0;
+            
+            // Draw glimmer highlights on powerup bricks (not debuff)
+            if (!isMobile) {
+                for (let row = 0; row < brickConfig.rows; row++) {
+                    for (let col = 0; col < brickConfig.cols; col++) {
+                        const brick = bricks[row][col];
+                        if (brick.alive && brick.powerUp) {
+                            // Use brick's twinkle offset to stagger the glimmer
+                            const offsetGlimmer = ((frameTime + brick.twinkleOffset * 200) % 1500) / 1500;
+                            const localGlimmerX = offsetGlimmer * (brickW + 20) - 10;
+                            
+                            // Only draw glimmer when it's within the brick
+                            if (localGlimmerX > -5 && localGlimmerX < brickW + 5) {
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.roundRect(brick.x, brick.y, brickW, brickH, 5);
+                                ctx.clip();
+                                
+                                // Draw diagonal glimmer line
+                                const gradient = ctx.createLinearGradient(
+                                    brick.x + localGlimmerX - 8, brick.y,
+                                    brick.x + localGlimmerX + 8, brick.y + brickH
+                                );
+                                gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
+                                gradient.addColorStop(0.4, 'rgba(255, 255, 255, 0.6)');
+                                gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.9)');
+                                gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.6)');
+                                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                                
+                                ctx.fillStyle = gradient;
+                                ctx.fillRect(brick.x + localGlimmerX - 10, brick.y, 20, brickH);
+                                ctx.restore();
+                            }
+                        }
+                    }
+                }
+            }
             
             // Draw symbols on special bricks (separate pass for text rendering)
             const symbolShadow = isMobile ? 0 : 5;
