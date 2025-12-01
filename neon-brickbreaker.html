@@ -510,6 +510,9 @@
         let bossesDropping = false; // True during drop animation
         let bossDropProgress = 0; // 0 to 1 for smooth drop
         let bossHitCooldownEnd = 0; // Global cooldown timer for boss damage
+        let bossDeathParticles = []; // Particles for boss death explosions
+        let bossDeathAnimationEnd = 0; // Time when last boss death animation ends
+        let waitingForBossDeathAnimation = false; // True when waiting for animation before level transition
         const bossConfig = {
             width: 50,
             height: 25,
@@ -520,7 +523,8 @@
             hitCooldown: 200, // Milliseconds between allowed hits
             colors: ['#ff0066', '#ff3300', '#ff00ff', '#00ffcc', '#ffcc00'], // Different colors per boss
             pointsPerHit: 30,
-            pointsPerKill: 0
+            pointsPerKill: 0,
+            deathAnimationDuration: 800 // ms to wait for death animation
         };
 
         // Power-up state
@@ -840,6 +844,12 @@
         function moveBosses() {
             if (!bossPhase || bosses.length === 0) return;
             
+            // Calculate speed multiplier based on number of active bosses
+            // Each additional boss slows all bosses by 10%
+            const aliveBossCount = bosses.filter(b => b.alive).length;
+            const speedMultiplier = aliveBossCount > 1 ? 1 - ((aliveBossCount - 1) * 0.10) : 1;
+            const effectiveSpeed = bossConfig.speed * Math.max(speedMultiplier, 0.5); // Minimum 50% speed
+            
             // If currently dropping, animate the drop
             if (bossesDropping) {
                 bossDropProgress += bossConfig.dropSpeed * deltaMultiplier;
@@ -889,10 +899,10 @@
                     boss.targetY = boss.y + bossConfig.dropDistance;
                 });
             } else {
-                // Normal horizontal movement (frame-rate independent)
+                // Normal horizontal movement (frame-rate independent) with speed multiplier
                 bosses.forEach(boss => {
                     if (!boss.alive) return;
-                    boss.x += bossConfig.speed * boss.direction * deltaMultiplier;
+                    boss.x += effectiveSpeed * boss.direction * deltaMultiplier;
                 });
             }
             
@@ -926,6 +936,126 @@
                 boss.y = 50;
                 boss.direction = 1;
             });
+        }
+        
+        // ========== BOSS DEATH PARTICLE SYSTEM ==========
+        function createBossDeathExplosion(boss) {
+            const centerX = boss.x + boss.width / 2;
+            const centerY = boss.y + boss.height / 2;
+            const particleCount = 30;
+            const now = performance.now();
+            
+            // Create explosion particles
+            for (let i = 0; i < particleCount; i++) {
+                const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.5;
+                const speed = 2 + Math.random() * 4;
+                const size = 4 + Math.random() * 8;
+                
+                bossDeathParticles.push({
+                    x: centerX,
+                    y: centerY,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: size,
+                    originalSize: size,
+                    color: boss.color,
+                    alpha: 1,
+                    createdAt: now,
+                    lifetime: 600 + Math.random() * 400, // 600-1000ms
+                    rotation: Math.random() * Math.PI * 2,
+                    rotationSpeed: (Math.random() - 0.5) * 0.3
+                });
+            }
+            
+            // Create smoke puff particles (gray/white)
+            const smokeCount = 15;
+            for (let i = 0; i < smokeCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 0.5 + Math.random() * 2;
+                const size = 10 + Math.random() * 15;
+                
+                bossDeathParticles.push({
+                    x: centerX + (Math.random() - 0.5) * boss.width,
+                    y: centerY + (Math.random() - 0.5) * boss.height,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 1, // Slight upward drift
+                    size: size,
+                    originalSize: size,
+                    color: '#ffffff',
+                    alpha: 0.7,
+                    createdAt: now,
+                    lifetime: 500 + Math.random() * 500,
+                    rotation: 0,
+                    rotationSpeed: 0,
+                    isSmoke: true
+                });
+            }
+        }
+        
+        function updateBossDeathParticles() {
+            const now = performance.now();
+            
+            bossDeathParticles = bossDeathParticles.filter(p => {
+                const age = now - p.createdAt;
+                if (age >= p.lifetime) return false;
+                
+                // Update position
+                p.x += p.vx * deltaMultiplier;
+                p.y += p.vy * deltaMultiplier;
+                
+                // Apply gravity to non-smoke particles
+                if (!p.isSmoke) {
+                    p.vy += 0.1 * deltaMultiplier;
+                }
+                
+                // Slow down
+                p.vx *= 0.98;
+                p.vy *= 0.98;
+                
+                // Update rotation
+                p.rotation += p.rotationSpeed * deltaMultiplier;
+                
+                // Fade out and shrink
+                const lifeProgress = age / p.lifetime;
+                p.alpha = 1 - lifeProgress;
+                p.size = p.originalSize * (1 - lifeProgress * 0.5);
+                
+                return true;
+            });
+        }
+        
+        function drawBossDeathParticles() {
+            if (bossDeathParticles.length === 0) return;
+            
+            bossDeathParticles.forEach(p => {
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.rotation);
+                ctx.globalAlpha = p.alpha;
+                
+                if (p.isSmoke) {
+                    // Draw smoke as soft circles
+                    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, p.size);
+                    gradient.addColorStop(0, `rgba(200, 200, 200, ${p.alpha * 0.5})`);
+                    gradient.addColorStop(0.5, `rgba(150, 150, 150, ${p.alpha * 0.3})`);
+                    gradient.addColorStop(1, 'rgba(100, 100, 100, 0)');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    // Draw colored explosion particles as glowing squares
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+                }
+                
+                ctx.restore();
+            });
+            
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
         }
         
         function checkBossCollisions() {
@@ -965,12 +1095,16 @@
                             boss.alive = false;
                             score += bossConfig.pointsPerKill;
                             scoreEl.textContent = score;
+                            
+                            // Create death explosion
+                            createBossDeathExplosion(boss);
+                            bossDeathAnimationEnd = performance.now() + bossConfig.deathAnimationDuration;
                         }
                         
                         // Check if all bosses defeated
                         if (bosses.every(b => !b.alive)) {
-                            bossPhase = false;
-                            startLevelTransition();
+                            // Wait for death animation before transitioning
+                            waitingForBossDeathAnimation = true;
                         }
                     }
                 });
@@ -1302,6 +1436,18 @@
             if (bossPhase) {
                 moveBosses();
                 checkBossCollisions();
+            }
+            
+            // Update boss death particles (always, even after boss phase ends)
+            updateBossDeathParticles();
+            
+            // Check if waiting for boss death animation to complete
+            if (waitingForBossDeathAnimation) {
+                if (performance.now() >= bossDeathAnimationEnd) {
+                    waitingForBossDeathAnimation = false;
+                    bossPhase = false;
+                    startLevelTransition();
+                }
             }
             
             // Remove balls that fell off screen (using filter is faster than splice)
@@ -1694,6 +1840,8 @@
             bosses = [];
             bossesDropping = false;
             bossDropProgress = 0;
+            bossDeathParticles = [];
+            waitingForBossDeathAnimation = false;
             
             // Progressive difficulty - slower ramp early, faster later
             if (level <= 3) {
@@ -1777,6 +1925,9 @@
             if (bossPhase) {
                 drawBosses();
             }
+            
+            // Draw boss death particles (always, even after boss phase ends)
+            drawBossDeathParticles();
             
             drawPaddle();
             drawBall();
@@ -1890,6 +2041,8 @@
             bosses = [];
             bossesDropping = false;
             bossDropProgress = 0;
+            bossDeathParticles = [];
+            waitingForBossDeathAnimation = false;
             
             // Reset all pause states
             lifeLostPause = false;
