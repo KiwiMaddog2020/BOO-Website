@@ -131,18 +131,32 @@
             box-shadow: 0 0 12px #f0f;
         }
         
-        /* Make button more tappable on mobile */
+        /* Make button much more tappable on mobile */
         @media (max-width: 800px), (hover: none) {
             #startBtn {
-                padding: 14px 40px;
-                font-size: 18px;
-                min-height: 48px; /* Minimum touch target size */
+                padding: 18px 60px;
+                font-size: 20px;
+                min-height: 60px;
+                min-width: 200px;
                 touch-action: manipulation;
+                /* Larger tap target via pseudo-element */
+                position: relative;
+            }
+            #startBtn::before {
+                content: '';
+                position: absolute;
+                top: -15px;
+                left: -20px;
+                right: -20px;
+                bottom: -15px;
+                /* Invisible but tappable */
             }
             .button-container {
-                height: 56px;
-                z-index: 200; /* Above any touch blockers */
+                height: 70px;
+                z-index: 200;
                 position: relative;
+                /* Extra padding around button */
+                padding: 10px 20px;
             }
         }
 
@@ -156,17 +170,42 @@
             margin: 0;
         }
         
+        /* Extended touch zone for paddle control - only visible on mobile/touch */
+        .paddle-touch-zone {
+            display: none;
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 120px; /* Covers button and instructions area */
+            z-index: 50; /* Below button (200) but above other elements */
+            /* Debug: uncomment to see touch zone */
+            /* background: rgba(255, 0, 0, 0.2); */
+        }
+        
+        @media (max-width: 800px), (hover: none) {
+            .paddle-touch-zone {
+                display: block;
+            }
+        }
+        
         /* Hide both by default, then show appropriate one via media queries */
         .desktop-instructions { display: none; }
         .mobile-instructions { display: none; }
         
-        /* Desktop: show keyboard/mouse instructions */
+        /* Desktop: show keyboard/mouse instructions (screens wider than 800px with hover capability) */
         @media (min-width: 801px) {
             .desktop-instructions { display: block !important; }
             .mobile-instructions { display: none !important; }
         }
+        
+        /* Also show desktop instructions on any device with hover (catches desktop with narrow windows) */
+        @media (hover: hover) and (pointer: fine) {
+            .desktop-instructions { display: block !important; }
+            .mobile-instructions { display: none !important; }
+        }
 
-        /* Mobile: show touch instructions and adjust layout */
+        /* Mobile: show touch instructions (narrow screens OR touch devices) */
         @media (max-width: 800px) {
             .desktop-instructions { display: none !important; }
             .mobile-instructions { display: block !important; }
@@ -182,6 +221,12 @@
             .game-container {
                 padding-bottom: 12px;
             }
+        }
+        
+        /* Touch devices always get touch instructions (overrides width-based rules) */
+        @media (hover: none) and (pointer: coarse) {
+            .desktop-instructions { display: none !important; }
+            .mobile-instructions { display: block !important; }
         }
         
         /* ========== UPGRADE SELECTOR OVERLAY ========== */
@@ -383,6 +428,8 @@
         </div>
         <p class="message desktop-instructions">Use ← → arrow keys or mouse to move paddle</p>
         <p class="message mobile-instructions">Touch to move paddle</p>
+        <!-- Extended touch zone for paddle control on mobile -->
+        <div class="paddle-touch-zone" id="paddleTouchZone"></div>
     </div>
 
     <script>
@@ -2167,6 +2214,31 @@
 
         canvas.addEventListener('touchstart', handleTouch, { passive: false });
         canvas.addEventListener('touchmove', handleTouch, { passive: false });
+        
+        // Extended paddle touch zone - maps touch X to paddle position
+        const paddleTouchZone = document.getElementById('paddleTouchZone');
+        function handleTouchZone(e) {
+            // Don't interfere with button
+            if (e.target.id === 'startBtn' || e.target.closest('.button-container')) {
+                return;
+            }
+            e.preventDefault();
+            if (e.touches.length === 0) return;
+            
+            // Map touch X position to canvas coordinates
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const touch = e.touches[0];
+            const touchX = (touch.clientX - rect.left) * scaleX;
+            
+            // Move paddle to touch position
+            paddle.targetX = touchX - paddle.width / 2;
+            if (paddle.targetX < 0) paddle.targetX = 0;
+            if (paddle.targetX + paddle.width > canvas.width) paddle.targetX = canvas.width - paddle.width;
+        }
+        
+        paddleTouchZone.addEventListener('touchstart', handleTouchZone, { passive: false });
+        paddleTouchZone.addEventListener('touchmove', handleTouchZone, { passive: false });
         
         // Prevent page scrolling when touching game container (but NOT on button)
         gameContainer.addEventListener('touchstart', (e) => {
