@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>Neon Brickbreaker</title>
@@ -33,6 +33,8 @@
             -webkit-user-select: none;
             user-select: none;
             -webkit-tap-highlight-color: transparent;
+            /* Safe area for notched phones */
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
         }
 
         .game-container {
@@ -81,7 +83,6 @@
             touch-action: none;
             /* GPU acceleration */
             transform: translateZ(0);
-            will-change: contents;
             image-rendering: -webkit-optimize-contrast;
             image-rendering: crisp-edges;
         }
@@ -109,6 +110,8 @@
             height: 60px; /* Fixed height for 3 powerups */
             padding: 2px 8px;
             overflow: hidden; /* Hide extra effects */
+            /* Enable touch for paddle control */
+            touch-action: none;
         }
         
         .power-up-bar span {
@@ -119,6 +122,7 @@
             padding: 2px 6px;
             background: rgba(0, 0, 0, 0.4);
             border-radius: 3px;
+            pointer-events: none; /* Allow touches to pass through to parent */
         }
 
         .hud {
@@ -190,33 +194,31 @@
         /* Paddle trackpad - bottom area for touch control during gameplay */
         .paddle-touch-zone {
             display: none;
-            position: absolute;
-            left: 8px;
-            right: 8px;
-            bottom: 8px;
-            height: 80px;
+            width: 100%;
+            min-height: 70px;
+            flex: 1;
             z-index: 300;
-            border-radius: 8px;
+            border-radius: 0 0 5px 5px;
             /* Subtle visual indicator */
             background: linear-gradient(to top, rgba(0, 255, 255, 0.08), transparent);
-            border: 1px solid rgba(0, 255, 255, 0.15);
+            border-top: 1px solid rgba(0, 255, 255, 0.15);
+            margin-top: 4px;
         }
         
         .paddle-touch-zone.active {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         
         .paddle-touch-zone::after {
-            content: '← DRAG TO MOVE PADDLE →';
-            position: absolute;
-            bottom: 8px;
-            left: 50%;
-            transform: translateX(-50%);
+            content: '← SLIDE HERE OR TOUCH PADDLE TO MOVE →';
             font-size: 10px;
             color: rgba(0, 255, 255, 0.4);
             letter-spacing: 1px;
             pointer-events: none;
             white-space: nowrap;
+            text-transform: uppercase;
         }
         
         @media (max-width: 800px), (hover: none) {
@@ -242,10 +244,10 @@
         .desktop-instructions { display: block; }
         .mobile-instructions { display: none; }
         
-        /* Touch devices: show touch instructions */
+        /* Touch devices: hide all instructions (trackpad has its own) */
         @media (hover: none), (pointer: coarse) {
             .desktop-instructions { display: none !important; }
-            .mobile-instructions { display: block !important; }
+            .mobile-instructions { display: none !important; }
         }
         
         /* Desktop with mouse: show keyboard/mouse instructions (overrides touch rules) */
@@ -273,6 +275,9 @@
                 padding: 6px 4px 8px;
                 gap: 4px;
                 box-shadow: 0 0 10px #0ff;
+                /* Fix container to minimum required size */
+                flex-shrink: 0;
+                height: auto;
             }
             .message {
                 font-size: 10px;
@@ -884,7 +889,7 @@
             </div>
         </div>
         
-        <div class="button-container">
+        <div class="button-container" id="buttonContainer">
             <div class="menu-buttons">
                 <button id="startBtn">🎮&nbsp;Start Game&nbsp;🎮</button>
                 <button id="leaderboardBtn">🏆 Leaderboard 🏆</button>
@@ -930,6 +935,7 @@
         const ctx = canvas.getContext('2d', { alpha: false }); // Optimization: disable alpha for faster rendering
         const startBtn = document.getElementById('startBtn');
         const leaderboardBtn = document.getElementById('leaderboardBtn');
+        const buttonContainer = document.getElementById('buttonContainer');
         const scoreEl = document.getElementById('score');
         const livesEl = document.getElementById('lives');
         const levelEl = document.getElementById('level');
@@ -2520,8 +2526,9 @@
             startBtn.textContent = 'Play Again';
             startBtn.style.visibility = 'visible';
             leaderboardBtn.style.visibility = 'visible';
-            // Hide paddle trackpad
+            // Hide paddle trackpad, show button container
             paddleTouchZone.classList.remove('active');
+            buttonContainer.style.display = '';
             powerUpBarEl.innerHTML = '';
             lastPowerUpBarContent = '';
             
@@ -2554,7 +2561,7 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             // Draw horizontal line at top (under HUD area) - matches border style
-            const topLineY = 8;
+            const topLineY = 1;
             ctx.beginPath();
             ctx.moveTo(0, topLineY);
             ctx.lineTo(canvas.width, topLineY);
@@ -2776,9 +2783,10 @@
             gameRunning = true;
             startBtn.style.visibility = 'hidden';
             leaderboardBtn.style.visibility = 'hidden';
-            // Show paddle trackpad on mobile during gameplay
+            // Show paddle trackpad on mobile during gameplay, hide button container
             if (isMobile) {
                 paddleTouchZone.classList.add('active');
+                buttonContainer.style.display = 'none';
             }
             requestAnimationFrame(update);
         }
@@ -2880,14 +2888,20 @@
         paddleTouchZone.addEventListener('touchstart', handleTrackpad, { passive: false });
         paddleTouchZone.addEventListener('touchmove', handleTrackpad, { passive: false });
         
+        // Power-up bar also acts as trackpad area
+        powerUpBarEl.addEventListener('touchstart', handleTrackpad, { passive: false });
+        powerUpBarEl.addEventListener('touchmove', handleTrackpad, { passive: false });
+        
         // Prevent page scrolling when touching game container (but NOT on interactive elements)
         gameContainer.addEventListener('touchstart', (e) => {
             // Allow interactive elements through
             if (e.target.id === 'startBtn' || 
                 e.target.id === 'leaderboardBtn' ||
                 e.target.id === 'paddleTouchZone' ||
+                e.target.id === 'powerUpBar' ||
                 e.target.closest('.button-container') ||
                 e.target.closest('.paddle-touch-zone') ||
+                e.target.closest('.power-up-bar') ||
                 e.target.closest('.upgrade-overlay') ||
                 e.target.closest('.upgrade-slot') ||
                 e.target.closest('.leaderboard-overlay') ||
@@ -2897,10 +2911,11 @@
             e.preventDefault();
         }, { passive: false });
         gameContainer.addEventListener('touchmove', (e) => {
-            // Allow touch move on overlays and trackpad
+            // Allow touch move on overlays and trackpad areas
             if (e.target.closest('.upgrade-overlay') || 
                 e.target.closest('.leaderboard-overlay') ||
-                e.target.closest('.paddle-touch-zone')) {
+                e.target.closest('.paddle-touch-zone') ||
+                e.target.closest('.power-up-bar')) {
                 return;
             }
             e.preventDefault();
@@ -2920,7 +2935,7 @@
             e.stopPropagation();
             e.stopImmediatePropagation();
             startGame();
-        }, { capture: true });
+        }, { passive: false, capture: true });
 
         // Create display-only bricks (no power-ups or debuffs) for pre-game view
         function createDisplayBricks() {
