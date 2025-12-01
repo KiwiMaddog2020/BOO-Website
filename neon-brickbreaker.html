@@ -613,6 +613,9 @@
             flex-direction: column;
             padding: 20px;
             box-sizing: border-box;
+            /* Allow touch interactions */
+            touch-action: manipulation;
+            pointer-events: auto;
         }
         
         .leaderboard-overlay.active {
@@ -642,8 +645,8 @@
         }
         
         .leaderboard-close {
-            width: 40px;
-            height: 40px;
+            width: 44px;
+            height: 44px;
             background: rgba(255, 255, 255, 0.1);
             border: 2px solid #666;
             border-radius: 8px;
@@ -654,12 +657,24 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            /* Mobile touch improvements */
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
+            z-index: 10;
         }
         
         .leaderboard-close:hover {
             border-color: #f0f;
             color: #f0f;
             box-shadow: 0 0 15px rgba(255, 0, 255, 0.5);
+        }
+        
+        .leaderboard-close:active {
+            transform: scale(0.95);
+            border-color: #0ff;
+            color: #0ff;
         }
         
         .leaderboard-list {
@@ -780,6 +795,7 @@
             letter-spacing: 1px;
             box-shadow: 0 0 8px #ffcc00;
             -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
             width: 220px;
             box-sizing: border-box;
             white-space: nowrap;
@@ -789,6 +805,10 @@
             background: #ffcc00;
             color: #000;
             box-shadow: 0 0 12px #ffcc00;
+        }
+        
+        #leaderboardBtn:active {
+            transform: scale(0.98);
         }
         
         /* Mobile leaderboard button sizing */
@@ -1063,7 +1083,6 @@
             '#ff00ff', // Magenta
             '#00ffa0', // Blue-green (was pure green)
             '#bf00ff', // Neon Purple
-            '#ffff00', // Yellow
         ];
 
         // Power-up types
@@ -1968,15 +1987,6 @@
             // Update boss death particles (always, even after boss phase ends)
             updateBossDeathParticles();
             
-            // Check if waiting for boss death animation to complete
-            if (waitingForBossDeathAnimation) {
-                if (performance.now() >= bossDeathAnimationEnd) {
-                    waitingForBossDeathAnimation = false;
-                    bossPhase = false;
-                    startLevelTransition();
-                }
-            }
-            
             // Remove balls that fell off screen (Set for O(1) lookup)
             if (ballsToRemove.length > 0) {
                 const removeSet = new Set(ballsToRemove);
@@ -2579,6 +2589,28 @@
                 return;
             }
             
+            // Check if waiting for boss death animation (freeze ball but keep drawing)
+            if (waitingForBossDeathAnimation) {
+                // Update boss death particles for animation
+                updateBossDeathParticles();
+                
+                // Check if animation is complete
+                if (currentTime >= bossDeathAnimationEnd) {
+                    waitingForBossDeathAnimation = false;
+                    bossPhase = false;
+                    startLevelTransition();
+                }
+                
+                // Draw everything but don't move ball
+                movePaddle();
+                updatePaddleAnimation();
+                updatePowerUps();
+                drawPowerUpTimers();
+                draw();
+                requestAnimationFrame(update);
+                return;
+            }
+            
             movePaddle();
             updatePaddleAnimation();
             moveBall();
@@ -2752,10 +2784,13 @@
             const target = document.elementFromPoint(touch.clientX, touch.clientY);
             if (target && (
                 target.id === 'startBtn' || 
+                target.id === 'leaderboardBtn' ||
                 target.closest('.button-container') || 
                 target.closest('#startBtn') ||
                 target.closest('.upgrade-overlay') ||
-                target.closest('.upgrade-slot')
+                target.closest('.upgrade-slot') ||
+                target.closest('.leaderboard-overlay') ||
+                target.closest('.leaderboard-close')
             )) {
                 return; // Don't handle - let interactive element get the event
             }
@@ -2782,16 +2817,19 @@
         gameContainer.addEventListener('touchstart', (e) => {
             // Allow button clicks and upgrade selection through
             if (e.target.id === 'startBtn' || 
+                e.target.id === 'leaderboardBtn' ||
                 e.target.closest('.button-container') ||
                 e.target.closest('.upgrade-overlay') ||
-                e.target.closest('.upgrade-slot')) {
+                e.target.closest('.upgrade-slot') ||
+                e.target.closest('.leaderboard-overlay') ||
+                e.target.closest('.leaderboard-close')) {
                 return; // Don't prevent default on interactive elements
             }
             e.preventDefault();
         }, { passive: false });
         gameContainer.addEventListener('touchmove', (e) => {
-            // Allow touch move on upgrade overlay
-            if (e.target.closest('.upgrade-overlay')) {
+            // Allow touch move on overlays
+            if (e.target.closest('.upgrade-overlay') || e.target.closest('.leaderboard-overlay')) {
                 return;
             }
             e.preventDefault();
@@ -3150,14 +3188,34 @@
         }
         
         leaderboardBtn.addEventListener('click', showLeaderboard);
+        leaderboardBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showLeaderboard();
+        }, { passive: false });
+        
         leaderboardClose.addEventListener('click', hideLeaderboard);
         
-        // Close leaderboard on overlay click (not content)
+        // Touch handler for close button (iOS Safari needs this)
+        leaderboardClose.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            hideLeaderboard();
+        }, { passive: false });
+        
+        // Close leaderboard on overlay click/touch (not content)
         leaderboardOverlay.addEventListener('click', (e) => {
             if (e.target === leaderboardOverlay) {
                 hideLeaderboard();
             }
         });
+        
+        leaderboardOverlay.addEventListener('touchend', (e) => {
+            if (e.target === leaderboardOverlay) {
+                e.preventDefault();
+                hideLeaderboard();
+            }
+        }, { passive: false });
     </script>
 </body>
 </html>
