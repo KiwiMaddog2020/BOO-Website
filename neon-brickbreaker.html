@@ -177,8 +177,8 @@
             left: 0;
             right: 0;
             bottom: 0;
-            height: 120px; /* Covers button and instructions area */
-            z-index: 50; /* Below button (200) but above other elements */
+            height: 50px; /* Only covers instructions area, NOT button */
+            z-index: 50;
             /* Debug: uncomment to see touch zone */
             /* background: rgba(255, 0, 0, 0.2); */
         }
@@ -186,6 +186,17 @@
         @media (max-width: 800px), (hover: none) {
             .paddle-touch-zone {
                 display: block;
+            }
+            /* Ensure button container has higher z-index and pointer-events */
+            .button-container {
+                z-index: 200 !important;
+                position: relative !important;
+                pointer-events: auto !important;
+            }
+            #startBtn {
+                pointer-events: auto !important;
+                position: relative !important;
+                z-index: 201 !important;
             }
         }
         
@@ -2251,17 +2262,20 @@
         // Extended paddle touch zone - maps touch X to paddle position
         const paddleTouchZone = document.getElementById('paddleTouchZone');
         function handleTouchZone(e) {
-            // Don't interfere with button
-            if (e.target.id === 'startBtn' || e.target.closest('.button-container')) {
-                return;
+            // Check if touch is on button or button container - let those through
+            const touch = e.touches[0];
+            const target = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (target && (target.id === 'startBtn' || target.closest('.button-container') || target.closest('#startBtn'))) {
+                return; // Don't handle - let button get the event
             }
+            
             e.preventDefault();
+            e.stopPropagation();
             if (e.touches.length === 0) return;
             
             // Map touch X position to canvas coordinates
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
-            const touch = e.touches[0];
             const touchX = (touch.clientX - rect.left) * scaleX;
             
             // Move paddle to touch position
@@ -2285,16 +2299,21 @@
             e.preventDefault();
         }, { passive: false });
 
-        // Start button - support both click and touch
+        // Start button - support both click and touch with capture phase for priority
         startBtn.addEventListener('click', startGame);
+        
+        // Use capture phase to ensure button gets touch events first
         startBtn.addEventListener('touchstart', (e) => {
-            e.stopPropagation(); // Prevent container from catching this
-        }, { passive: true });
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+        }, { passive: true, capture: true });
+        
         startBtn.addEventListener('touchend', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            e.stopImmediatePropagation();
             startGame();
-        });
+        }, { capture: true });
 
         // Create display-only bricks (no power-ups or debuffs) for pre-game view
         function createDisplayBricks() {
