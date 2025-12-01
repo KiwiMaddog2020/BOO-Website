@@ -6148,7 +6148,13 @@
                 document.documentElement.style.setProperty('--vh', vh + 'px');
             };
             setVH();
-            window.addEventListener('resize', setVH);
+            
+            // Debounced resize handler
+            let resizeTimeout;
+            window.addEventListener('resize', function() {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(setVH, 100);
+            });
             window.addEventListener('orientationchange', function() {
                 setTimeout(setVH, 100);
             });
@@ -6346,12 +6352,8 @@
         let scrollTicking = false;
         let cardIndicatorTimeout;
         
-        function handleScroll() {
-            // Pause animations during scroll
-            pauseAnimations();
-            resumeAnimations();
-            
-            // Show card indicators
+        // Shared function to show card indicators (defined early for reuse)
+        function showCardIndicators() {
             if (cardIndicators) {
                 cardIndicators.classList.add('visible');
                 clearTimeout(cardIndicatorTimeout);
@@ -6359,6 +6361,15 @@
                     cardIndicators.classList.remove('visible');
                 }, 1200);
             }
+        }
+        
+        function handleScroll() {
+            // Pause animations during scroll
+            pauseAnimations();
+            resumeAnimations();
+            
+            // Show card indicators (reuse shared function)
+            showCardIndicators();
             
             scrollTicking = false;
         }
@@ -6421,20 +6432,25 @@
             // IntersectionObserver not supported or error
         }
         
+        // Cache nav links for performance (queried once)
+        const navMenuLinks = document.querySelectorAll('nav a:not(.nav-animated-logo-container)');
+        
         // Update active menu item for current section (mobile)
         function updateActiveMenuItem(sectionId) {
-            // Remove active class from all menu items
-            document.querySelectorAll('nav a:not(.nav-animated-logo-container)').forEach(function(link) {
+            // Remove active class from all menu items (using cached NodeList)
+            navMenuLinks.forEach(function(link) {
                 link.classList.remove('menu-active');
             });
             
             // Don't highlight for home or logo-outro sections
             if (sectionId === 'home' || sectionId === 'logo-outro') return;
             
-            // Find and activate the corresponding menu link
-            var activeLink = document.querySelector('nav a[href="#' + sectionId + '"]');
-            if (activeLink) {
-                activeLink.classList.add('menu-active');
+            // Find and activate the corresponding menu link (using cached links)
+            for (let i = 0; i < navMenuLinks.length; i++) {
+                if (navMenuLinks[i].getAttribute('href') === '#' + sectionId) {
+                    navMenuLinks[i].classList.add('menu-active');
+                    break;
+                }
             }
         }
 
@@ -6483,17 +6499,10 @@
             if (homeSection) {
                 setTimeout(() => homeSection.classList.add('visible'), 1300);
             }
+            
+            // Sync all color animations to start together
+            setTimeout(syncColorAnimations, 100);
         });
-
-        function showCardIndicators() {
-            if (cardIndicators) {
-                cardIndicators.classList.add('visible');
-                clearTimeout(cardIndicatorTimeout);
-                cardIndicatorTimeout = setTimeout(() => {
-                    cardIndicators.classList.remove('visible');
-                }, 1200);
-            }
-        }
 
         // Show on wheel scroll
         if (scrollContainer) {
@@ -6794,11 +6803,6 @@
                 });
             });
         }
-        
-        // Sync animations after page fully loads
-        window.addEventListener('load', () => {
-            setTimeout(syncColorAnimations, 100);
-        });
     </script>
 </body>
 </html>
