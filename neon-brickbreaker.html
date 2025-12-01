@@ -156,12 +156,18 @@
             margin: 0;
         }
         
-        /* Show desktop instructions by default, hide mobile */
-        .desktop-instructions { display: block !important; }
-        .mobile-instructions { display: none !important; }
+        /* Hide both by default, then show appropriate one via media queries */
+        .desktop-instructions { display: none; }
+        .mobile-instructions { display: none; }
+        
+        /* Desktop: show keyboard/mouse instructions */
+        @media (min-width: 801px) {
+            .desktop-instructions { display: block !important; }
+            .mobile-instructions { display: none !important; }
+        }
 
+        /* Mobile: show touch instructions and adjust layout */
         @media (max-width: 800px) {
-            /* Hide desktop instructions, show mobile */
             .desktop-instructions { display: none !important; }
             .mobile-instructions { display: block !important; }
             .hud {
@@ -172,6 +178,9 @@
                 gap: 3px;
                 min-height: 54px;
                 height: 54px;
+            }
+            .game-container {
+                padding-bottom: 12px;
             }
         }
     </style>
@@ -248,6 +257,8 @@
         let bossSpawnPauseEnd = 0;
         let levelTransitionPause = false;
         let levelTransitionPauseEnd = 0;
+        let extraLifePause = false;
+        let extraLifePauseEnd = 0;
         
         // Boss state
         let bossPhase = false; // True when fighting bosses
@@ -258,7 +269,7 @@
         const bossConfig = {
             width: 50,
             height: 25,
-            speed: 2.5,
+            speed: 2.25, // 10% slower than original 2.5
             dropDistance: 20,
             dropSpeed: 0.08, // How fast the drop animation plays (0-1 per frame)
             hitsRequired: 3,
@@ -380,9 +391,10 @@
                 return adjacent;
             }
             
-            // Luck protection: guarantee 2-3 power-ups per level, each unique
+            // Luck protection: guarantee 2+ power-ups per level, each unique
+            // Max power-ups increases by 1 every 3 levels (3 at level 1-2, 4 at level 3-5, etc.)
             const minPowerUps = 2;
-            const maxPowerUps = 3;
+            const maxPowerUps = 3 + Math.floor(level / 3);
             const numPowerUps = Math.floor(Math.random() * (maxPowerUps - minPowerUps + 1)) + minPowerUps;
             
             // Pick random unique power-up types
@@ -1077,7 +1089,7 @@
             ctx.textAlign = 'center';
             ctx.shadowColor = '#f0f';
             ctx.shadowBlur = 20;
-            ctx.fillText(`${lives} ${lives === 1 ? 'Life' : 'Lives'}`, canvas.width / 2, canvas.height / 2);
+            ctx.fillText(`${lives} ${lives === 1 ? 'LIFE' : 'LIVES'} REMAINING`, canvas.width / 2, canvas.height / 2);
             ctx.shadowBlur = 0;
         }
 
@@ -1097,9 +1109,35 @@
         }
         
         function startLevelTransition() {
-            // Pause after boss defeat before next level
-            levelTransitionPause = true;
-            levelTransitionPauseEnd = performance.now() + 1200; // 1.2 second pause
+            // Check if player earns an extra life (every 5 levels)
+            if (level % 5 === 0) {
+                lives++;
+                livesEl.textContent = lives;
+                // Show extra life message first, then level clear
+                extraLifePause = true;
+                extraLifePauseEnd = performance.now() + 1200; // 1.2 second pause
+            } else {
+                // Normal level transition
+                levelTransitionPause = true;
+                levelTransitionPauseEnd = performance.now() + 1200; // 1.2 second pause
+            }
+        }
+        
+        function drawExtraLifeMessage() {
+            if (!extraLifePause) return;
+            
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Blue text for extra life
+            ctx.font = 'bold 42px Arial';
+            ctx.fillStyle = '#00aaff';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#00aaff';
+            ctx.shadowBlur = 25;
+            ctx.fillText('+1 LIFE', canvas.width / 2, canvas.height / 2);
+            ctx.shadowBlur = 0;
         }
         
         function drawBossSpawnMessage() {
@@ -1445,6 +1483,21 @@
                 return;
             }
             
+            // Check if extra life pause is over
+            if (extraLifePause) {
+                if (currentTime >= extraLifePauseEnd) {
+                    extraLifePause = false;
+                    // Now show level clear message
+                    levelTransitionPause = true;
+                    levelTransitionPauseEnd = performance.now() + 1200;
+                }
+                // During pause, still draw but don't update game logic
+                draw();
+                drawExtraLifeMessage();
+                requestAnimationFrame(update);
+                return;
+            }
+            
             movePaddle();
             updatePaddleAnimation();
             moveBall();
@@ -1475,6 +1528,7 @@
             lifeLostPause = false;
             bossSpawnPause = false;
             levelTransitionPause = false;
+            extraLifePause = false;
             
             // Activate mouse control when starting game
             mouseControlActive = true;
