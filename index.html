@@ -1772,6 +1772,8 @@
             #game {
                 touch-action: none !important;
                 -webkit-overflow-scrolling: auto !important;
+                overscroll-behavior: none !important;
+                -webkit-overscroll-behavior: none !important;
             }
             
             /* Disable animated overlays on game section for mobile performance */
@@ -1796,12 +1798,12 @@
             }
             
             .game-container {
-                /* Use aspect ratio to match game content: 640w x ~680h (canvas + UI) */
+                /* Taller aspect ratio to fit all game content including buttons */
                 width: 95% !important;
                 max-width: 400px !important;
-                aspect-ratio: 640 / 700 !important;
+                aspect-ratio: 640 / 780 !important;
                 height: auto !important;
-                max-height: 80vh !important;
+                max-height: 85vh !important;
                 min-height: unset !important;
                 padding: 0 !important;
                 border-radius: 16px !important;
@@ -1812,6 +1814,8 @@
                 -webkit-user-select: none !important;
                 user-select: none !important;
                 flex-shrink: 0 !important;
+                /* Isolate touch events */
+                isolation: isolate !important;
             }
             
             /* Disable touch blockers - they interfere with game controls */
@@ -1826,6 +1830,8 @@
                 min-height: unset !important;
                 border-radius: 12px !important;
                 touch-action: none !important;
+                /* Ensure iframe receives all touch events */
+                pointer-events: auto !important;
             }
             
             .game-info {
@@ -4374,7 +4380,7 @@
             font-size: 3rem;
         }
 
-        .game-container { width: 100%; max-width: 700px; aspect-ratio: 640/700; max-height: 85vh; border-radius: 20px; overflow: hidden; border: 2px solid rgba(0, 255, 204, 0.4); box-shadow: 0 0 30px rgba(0, 255, 204, 0.3), 0 0 60px rgba(255, 0, 255, 0.2); position: relative; z-index: 10; }
+        .game-container { width: 100%; max-width: 700px; aspect-ratio: 640/780; max-height: 85vh; border-radius: 20px; overflow: hidden; border: 2px solid rgba(0, 255, 204, 0.4); box-shadow: 0 0 30px rgba(0, 255, 204, 0.3), 0 0 60px rgba(255, 0, 255, 0.2); position: relative; z-index: 10; }
         
         /* Hide touch blockers on desktop - only needed for mobile */
         .game-touch-blocker { display: none; }
@@ -5146,11 +5152,11 @@
                 max-width: 92% !important; 
                 max-height: 56vh !important; 
             }
-            /* Slightly taller game container for larger phones - use aspect ratio */
+            /* Taller game container for larger phones - use aspect ratio */
             .game-container {
-                aspect-ratio: 640 / 700 !important;
+                aspect-ratio: 640 / 780 !important;
                 height: auto !important;
-                max-height: 82vh !important;
+                max-height: 85vh !important;
                 min-height: unset !important;
             }
         }
@@ -5243,11 +5249,11 @@
             }
             .placeholder-icon { font-size: 0.9rem !important; }
             
-            /* Smaller game container - use aspect ratio instead of fixed height */
+            /* Smaller game container - taller aspect ratio to show all buttons */
             .game-container {
-                aspect-ratio: 640 / 700 !important;
+                aspect-ratio: 640 / 780 !important;
                 height: auto !important;
-                max-height: 75vh !important;
+                max-height: 80vh !important;
                 min-height: unset !important;
             }
             
@@ -6712,33 +6718,49 @@
         // Prevent page scrolling when touching the game section
         const gameSection = document.getElementById('game');
         const gameContainer = document.querySelector('.game-container');
+        const gameIframe = gameContainer ? gameContainer.querySelector('iframe') : null;
         
-        // Prevent scroll on entire game section
+        // Track if we're currently touching the game area
+        let touchingGame = false;
+        
+        // Use capture phase at document level for maximum control
+        document.addEventListener('touchstart', (e) => {
+            if (e.target.closest('.game-container') || e.target.closest('#game .game-container')) {
+                touchingGame = true;
+                e.preventDefault();
+            }
+        }, { passive: false, capture: true });
+        
+        document.addEventListener('touchmove', (e) => {
+            // If we started touching the game, prevent all moves
+            if (touchingGame) {
+                e.preventDefault();
+                return;
+            }
+            // Also prevent if currently over game container
+            if (e.target.closest('.game-container')) {
+                e.preventDefault();
+            }
+        }, { passive: false, capture: true });
+        
+        document.addEventListener('touchend', () => {
+            touchingGame = false;
+        }, { passive: true, capture: true });
+        
+        document.addEventListener('touchcancel', () => {
+            touchingGame = false;
+        }, { passive: true, capture: true });
+        
+        // Prevent scroll on game section itself
         if (gameSection) {
-            gameSection.addEventListener('touchstart', (e) => {
-                // Only prevent if touch is on game container area
-                if (e.target.closest('.game-container')) {
-                    e.preventDefault();
-                }
-            }, { passive: false });
-            
-            gameSection.addEventListener('touchmove', (e) => {
-                // Only prevent if touch is on game container area
-                if (e.target.closest('.game-container')) {
-                    e.preventDefault();
-                }
-            }, { passive: false });
+            gameSection.style.touchAction = 'none';
+            gameSection.style.overscrollBehavior = 'none';
         }
         
-        // Also prevent on game container directly (belt and suspenders)
+        // Also prevent on game container directly
         if (gameContainer) {
-            gameContainer.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-            }, { passive: false });
-            
-            gameContainer.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-            }, { passive: false });
+            gameContainer.style.touchAction = 'none';
+            gameContainer.style.overscrollBehavior = 'none';
         }
         
         // ========== SYNC COLOR ANIMATIONS ==========
