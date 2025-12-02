@@ -1768,12 +1768,18 @@
                 opacity: 1 !important;
             }
             
-            /* ========== GAME CONTAINER - LARGER TO SHOW START BUTTON ========== */
+            /* ========== GAME CONTAINER - SCROLL PREVENTION ========== */
             #game {
                 touch-action: none !important;
                 -webkit-overflow-scrolling: auto !important;
-                overscroll-behavior: none !important;
-                -webkit-overscroll-behavior: none !important;
+                overscroll-behavior: contain !important;
+                -webkit-overscroll-behavior: contain !important;
+                overflow: hidden !important;
+            }
+            
+            #game iframe {
+                touch-action: none !important;
+                overscroll-behavior: contain !important;
             }
             
             /* Disable animated overlays on game section for mobile performance */
@@ -1816,6 +1822,9 @@
                 flex-shrink: 0 !important;
                 /* Isolate touch events */
                 isolation: isolate !important;
+                /* Prevent scroll bleed */
+                overscroll-behavior: contain !important;
+                -webkit-overscroll-behavior: contain !important;
             }
             
             /* Disable touch blockers - they interfere with game controls */
@@ -1832,6 +1841,8 @@
                 touch-action: none !important;
                 /* Ensure iframe receives all touch events */
                 pointer-events: auto !important;
+                /* Prevent scroll bleed */
+                overscroll-behavior: contain !important;
             }
             
             .game-info {
@@ -6714,99 +6725,131 @@
             });
         }
         
-        // ========== GAME CONTAINER TOUCH PREVENTION ==========
-        // Prevent page scrolling when touching the game section
+        // ========== GAME CONTAINER SCROLL PREVENTION ==========
+        // Completely prevent page scrolling when interacting with game
         const gameSection = document.getElementById('game');
         const gameContainer = document.querySelector('.game-container');
-        const gameIframe = gameContainer ? gameContainer.querySelector('iframe') : null;
         
-        // Track if we're currently touching the game area
-        let touchingGame = false;
+        // Track game interaction state
+        let isInteractingWithGame = false;
+        let savedScrollY = 0;
         
-        // Lock body scroll when touching game
-        function lockBodyScroll() {
-            document.body.style.overflow = 'hidden';
-            document.body.style.position = 'fixed';
-            document.body.style.width = '100%';
-            document.body.style.touchAction = 'none';
+        // Check if element is within game area
+        function isGameElement(el) {
+            if (!el) return false;
+            return el.closest('.game-container') || el.closest('#game iframe') || el.id === 'game';
         }
         
-        function unlockBodyScroll() {
-            document.body.style.overflow = '';
-            document.body.style.position = '';
-            document.body.style.width = '';
-            document.body.style.touchAction = '';
-        }
-        
-        // Check if touch is on game container (including iframe)
-        function isTouchOnGame(e) {
-            const touch = e.touches ? e.touches[0] : e;
-            if (!touch || !gameContainer) return false;
-            
+        // Check if coordinates are within game container
+        function isPointInGame(x, y) {
+            if (!gameContainer) return false;
             const rect = gameContainer.getBoundingClientRect();
-            const x = touch.clientX;
-            const y = touch.clientY;
-            
             return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
         }
         
-        // Use capture phase at document level for maximum control
-        document.addEventListener('touchstart', (e) => {
-            if (e.target.closest('.game-container') || isTouchOnGame(e)) {
-                touchingGame = true;
-                lockBodyScroll();
-                e.preventDefault();
-                e.stopPropagation();
-            }
-        }, { passive: false, capture: true });
-        
-        document.addEventListener('touchmove', (e) => {
-            // If we started touching the game, prevent all moves
-            if (touchingGame) {
-                e.preventDefault();
-                e.stopPropagation();
-                return false;
-            }
-            // Also prevent if currently over game container
-            if (e.target.closest('.game-container') || isTouchOnGame(e)) {
-                e.preventDefault();
-                e.stopPropagation();
-                return false;
-            }
-        }, { passive: false, capture: true });
-        
-        document.addEventListener('touchend', () => {
-            if (touchingGame) {
-                touchingGame = false;
-                unlockBodyScroll();
-            }
-        }, { passive: true, capture: true });
-        
-        document.addEventListener('touchcancel', () => {
-            if (touchingGame) {
-                touchingGame = false;
-                unlockBodyScroll();
-            }
-        }, { passive: true, capture: true });
-        
-        // Also add scroll listener to prevent any scroll while touching game
-        window.addEventListener('scroll', (e) => {
-            if (touchingGame) {
-                e.preventDefault();
-                window.scrollTo(0, window.scrollY);
-            }
-        }, { passive: false, capture: true });
-        
-        // Prevent scroll on game section itself
-        if (gameSection) {
-            gameSection.style.touchAction = 'none';
-            gameSection.style.overscrollBehavior = 'none';
+        // Lock scrolling completely
+        function lockScroll() {
+            savedScrollY = window.scrollY;
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+            document.body.style.position = 'fixed';
+            document.body.style.top = `-${savedScrollY}px`;
+            document.body.style.left = '0';
+            document.body.style.right = '0';
+            document.body.style.width = '100%';
         }
         
-        // Also prevent on game container directly
+        // Unlock scrolling
+        function unlockScroll() {
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
+            document.body.style.position = '';
+            document.body.style.top = '';
+            document.body.style.left = '';
+            document.body.style.right = '';
+            document.body.style.width = '';
+            window.scrollTo(0, savedScrollY);
+        }
+        
+        // TOUCH EVENTS - Capture phase for maximum control
+        document.addEventListener('touchstart', function(e) {
+            const touch = e.touches[0];
+            if (isGameElement(e.target) || isPointInGame(touch.clientX, touch.clientY)) {
+                isInteractingWithGame = true;
+                lockScroll();
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        }, { passive: false, capture: true });
+        
+        document.addEventListener('touchmove', function(e) {
+            if (isInteractingWithGame) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+            }
+            const touch = e.touches[0];
+            if (isGameElement(e.target) || isPointInGame(touch.clientX, touch.clientY)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+            }
+        }, { passive: false, capture: true });
+        
+        document.addEventListener('touchend', function(e) {
+            if (isInteractingWithGame) {
+                isInteractingWithGame = false;
+                // Small delay before unlocking to prevent scroll momentum
+                setTimeout(unlockScroll, 50);
+            }
+        }, { passive: true, capture: true });
+        
+        document.addEventListener('touchcancel', function(e) {
+            if (isInteractingWithGame) {
+                isInteractingWithGame = false;
+                setTimeout(unlockScroll, 50);
+            }
+        }, { passive: true, capture: true });
+        
+        // MOUSE WHEEL - Prevent scroll when over game
+        document.addEventListener('wheel', function(e) {
+            if (isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+        }, { passive: false, capture: true });
+        
+        // KEYBOARD - Prevent arrow keys from scrolling when game is focused
+        document.addEventListener('keydown', function(e) {
+            if (isInteractingWithGame || isGameElement(document.activeElement)) {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown'].includes(e.key)) {
+                    e.preventDefault();
+                }
+            }
+        }, { passive: false, capture: true });
+        
+        // Apply CSS properties to game elements
+        if (gameSection) {
+            gameSection.style.touchAction = 'none';
+            gameSection.style.overscrollBehavior = 'contain';
+            gameSection.style.webkitOverflowScrolling = 'auto';
+        }
+        
         if (gameContainer) {
             gameContainer.style.touchAction = 'none';
-            gameContainer.style.overscrollBehavior = 'none';
+            gameContainer.style.overscrollBehavior = 'contain';
+            
+            // Also handle mouse enter/leave for desktop wheel scrolling
+            gameContainer.addEventListener('mouseenter', function() {
+                isInteractingWithGame = true;
+            });
+            gameContainer.addEventListener('mouseleave', function() {
+                isInteractingWithGame = false;
+            });
         }
         
         // ========== SYNC COLOR ANIMATIONS ==========
