@@ -1017,7 +1017,7 @@
     
     <!-- Score Submission Modal -->
     <div class="score-modal" id="scoreModal">
-        <div class="score-modal-title">LEADERBOARD</div>
+        <div class="score-modal-title" id="scoreModalTitle">HIGH SCORE</div>
         <div class="score-modal-score">Score: <span id="finalScoreDisplay">0</span></div>
         <div class="score-modal-level">Level <span id="finalLevelDisplay">1</span></div>
         <div class="score-input-container">
@@ -3481,6 +3481,7 @@
         
         // ===== SCORE SUBMISSION =====
         const scoreModal = document.getElementById('scoreModal');
+        const scoreModalTitle = document.getElementById('scoreModalTitle');
         const usernameInput = document.getElementById('usernameInput');
         const submitScoreBtn = document.getElementById('submitScoreBtn');
         const skipScoreBtn = document.getElementById('skipScoreBtn');
@@ -3491,7 +3492,7 @@
         let pendingScore = 0;
         let pendingLevel = 1;
         
-        function showScoreModal(finalScore, finalLevel) {
+        async function showScoreModal(finalScore, finalLevel) {
             pendingScore = finalScore;
             pendingLevel = finalLevel;
             finalScoreDisplay.textContent = finalScore;
@@ -3500,10 +3501,60 @@
             scoreErrorMsg.textContent = '';
             usernameInput.classList.remove('error');
             submitScoreBtn.disabled = false;
+            
+            // Check rank against existing scores
+            let rank = await getScoreRank(finalScore);
+            
+            // Update title based on rank
+            if (rank === 1) {
+                scoreModalTitle.textContent = "YOU'RE THE CHAMPION!!!";
+            } else if (rank <= 10) {
+                scoreModalTitle.textContent = 'AMAZING, TOP 10!!';
+            } else {
+                scoreModalTitle.textContent = 'HIGH SCORE';
+            }
+            
             scoreModal.classList.add('active');
             
             // Focus input after brief delay (for mobile keyboards)
             setTimeout(() => usernameInput.focus(), 100);
+        }
+        
+        // Get the rank this score would achieve
+        async function getScoreRank(playerScore) {
+            try {
+                let scores = [];
+                
+                if (typeof db !== 'undefined' && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                    // Fetch from Firebase
+                    const snapshot = await db.collection('highscores')
+                        .orderBy('score', 'desc')
+                        .limit(100)
+                        .get();
+                    snapshot.forEach(doc => {
+                        scores.push(doc.data().score);
+                    });
+                } else {
+                    // Use local scores
+                    const localScores = getLocalScores();
+                    scores = localScores.map(s => s.score);
+                }
+                
+                // Find where this score would rank
+                let rank = 1;
+                for (const existingScore of scores) {
+                    if (playerScore <= existingScore) {
+                        rank++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                return rank;
+            } catch (error) {
+                console.error('Error checking rank:', error);
+                return 999; // Default to non-top-10 on error
+            }
         }
         
         // Prevent score modal touches from propagating
