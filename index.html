@@ -6747,27 +6747,35 @@
             return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
         }
         
-        // Lock scrolling completely
+        // Lock scrolling completely - prevents browser address bar hiding
         function lockScroll() {
             savedScrollY = window.scrollY;
             document.documentElement.style.overflow = 'hidden';
+            document.documentElement.style.touchAction = 'none';
+            document.documentElement.style.overscrollBehavior = 'none';
             document.body.style.overflow = 'hidden';
             document.body.style.position = 'fixed';
             document.body.style.top = `-${savedScrollY}px`;
             document.body.style.left = '0';
             document.body.style.right = '0';
             document.body.style.width = '100%';
+            document.body.style.touchAction = 'none';
+            document.body.style.overscrollBehavior = 'none';
         }
         
         // Unlock scrolling
         function unlockScroll() {
             document.documentElement.style.overflow = '';
+            document.documentElement.style.touchAction = '';
+            document.documentElement.style.overscrollBehavior = '';
             document.body.style.overflow = '';
             document.body.style.position = '';
             document.body.style.top = '';
             document.body.style.left = '';
             document.body.style.right = '';
             document.body.style.width = '';
+            document.body.style.touchAction = '';
+            document.body.style.overscrollBehavior = '';
             window.scrollTo(0, savedScrollY);
         }
         
@@ -6842,6 +6850,31 @@
         if (gameContainer) {
             gameContainer.style.touchAction = 'none';
             gameContainer.style.overscrollBehavior = 'contain';
+            
+            // Direct touch handlers on game container - highest priority prevention
+            // These fire before document-level handlers and prevent browser UI changes
+            gameContainer.addEventListener('touchstart', function(e) {
+                isInteractingWithGame = true;
+                lockScroll();
+                // Only preventDefault on non-interactive elements
+                const isInteractive = e.target.closest('button') || e.target.closest('input');
+                if (!isInteractive) {
+                    e.preventDefault();
+                }
+            }, { passive: false, capture: true });
+            
+            gameContainer.addEventListener('touchmove', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }, { passive: false, capture: true });
+            
+            gameContainer.addEventListener('touchend', function(e) {
+                // Delay unlock to prevent scroll momentum triggering UI changes
+                setTimeout(function() {
+                    isInteractingWithGame = false;
+                    unlockScroll();
+                }, 100);
+            }, { passive: true });
             
             // Also handle mouse enter/leave for desktop wheel scrolling
             gameContainer.addEventListener('mouseenter', function() {
