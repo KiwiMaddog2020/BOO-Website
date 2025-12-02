@@ -1025,6 +1025,13 @@
         
         <!-- Unified trackpad zone: power-up timers at top, instructions + permanent upgrades at bottom -->
         <div class="trackpad-zone" id="trackpadZone">
+            <!-- Button container - positioned at top of trackpad zone -->
+            <div class="button-container" id="buttonContainer">
+                <div class="menu-buttons">
+                    <button id="startBtn">🎮&nbsp;Start Game&nbsp;🎮</button>
+                </div>
+                <button id="leaderboardBtn">🏆 Leaderboard 🏆</button>
+            </div>
             <div class="power-up-timers" id="powerUpBar"></div>
             <div class="trackpad-spacer"></div>
             <div class="trackpad-instructions" id="trackpadInstructions">
@@ -1341,6 +1348,19 @@
             currentR: 255, currentG: 255, currentB: 255,
             targetR: 255, targetG: 255, targetB: 255,
             speed: 0.1 // How fast to transition (0-1)
+        };
+        
+        // Paddle color transition state
+        let paddleColorTransition = {
+            currentR: 0, currentG: 255, currentB: 255, // Start cyan
+            speed: 0.08 // Slightly slower than ball for smoother paddle transition
+        };
+        
+        // Paddle border color transition (for debuff red border)
+        let paddleBorderTransition = {
+            currentR: 0, currentG: 255, currentB: 255, // Start cyan (no border visible)
+            currentAlpha: 0, // Border starts invisible
+            speed: 0.08
         };
 
         // Neon colors
@@ -2017,13 +2037,43 @@
         }
 
         function drawPaddle() {
-            // Determine paddle color - green when big paddle active
-            let paddleColor = paddle.color; // default cyan
+            // Determine target paddle color based on active power-ups
+            let targetR = 0, targetG = 255, targetB = 255; // Default cyan
+            let targetBorderR = 0, targetBorderG = 255, targetBorderB = 255;
+            let targetBorderAlpha = 0; // No border by default
+            
             if (activePowerUps.bigPaddle.active) {
-                paddleColor = '#00cc66'; // green
+                // Green for huge paddle: #00cc66
+                targetR = 0; targetG = 204; targetB = 102;
             } else if (activePowerUps.smallPaddle.active) {
-                paddleColor = '#888888'; // grey for debuff
+                // Grey for small paddle debuff: #888888
+                targetR = 136; targetG = 136; targetB = 136;
+                // Red border for debuff
+                targetBorderR = 255; targetBorderG = 0; targetBorderB = 40;
+                targetBorderAlpha = 1;
             }
+            
+            // Smoothly transition paddle color
+            paddleColorTransition.currentR += (targetR - paddleColorTransition.currentR) * paddleColorTransition.speed;
+            paddleColorTransition.currentG += (targetG - paddleColorTransition.currentG) * paddleColorTransition.speed;
+            paddleColorTransition.currentB += (targetB - paddleColorTransition.currentB) * paddleColorTransition.speed;
+            
+            // Smoothly transition border
+            paddleBorderTransition.currentR += (targetBorderR - paddleBorderTransition.currentR) * paddleBorderTransition.speed;
+            paddleBorderTransition.currentG += (targetBorderG - paddleBorderTransition.currentG) * paddleBorderTransition.speed;
+            paddleBorderTransition.currentB += (targetBorderB - paddleBorderTransition.currentB) * paddleBorderTransition.speed;
+            paddleBorderTransition.currentAlpha += (targetBorderAlpha - paddleBorderTransition.currentAlpha) * paddleBorderTransition.speed;
+            
+            const pR = Math.round(paddleColorTransition.currentR);
+            const pG = Math.round(paddleColorTransition.currentG);
+            const pB = Math.round(paddleColorTransition.currentB);
+            const paddleColor = `rgb(${pR}, ${pG}, ${pB})`;
+            
+            const bR = Math.round(paddleBorderTransition.currentR);
+            const bG = Math.round(paddleBorderTransition.currentG);
+            const bB = Math.round(paddleBorderTransition.currentB);
+            const borderAlpha = paddleBorderTransition.currentAlpha;
+            const borderColor = `rgba(${bR}, ${bG}, ${bB}, ${borderAlpha})`;
             
             // Draw horizontal line underneath paddle area - matches border style
             // Position at canvas bottom where ball terminates (ball removed when ball.y + radius > canvas.height)
@@ -2045,6 +2095,15 @@
             ctx.shadowColor = paddleColor;
             ctx.shadowBlur = shadowSettings.paddle;
             ctx.fill();
+            
+            // Draw red border if debuff active (with fade)
+            if (borderAlpha > 0.01) {
+                ctx.strokeStyle = borderColor;
+                ctx.lineWidth = 2;
+                ctx.shadowColor = `rgba(${bR}, ${bG}, ${bB}, ${borderAlpha * 0.8})`;
+                ctx.shadowBlur = 8;
+                ctx.stroke();
+            }
             ctx.shadowBlur = 0;
         }
 
@@ -2128,6 +2187,15 @@
                         ctx.roundRect(brick.x, brick.y, brickW, brickH, 5);
                         ctx.fillStyle = brick.color;
                         ctx.fill();
+                        
+                        // Add red border to debuff (skull) bricks
+                        if (brick.debuff) {
+                            ctx.strokeStyle = '#ff0028';
+                            ctx.lineWidth = 2;
+                            ctx.shadowColor = '#ff0028';
+                            ctx.shadowBlur = 6 + pulse * 4;
+                            ctx.stroke();
+                        }
                     }
                 }
             }
@@ -2851,14 +2919,14 @@
                 });
             }
             
-            // Small paddle timer (debuff)
+            // Small paddle timer (debuff) - with red border
             if (activePowerUps.smallPaddle.active) {
                 const timeLeft = activePowerUps.smallPaddle.timeLeft;
                 const isWarning = timeLeft <= 3;
                 const opacity = (isWarning && !flashOn) ? '0.5' : '1';
                 activePowerups.push({
                     sortValue: timeLeft,
-                    html: `<span style="color: #888888; text-shadow: 0 0 6px #888888; font-weight: bold; opacity: ${opacity};">☠ Small Paddle: ${Math.ceil(timeLeft)}s ☠</span>`
+                    html: `<span style="color: #888888; text-shadow: 0 0 6px #888888; font-weight: bold; opacity: ${opacity}; border: 1px solid #ff0028; border-radius: 3px; padding: 0 4px; box-shadow: 0 0 6px rgba(255, 0, 40, 0.5);">☠ Small Paddle: ${Math.ceil(timeLeft)}s ☠</span>`
                 });
             }
             
@@ -3194,6 +3262,17 @@
             ballColorTransition.targetR = 255;
             ballColorTransition.targetG = 255;
             ballColorTransition.targetB = 255;
+            
+            // Reset paddle color to cyan
+            paddleColorTransition.currentR = 0;
+            paddleColorTransition.currentG = 255;
+            paddleColorTransition.currentB = 255;
+            
+            // Reset paddle border
+            paddleBorderTransition.currentR = 0;
+            paddleBorderTransition.currentG = 255;
+            paddleBorderTransition.currentB = 255;
+            paddleBorderTransition.currentAlpha = 0;
             
             // Reset skull tracking
             levelsSinceSkull = 0;
