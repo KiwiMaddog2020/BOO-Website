@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=overlays-content">
     <title>Bunch of Others</title>
     <!-- Early error handler to catch CORS/external resource errors -->
     <script>
@@ -1768,18 +1768,25 @@
                 opacity: 1 !important;
             }
             
-            /* ========== GAME CONTAINER - SCROLL PREVENTION ========== */
+            /* ========== GAME CONTAINER - AGGRESSIVE SCROLL PREVENTION ========== */
+            /* Browser chrome operates at native compositor level - need CSS containment */
             #game {
                 touch-action: none !important;
                 -webkit-overflow-scrolling: auto !important;
-                overscroll-behavior: contain !important;
-                -webkit-overscroll-behavior: contain !important;
+                overscroll-behavior: none !important;
+                -webkit-overscroll-behavior: none !important;
                 overflow: hidden !important;
+                /* Containment helps isolate from document scroll */
+                contain: strict !important;
+                /* Prevent any scroll gesture interpretation */
+                scroll-behavior: auto !important;
             }
             
             #game iframe {
                 touch-action: none !important;
-                overscroll-behavior: contain !important;
+                overscroll-behavior: none !important;
+                -webkit-overscroll-behavior: none !important;
+                pointer-events: auto !important;
             }
             
             /* Disable animated overlays on game section for mobile performance */
@@ -6732,6 +6739,7 @@
         
         // Track game interaction state
         let isInteractingWithGame = false;
+        let isGameVisible = false;
         let savedScrollY = 0;
         
         // Check if element is within game area
@@ -6747,35 +6755,118 @@
             return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
         }
         
-        // Lock scrolling completely - prevents browser address bar hiding
+        // Intersection Observer to detect when game is visible
+        // Preemptively lock scroll when game section is highly visible
+        if (gameSection && 'IntersectionObserver' in window) {
+            const gameObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    // Lock when game is more than 50% visible
+                    if (entry.intersectionRatio > 0.5) {
+                        isGameVisible = true;
+                        // On mobile, preemptively lock when game is visible
+                        if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                            lockScroll();
+                        }
+                    } else {
+                        if (isGameVisible && !isInteractingWithGame) {
+                            isGameVisible = false;
+                            unlockScroll();
+                        }
+                    }
+                });
+            }, { threshold: [0, 0.5, 1.0] });
+            
+            gameObserver.observe(gameSection);
+        }
+        
+        // Listen for postMessage from game iframe to lock/unlock scroll
+        // This bridges the gap since iframe touch events don't bubble to parent
+        window.addEventListener('message', function(e) {
+            if (e.data && e.data.type === 'gameTouch') {
+                if (e.data.action === 'start') {
+                    isInteractingWithGame = true;
+                    lockScroll();
+                } else if (e.data.action === 'end') {
+                    // Delay unlock to prevent scroll momentum
+                    setTimeout(function() {
+                        if (!isGameVisible) {
+                            isInteractingWithGame = false;
+                            unlockScroll();
+                        }
+                    }, 150);
+                }
+            }
+        });
+        
+        // Lock scrolling completely - aggressive prevention of browser UI changes
         function lockScroll() {
             savedScrollY = window.scrollY;
+            
+            // Lock html element
             document.documentElement.style.overflow = 'hidden';
             document.documentElement.style.touchAction = 'none';
             document.documentElement.style.overscrollBehavior = 'none';
+            document.documentElement.style.height = '100%';
+            document.documentElement.style.position = 'fixed';
+            document.documentElement.style.width = '100%';
+            
+            // Lock body element  
             document.body.style.overflow = 'hidden';
             document.body.style.position = 'fixed';
             document.body.style.top = `-${savedScrollY}px`;
             document.body.style.left = '0';
             document.body.style.right = '0';
             document.body.style.width = '100%';
+            document.body.style.height = '100%';
             document.body.style.touchAction = 'none';
             document.body.style.overscrollBehavior = 'none';
+            
+            // Prevent any scroll events
+            window.addEventListener('scroll', preventScroll, { passive: false });
+            window.addEventListener('touchmove', preventAllTouchMove, { passive: false });
         }
         
-        // Unlock scrolling
+        function preventScroll(e) {
+            if (isInteractingWithGame || isGameVisible) {
+                e.preventDefault();
+                window.scrollTo(0, savedScrollY);
+            }
+        }
+        
+        function preventAllTouchMove(e) {
+            if (isInteractingWithGame || isGameVisible) {
+                e.preventDefault();
+            }
+        }
+        
+        // Unlock scrolling - only if game is not visible
         function unlockScroll() {
+            // Don't unlock if game is still visible
+            if (isGameVisible) return;
+            
+            // Remove event listeners
+            window.removeEventListener('scroll', preventScroll);
+            window.removeEventListener('touchmove', preventAllTouchMove);
+            
+            // Unlock html element
             document.documentElement.style.overflow = '';
             document.documentElement.style.touchAction = '';
             document.documentElement.style.overscrollBehavior = '';
+            document.documentElement.style.height = '';
+            document.documentElement.style.position = '';
+            document.documentElement.style.width = '';
+            
+            // Unlock body element
             document.body.style.overflow = '';
             document.body.style.position = '';
             document.body.style.top = '';
             document.body.style.left = '';
             document.body.style.right = '';
             document.body.style.width = '';
+            document.body.style.height = '';
             document.body.style.touchAction = '';
             document.body.style.overscrollBehavior = '';
+            
             window.scrollTo(0, savedScrollY);
         }
         
