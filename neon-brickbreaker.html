@@ -339,7 +339,8 @@
                 height: 18px !important;
                 min-height: 18px !important;
                 max-height: 18px !important;
-                font-size: 9px !important;
+                font-size: 10px !important;
+                color: rgba(0, 255, 255, 0.65) !important;
                 flex-shrink: 0 !important;
             }
             .game-container {
@@ -1107,9 +1108,9 @@
             {
                 id: 'speed',
                 name: 'Slower Ball',
-                desc: '-10% Permanent Ball Speed Reduction',
+                desc: '-8% Permanent Ball Speed Reduction',
                 icon: '🐢',
-                apply: () => { permanentUpgrades.speedReduction += 10; }
+                apply: () => { permanentUpgrades.speedReduction += 8; }
             },
             {
                 id: 'crusher',
@@ -1141,6 +1142,12 @@
             }
         ];
         
+        // Smart RNG tracking for upgrade selection
+        // Tracks how many rounds since each upgrade was last offered (higher = more likely to appear)
+        let upgradeOfferHistory = {};
+        // Initialize history for all upgrades
+        upgradeDefinitions.forEach(u => { upgradeOfferHistory[u.id] = 3; }); // Start with equal weight
+        
         // Boss state
         let bossPhase = false; // True when fighting bosses
         let bosses = []; // Array of boss objects
@@ -1154,6 +1161,8 @@
             width: 50,
             height: 25,
             speed: 2.25, // 10% slower than original 2.5
+            speedPenaltyPerBoss: 0.15, // 15% slower per additional boss
+            minSpeedMultiplier: 0.25, // Never slower than 25% speed
             dropDistance: 20,
             dropSpeed: 0.08, // How fast the drop animation plays (0-1 per frame)
             hitsRequired: 3,
@@ -1161,8 +1170,19 @@
             colors: ['#ff0066', '#ff3300', '#ff00ff', '#00ffcc', '#ffcc00'], // Different colors per boss
             pointsPerHit: 30,
             pointsPerKill: 0,
-            deathAnimationDuration: 800 // ms to wait for death animation
+            deathAnimationDuration: 800, // ms to wait for death animation
+            // Laser settings
+            laserCooldown: 8000, // 8 seconds per boss
+            globalLaserCooldown: 3000, // 3 seconds minimum between any laser
+            laserSpeed: 2.5, // Slow moving
+            laserWidth: 6,
+            laserHeight: 20,
+            laserColor: '#ff0000'
         };
+        
+        // Laser state
+        let bossLasers = []; // Active laser projectiles
+        let lastGlobalLaserTime = 0; // Timestamp of last laser fired (any boss)
 
         // Power-up state
         let activePowerUps = {
@@ -1388,10 +1408,16 @@
         // ========== BOSS SYSTEM ==========
         function createBosses() {
             bosses = [];
+            bossLasers = []; // Clear any existing lasers
             const numBosses = level; // Level 1 = 1 boss, Level 2 = 2 bosses, etc.
             const spacing = canvas.width / (numBosses + 1);
             
+            // Stagger initial laser cooldowns so bosses don't all fire at once
+            const now = performance.now();
+            
             for (let i = 0; i < numBosses; i++) {
+                // Randomize initial cooldown between 2-6 seconds to keep player guessing
+                const initialCooldown = 2000 + Math.random() * 4000;
                 bosses.push({
                     x: spacing * (i + 1) - bossConfig.width / 2,
                     y: 50,
@@ -1401,7 +1427,8 @@
                     alive: true,
                     direction: 1, // 1 = right, -1 = left
                     color: bossConfig.colors[i % bossConfig.colors.length],
-                    flashUntil: 0 // Timestamp when flash effect ends
+                    flashUntil: 0, // Timestamp when flash effect ends
+                    nextLaserTime: now + initialCooldown // When this boss can fire next
                 });
             }
             bossPhase = true;
@@ -1481,10 +1508,10 @@
             if (!bossPhase || bosses.length === 0) return;
             
             // Calculate speed multiplier based on number of active bosses
-            // Each additional boss slows all bosses by 10%
+            // Each additional boss slows all bosses by 5%
             const aliveBossCount = bosses.filter(b => b.alive).length;
-            const speedMultiplier = aliveBossCount > 1 ? 1 - ((aliveBossCount - 1) * 0.10) : 1;
-            const effectiveSpeed = bossConfig.speed * Math.max(speedMultiplier, 0.5); // Minimum 50% speed
+            const speedMultiplier = aliveBossCount > 1 ? 1 - ((aliveBossCount - 1) * bossConfig.speedPenaltyPerBoss) : 1;
+            const effectiveSpeed = bossConfig.speed * Math.max(speedMultiplier, bossConfig.minSpeedMultiplier);
             
             // If currently dropping, animate the drop
             if (bossesDropping) {
@@ -1567,10 +1594,18 @@
             bossesDropping = false;
             bossDropProgress = 0;
             
+            // Clear all active lasers and reset global cooldown
+            bossLasers = [];
+            lastGlobalLaserTime = 0;
+            
+            // Reset laser cooldowns with staggered timing
+            const now = performance.now();
             aliveBosses.forEach((boss, i) => {
                 boss.x = spacing * (i + 1) - boss.width / 2;
                 boss.y = 50;
                 boss.direction = 1;
+                // Stagger laser cooldowns again after reset
+                boss.nextLaserTime = now + 2000 + Math.random() * 4000;
             });
         }
         
@@ -1692,6 +1727,85 @@
             });
             
             ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+        }
+        
+        // Boss laser system
+        function updateBossLasers() {
+            if (!bossPhase) return;
+            
+            const now = performance.now();
+            
+            // Check if any boss can fire (respects global cooldown)
+            if (now >= lastGlobalLaserTime + bossConfig.globalLaserCooldown) {
+                // Get all bosses that are ready to fire
+                const readyBosses = bosses.filter(b => b.alive && now >= b.nextLaserTime);
+                
+                if (readyBosses.length > 0) {
+                    // Pick a random ready boss to fire (keeps player guessing)
+                    const shooter = readyBosses[Math.floor(Math.random() * readyBosses.length)];
+                    
+                    // Fire laser from center bottom of boss
+                    bossLasers.push({
+                        x: shooter.x + shooter.width / 2 - bossConfig.laserWidth / 2,
+                        y: shooter.y + shooter.height,
+                        width: bossConfig.laserWidth,
+                        height: bossConfig.laserHeight,
+                        color: shooter.color // Match boss color
+                    });
+                    
+                    // Set cooldowns
+                    shooter.nextLaserTime = now + bossConfig.laserCooldown;
+                    lastGlobalLaserTime = now;
+                }
+            }
+            
+            // Move lasers downward
+            bossLasers = bossLasers.filter(laser => {
+                laser.y += bossConfig.laserSpeed * deltaMultiplier;
+                
+                // Check collision with paddle
+                if (laser.y + laser.height >= paddle.y &&
+                    laser.y <= paddle.y + paddle.height &&
+                    laser.x + laser.width >= paddle.x &&
+                    laser.x <= paddle.x + paddle.width) {
+                    // Hit paddle - lose a life
+                    lives--;
+                    livesEl.textContent = lives;
+                    if (lives <= 0) {
+                        gameOver();
+                    } else {
+                        showLifeLostMessage();
+                        resetBossPositions();
+                    }
+                    return false; // Remove laser
+                }
+                
+                // Remove if off screen
+                return laser.y < canvas.height;
+            });
+        }
+        
+        function drawBossLasers() {
+            if (bossLasers.length === 0) return;
+            
+            bossLasers.forEach(laser => {
+                // Draw laser beam with glow
+                ctx.shadowColor = laser.color;
+                ctx.shadowBlur = 15;
+                ctx.fillStyle = laser.color;
+                
+                // Main laser body
+                ctx.fillRect(laser.x, laser.y, laser.width, laser.height);
+                
+                // Bright core
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                const coreWidth = laser.width * 0.4;
+                const coreX = laser.x + (laser.width - coreWidth) / 2;
+                ctx.fillRect(coreX, laser.y, coreWidth, laser.height);
+            });
+            
             ctx.shadowBlur = 0;
         }
         
@@ -2107,6 +2221,7 @@
             // Boss phase logic
             if (bossPhase) {
                 moveBosses();
+                updateBossLasers();
                 checkBossCollisions();
                 
                 // If boss death triggered freeze, restore all ball positions
@@ -2231,13 +2346,54 @@
         function showUpgradeSelector() {
             upgradeSelectionActive = true;
             
-            // Pick 3 random unique upgrades
-            const available = [...upgradeDefinitions];
-            currentUpgradeChoices = [];
-            for (let i = 0; i < 3 && available.length > 0; i++) {
-                const idx = Math.floor(Math.random() * available.length);
-                currentUpgradeChoices.push(available.splice(idx, 1)[0]);
+            // Smart RNG: Weight upgrades by how long since they were offered
+            // Upgrades not shown recently have higher chance of appearing
+            function weightedRandomSelect(available, count) {
+                const selected = [];
+                const pool = [...available];
+                
+                for (let i = 0; i < count && pool.length > 0; i++) {
+                    // Calculate weights based on history (higher = shown longer ago)
+                    const weights = pool.map(u => {
+                        const roundsSince = upgradeOfferHistory[u.id] || 1;
+                        // Weight formula: rounds since last offer squared (exponential preference for variety)
+                        return roundsSince * roundsSince;
+                    });
+                    
+                    // Calculate total weight
+                    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+                    
+                    // Random selection based on weights
+                    let random = Math.random() * totalWeight;
+                    let selectedIdx = 0;
+                    
+                    for (let j = 0; j < weights.length; j++) {
+                        random -= weights[j];
+                        if (random <= 0) {
+                            selectedIdx = j;
+                            break;
+                        }
+                    }
+                    
+                    selected.push(pool.splice(selectedIdx, 1)[0]);
+                }
+                
+                return selected;
             }
+            
+            // Pick 3 upgrades using weighted selection
+            currentUpgradeChoices = weightedRandomSelect(upgradeDefinitions, 3);
+            
+            // Update history: reset offered upgrades to 0, increment others
+            upgradeDefinitions.forEach(u => {
+                const wasOffered = currentUpgradeChoices.some(c => c.id === u.id);
+                if (wasOffered) {
+                    upgradeOfferHistory[u.id] = 0; // Just offered
+                } else {
+                    // Increment rounds since last offer (cap at 5 to prevent runaway weights)
+                    upgradeOfferHistory[u.id] = Math.min((upgradeOfferHistory[u.id] || 0) + 1, 5);
+                }
+            });
             
             // Reset slots to rolling state
             slots.forEach((slot, i) => {
@@ -2568,6 +2724,8 @@
             // Clear boss state for new level
             bossPhase = false;
             bosses = [];
+            bossLasers = [];
+            lastGlobalLaserTime = 0;
             bossesDropping = false;
             bossDropProgress = 0;
             bossDeathParticles = [];
@@ -2674,6 +2832,7 @@
             // Draw bosses if in boss phase
             if (bossPhase) {
                 drawBosses();
+                drawBossLasers();
             }
             
             // Draw boss death particles (always, even after boss phase ends)
@@ -2811,6 +2970,8 @@
             // Reset boss phase
             bossPhase = false;
             bosses = [];
+            bossLasers = [];
+            lastGlobalLaserTime = 0;
             bossesDropping = false;
             bossDropProgress = 0;
             bossDeathParticles = [];
@@ -2833,6 +2994,9 @@
                 powerupSpawnBonus: 0,
                 multiBallBounceBonus: 0
             };
+            
+            // Reset smart RNG history for upgrades
+            upgradeDefinitions.forEach(u => { upgradeOfferHistory[u.id] = 3; });
             
             // Activate mouse control when starting game
             mouseControlActive = true;
@@ -2877,10 +3041,8 @@
             gameRunning = true;
             startBtn.style.visibility = 'hidden';
             leaderboardBtn.style.visibility = 'hidden';
-            // Hide button container on mobile during gameplay
-            if (isMobile) {
-                buttonContainer.style.display = 'none';
-            }
+            // Hide button container during gameplay
+            buttonContainer.style.display = 'none';
             requestAnimationFrame(update);
         }
 
