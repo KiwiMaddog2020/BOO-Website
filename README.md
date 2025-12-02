@@ -1,68 +1,100 @@
-# Bunch of Others - Website
+# Bunch of Others
 
-## File Structure
+Official website for BOO — a psychedelic rock band out of Kelowna, BC.
+
+## About
+
+BOO started in 2024 after Jeff lost his brother Kyle, who fronted Fields of Green. Jeff found Kyle's unreleased recordings and taught himself guitar to bring the music back to life. Joe (who played with Kyle and mentored Jeff), Johnny (Fields of Green's drummer), and Sean on bass round out the lineup.
+
+The music comes from good times, loss, love, and wanting to make something others can connect with.
+
+## The Site
+
+Psychedelic single-page site with animated gradients, breathing effects, and layered visuals. Pure HTML, CSS, and JavaScript — no frameworks.
+
+**Sections:** Home, Bio, Videos, Photos, Game, Merch, Events
+
+**Features:**
+- Scroll-snap navigation
+- Pill-style music player
+- Animated color-cycling effects
+- Mobile touch support
+- Works on Chrome, Safari, Firefox, and mobile browsers
+
+## 🎮 Neon Brickbreaker
+
+The site includes a custom brickbreaker game with roguelike elements.
+
+### Controls
+
+- **Desktop:** Arrow keys or mouse
+- **Mobile:** Slide on the trackpad below the game, or touch the paddle
+
+Break all bricks to clear a level. Don't let the ball drop.
+
+### Mechanics
+
+| | |
+|--|--|
+| **Lives** | Start with 3. Lose one when the ball falls. |
+| **Levels** | Ball gets faster as you progress. |
+| **Bosses** | Every 5 levels — moving bricks that take multiple hits. |
+| **Leaderboard** | Submit your score when you're done. |
+
+### Power-Ups
+
+Catch these with your paddle:
+
+| Power-Up | Color | What it does |
+|----------|-------|--------------|
+| Big Paddle | 🟢 Green | Wider paddle (10s) |
+| Multi Ball | 🟠 Orange | 3 balls (5 bounces) |
+| Crusher | 🔴 Red | Ball plows through bricks (8s) |
+| Extra Life | 🩷 Pink | +1 life (max 5) |
+| Small Paddle | ⚫ Gray | Smaller paddle (8s) — avoid this one |
+
+### Upgrades
+
+Every 2 levels you pick a permanent buff:
+
+- **Paddle Speed+** — Move faster
+- **Ball Control** — Better angle control
+- **Power-Up Magnet** — Power-ups drift toward you
+- **Combo Master** — Bonus points for streaks
+- **Extra Life** — +1 life right now
+
+### Tips
+
+- Hit brick edges to start chain reactions
+- Crusher clears problem areas fast
+- Multi Ball scores big but gets chaotic
+- Boss levels — stay patient, stay alive
+
+Game runs client-side (HTML5 canvas + JS).
+
+## Files
 
 ```
-BOO-Website/
-├── index.html                          # Main website (6,257 lines)
-├── neon-brickbreaker.html              # Brick breaker game (2,057 lines)
-├── Queen.mp3                           # Music player audio
-│
-├── LOGO & BRANDING
-│   ├── BOO_Logo.jpg                    # Main logo (nav bar)
-│   ├── BOO_Logo_Transparent_Background.png  # Transparent logo
-│   └── Boo_Banner3.jpg                 # Banner image
-│
-├── BAND PHOTOS
-│   ├── BOO_BandShotV2.jpg              # Main band photo (Bio section)
-│   ├── BOO_EPCover.jpg                 # EP album cover
-│   └── CuriosityAlbumCover.png         # Curiosity album cover (Home hero)
-│
-└── PHOTO GALLERY (7 images)
-    ├── B084_C001_01016M_0000010.jpg
-    ├── B084_C005_0101A9_0000950.jpg
-    ├── B084_C008_010126_0000699.jpg
-    ├── B084_C011_0101SV_0001342.jpg
-    ├── B084_C027_0101O5_0001226.jpg
-    ├── B084_C028_0101RV_0001271.jpg
-    └── B084_C033_0101KN_0000289.jpg
+index.html               # Main site
+neon-brickbreaker.html   # Game (standalone or embedded)
 ```
 
-## Total: 16 Files
+## Local Development
 
-| Type | Count | Size |
-|------|-------|------|
-| HTML | 2 | ~330 KB |
-| Images | 13 | ~6.8 MB |
-| Audio | 1 | ~17 MB |
-| **Total** | **16** | **~24 MB** |
+Open `index.html` directly, or run a local server if iframes give you trouble:
 
-## Recent Updates
+```bash
+python -m http.server 8000
+# then go to http://localhost:8000
+```
 
-### Website (index.html)
-- Mobile color vibrancy boosts for DuckDuckGo/Chrome parity with LibreWolf
-- Increased home social button spacing on mobile
-- 8% darker backgrounds across all browsers
-- Chrome-specific saturation and contrast boosters
+## Links
 
-### Game (neon-brickbreaker.html)
-- **NEW: Roguelike Upgrade System**
-  - 5 permanent upgrades to choose from after each level
-  - Neon slot machine UI with rolling animation
-  - Upgrades: Larger Paddle, Slower Ball, Crusher+, Big Paddle+, Lucky Drops
-  - All upgrades stack and persist until game over
+- [Instagram](https://www.instagram.com/bunch_of_others/)
+- [YouTube](https://www.youtube.com/@BunchOfOthersMusic)
+- [Spotify](https://open.spotify.com/artist/1n8AIkpbrWiXAS8pewVjnP)
+- [Apple Music](https://music.apple.com/us/artist/bunch-of-others/1754588177)
 
-## GitHub Pages Deployment
+## License
 
-1. Create repository named `BOO-Website` (or your preferred name)
-2. Upload all files to the root directory
-3. Go to Settings → Pages → Source: Deploy from branch (main)
-4. Site will be live at: `https://[username].github.io/BOO-Website/`
-
-## Browser Compatibility
-
-- ✓ Chrome / Chromium (with saturation boosts)
-- ✓ Firefox / LibreWolf (reference styling)
-- ✓ Safari (desktop & iOS)
-- ✓ DuckDuckGo browser (mobile)
-- ✓ Samsung Internet
+© Bunch of Others. All rights reserved.
