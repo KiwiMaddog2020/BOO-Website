@@ -67,7 +67,7 @@
         /* Button container - positioned at top of trackpad zone, close to paddle */
         .button-container {
             position: absolute;
-            top: 6px;
+            top: 2px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
@@ -1479,21 +1479,50 @@
             }
             
             // Pick random brick positions for power-ups with at least 1 brick separation
+            // Luck protection: bottom row (closest to paddle) and top row (furthest) have reduced spawn chance
             const powerUpPositions = new Map();
             const usedPositions = new Set();
             const blockedPositions = new Set(); // Positions adjacent to power-ups
             
+            // Row spawn probability multipliers (1.0 = normal, lower = less likely)
+            const getRowSpawnChance = (pos) => {
+                const row = Math.floor(pos / cols);
+                const lastRow = brickConfig.rows - 1;
+                
+                if (row === lastRow) {
+                    // Bottom row (closest to paddle) - 30% normal chance
+                    return 0.3;
+                } else if (row === 0) {
+                    // Top row (furthest from paddle) - 15% normal chance
+                    return 0.15;
+                }
+                // Middle rows - normal chance
+                return 1.0;
+            };
+            
             for (let i = 0; i < selectedPowerUps.length; i++) {
                 let pos;
                 let attempts = 0;
-                do {
+                let validPosition = false;
+                
+                while (!validPosition && attempts < 100) {
                     pos = Math.floor(Math.random() * totalBricks);
                     attempts++;
-                    // Fallback after many attempts to avoid infinite loop
-                    if (attempts > 100) break;
-                } while (usedPositions.has(pos) || blockedPositions.has(pos));
+                    
+                    // Skip if position already used or blocked
+                    if (usedPositions.has(pos) || blockedPositions.has(pos)) {
+                        continue;
+                    }
+                    
+                    // Check row-based luck protection
+                    const spawnChance = getRowSpawnChance(pos);
+                    if (Math.random() < spawnChance) {
+                        validPosition = true;
+                    }
+                    // If failed row check, loop will try another position
+                }
                 
-                if (attempts <= 100) {
+                if (validPosition) {
                     usedPositions.add(pos);
                     powerUpPositions.set(pos, selectedPowerUps[i]);
                     
@@ -1951,21 +1980,104 @@
         function drawBossLasers() {
             if (bossLasers.length === 0) return;
             
+            const time = performance.now() / 1000;
+            
             bossLasers.forEach(laser => {
-                // Draw laser beam with glow
-                ctx.shadowColor = laser.color;
-                ctx.shadowBlur = 15;
-                ctx.fillStyle = laser.color;
+                const centerX = laser.x + laser.width / 2;
+                const centerY = laser.y + laser.height / 2;
                 
-                // Main laser body
-                ctx.fillRect(laser.x, laser.y, laser.width, laser.height);
+                // Plasma blast - pulsing energy orb with electric tendrils
+                const pulseScale = 1 + Math.sin(time * 15) * 0.15;
+                const baseRadius = laser.width * 1.2 * pulseScale;
                 
-                // Bright core
-                ctx.shadowBlur = 0;
+                // Outer glow layers (multiple for depth)
+                for (let i = 3; i >= 0; i--) {
+                    const glowRadius = baseRadius + i * 6;
+                    const alpha = 0.15 - i * 0.03;
+                    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowRadius);
+                    gradient.addColorStop(0, `rgba(255, 100, 255, ${alpha})`);
+                    gradient.addColorStop(0.5, `rgba(100, 200, 255, ${alpha * 0.7})`);
+                    gradient.addColorStop(1, 'rgba(0, 255, 255, 0)');
+                    
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, glowRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = gradient;
+                    ctx.fill();
+                }
+                
+                // Electric tendrils/arcs around the plasma
+                ctx.strokeStyle = `rgba(0, 255, 255, ${0.6 + Math.sin(time * 20) * 0.3})`;
+                ctx.lineWidth = 1.5;
+                ctx.shadowColor = '#00ffff';
+                ctx.shadowBlur = 8;
+                
+                for (let i = 0; i < 6; i++) {
+                    const angle = (time * 8 + i * Math.PI / 3) % (Math.PI * 2);
+                    const tendrilLength = baseRadius * (0.7 + Math.sin(time * 12 + i) * 0.25);
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(centerX, centerY);
+                    
+                    // Jagged lightning path
+                    let px = centerX;
+                    let py = centerY;
+                    const segments = 4;
+                    for (let j = 1; j <= segments; j++) {
+                        const progress = j / segments;
+                        const targetX = centerX + Math.cos(angle) * tendrilLength * progress;
+                        const targetY = centerY + Math.sin(angle) * tendrilLength * progress;
+                        // Add jitter for electric effect
+                        const jitter = (1 - progress) * 4;
+                        px = targetX + (Math.random() - 0.5) * jitter;
+                        py = targetY + (Math.random() - 0.5) * jitter;
+                        ctx.lineTo(px, py);
+                    }
+                    ctx.stroke();
+                }
+                
+                // Main plasma core - swirling gradient
+                const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, baseRadius);
+                const hueShift = (time * 60) % 360;
+                coreGradient.addColorStop(0, '#ffffff');
+                coreGradient.addColorStop(0.2, `hsl(${280 + hueShift * 0.1}, 100%, 70%)`);
+                coreGradient.addColorStop(0.5, `hsl(${200 + hueShift * 0.1}, 100%, 50%)`);
+                coreGradient.addColorStop(0.8, `hsl(${180 + hueShift * 0.1}, 100%, 40%)`);
+                coreGradient.addColorStop(1, 'rgba(0, 100, 150, 0)');
+                
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, baseRadius, 0, Math.PI * 2);
+                ctx.fillStyle = coreGradient;
+                ctx.shadowColor = '#ff00ff';
+                ctx.shadowBlur = 20;
+                ctx.fill();
+                
+                // Inner bright core
+                const innerGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, baseRadius * 0.4);
+                innerGradient.addColorStop(0, '#ffffff');
+                innerGradient.addColorStop(0.5, 'rgba(200, 150, 255, 0.9)');
+                innerGradient.addColorStop(1, 'rgba(100, 200, 255, 0)');
+                
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, baseRadius * 0.4, 0, Math.PI * 2);
+                ctx.fillStyle = innerGradient;
+                ctx.shadowBlur = 10;
+                ctx.fill();
+                
+                // Sparkle highlights
                 ctx.fillStyle = '#ffffff';
-                const coreWidth = laser.width * 0.4;
-                const coreX = laser.x + (laser.width - coreWidth) / 2;
-                ctx.fillRect(coreX, laser.y, coreWidth, laser.height);
+                ctx.shadowColor = '#ffffff';
+                ctx.shadowBlur = 5;
+                for (let i = 0; i < 3; i++) {
+                    const sparkAngle = time * 10 + i * 2.1;
+                    const sparkDist = baseRadius * 0.3 * (0.5 + Math.sin(time * 15 + i) * 0.5);
+                    const sparkX = centerX + Math.cos(sparkAngle) * sparkDist;
+                    const sparkY = centerY + Math.sin(sparkAngle) * sparkDist;
+                    const sparkSize = 1.5 + Math.sin(time * 20 + i * 3) * 0.5;
+                    
+                    ctx.beginPath();
+                    ctx.arc(sparkX, sparkY, sparkSize, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             });
             
             ctx.shadowBlur = 0;
