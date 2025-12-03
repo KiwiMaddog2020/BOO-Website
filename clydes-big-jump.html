@@ -955,10 +955,68 @@
 
         // Animation timing
         let animTime = 0;
+        let lastFrameTime = performance.now();
+        
+        // ===== SPRITE CACHING SYSTEM =====
+        // Pre-render mushrooms to off-screen canvases for massive performance gain
+        const mushroomCache = new Map();
+        const CACHE_SIZE = 400; // Max cached sprites
+        
+        function getMushroomCacheKey(pipe, isTop) {
+            return `${pipe.capColorIndex}-${pipe.stemColorIndex}-${pipe.pattern}-${isTop ? 't' : 'b'}`;
+        }
+        
+        function getCachedMushroom(pipe, isTop) {
+            const key = getMushroomCacheKey(pipe, isTop);
+            if (mushroomCache.has(key)) {
+                return mushroomCache.get(key);
+            }
+            
+            // Create off-screen canvas for this mushroom
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = 120;
+            offCanvas.height = isTop ? 650 : 650;
+            const offCtx = offCanvas.getContext('2d');
+            
+            // Draw mushroom to off-screen canvas (positioned at center)
+            drawMushroomToCache(offCtx, 60, isTop ? pipe.gapY : 0, pipe, isTop);
+            
+            // Limit cache size
+            if (mushroomCache.size >= CACHE_SIZE) {
+                const firstKey = mushroomCache.keys().next().value;
+                mushroomCache.delete(firstKey);
+            }
+            
+            mushroomCache.set(key, offCanvas);
+            return offCanvas;
+        }
+        
+        // Cached background grid
+        let bgGridCanvas = null;
+        function createBgGridCache() {
+            bgGridCanvas = document.createElement('canvas');
+            bgGridCanvas.width = 400;
+            bgGridCanvas.height = 600;
+            const bgCtx = bgGridCanvas.getContext('2d');
+            
+            bgCtx.fillStyle = '#0a0a0a';
+            bgCtx.fillRect(0, 0, 400, 600);
+            
+            bgCtx.strokeStyle = 'rgba(0, 255, 255, 0.04)';
+            bgCtx.lineWidth = 1;
+            const gridSpacing = isLowPerf ? 60 : 30;
+            for (let x = 0; x < 400; x += gridSpacing) {
+                bgCtx.beginPath(); bgCtx.moveTo(x, 0); bgCtx.lineTo(x, 600); bgCtx.stroke();
+            }
+            for (let y = 0; y < 600; y += gridSpacing) {
+                bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(400, y); bgCtx.stroke();
+            }
+        }
+        createBgGridCache();
         
         // Background stars (reduced for mobile/Safari performance)
         const stars = [];
-        const starCount = isLowPerf ? 3 : 8;
+        const starCount = isLowPerf ? 2 : 6;
         for (let i = 0; i < starCount; i++) {
             stars.push({
                 x: Math.random() * 400,
@@ -1099,8 +1157,8 @@
         }
 
         // Update game
-        function update() {
-            animTime += 0.016;
+        function update(dt = 0.016) {
+            animTime += dt;
             
             // Animate Clyde's floppy ears
             bird.wingAngle *= 0.9;
@@ -1116,8 +1174,8 @@
             
             if (gameState !== 'playing') return;
 
-            // Increment play time
-            playTime += 0.016;
+            // Increment play time with actual delta
+            playTime += dt;
 
             const scale = getScale();
 
@@ -1651,36 +1709,115 @@
             }
         }
 
+        // Ultra-simplified mushroom for maximum mobile performance
+        function drawSimpleMushroom(ctx, x, gapY, pipe, isTop) {
+            const capWidth = 95;
+            const capHeight = 48;
+            const stemWidth = 26;
+            const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
+            const centerX = x + pipeWidth / 2;
+            
+            if (isTop) {
+                const capY = gapY - capHeight;
+                // Simple rectangle stem
+                ctx.fillStyle = colors.stem;
+                ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, capY + 12);
+                // Simple ellipse cap
+                ctx.fillStyle = colors.cap;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI * 2); ctx.fill();
+                // Just 2 spots
+                ctx.fillStyle = colors.spot;
+                ctx.beginPath(); ctx.arc(centerX - 15, capY + capHeight * 0.4, 7, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(centerX + 12, capY + capHeight * 0.35, 6, 0, Math.PI * 2); ctx.fill();
+            } else {
+                const capY = gapY;
+                // Simple rectangle stem
+                ctx.fillStyle = colors.stem;
+                ctx.fillRect(centerX - stemWidth/2, capY + capHeight - 12, stemWidth, 600);
+                // Simple ellipse cap
+                ctx.fillStyle = colors.cap;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI * 2); ctx.fill();
+                // Just 2 spots
+                ctx.fillStyle = colors.spot;
+                ctx.beginPath(); ctx.arc(centerX - 15, capY + capHeight * 0.6, 7, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(centerX + 12, capY + capHeight * 0.65, 6, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+
+        // Simplified mushroom for caching (no stalk type variations on mobile)
+        function drawMushroomToCache(ctx, centerX, gapY, pipe, isTop) {
+            const capWidth = 95;
+            const capHeight = 48;
+            const stemWidth = 26;
+            const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
+            const pattern = isLowPerf ? 'minimal' : (pipe.pattern || 'classic-4');
+            
+            if (isTop) {
+                const capY = gapY - capHeight;
+                // Simplified stalk for cache
+                ctx.fillStyle = colors.stem;
+                ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, capY + 12);
+                // Cap
+                ctx.strokeStyle = colors.outline; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.fillStyle = colors.cap;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, Math.PI, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = colors.capDark;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI); ctx.fill();
+                drawSpots(ctx, pattern, centerX, capY, capWidth, capHeight, colors.spot, true);
+            } else {
+                const capY = gapY;
+                // Simplified stalk for cache
+                ctx.fillStyle = colors.stem;
+                ctx.fillRect(centerX - stemWidth/2, capY + capHeight - 12, 600, 600);
+                // Cap
+                ctx.strokeStyle = colors.outline; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.fillStyle = colors.cap;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, Math.PI, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, Math.PI); ctx.fill();
+                ctx.fillStyle = colors.capDark;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI); ctx.fill();
+                drawSpots(ctx, pattern, centerX, capY, capWidth, capHeight, colors.spot, false);
+            }
+        }
+
         // Draw game
         function draw() {
             const scale = getScale();
             ctx.save();
             ctx.scale(scale, scale);
 
-            ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, 400, 600);
-
-            // Grid (simplified on mobile for performance)
-            ctx.strokeStyle = 'rgba(0, 255, 255, 0.04)';
-            ctx.lineWidth = 1;
-            const gridSpacing = isLowPerf ? 60 : 30; // Fewer grid lines on mobile
-            for (let x = 0; x < 400; x += gridSpacing) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
-            for (let y = 0; y < 600; y += gridSpacing) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(400, y); ctx.stroke(); }
+            // Use cached background with grid
+            ctx.drawImage(bgGridCanvas, 0, 0);
             
-            // Stars
-            ctx.globalAlpha = 0.6;
-            stars.forEach(star => { ctx.fillStyle = star.color; ctx.beginPath(); ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2); ctx.fill(); });
-            ctx.globalAlpha = 1;
+            // Stars (minimal on mobile)
+            if (!isLowPerf || stars.length <= 2) {
+                ctx.globalAlpha = 0.6;
+                stars.forEach(star => { ctx.fillStyle = star.color; ctx.beginPath(); ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2); ctx.fill(); });
+                ctx.globalAlpha = 1;
+            }
 
-            // Particles
-            particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2); ctx.fill(); });
-            ctx.globalAlpha = 1;
+            // Particles (skip some frames on mobile)
+            if (!isLowPerf || animTime % 2 < 1) {
+                particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2); ctx.fill(); });
+                ctx.globalAlpha = 1;
+            }
 
-            // Mushrooms
-            pipes.forEach((pipe) => {
-                drawPixelMushroom(ctx, pipe.x, pipe.gapY, pipe, true);
-                drawPixelMushroom(ctx, pipe.x, pipe.gapY + pipeGap, pipe, false);
-            });
+            // Mushrooms - use simplified drawing on mobile
+            if (isLowPerf) {
+                // Ultra-simplified mushrooms for mobile
+                pipes.forEach((pipe) => {
+                    drawSimpleMushroom(ctx, pipe.x, pipe.gapY, pipe, true);
+                    drawSimpleMushroom(ctx, pipe.x, pipe.gapY + pipeGap, pipe, false);
+                });
+            } else {
+                pipes.forEach((pipe) => {
+                    drawPixelMushroom(ctx, pipe.x, pipe.gapY, pipe, true);
+                    drawPixelMushroom(ctx, pipe.x, pipe.gapY + pipeGap, pipe, false);
+                });
+            }
 
             // Draw Clyde
             ctx.save();
@@ -1688,121 +1825,159 @@
             ctx.rotate(bird.rotation * Math.PI / 180);
             ctx.scale(1.4, 1.4);
 
-            const earFlap = bird.wingAngle * 2 + Math.sin(animTime * 3) * 3;
-            
-            // Tail
-            const wagAngle = Math.sin(animTime * 10) * 20;
-            ctx.save();
-            ctx.translate(-24, 0);
-            ctx.rotate((wagAngle - 50) * Math.PI / 180);
-            ctx.fillStyle = '#d9a840';
-            ctx.beginPath();
-            ctx.moveTo(0, 6); ctx.quadraticCurveTo(-5, 2, -4, -6); ctx.quadraticCurveTo(-3, -12, -1, -18); ctx.quadraticCurveTo(0, -20, 1, -18); ctx.quadraticCurveTo(3, -12, 4, -6); ctx.quadraticCurveTo(5, 2, 0, 6);
-            ctx.fill();
-            ctx.restore();
-            
-            // Back legs
-            ctx.fillStyle = '#d9a850';
-            const legSwing = Math.sin(animTime * 4) * 6;
-            
-            ctx.save();
-            ctx.translate(-14, 6);
-            ctx.rotate((legSwing + 10) * Math.PI / 180);
-            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
-            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.restore();
-            
-            ctx.fillStyle = '#d9a850';
-            ctx.save();
-            ctx.translate(-8, 6);
-            ctx.rotate((-legSwing + 15) * Math.PI / 180);
-            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
-            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.restore();
+            if (isLowPerf) {
+                // Simplified Clyde for mobile - fewer draw calls
+                const wagAngle = Math.sin(animTime * 10) * 15;
+                
+                // Simple tail
+                ctx.save();
+                ctx.translate(-24, 0);
+                ctx.rotate((wagAngle - 50) * Math.PI / 180);
+                ctx.fillStyle = '#d9a840';
+                ctx.beginPath(); ctx.ellipse(0, -8, 4, 12, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+                
+                // Simple body
+                ctx.fillStyle = '#e8b84a';
+                ctx.beginPath(); ctx.ellipse(0, 4, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Simple head
+                ctx.beginPath(); ctx.ellipse(18, -6, 13, 12, 0.1, 0, Math.PI * 2); ctx.fill();
+                
+                // Snout
+                ctx.fillStyle = '#f0c860';
+                ctx.beginPath(); ctx.ellipse(30, -2, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Nose
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath(); ctx.ellipse(36, -3, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Eye
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.ellipse(22, -8, 4, 5, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#1a0a00';
+                ctx.beginPath(); ctx.ellipse(23, -7, 2.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Simple ear
+                ctx.fillStyle = '#c9874d';
+                ctx.beginPath(); ctx.ellipse(8, 2, 6, 12, -0.3, 0, Math.PI * 2); ctx.fill();
+            } else {
+                const earFlap = bird.wingAngle * 2 + Math.sin(animTime * 3) * 3;
+                
+                // Tail
+                const wagAngle = Math.sin(animTime * 10) * 20;
+                ctx.save();
+                ctx.translate(-24, 0);
+                ctx.rotate((wagAngle - 50) * Math.PI / 180);
+                ctx.fillStyle = '#d9a840';
+                ctx.beginPath();
+                ctx.moveTo(0, 6); ctx.quadraticCurveTo(-5, 2, -4, -6); ctx.quadraticCurveTo(-3, -12, -1, -18); ctx.quadraticCurveTo(0, -20, 1, -18); ctx.quadraticCurveTo(3, -12, 4, -6); ctx.quadraticCurveTo(5, 2, 0, 6);
+                ctx.fill();
+                ctx.restore();
+                
+                // Back legs
+                ctx.fillStyle = '#d9a850';
+                const legSwing = Math.sin(animTime * 4) * 6;
+                
+                ctx.save();
+                ctx.translate(-14, 6);
+                ctx.rotate((legSwing + 10) * Math.PI / 180);
+                ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+                ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+                
+                ctx.fillStyle = '#d9a850';
+                ctx.save();
+                ctx.translate(-8, 6);
+                ctx.rotate((-legSwing + 15) * Math.PI / 180);
+                ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+                ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
 
-            // Body
-            ctx.fillStyle = '#e8b84a';
-            ctx.beginPath(); ctx.ellipse(0, 4, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+                // Body
+                ctx.fillStyle = '#e8b84a';
+                ctx.beginPath(); ctx.ellipse(0, 4, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Front legs
+                ctx.fillStyle = '#d9a850';
+                const frontLegSwing = Math.sin(animTime * 4 + Math.PI) * 8;
+                
+                ctx.save();
+                ctx.translate(8, 6);
+                ctx.rotate((frontLegSwing - 5) * Math.PI / 180);
+                ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+                ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+                
+                ctx.fillStyle = '#d9a850';
+                ctx.save();
+                ctx.translate(14, 6);
+                ctx.rotate((-frontLegSwing - 5) * Math.PI / 180);
+                ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+                ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
             
-            // Front legs
-            ctx.fillStyle = '#d9a850';
-            const frontLegSwing = Math.sin(animTime * 4 + Math.PI) * 8;
-            
-            ctx.save();
-            ctx.translate(8, 6);
-            ctx.rotate((frontLegSwing - 5) * Math.PI / 180);
-            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
-            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.restore();
-            
-            ctx.fillStyle = '#d9a850';
-            ctx.save();
-            ctx.translate(14, 6);
-            ctx.rotate((-frontLegSwing - 5) * Math.PI / 180);
-            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
-            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.restore();
-            
-            // Head
-            ctx.fillStyle = '#e8b84a';
-            ctx.beginPath(); ctx.ellipse(18, -6, 13, 12, 0.1, 0, Math.PI * 2); ctx.fill();
-            
-            // Snout
-            ctx.fillStyle = '#f0c860';
-            ctx.beginPath(); ctx.ellipse(30, -2, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
-            
-            // Nose
-            ctx.fillStyle = '#1a1a1a';
-            ctx.beginPath(); ctx.ellipse(36, -3, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#555';
-            ctx.beginPath(); ctx.ellipse(35, -4.5, 1.5, 1, 0, 0, Math.PI * 2); ctx.fill();
-            
-            // Mouth
-            ctx.fillStyle = '#2a1a10';
-            ctx.beginPath(); ctx.ellipse(32, 3, 5, 3, 0.1, 0, Math.PI); ctx.fill();
-            
-            // Tongue
-            const tongueOut = (Math.sin(animTime * 2) + 1) * 0.5;
-            const tongueLength = 4 + tongueOut * 5;
-            ctx.save();
-            ctx.translate(26, 3);
-            ctx.rotate(-30 * Math.PI / 180);
-            ctx.fillStyle = '#ff7b9a';
-            ctx.beginPath();
-            ctx.moveTo(0, 0); ctx.quadraticCurveTo(2, tongueLength * 0.5, 0, tongueLength); ctx.quadraticCurveTo(-3, tongueLength, -3, tongueLength * 0.5); ctx.quadraticCurveTo(-2, 0, 0, 0);
-            ctx.fill();
-            ctx.restore();
-            
-            ctx.fillStyle = '#f0c860';
-            ctx.beginPath(); ctx.ellipse(30, 1, 6, 3, 0, 0, Math.PI); ctx.fill();
-            
-            // Eye
-            ctx.fillStyle = '#fff';
-            ctx.beginPath(); ctx.ellipse(22, -8, 4, 5, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#3d2010';
-            ctx.beginPath(); ctx.ellipse(23, -7.5, 2.5, 3, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#1a0a00';
-            ctx.beginPath(); ctx.ellipse(23.5, -7, 1.5, 2, 0, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#fff';
-            ctx.beginPath(); ctx.arc(24.5, -9, 1.5, 0, Math.PI * 2); ctx.fill();
-            
-            // Eyebrow
-            ctx.strokeStyle = '#a86830'; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.arc(22, -12, 5, Math.PI * 1.2, Math.PI * 1.7); ctx.stroke();
-            
-            // Floppy ear
-            ctx.fillStyle = '#c9874d';
-            ctx.save();
-            ctx.translate(10, -8);
-            ctx.rotate((-earFlap + 15) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.moveTo(0, 0); ctx.quadraticCurveTo(11, 7, 9, 16); ctx.quadraticCurveTo(6, 21, 1, 18); ctx.quadraticCurveTo(-4, 12, 0, 0);
-            ctx.fill();
-            ctx.fillStyle = '#a86830';
-            ctx.beginPath();
-            ctx.moveTo(1, 3); ctx.quadraticCurveTo(6, 8, 5, 13); ctx.quadraticCurveTo(4, 15, 2, 13); ctx.quadraticCurveTo(0, 9, 1, 3);
-            ctx.fill();
-            ctx.restore();
+                // Head
+                ctx.fillStyle = '#e8b84a';
+                ctx.beginPath(); ctx.ellipse(18, -6, 13, 12, 0.1, 0, Math.PI * 2); ctx.fill();
+                
+                // Snout
+                ctx.fillStyle = '#f0c860';
+                ctx.beginPath(); ctx.ellipse(30, -2, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Nose
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath(); ctx.ellipse(36, -3, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#555';
+                ctx.beginPath(); ctx.ellipse(35, -4.5, 1.5, 1, 0, 0, Math.PI * 2); ctx.fill();
+                
+                // Mouth
+                ctx.fillStyle = '#2a1a10';
+                ctx.beginPath(); ctx.ellipse(32, 3, 5, 3, 0.1, 0, Math.PI); ctx.fill();
+                
+                // Tongue
+                const tongueOut = (Math.sin(animTime * 2) + 1) * 0.5;
+                const tongueLength = 4 + tongueOut * 5;
+                ctx.save();
+                ctx.translate(26, 3);
+                ctx.rotate(-30 * Math.PI / 180);
+                ctx.fillStyle = '#ff7b9a';
+                ctx.beginPath();
+                ctx.moveTo(0, 0); ctx.quadraticCurveTo(2, tongueLength * 0.5, 0, tongueLength); ctx.quadraticCurveTo(-3, tongueLength, -3, tongueLength * 0.5); ctx.quadraticCurveTo(-2, 0, 0, 0);
+                ctx.fill();
+                ctx.restore();
+                
+                ctx.fillStyle = '#f0c860';
+                ctx.beginPath(); ctx.ellipse(30, 1, 6, 3, 0, 0, Math.PI); ctx.fill();
+                
+                // Eye
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.ellipse(22, -8, 4, 5, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#3d2010';
+                ctx.beginPath(); ctx.ellipse(23, -7.5, 2.5, 3, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#1a0a00';
+                ctx.beginPath(); ctx.ellipse(23.5, -7, 1.5, 2, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(24.5, -9, 1.5, 0, Math.PI * 2); ctx.fill();
+                
+                // Eyebrow
+                ctx.strokeStyle = '#a86830'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(22, -12, 5, Math.PI * 1.2, Math.PI * 1.7); ctx.stroke();
+                
+                // Floppy ear
+                ctx.fillStyle = '#c9874d';
+                ctx.save();
+                ctx.translate(10, -8);
+                ctx.rotate((-earFlap + 15) * Math.PI / 180);
+                ctx.beginPath();
+                ctx.moveTo(0, 0); ctx.quadraticCurveTo(11, 7, 9, 16); ctx.quadraticCurveTo(6, 21, 1, 18); ctx.quadraticCurveTo(-4, 12, 0, 0);
+                ctx.fill();
+                ctx.fillStyle = '#a86830';
+                ctx.beginPath();
+                ctx.moveTo(1, 3); ctx.quadraticCurveTo(6, 8, 5, 13); ctx.quadraticCurveTo(4, 15, 2, 13); ctx.quadraticCurveTo(0, 9, 1, 3);
+                ctx.fill();
+                ctx.restore();
+            } // end else (desktop Clyde)
 
             ctx.restore();
 
@@ -1824,14 +1999,17 @@
             ctx.restore();
         }
 
-        // Game loop - simple and clean
-        function gameLoop() {
+        // Game loop with proper delta time
+        function gameLoop(currentTime) {
+            const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.1); // Cap at 100ms
+            lastFrameTime = currentTime;
+            
             // Only do heavy updates/draws when actually playing
             if (gameState === 'playing') {
-                update();
+                update(deltaTime);
                 draw();
             } else {
-                update(); // Still update for bobbing animation
+                update(deltaTime); // Still update for bobbing animation
                 drawMenuBackground();
             }
             requestAnimationFrame(gameLoop);
