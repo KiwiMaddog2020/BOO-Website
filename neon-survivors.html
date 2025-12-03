@@ -669,6 +669,7 @@
             color: #fff;
             text-shadow: 0 0 8px #0ff;
             text-align: center;
+            margin-top: 6px;
         }
         
         .game-level-indicator span {
@@ -679,7 +680,7 @@
         /* XP bar at bottom of game frame */
         .game-xp-bar {
             width: calc(100% - 4px);
-            height: 5px;
+            height: 6px;
             background: rgba(0, 255, 255, 0.1);
             border: 1px solid #0ff;
             border-radius: 3px;
@@ -690,8 +691,8 @@
         
         .game-xp-fill {
             height: 100%;
-            background: #888;
-            box-shadow: 0 0 4px rgba(136, 136, 136, 0.5);
+            background: #a8b8c8;
+            box-shadow: 0 0 4px rgba(168, 184, 200, 0.5);
             transition: width 0.15s;
         }
         
@@ -903,7 +904,7 @@
 
         // Load sunglasses image
         const sunglassesImg = new Image();
-        sunglassesImg.src = 'Sunglasses.png';
+        sunglassesImg.src = 'Sunglasses_NeonSurvivors.png';
 
         // ===== NEON COLOR PALETTE =====
         const COLORS = {
@@ -2370,7 +2371,15 @@
                     <div class="value">${powerup.desc}</div>
                 `;
                 
-                card.onclick = () => selectShrinePowerup(powerup);
+                // Support both click and touch
+                const handleSelect = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectShrinePowerup(powerup);
+                };
+                card.addEventListener('click', handleSelect);
+                card.addEventListener('touchend', handleSelect);
+                
                 DOM.shrineOptions.appendChild(card);
                 
                 // Animate reveal
@@ -2777,7 +2786,15 @@
                     <div class="desc">${upgrade.desc}</div>
                 `;
                 
-                card.onclick = () => selectUpgrade(upgrade);
+                // Support both click and touch
+                const handleSelect = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectUpgrade(upgrade);
+                };
+                card.addEventListener('click', handleSelect);
+                card.addEventListener('touchend', handleSelect);
+                
                 DOM.upgradeOptions.appendChild(card);
                 
                 // Animate reveal
@@ -2844,8 +2861,33 @@
         const joystickRadius = 60; // Half of overlay size
         const knobMaxDist = 40;    // Max distance knob can move
         
+        function updateJoystick(touchX, touchY) {
+            const dx = touchX - joystickCenter.x;
+            const dy = touchY - joystickCenter.y;
+            const dist = Math.hypot(dx, dy);
+            const angle = Math.atan2(dy, dx);
+            
+            // Clamp distance to max
+            const clampedDist = Math.min(dist, knobMaxDist);
+            
+            // Calculate input values (-1 to 1)
+            if (dist > 5) { // Small deadzone
+                input.joystickX = (clampedDist / knobMaxDist) * Math.cos(angle);
+                input.joystickY = (clampedDist / knobMaxDist) * Math.sin(angle);
+            } else {
+                input.joystickX = 0;
+                input.joystickY = 0;
+            }
+            
+            // Move knob visually
+            const knobX = Math.cos(angle) * clampedDist;
+            const knobY = Math.sin(angle) * clampedDist;
+            joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
+        }
+        
         trackpadZone.addEventListener('touchstart', e => {
             e.preventDefault();
+            e.stopPropagation();
             touchActive = true;
             
             const touch = e.touches[0];
@@ -2862,8 +2904,19 @@
             joystickOverlay.style.top = (touch.clientY - rect.top - joystickRadius) + 'px';
             joystickOverlay.classList.add('active');
             
-            // Reset knob position
+            // Reset knob and input
             joystickKnob.style.transform = 'translate(-50%, -50%)';
+            input.joystickX = 0;
+            input.joystickY = 0;
+        }, { passive: false });
+
+        trackpadZone.addEventListener('touchmove', e => {
+            if (!touchActive) return;
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const touch = e.touches[0];
+            updateJoystick(touch.clientX, touch.clientY);
         }, { passive: false });
 
         document.addEventListener('touchmove', e => {
@@ -2871,22 +2924,7 @@
             e.preventDefault();
             
             const touch = e.touches[0];
-            const dx = touch.clientX - joystickCenter.x;
-            const dy = touch.clientY - joystickCenter.y;
-            const dist = Math.hypot(dx, dy);
-            const angle = Math.atan2(dy, dx);
-            
-            // Clamp distance to max
-            const clampedDist = Math.min(dist, knobMaxDist);
-            
-            // Calculate input values (-1 to 1)
-            input.joystickX = (clampedDist / knobMaxDist) * Math.cos(angle);
-            input.joystickY = (clampedDist / knobMaxDist) * Math.sin(angle);
-            
-            // Move knob visually
-            const knobX = Math.cos(angle) * clampedDist;
-            const knobY = Math.sin(angle) * clampedDist;
-            joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
+            updateJoystick(touch.clientX, touch.clientY);
         }, { passive: false });
 
         document.addEventListener('touchend', e => {
@@ -3281,7 +3319,11 @@
         }
 
         // ===== INIT =====
-        DOM.startBtn.onclick = startGame;
+        DOM.startBtn.addEventListener('click', startGame);
+        DOM.startBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            startGame();
+        });
         requestAnimationFrame(gameLoop);
     </script>
 </body>
