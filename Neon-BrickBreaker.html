@@ -609,6 +609,42 @@
         .upgrade-slot[data-type="bigpaddle"] .upgrade-icon { color: #f0f; }
         .upgrade-slot[data-type="powerup"] .upgrade-icon { color: #ffcc00; }
         
+        /* Legendary upgrade colors */
+        .upgrade-slot[data-type="extralives"] .upgrade-icon { color: #ff3366; }
+        .upgrade-slot[data-type="bossdamage"] .upgrade-icon { color: #ff4400; }
+        .upgrade-slot[data-type="dualball"] .upgrade-icon { color: #ffdd00; }
+        
+        /* Legendary overlay styling */
+        .upgrade-overlay.legendary {
+            background: radial-gradient(ellipse at center, rgba(255, 200, 0, 0.15) 0%, rgba(0, 0, 0, 0.95) 70%);
+        }
+        
+        .upgrade-overlay.legendary .upgrade-title {
+            color: #ffdd00;
+            text-shadow: 0 0 20px #ffdd00, 0 0 40px #ff8800;
+        }
+        
+        /* Legendary slot styling */
+        .upgrade-slot.legendary {
+            border-color: #ffaa00;
+            box-shadow: 0 0 20px rgba(255, 170, 0, 0.5), inset 0 0 15px rgba(255, 200, 0, 0.1);
+        }
+        
+        .upgrade-slot.legendary.revealed {
+            border-color: #ffdd00;
+            box-shadow: 0 0 35px rgba(255, 220, 0, 0.6), inset 0 0 20px rgba(255, 200, 0, 0.15);
+        }
+        
+        .upgrade-slot.legendary.revealed:hover {
+            border-color: #fff;
+            box-shadow: 0 0 50px rgba(255, 255, 255, 0.7), 0 10px 40px rgba(0, 0, 0, 0.4);
+        }
+        
+        .upgrade-slot.legendary.selected {
+            border-color: #00ff88;
+            box-shadow: 0 0 60px rgba(0, 255, 136, 0.9);
+        }
+        
         @media (max-width: 500px) {
             .upgrade-slots { gap: 8px; }
             .upgrade-slot { width: 90px; height: 125px; border-width: 2px; }
@@ -1211,7 +1247,10 @@
             crusherDurationBonus: 0, // Extra seconds for crusher
             bigPaddleDurationBonus: 0, // Extra seconds for big paddle
             powerupSpawnBonus: 0,    // Bonus to powerup spawn chance (increases max powerups)
-            multiBallBounceBonus: 0  // Extra bounces for multiball
+            multiBallBounceBonus: 0, // Extra bounces for multiball
+            // Legendary upgrades
+            bossDamageBonus: 0,      // Extra damage per hit to bosses
+            dualBallStart: 0         // Start each round with extra balls (staggered)
         };
         
         // Upgrade definitions
@@ -1273,8 +1312,40 @@
             crusher: { icon: '💥', color: '#ff6600' },
             bigpaddle: { icon: '📏', color: '#f0f' },
             powerup: { icon: '🍀', color: '#ffcc00' },
-            multiball: { icon: '🎱', color: '#ff66ff' }
+            multiball: { icon: '🎱', color: '#ff66ff' },
+            // Legendary upgrades
+            extralives: { icon: '❤️', color: '#ff3366' },
+            bossdamage: { icon: '⚔️', color: '#ff4400' },
+            dualball: { icon: '🌟', color: '#ffdd00' }
         };
+        
+        // Legendary upgrade definitions (shown at levels 5, 10, 15, etc.)
+        const legendaryUpgradeDefinitions = [
+            {
+                id: 'extralives',
+                name: 'Extra Lives',
+                desc: '+2 Lives',
+                icon: '❤️',
+                apply: () => { 
+                    lives += 2; 
+                    livesEl.textContent = lives;
+                }
+            },
+            {
+                id: 'bossdamage',
+                name: 'Boss Slayer',
+                desc: '+1 Damage Per Hit to Bosses',
+                icon: '⚔️',
+                apply: () => { permanentUpgrades.bossDamageBonus += 1; }
+            },
+            {
+                id: 'dualball',
+                name: 'Multi-Launch',
+                desc: '+1 Extra Ball Each Round',
+                icon: '🌟',
+                apply: () => { permanentUpgrades.dualBallStart += 1; }
+            }
+        ];
         
         // Update permanent upgrades display
         function updatePermanentUpgradesDisplay() {
@@ -1288,12 +1359,20 @@
             const powerupStacks = Math.floor(permanentUpgrades.powerupSpawnBonus / 50);
             const multiballStacks = Math.floor(permanentUpgrades.multiBallBounceBonus / 1);
             
+            // Legendary upgrades
+            const bossDamageStacks = permanentUpgrades.bossDamageBonus;
+            const dualBallStacks = permanentUpgrades.dualBallStart;
+            
             if (paddleStacks > 0) upgrades.push({ id: 'paddle', stacks: paddleStacks });
             if (speedStacks > 0) upgrades.push({ id: 'speed', stacks: speedStacks });
             if (crusherStacks > 0) upgrades.push({ id: 'crusher', stacks: crusherStacks });
             if (bigPaddleStacks > 0) upgrades.push({ id: 'bigpaddle', stacks: bigPaddleStacks });
             if (powerupStacks > 0) upgrades.push({ id: 'powerup', stacks: powerupStacks });
             if (multiballStacks > 0) upgrades.push({ id: 'multiball', stacks: multiballStacks });
+            
+            // Legendary upgrades (show with special styling)
+            if (bossDamageStacks > 0) upgrades.push({ id: 'bossdamage', stacks: bossDamageStacks, legendary: true });
+            if (dualBallStacks > 0) upgrades.push({ id: 'dualball', stacks: dualBallStacks, legendary: true });
             
             // Build HTML with squircle backgrounds
             const html = upgrades.map(u => {
@@ -1317,7 +1396,7 @@
         const bossConfig = {
             width: 50,
             height: 25,
-            speed: 2.25, // 10% slower than original 2.5
+            speed: 1.8, // 20% slower than previous 2.25
             speedPenaltyPerBoss: 0.15, // 15% slower per additional boss
             minSpeedMultiplier: 0.25, // Never slower than 25% speed
             dropDistance: 20,
@@ -2120,10 +2199,11 @@
                         // Set cooldown
                         bossHitCooldownEnd = now + bossConfig.hitCooldown;
                         
-                        // Damage the boss and trigger flash
-                        boss.hits++;
+                        // Damage the boss (apply boss damage bonus)
+                        const damageDealt = 1 + permanentUpgrades.bossDamageBonus;
+                        boss.hits += damageDealt;
                         boss.flashUntil = now + 150; // Flash for 150ms
-                        score += bossConfig.pointsPerHit;
+                        score += bossConfig.pointsPerHit * damageDealt;
                         scoreEl.textContent = score;
                         
                         // Check if boss is destroyed
@@ -2632,18 +2712,23 @@
         }
         
         function startLevelTransition() {
-            // Check if player earns an extra life (every 5 levels)
+            // Check if player earns an extra life AND legendary upgrade (every 5 levels)
             if (level % 5 === 0) {
                 lives++;
                 livesEl.textContent = lives;
-                // Show extra life message first, then upgrade selector
+                // Show extra life message first, then legendary upgrade selector
                 extraLifePause = true;
                 extraLifePauseEnd = performance.now() + 1200; // 1.2 second pause
+                // Flag for legendary upgrade after extra life pause
+                pendingLegendaryUpgrade = true;
             } else {
-                // Show upgrade selector directly
+                // Show regular upgrade selector directly
                 showUpgradeSelector();
             }
         }
+        
+        // Flag for pending legendary upgrade
+        let pendingLegendaryUpgrade = false;
         
         // ========== UPGRADE SELECTOR SYSTEM ==========
         const upgradeOverlay = document.getElementById('upgradeOverlay');
@@ -2785,6 +2870,71 @@
             });
         }
         
+        // Legendary upgrade selector (shown at levels 5, 10, 15, etc.)
+        let isLegendaryUpgrade = false;
+        
+        function showLegendaryUpgradeSelector() {
+            upgradeSelectionActive = true;
+            isLegendaryUpgrade = true;
+            
+            // Use all 3 legendary upgrades
+            currentUpgradeChoices = [...legendaryUpgradeDefinitions];
+            
+            // Reset slots to rolling state with legendary styling
+            slots.forEach((slot, i) => {
+                slot.className = 'upgrade-slot rolling legendary';
+                slot.dataset.type = '';
+                slot.querySelector('.upgrade-icon').textContent = '?';
+                slot.querySelector('.upgrade-name').textContent = '???';
+                slot.querySelector('.upgrade-desc').textContent = '???';
+            });
+            
+            upgradeOverlay.classList.add('active');
+            upgradeOverlay.classList.add('legendary');
+            
+            // Start the slot machine roll animation with legendary upgrades
+            rollLegendarySlots();
+        }
+        
+        function rollLegendarySlots() {
+            const rollDuration = 1800; // Slightly longer for legendary drama
+            const staggerDelay = 400; // More dramatic stagger
+            
+            slots.forEach((slot, index) => {
+                const stopTime = rollDuration + (index * staggerDelay);
+                let rollInterval;
+                
+                // Cycle through legendary upgrades
+                rollInterval = setInterval(() => {
+                    const randomUpgrade = legendaryUpgradeDefinitions[Math.floor(Math.random() * legendaryUpgradeDefinitions.length)];
+                    slot.querySelector('.upgrade-icon').textContent = randomUpgrade.icon;
+                    slot.querySelector('.upgrade-name').textContent = randomUpgrade.name;
+                    slot.querySelector('.upgrade-desc').textContent = randomUpgrade.desc;
+                }, 100);
+                
+                // Stop on the actual choice
+                setTimeout(() => {
+                    clearInterval(rollInterval);
+                    const choice = currentUpgradeChoices[index];
+                    slot.className = 'upgrade-slot revealed legendary';
+                    slot.dataset.type = choice.id;
+                    slot.querySelector('.upgrade-icon').textContent = choice.icon;
+                    slot.querySelector('.upgrade-name').textContent = choice.name;
+                    slot.querySelector('.upgrade-desc').textContent = choice.desc;
+                    
+                    // Add click handler for desktop
+                    slot.onclick = () => selectUpgrade(index);
+                    
+                    // Add touch handler for mobile
+                    slot.ontouchend = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        selectUpgrade(index);
+                    };
+                }, stopTime);
+            });
+        }
+        
         function selectUpgrade(index) {
             if (!upgradeSelectionActive) return;
             
@@ -2812,15 +2962,20 @@
             // Brief pause then continue
             setTimeout(() => {
                 upgradeOverlay.classList.remove('active');
+                upgradeOverlay.classList.remove('legendary');
                 
                 // Reset slot styles and clear all handlers
                 slots.forEach(slot => {
                     slot.style.opacity = '';
                     slot.style.pointerEvents = '';
                     slot.classList.remove('selected');
+                    slot.classList.remove('legendary');
                     slot.onclick = null;
                     slot.ontouchend = null;
                 });
+                
+                // Reset legendary flag
+                isLegendaryUpgrade = false;
                 
                 // Check if this was a pre-boss upgrade
                 if (preBossUpgrade) {
@@ -3113,6 +3268,8 @@
             // At 45°: sin(45°) = cos(45°) = 0.707, so dx² + dy² = speed²
             const angle = 0.707; // √2/2 for 45-degree launch
             const direction = Math.random() > 0.5 ? 1 : -1;
+            
+            // Create primary ball
             balls = [createBall(
                 paddle.x + paddle.width / 2,
                 paddle.y - 8 - 5,
@@ -3120,6 +3277,27 @@
                 -speed * angle,              // dy: ~70% of speed (upward)
                 speed
             )];
+            
+            // Spawn extra balls from dual ball start upgrade (staggered deployment)
+            if (permanentUpgrades.dualBallStart > 0) {
+                const extraBalls = permanentUpgrades.dualBallStart;
+                for (let i = 0; i < extraBalls; i++) {
+                    // Stagger each extra ball by 300ms
+                    setTimeout(() => {
+                        if (!gameRunning) return; // Don't spawn if game ended
+                        const extraDirection = (i % 2 === 0) ? -direction : direction; // Alternate directions
+                        const extraAngle = 0.6 + (Math.random() * 0.2); // Slight angle variation
+                        const extraBall = createBall(
+                            paddle.x + paddle.width / 2,
+                            paddle.y - 8 - 5,
+                            speed * extraAngle * extraDirection,
+                            -speed * (1 - extraAngle * extraAngle) ** 0.5, // Normalize velocity
+                            speed
+                        );
+                        balls.push(extraBall);
+                    }, 300 * (i + 1));
+                }
+            }
         }
 
         function gameOver() {
@@ -3269,8 +3447,13 @@
             if (extraLifePause) {
                 if (currentTime >= extraLifePauseEnd) {
                     extraLifePause = false;
-                    // Now show upgrade selector
-                    showUpgradeSelector();
+                    // Show legendary or regular upgrade selector
+                    if (pendingLegendaryUpgrade) {
+                        pendingLegendaryUpgrade = false;
+                        showLegendaryUpgradeSelector();
+                    } else {
+                        showUpgradeSelector();
+                    }
                 }
                 // During pause, still draw but don't update game logic
                 draw();
@@ -3345,16 +3528,22 @@
             extraLifePause = false;
             upgradeSelectionActive = false;
             preBossUpgrade = false;
+            pendingLegendaryUpgrade = false;
+            isLegendaryUpgrade = false;
             upgradeOverlay.classList.remove('active');
+            upgradeOverlay.classList.remove('legendary');
             
-            // Reset permanent upgrades
+            // Reset permanent upgrades (including legendary)
             permanentUpgrades = {
                 paddleSizeBonus: 0,
                 speedReduction: 0,
                 crusherDurationBonus: 0,
                 bigPaddleDurationBonus: 0,
                 powerupSpawnBonus: 0,
-                multiBallBounceBonus: 0
+                multiBallBounceBonus: 0,
+                // Legendary upgrades
+                bossDamageBonus: 0,
+                dualBallStart: 0
             };
             
             // Reset smart RNG history for upgrades
