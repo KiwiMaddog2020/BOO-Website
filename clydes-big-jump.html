@@ -19,15 +19,12 @@
             touch-action: none;
             width: 100%;
             height: 100%;
-            margin: 0;
-            padding: 0;
             background: #0a0a0a;
             font-family: 'Bebas Neue', sans-serif;
             -webkit-user-select: none;
             user-select: none;
             -webkit-tap-highlight-color: transparent;
             overscroll-behavior: none;
-            -webkit-overflow-scrolling: none;
         }
 
         body {
@@ -39,14 +36,18 @@
         .game-container {
             position: relative;
             border: 3px solid #0ff;
-            box-shadow: 0 0 15px #0ff, inset 0 0 10px rgba(0, 255, 255, 0.1);
-            border-radius: 3px;
+            box-shadow: 0 0 20px #0ff, inset 0 0 15px rgba(0, 255, 255, 0.1);
+            border-radius: 4px;
             background: #0a0a0a;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
         }
 
         #gameCanvas {
             display: block;
             border-radius: 2px;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
         }
 
         /* Overlay screens */
@@ -63,8 +64,6 @@
             background: rgba(10, 10, 10, 0.85);
             z-index: 10;
             transition: opacity 0.3s ease;
-            overflow: hidden;
-            padding: 10px;
         }
 
         .overlay.hidden {
@@ -114,8 +113,8 @@
 
         .score-display {
             font-size: 28px;
-            color: #ff6600;
-            text-shadow: 0 0 15px #ff6600;
+            color: #fff;
+            text-shadow: 0 0 15px #fff;
             margin-bottom: 10px;
         }
 
@@ -140,6 +139,7 @@
             box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
             transition: all 0.2s ease;
             animation: btnPulse 2.5s ease-in-out infinite;
+            -webkit-tap-highlight-color: transparent;
         }
         
         @keyframes btnPulse {
@@ -200,6 +200,7 @@
             text-align: center;
             max-width: 200px;
             line-height: 1.4;
+            margin-top: -8px;
         }
         
         /* Intro screen styles */
@@ -247,19 +248,31 @@
             text-shadow: 0 0 10px #ffaa00;
         }
         
-        /* Mobile responsive scaling */
-        @media (max-height: 500px), (max-width: 350px) {
-            .title { font-size: 28px; margin-bottom: 12px; }
-            .intro-title { font-size: 24px; margin-bottom: 12px; }
-            .subtitle { font-size: 14px; margin-bottom: 20px; }
-            .intro-story { font-size: 12px; line-height: 1.5; margin-bottom: 15px; max-width: 280px; }
-            .intro-cauldron { font-size: 40px; margin-bottom: 6px; }
-            .btn { font-size: 18px; padding: 10px 30px; }
-            .btn-secondary { font-size: 14px; padding: 6px 18px; margin-top: 8px; }
-            .score-display { font-size: 22px; margin-bottom: 6px; }
-            .high-score { font-size: 14px; margin-bottom: 20px; }
-            .instructions { font-size: 11px; max-width: 180px; }
-            .hud { font-size: 28px; top: 10px; }
+        /* Mobile performance optimizations */
+        @media (hover: none), (max-width: 768px) {
+            .title, .intro-title {
+                animation: none !important;
+            }
+            .btn {
+                animation: none !important;
+                box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            }
+            .btn:hover, .btn:active {
+                transform: none;
+            }
+            .intro-cauldron {
+                animation: none !important;
+            }
+        }
+        
+        /* GPU acceleration hints */
+        .game-container, .overlay, canvas {
+            -webkit-transform: translateZ(0);
+            -moz-transform: translateZ(0);
+            -ms-transform: translateZ(0);
+            transform: translateZ(0);
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
         }
     </style>
 </head>
@@ -293,7 +306,7 @@
             <div class="intro-title">CLYDE'S BIG JUMP</div>
             <div class="intro-story">
                 Clyde is Joe's golden retriever, and he's been waiting ALL DAY for this moment. The lake is right there, shimmering in the summer sun!<br><br>
-                Though... there was something kinda funky about that cookie he snagged off the counter earlier. Everything's looking SO colorful now... 🍪✨<br><br>
+                Though... there was something kinda funky about that cookie he snagged off the counter earlier. Everything's looking SO colorful now, and are those... giant mushrooms?! 🍪🍄<br><br>
                 No time to think about that — time to make the biggest splash of his life! 💦<br><br>
                 <span class="intro-tip">🦴 Tap to help Clyde bounce to victory! 🦴</span>
             </div>
@@ -302,25 +315,50 @@
     </div>
 
     <script>
+        // ===== BROWSER COMPATIBILITY =====
+        window.requestAnimationFrame = window.requestAnimationFrame 
+            || window.webkitRequestAnimationFrame 
+            || window.mozRequestAnimationFrame 
+            || window.msRequestAnimationFrame 
+            || function(callback) { return setTimeout(callback, 16); };
+        
+        window.cancelAnimationFrame = window.cancelAnimationFrame
+            || window.webkitCancelAnimationFrame
+            || window.mozCancelAnimationFrame
+            || window.msCancelAnimationFrame
+            || function(id) { clearTimeout(id); };
+        
+        if (!window.performance) window.performance = {};
+        if (!window.performance.now) {
+            window.performance.now = function() { return Date.now(); };
+        }
+        
+        // ===== PERFORMANCE DETECTION =====
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
+                      || window.matchMedia('(hover: none)').matches;
+        const isLowPerf = isMobile || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4);
+        
+        const PERF = {
+            particleMultiplier: isLowPerf ? 0.5 : 1.0,
+            maxParticles: isLowPerf ? 15 : 30
+        };
+
         // Canvas setup
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Responsive sizing - fills available space in iframe
+        // Responsive sizing
         function resizeCanvas() {
-            const padding = 6;
-            const maxWidth = window.innerWidth - padding;
-            const maxHeight = window.innerHeight - padding;
-            const ratio = 400 / 600; // 2:3 aspect ratio
+            const maxWidth = Math.min(400, window.innerWidth - 20);
+            const maxHeight = Math.min(600, window.innerHeight - 20);
+            const ratio = 400 / 600;
             
             if (maxWidth / maxHeight > ratio) {
-                // Height constrained
                 canvas.height = maxHeight;
-                canvas.width = Math.floor(maxHeight * ratio);
+                canvas.width = maxHeight * ratio;
             } else {
-                // Width constrained
                 canvas.width = maxWidth;
-                canvas.height = Math.floor(maxWidth / ratio);
+                canvas.height = maxWidth / ratio;
             }
             
             canvas.parentElement.style.width = canvas.width + 'px';
@@ -341,8 +379,8 @@
         const bird = {
             x: 80,
             y: 280,
-            width: 50,
-            height: 30,
+            width: 70,
+            height: 42,
             velocity: 0,
             gravity: 0.10,
             jumpStrength: -4.5,
@@ -354,14 +392,10 @@
         // Pipes
         let pipes = [];
         const pipeWidth = 52;
-        const pipeGap = 230;
+        const pipeGap = 210;
         const pipeSpeed = 1.0;
         let pipeSpawnTimer = 0;
-        const pipeSpawnInterval = 240;
-
-        // Neon colors for pipes
-        const pipeColors = ['#0ff', '#ff00ff', '#ff6600', '#00ffcc'];
-        let currentPipeColor = 0;
+        const pipeSpawnInterval = 300;
 
         // Particles for trail effect
         let particles = [];
@@ -369,21 +403,27 @@
         // Animation timing
         let animTime = 0;
         
-        // Background stars
+        // Background stars (reduced for mobile performance)
         const stars = [];
-        for (let i = 0; i < 40; i++) {
+        const starCount = isLowPerf ? 5 : 8;
+        for (let i = 0; i < starCount; i++) {
             stars.push({
                 x: Math.random() * 400,
                 y: Math.random() * 600,
-                size: Math.random() * 2 + 0.5,
-                twinkleSpeed: Math.random() * 0.05 + 0.02,
-                twinkleOffset: Math.random() * Math.PI * 2,
+                size: Math.random() * 1.5 + 0.5,
                 color: ['#0ff', '#ff00ff', '#ff6600', '#00ffcc'][Math.floor(Math.random() * 4)]
             });
         }
         
         // Score pop animation
         let scorePop = 0;
+        
+        // Play time tracker for instructions
+        let playTime = 0;
+        
+        // Touch throttling
+        let lastTouchTime = 0;
+        const TOUCH_THROTTLE = 50;
 
         // DOM elements
         const hud = document.getElementById('hud');
@@ -411,6 +451,9 @@
             score = 0;
             scorePop = 0;
             pipeSpawnTimer = 0;
+            playTime = 0;
+            capColorSequence = 0;
+            lastMushroom = { capColorIndex: -1, stemColorIndex: -1, spotPattern: '', stalkType: '', stalkPattern: '' };
             hud.textContent = '0';
         }
 
@@ -438,52 +481,72 @@
         function flap() {
             if (gameState === 'playing') {
                 bird.velocity = bird.jumpStrength;
-                bird.wingAngle = -30; // Trigger ear flap
-                // Add particles on flap - golden water splashes
-                for (let i = 0; i < 8; i++) {
-                    const angle = Math.PI + (Math.random() - 0.5) * 1.2;
-                    const speed = Math.random() * 2 + 1.5;
+                bird.wingAngle = -25; // Trigger ear flap
+                // Dust puff effect (reduced for mobile)
+                const dustColors = ['#e8e8e8', '#d0d0d0', '#f0f0f0'];
+                const dustCount = Math.floor(3 * PERF.particleMultiplier);
+                for (let i = 0; i < dustCount; i++) {
+                    if (particles.length >= PERF.maxParticles) break;
+                    const angle = Math.PI + (i - 1) * 0.4;
                     particles.push({
-                        x: bird.x,
-                        y: bird.y + bird.height / 2,
-                        vx: Math.cos(angle) * speed,
-                        vy: Math.sin(angle) * speed + bird.velocity * 0.3,
-                        life: 1,
-                        color: ['#ffaa00', '#0ff', '#fff'][Math.floor(Math.random() * 3)],
-                        size: Math.random() * 3 + 2
+                        x: bird.x - 5,
+                        y: bird.y + bird.height / 2 + (i - 1) * 6,
+                        vx: Math.cos(angle) * (1 + i * 0.3),
+                        vy: Math.sin(angle) * 0.8 + (i - 1) * 0.5,
+                        life: 0.8,
+                        color: dustColors[i % dustColors.length],
+                        size: 8 - i
                     });
                 }
             }
         }
 
-        // Spawn pipe
+        // Spawn pipe with intelligent variety - each mushroom different from last
         function spawnPipe() {
             const minY = 100;
             const maxY = 600 - pipeGap - 100;
             const gapY = Math.random() * (maxY - minY) + minY;
-            const color = pipeColors[currentPipeColor % pipeColors.length];
-            currentPipeColor++;
+            
+            // Get values different from last mushroom
+            const pattern = getDifferentFrom(spotPatternIds, lastMushroom.spotPattern);
+            const stalkType = getDifferentFrom(stalkTypeIds, lastMushroom.stalkType);
+            const stalkPattern = getDifferentFrom(stalkPatternIds, lastMushroom.stalkPattern);
+            const capColorIndex = getNextCapColor();
+            const stemColorIndex = getDifferentStemColor();
+            
+            // Update last mushroom tracking
+            lastMushroom = {
+                capColorIndex: capColorIndex,
+                stemColorIndex: stemColorIndex,
+                spotPattern: pattern,
+                stalkType: stalkType,
+                stalkPattern: stalkPattern
+            };
             
             pipes.push({
                 x: 400,
                 gapY: gapY,
-                color: color,
+                pattern: pattern,
+                stalkType: stalkType,
+                stalkPattern: stalkPattern,
+                capColorIndex: capColorIndex,
+                stemColorIndex: stemColorIndex,
+                topSpots: Math.floor(Math.random() * 4) + 1,
                 scored: false
             });
         }
 
         // Update game
         function update() {
-            animTime += 0.016; // ~60fps timing
+            animTime += 0.016;
             
             // Animate Clyde's floppy ears
-            bird.wingAngle *= 0.92;
-            bird.wingAngle += Math.sin(animTime * 4) * 0.5; // Ear flutter
+            bird.wingAngle *= 0.9;
             
-            // Clyde bobbing excitedly on intro/start/gameover screens
+            // Clyde bobbing on non-playing screens
             if (gameState !== 'playing') {
-                bird.y = 280 + Math.sin(animTime * 1.5) * 10;
-                bird.rotation = Math.sin(animTime * 1) * 5;
+                bird.y = 280 + Math.sin(animTime * 1.2) * 8;
+                bird.rotation = Math.sin(animTime * 0.8) * 4;
             }
             
             // Score pop decay
@@ -491,15 +554,17 @@
             
             if (gameState !== 'playing') return;
 
+            // Increment play time
+            playTime += 0.016;
+
             const scale = getScale();
 
             // Bird physics
             bird.velocity += bird.gravity;
-            // Cap fall speed so player has time to react
             if (bird.velocity > 3) bird.velocity = 3;
             bird.y += bird.velocity;
             
-            // Smoother rotation with easing (less dramatic angles)
+            // Smoother rotation
             const targetRotation = Math.min(Math.max(bird.velocity * 5, -20), 45);
             bird.rotation += (targetRotation - bird.rotation) * 0.08;
 
@@ -529,23 +594,9 @@
                 if (!pipe.scored && pipe.x + pipeWidth < bird.x) {
                     pipe.scored = true;
                     score++;
-                    scorePop = 1;
                     hud.textContent = score.toString();
-                    // HUD pop animation
                     hud.classList.add('pop');
                     setTimeout(() => hud.classList.remove('pop'), 100);
-                    // Score particles
-                    for (let j = 0; j < 6; j++) {
-                        particles.push({
-                            x: bird.x + bird.width,
-                            y: bird.y,
-                            vx: Math.random() * 3 + 1,
-                            vy: (Math.random() - 0.5) * 4,
-                            life: 1,
-                            color: '#00ffcc',
-                            size: Math.random() * 4 + 2
-                        });
-                    }
                 }
 
                 // Remove off-screen pipes
@@ -554,7 +605,7 @@
                     continue;
                 }
 
-                // Collision detection (forgiving hitbox for good boy Clyde)
+                // Collision detection (forgiving hitbox)
                 const hitboxPadding = 8;
                 if (bird.x + bird.width - hitboxPadding > pipe.x && bird.x + hitboxPadding < pipe.x + pipeWidth) {
                     if (bird.y + hitboxPadding < pipe.gapY || bird.y + bird.height - hitboxPadding > pipe.gapY + pipeGap) {
@@ -569,11 +620,286 @@
                 const p = particles[i];
                 p.x += p.vx;
                 p.y += p.vy;
-                p.vy += 0.05; // Slight gravity on particles
-                p.life -= 0.025;
+                p.vy += 0.03;
+                p.vx *= 0.96;
+                p.life -= 0.035;
                 if (p.life <= 0) {
                     particles.splice(i, 1);
                 }
+            }
+            
+            // Enforce particle limit
+            if (particles.length > PERF.maxParticles) {
+                particles.length = PERF.maxParticles;
+            }
+        }
+
+        // Psychedelic mushroom color palette
+        const mushroomPalette = {
+            caps: ['#ff00ff', '#0ff', '#ff6600', '#00ffcc', '#ff1493', '#9b30ff', '#00ff88', '#ff3366'],
+            spots: ['#fff', '#fffef0', '#f8f8ff', '#fffff0', '#fafafa'],
+            stems: ['#f5e6d3', '#e8d4c0', '#d4e8d4', '#e0d0e8', '#d8e4f0']
+        };
+        
+        // Pattern IDs
+        const spotPatternIds = ['classic-4', 'many-small', 'few-large', 'scattered-mix', 'dense-dots', 'giant-spot', 'asymmetric', 'minimal'];
+        const stalkTypeIds = ['straight', 'tapered', 'bulbous', 'curved', 'twisted', 'thick'];
+        const stalkPatternIds = ['plain', 'small-spots', 'large-spots', 'rings', 'scattered-spots', 'stripes', 'dense-specks'];
+        
+        // Track last spawned mushroom
+        let lastMushroom = {
+            capColorIndex: -1,
+            stemColorIndex: -1,
+            spotPattern: '',
+            stalkType: '',
+            stalkPattern: ''
+        };
+        
+        let capColorSequence = 0;
+        
+        function getDifferentFrom(arr, lastValue) {
+            const available = arr.filter(item => item !== lastValue);
+            return available[Math.floor(Math.random() * available.length)];
+        }
+        
+        function getNextCapColor() {
+            capColorSequence = (capColorSequence + 1) % mushroomPalette.caps.length;
+            return capColorSequence;
+        }
+        
+        function getDifferentStemColor() {
+            let newIndex;
+            do {
+                newIndex = Math.floor(Math.random() * mushroomPalette.stems.length);
+            } while (newIndex === lastMushroom.stemColorIndex && mushroomPalette.stems.length > 1);
+            return newIndex;
+        }
+        
+        function getMushroomColors(colorIndex, stemIndex) {
+            const capColor = mushroomPalette.caps[colorIndex];
+            const spotIndex = Math.floor(Math.random() * mushroomPalette.spots.length);
+            return {
+                cap: capColor,
+                capDark: shadeColor(capColor, -35),
+                capLight: shadeColor(capColor, 45),
+                spot: mushroomPalette.spots[spotIndex],
+                stem: mushroomPalette.stems[stemIndex],
+                stemDark: shadeColor(mushroomPalette.stems[stemIndex], -20),
+                outline: shadeColor(capColor, -50)
+            };
+        }
+        
+        function shadeColor(color, percent) {
+            const num = parseInt(color.replace('#', ''), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = Math.min(255, Math.max(0, (num >> 16) + amt));
+            const G = Math.min(255, Math.max(0, (num >> 8 & 0x00FF) + amt));
+            const B = Math.min(255, Math.max(0, (num & 0x0000FF) + amt));
+            return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+        }
+        
+        function drawSpots(ctx, pattern, x, y, width, height, spotColor, isTop) {
+            ctx.fillStyle = spotColor;
+            const flip = isTop ? 1 : -1;
+            const baseY = isTop ? y + height * 0.28 : y + height * 0.72;
+            
+            switch(pattern) {
+                case 'classic-4':
+                    ctx.beginPath(); ctx.arc(x - width * 0.22, baseY - height * 0.02 * flip, 8, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.18, baseY - height * 0.1 * flip, 7, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x - width * 0.02, baseY + height * 0.08 * flip, 6, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.28, baseY + height * 0.02 * flip, 6, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 'many-small':
+                    const smallSpots = [[-0.28, -0.04, 4], [-0.14, -0.1, 3], [0.02, -0.06, 4], [0.18, -0.02, 3], [0.30, 0.04, 3], [-0.20, 0.08, 3], [0.0, 0.1, 4], [0.14, 0.08, 3], [-0.06, 0.02, 3]];
+                    smallSpots.forEach(([ox, oy, r]) => { ctx.beginPath(); ctx.arc(x + width * ox, baseY + height * oy * flip, r, 0, Math.PI * 2); ctx.fill(); });
+                    break;
+                case 'few-large':
+                    ctx.beginPath(); ctx.arc(x - width * 0.15, baseY, 12, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.18, baseY - height * 0.04 * flip, 11, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.02, baseY + height * 0.1 * flip, 9, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 'scattered-mix':
+                    ctx.beginPath(); ctx.arc(x - width * 0.18, baseY - height * 0.02 * flip, 10, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.2, baseY + height * 0.04 * flip, 8, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.02, baseY - height * 0.08 * flip, 4, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x - width * 0.06, baseY + height * 0.1 * flip, 3, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.30, baseY - height * 0.04 * flip, 4, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 'dense-dots':
+                    const denseSpots = [[-0.26, -0.06, 3], [-0.16, -0.02, 3], [-0.06, -0.08, 3], [0.04, -0.04, 3], [0.14, 0.0, 3], [0.24, -0.06, 3], [-0.22, 0.06, 3], [-0.10, 0.1, 3], [0.0, 0.06, 3], [0.12, 0.1, 3], [0.22, 0.04, 3], [0.30, 0.08, 3]];
+                    denseSpots.forEach(([ox, oy, r]) => { ctx.beginPath(); ctx.arc(x + width * ox, baseY + height * oy * flip, r, 0, Math.PI * 2); ctx.fill(); });
+                    break;
+                case 'giant-spot':
+                    ctx.beginPath(); ctx.arc(x - width * 0.05, baseY, 14, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.28, baseY - height * 0.06 * flip, 5, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x - width * 0.26, baseY + height * 0.06 * flip, 4, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 'asymmetric':
+                    ctx.beginPath(); ctx.ellipse(x - width * 0.2, baseY - height * 0.04 * flip, 10, 7, 0.3, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.ellipse(x + width * 0.15, baseY + height * 0.02 * flip, 7, 9, -0.2, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.28, baseY - height * 0.08 * flip, 5, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x - width * 0.02, baseY + height * 0.1 * flip, 4, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 'minimal':
+                    ctx.beginPath(); ctx.arc(x - width * 0.12, baseY - height * 0.02 * flip, 6, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.16, baseY + height * 0.04 * flip, 5, 0, Math.PI * 2); ctx.fill();
+                    break;
+            }
+        }
+
+        function drawTopSpots(ctx, variant, x, capY, width, height, isTop) {
+            if (variant === 0) return;
+            ctx.fillStyle = '#fff';
+            const spotY = isTop ? capY + 8 : capY + height - 8;
+            switch(variant) {
+                case 1:
+                    ctx.beginPath(); ctx.arc(x - width * 0.1, spotY, 4, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.15, spotY + 3, 3, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 2:
+                    ctx.beginPath(); ctx.arc(x - width * 0.18, spotY + 4, 3, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.05, spotY, 4, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.22, spotY + 5, 3, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 3:
+                    ctx.beginPath(); ctx.arc(x - width * 0.05, spotY + 2, 6, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.18, spotY + 5, 3, 0, Math.PI * 2); ctx.fill();
+                    break;
+                case 4:
+                    ctx.beginPath(); ctx.arc(x - width * 0.2, spotY + 5, 2, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x - width * 0.05, spotY, 3, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.1, spotY + 6, 2, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.22, spotY + 3, 3, 0, Math.PI * 2); ctx.fill();
+                    break;
+            }
+        }
+
+        function drawStalk(ctx, centerX, startY, endY, baseWidth, colors, stalkType, stalkPattern, isTop) {
+            const stemWidth = baseWidth;
+            ctx.fillStyle = colors.stem;
+            ctx.beginPath();
+            
+            switch(stalkType) {
+                case 'straight':
+                    if (isTop) { ctx.moveTo(centerX - stemWidth/2 - 2, startY); ctx.lineTo(centerX - stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2 + 2, startY); }
+                    else { ctx.moveTo(centerX - stemWidth/2, startY); ctx.lineTo(centerX - stemWidth/2 - 2, endY); ctx.lineTo(centerX + stemWidth/2 + 2, endY); ctx.lineTo(centerX + stemWidth/2, startY); }
+                    break;
+                case 'tapered':
+                    if (isTop) { ctx.moveTo(centerX - stemWidth/2 - 8, startY); ctx.lineTo(centerX - stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2 + 8, startY); }
+                    else { ctx.moveTo(centerX - stemWidth/2, startY); ctx.lineTo(centerX - stemWidth/2 - 10, endY); ctx.lineTo(centerX + stemWidth/2 + 10, endY); ctx.lineTo(centerX + stemWidth/2, startY); }
+                    break;
+                case 'bulbous':
+                    const midY = (startY + endY) / 2;
+                    const bulge = stemWidth * 0.4;
+                    if (isTop) { ctx.moveTo(centerX - stemWidth/2 - 4, startY); ctx.quadraticCurveTo(centerX - stemWidth/2 - bulge, midY, centerX - stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2, endY); ctx.quadraticCurveTo(centerX + stemWidth/2 + bulge, midY, centerX + stemWidth/2 + 4, startY); }
+                    else { ctx.moveTo(centerX - stemWidth/2, startY); ctx.quadraticCurveTo(centerX - stemWidth/2 - bulge, midY, centerX - stemWidth/2 - 6, endY); ctx.lineTo(centerX + stemWidth/2 + 6, endY); ctx.quadraticCurveTo(centerX + stemWidth/2 + bulge, midY, centerX + stemWidth/2, startY); }
+                    break;
+                case 'curved':
+                    const curveAmt = stemWidth * 0.5;
+                    if (isTop) { ctx.moveTo(centerX - stemWidth/2 - 4, startY); ctx.quadraticCurveTo(centerX - stemWidth/2 + curveAmt, (startY + endY) / 2, centerX - stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2, endY); ctx.quadraticCurveTo(centerX + stemWidth/2 + curveAmt, (startY + endY) / 2, centerX + stemWidth/2 + 4, startY); }
+                    else { ctx.moveTo(centerX - stemWidth/2, startY); ctx.quadraticCurveTo(centerX - stemWidth/2 - curveAmt, (startY + endY) / 2, centerX - stemWidth/2 - 6, endY); ctx.lineTo(centerX + stemWidth/2 + 6, endY); ctx.quadraticCurveTo(centerX + stemWidth/2 - curveAmt, (startY + endY) / 2, centerX + stemWidth/2, startY); }
+                    break;
+                case 'twisted':
+                    const twistAmt = stemWidth * 0.3;
+                    const seg = (endY - startY) / 4;
+                    if (isTop) { ctx.moveTo(centerX - stemWidth/2 - 4, startY); ctx.lineTo(centerX - stemWidth/2 + twistAmt, startY + seg); ctx.lineTo(centerX - stemWidth/2 - twistAmt, startY + seg * 2); ctx.lineTo(centerX - stemWidth/2 + twistAmt, startY + seg * 3); ctx.lineTo(centerX - stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2, endY); ctx.lineTo(centerX + stemWidth/2 - twistAmt, startY + seg * 3); ctx.lineTo(centerX + stemWidth/2 + twistAmt, startY + seg * 2); ctx.lineTo(centerX + stemWidth/2 - twistAmt, startY + seg); ctx.lineTo(centerX + stemWidth/2 + 4, startY); }
+                    else { ctx.moveTo(centerX - stemWidth/2, startY); ctx.lineTo(centerX - stemWidth/2 - twistAmt, startY + seg); ctx.lineTo(centerX - stemWidth/2 + twistAmt, startY + seg * 2); ctx.lineTo(centerX - stemWidth/2 - twistAmt, startY + seg * 3); ctx.lineTo(centerX - stemWidth/2 - 6, endY); ctx.lineTo(centerX + stemWidth/2 + 6, endY); ctx.lineTo(centerX + stemWidth/2 + twistAmt, startY + seg * 3); ctx.lineTo(centerX + stemWidth/2 - twistAmt, startY + seg * 2); ctx.lineTo(centerX + stemWidth/2 + twistAmt, startY + seg); ctx.lineTo(centerX + stemWidth/2, startY); }
+                    break;
+                case 'thick':
+                    const thickWidth = stemWidth * 1.5;
+                    if (isTop) { ctx.moveTo(centerX - thickWidth/2 - 4, startY); ctx.lineTo(centerX - thickWidth/2, endY); ctx.lineTo(centerX + thickWidth/2, endY); ctx.lineTo(centerX + thickWidth/2 + 4, startY); }
+                    else { ctx.moveTo(centerX - thickWidth/2, startY); ctx.lineTo(centerX - thickWidth/2 - 6, endY); ctx.lineTo(centerX + thickWidth/2 + 6, endY); ctx.lineTo(centerX + thickWidth/2, startY); }
+                    break;
+            }
+            ctx.fill();
+            
+            // Left edge shading
+            ctx.fillStyle = colors.stemDark;
+            ctx.beginPath();
+            if (isTop) { ctx.moveTo(centerX - stemWidth/2 - 4, startY); ctx.lineTo(centerX - stemWidth/2, endY); ctx.lineTo(centerX - stemWidth/2 + 6, endY); ctx.lineTo(centerX - stemWidth/2 + 2, startY); }
+            else { ctx.moveTo(centerX - stemWidth/2, startY); ctx.lineTo(centerX - stemWidth/2 - 6, endY); ctx.lineTo(centerX - stemWidth/2, endY); ctx.lineTo(centerX - stemWidth/2 + 6, startY); }
+            ctx.fill();
+            
+            // Draw stalk pattern
+            const stalkHeight = Math.abs(endY - startY);
+            
+            switch(stalkPattern) {
+                case 'plain': break;
+                case 'small-spots':
+                    ctx.fillStyle = '#fff';
+                    const smallCount = Math.floor(stalkHeight / 45);
+                    for (let i = 0; i < smallCount; i++) { const spotY = startY + 20 + i * 45; const spotX = centerX + (i % 2 === 0 ? -5 : 5); ctx.beginPath(); ctx.arc(spotX, spotY, 3, 0, Math.PI * 2); ctx.fill(); }
+                    break;
+                case 'large-spots':
+                    ctx.fillStyle = '#fff';
+                    const largeCount = Math.floor(stalkHeight / 70);
+                    for (let i = 0; i < largeCount; i++) { const spotY = startY + 35 + i * 70; const spotX = centerX + (i % 2 === 0 ? -4 : 4); ctx.beginPath(); ctx.arc(spotX, spotY, 6, 0, Math.PI * 2); ctx.fill(); }
+                    break;
+                case 'rings':
+                    ctx.strokeStyle = colors.stemDark; ctx.lineWidth = 2;
+                    const ringCount = Math.floor(stalkHeight / 40);
+                    for (let i = 1; i < ringCount; i++) { const ringY = startY + (stalkHeight / ringCount) * i; ctx.beginPath(); ctx.moveTo(centerX - stemWidth/2 + 2, ringY); ctx.lineTo(centerX + stemWidth/2 - 2, ringY); ctx.stroke(); }
+                    break;
+                case 'scattered-spots':
+                    ctx.fillStyle = '#fff';
+                    const scatterCount = Math.floor(stalkHeight / 35);
+                    for (let i = 0; i < scatterCount; i++) { const spotY = startY + 15 + i * 35; const offsetX = ((i * 7) % 11) - 5; const size = 2 + (i % 3); ctx.beginPath(); ctx.arc(centerX + offsetX, spotY, size, 0, Math.PI * 2); ctx.fill(); }
+                    break;
+                case 'stripes':
+                    ctx.strokeStyle = shadeColor(colors.stem, -15); ctx.lineWidth = 3;
+                    ctx.beginPath(); ctx.moveTo(centerX - 4, startY); ctx.lineTo(centerX - 4, endY); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(centerX + 4, startY); ctx.lineTo(centerX + 4, endY); ctx.stroke();
+                    break;
+                case 'dense-specks':
+                    ctx.fillStyle = '#fff';
+                    const speckCount = Math.floor(stalkHeight / 20);
+                    for (let i = 0; i < speckCount; i++) { const spotY = startY + 10 + i * 20; const offsetX = ((i * 5) % 9) - 4; ctx.beginPath(); ctx.arc(centerX + offsetX, spotY, 2, 0, Math.PI * 2); ctx.fill(); }
+                    break;
+            }
+        }
+
+        function drawPixelMushroom(ctx, x, gapY, pipe, isTop) {
+            const capWidth = 95;
+            const capHeight = 48;
+            const stemWidth = 26;
+            const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
+            const pattern = pipe.pattern || 'classic-4';
+            const stalkType = pipe.stalkType || 'straight';
+            const stalkPattern = pipe.stalkPattern || 'plain';
+            const topSpots = pipe.topSpots || 0;
+            const centerX = x + pipeWidth / 2;
+            
+            if (isTop) {
+                const capY = gapY - capHeight;
+                drawStalk(ctx, centerX, 0, capY + 12, stemWidth, colors, stalkType, stalkPattern, true);
+                ctx.strokeStyle = colors.outline; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.fillStyle = colors.cap;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, Math.PI, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = colors.capDark;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI); ctx.fill();
+                ctx.fillStyle = colors.capLight; ctx.globalAlpha = 0.35;
+                ctx.beginPath(); ctx.ellipse(centerX - capWidth * 0.15, capY + capHeight * 0.28, capWidth * 0.18, capHeight * 0.12, -0.3, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1;
+                drawSpots(ctx, pattern, centerX, capY, capWidth, capHeight, colors.spot, true);
+                drawTopSpots(ctx, topSpots, centerX, capY, capWidth, capHeight, true);
+            } else {
+                const capY = gapY;
+                drawStalk(ctx, centerX, capY + capHeight - 12, 600, stemWidth, colors, stalkType, stalkPattern, false);
+                ctx.strokeStyle = colors.outline; ctx.lineWidth = 3;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.fillStyle = colors.cap;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, Math.PI, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, Math.PI); ctx.fill();
+                ctx.fillStyle = colors.capDark;
+                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI); ctx.fill();
+                ctx.fillStyle = colors.capLight; ctx.globalAlpha = 0.35;
+                ctx.beginPath(); ctx.ellipse(centerX - capWidth * 0.15, capY + capHeight * 0.22, capWidth * 0.18, capHeight * 0.12, -0.3, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 1;
+                drawSpots(ctx, pattern, centerX, capY, capWidth, capHeight, colors.spot, false);
+                drawTopSpots(ctx, topSpots, centerX, capY, capWidth, capHeight, false);
             }
         }
 
@@ -583,316 +909,166 @@
             ctx.save();
             ctx.scale(scale, scale);
 
-            // Clear with dark background
             ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(0, 0, 400, 600);
 
-            // Draw subtle grid
+            // Grid
             ctx.strokeStyle = 'rgba(0, 255, 255, 0.04)';
             ctx.lineWidth = 1;
-            for (let x = 0; x < 400; x += 30) {
-                ctx.beginPath();
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, 600);
-                ctx.stroke();
-            }
-            for (let y = 0; y < 600; y += 30) {
-                ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(400, y);
-                ctx.stroke();
-            }
+            for (let x = 0; x < 400; x += 30) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
+            for (let y = 0; y < 600; y += 30) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(400, y); ctx.stroke(); }
             
-            // Draw twinkling stars
-            stars.forEach(star => {
-                const twinkle = Math.sin(animTime * star.twinkleSpeed * 60 + star.twinkleOffset) * 0.5 + 0.5;
-                ctx.globalAlpha = 0.3 + twinkle * 0.5;
-                ctx.fillStyle = star.color;
-                ctx.shadowColor = star.color;
-                ctx.shadowBlur = 6;
-                ctx.beginPath();
-                ctx.arc(star.x, star.y, star.size * (0.8 + twinkle * 0.4), 0, Math.PI * 2);
-                ctx.fill();
-            });
+            // Stars
+            ctx.globalAlpha = 0.6;
+            stars.forEach(star => { ctx.fillStyle = star.color; ctx.beginPath(); ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2); ctx.fill(); });
             ctx.globalAlpha = 1;
-            ctx.shadowBlur = 0;
 
-            // Draw particles
-            particles.forEach(p => {
-                ctx.globalAlpha = p.life;
-                ctx.fillStyle = p.color;
-                ctx.shadowColor = p.color;
-                ctx.shadowBlur = 8;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-                ctx.fill();
-            });
+            // Particles
+            particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2); ctx.fill(); });
             ctx.globalAlpha = 1;
-            ctx.shadowBlur = 0;
 
-            // Draw pipes with pulsing glow
-            pipes.forEach(pipe => {
-                const pulse = Math.sin(animTime * 3 + pipe.x * 0.01) * 0.3 + 0.7;
-                ctx.fillStyle = pipe.color;
-                ctx.shadowColor = pipe.color;
-                ctx.shadowBlur = 12 + pulse * 8;
-
-                // Top pipe
-                ctx.fillRect(pipe.x, 0, pipeWidth, pipe.gapY);
-                // Pipe cap top
-                ctx.fillRect(pipe.x - 4, pipe.gapY - 20, pipeWidth + 8, 20);
-
-                // Bottom pipe
-                ctx.fillRect(pipe.x, pipe.gapY + pipeGap, pipeWidth, 600 - pipe.gapY - pipeGap);
-                // Pipe cap bottom
-                ctx.fillRect(pipe.x - 4, pipe.gapY + pipeGap, pipeWidth + 8, 20);
-
-                // Inner highlight line
-                ctx.shadowBlur = 0;
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(pipe.x + 8, 0);
-                ctx.lineTo(pipe.x + 8, pipe.gapY - 20);
-                ctx.moveTo(pipe.x + 8, pipe.gapY + pipeGap + 20);
-                ctx.lineTo(pipe.x + 8, 600);
-                ctx.stroke();
+            // Mushrooms
+            pipes.forEach((pipe) => {
+                drawPixelMushroom(ctx, pipe.x, pipe.gapY, pipe, true);
+                drawPixelMushroom(ctx, pipe.x, pipe.gapY + pipeGap, pipe, false);
             });
-            ctx.shadowBlur = 0;
 
-            // Draw Clyde the golden retriever
+            // Draw Clyde
             ctx.save();
             ctx.translate(bird.x + bird.width / 2, bird.y + bird.height / 2);
             ctx.rotate(bird.rotation * Math.PI / 180);
+            ctx.scale(1.4, 1.4);
 
-            // Dog glow - warm golden
-            const birdPulse = Math.sin(animTime * 5) * 0.15 + 0.85;
-            ctx.shadowColor = '#ffaa00';
-            ctx.shadowBlur = 12 + birdPulse * 8;
+            const earFlap = bird.wingAngle * 2 + Math.sin(animTime * 3) * 3;
             
-            // Big floppy ears (behind head) - animated!
-            const earFlap = bird.wingAngle * 2 + Math.sin(animTime * 5) * 4;
-            
-            // Left ear (back, big and floppy)
-            ctx.fillStyle = '#c9874d';
-            ctx.shadowColor = '#b87840';
-            ctx.shadowBlur = 6;
-            ctx.save();
-            ctx.translate(-4, -8);
-            ctx.rotate((earFlap - 25) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.quadraticCurveTo(-14, 8, -12, 24);
-            ctx.quadraticCurveTo(-8, 30, -2, 26);
-            ctx.quadraticCurveTo(4, 18, 0, 0);
-            ctx.fill();
-            ctx.restore();
-            
-            // Right ear (front, bigger - EXTRA FLOPPY)
-            ctx.save();
-            ctx.translate(4, -10);
-            ctx.rotate((-earFlap + 15) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.quadraticCurveTo(16, 10, 14, 28);
-            ctx.quadraticCurveTo(10, 36, 2, 30);
-            ctx.quadraticCurveTo(-6, 20, 0, 0);
-            ctx.fill();
-            // Ear inner shadow
-            ctx.fillStyle = '#a86830';
-            ctx.beginPath();
-            ctx.moveTo(2, 4);
-            ctx.quadraticCurveTo(10, 12, 9, 22);
-            ctx.quadraticCurveTo(6, 26, 3, 22);
-            ctx.quadraticCurveTo(0, 14, 2, 4);
-            ctx.fill();
-            ctx.restore();
-            
-            // Fluffy tail - thinner middle, pointed end
-            const wagAngle = Math.sin(animTime * 12) * 15;
+            // Tail
+            const wagAngle = Math.sin(animTime * 10) * 20;
             ctx.save();
             ctx.translate(-24, 0);
             ctx.rotate((wagAngle - 50) * Math.PI / 180);
             ctx.fillStyle = '#d9a840';
-            ctx.shadowColor = '#ffaa00';
-            ctx.shadowBlur = 8;
             ctx.beginPath();
-            ctx.moveTo(0, 4);
-            ctx.quadraticCurveTo(-3, 0, -2, -12);
-            ctx.quadraticCurveTo(0, -20, 0, -28);
-            ctx.lineTo(0, -28);
-            ctx.quadraticCurveTo(2, -20, 3, -12);
-            ctx.quadraticCurveTo(4, 0, 0, 4);
+            ctx.moveTo(0, 6); ctx.quadraticCurveTo(-5, 2, -4, -6); ctx.quadraticCurveTo(-3, -12, -1, -18); ctx.quadraticCurveTo(0, -20, 1, -18); ctx.quadraticCurveTo(3, -12, 4, -6); ctx.quadraticCurveTo(5, 2, 0, 6);
             ctx.fill();
             ctx.restore();
             
-            // Back legs (behind body)
-            ctx.fillStyle = '#c9974d';
-            ctx.shadowBlur = 4;
-            const legSwing = Math.sin(animTime * 6) * 8;
+            // Back legs
+            ctx.fillStyle = '#d9a850';
+            const legSwing = Math.sin(animTime * 4) * 6;
             
-            // Back leg - left (further back)
             ctx.save();
             ctx.translate(-14, 6);
             ctx.rotate((legSwing + 10) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.roundRect(-3, 0, 7, 18, 3);
-            ctx.fill();
-            // Paw
-            ctx.fillStyle = '#d9a850';
-            ctx.beginPath();
-            ctx.ellipse(0, 20, 5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
             
-            // Back leg - right
-            ctx.fillStyle = '#c08040';
+            ctx.fillStyle = '#d9a850';
             ctx.save();
             ctx.translate(-8, 6);
             ctx.rotate((-legSwing + 15) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.roundRect(-3, 0, 7, 18, 3);
-            ctx.fill();
-            // Paw
-            ctx.fillStyle = '#d9a850';
-            ctx.beginPath();
-            ctx.ellipse(0, 20, 5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
 
-            // Simple golden retriever body
+            // Body
             ctx.fillStyle = '#e8b84a';
-            ctx.shadowColor = '#ffaa00';
-            ctx.shadowBlur = 15 + birdPulse * 10;
-            ctx.beginPath();
-            ctx.ellipse(0, 4, 22, 12, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
+            ctx.beginPath(); ctx.ellipse(0, 4, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
             
             // Front legs
             ctx.fillStyle = '#d9a850';
-            ctx.shadowColor = '#ffaa00';
-            ctx.shadowBlur = 4;
-            const frontLegSwing = Math.sin(animTime * 6 + Math.PI) * 10;
+            const frontLegSwing = Math.sin(animTime * 4 + Math.PI) * 8;
             
-            // Front leg - left (back one)
             ctx.save();
-            ctx.translate(8, 8);
+            ctx.translate(8, 6);
             ctx.rotate((frontLegSwing - 5) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.roundRect(-3, 0, 7, 18, 3);
-            ctx.fill();
-            // Paw
-            ctx.fillStyle = '#e8c060';
-            ctx.beginPath();
-            ctx.ellipse(0, 20, 5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
             
-            // Front leg - right (front one)
-            ctx.fillStyle = '#e8bc55';
+            ctx.fillStyle = '#d9a850';
             ctx.save();
-            ctx.translate(14, 8);
+            ctx.translate(14, 6);
             ctx.rotate((-frontLegSwing - 5) * Math.PI / 180);
-            ctx.beginPath();
-            ctx.roundRect(-3, 0, 7, 18, 3);
-            ctx.fill();
-            // Paw
-            ctx.fillStyle = '#f0cc70';
-            ctx.beginPath();
-            ctx.ellipse(0, 20, 5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.roundRect(-3, 0, 7, 18, 3); ctx.fill();
+            ctx.fillStyle = '#d9a850'; ctx.beginPath(); ctx.ellipse(0, 20, 5, 4, 0, 0, Math.PI * 2); ctx.fill();
             ctx.restore();
             
             // Head
             ctx.fillStyle = '#e8b84a';
-            ctx.shadowColor = '#ffaa00';
-            ctx.shadowBlur = 10;
-            ctx.beginPath();
-            ctx.ellipse(18, -6, 13, 12, 0.1, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.ellipse(18, -6, 13, 12, 0.1, 0, Math.PI * 2); ctx.fill();
             
             // Snout
             ctx.fillStyle = '#f0c860';
-            ctx.shadowBlur = 0;
-            ctx.beginPath();
-            ctx.ellipse(30, -2, 9, 6, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.ellipse(30, -2, 9, 6, 0, 0, Math.PI * 2); ctx.fill();
             
             // Nose
             ctx.fillStyle = '#1a1a1a';
-            ctx.beginPath();
-            ctx.ellipse(36, -3, 4, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Nose shine
+            ctx.beginPath(); ctx.ellipse(36, -3, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#555';
-            ctx.beginPath();
-            ctx.ellipse(35, -4.5, 1.5, 1, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.ellipse(35, -4.5, 1.5, 1, 0, 0, Math.PI * 2); ctx.fill();
             
             // Mouth
             ctx.fillStyle = '#2a1a10';
-            ctx.beginPath();
-            ctx.ellipse(32, 3, 5, 3, 0.1, 0, Math.PI);
-            ctx.fill();
+            ctx.beginPath(); ctx.ellipse(32, 3, 5, 3, 0.1, 0, Math.PI); ctx.fill();
             
             // Tongue
-            const tongueWag = Math.sin(animTime * 8) * 2;
+            const tongueOut = (Math.sin(animTime * 2) + 1) * 0.5;
+            const tongueLength = 3 + tongueOut * 4;
+            ctx.save();
+            ctx.translate(26, 3);
+            ctx.rotate(-30 * Math.PI / 180);
             ctx.fillStyle = '#ff7b9a';
             ctx.beginPath();
-            ctx.moveTo(30, 3);
-            ctx.quadraticCurveTo(32 + tongueWag, 9, 29 + tongueWag, 12);
-            ctx.quadraticCurveTo(26 + tongueWag, 12, 27, 8);
-            ctx.quadraticCurveTo(28, 4, 30, 3);
+            ctx.moveTo(0, 0); ctx.quadraticCurveTo(2, tongueLength * 0.5, 0, tongueLength); ctx.quadraticCurveTo(-3, tongueLength, -3, tongueLength * 0.5); ctx.quadraticCurveTo(-2, 0, 0, 0);
             ctx.fill();
+            ctx.restore();
+            
+            ctx.fillStyle = '#f0c860';
+            ctx.beginPath(); ctx.ellipse(30, 1, 6, 3, 0, 0, Math.PI); ctx.fill();
             
             // Eye
             ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.ellipse(22, -8, 4, 5, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Iris
+            ctx.beginPath(); ctx.ellipse(22, -8, 4, 5, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#3d2010';
-            ctx.beginPath();
-            ctx.ellipse(23, -7.5, 2.5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Pupil
+            ctx.beginPath(); ctx.ellipse(23, -7.5, 2.5, 3, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#1a0a00';
-            ctx.beginPath();
-            ctx.ellipse(23.5, -7, 1.5, 2, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Eye shine
+            ctx.beginPath(); ctx.ellipse(23.5, -7, 1.5, 2, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(24.5, -9, 1.5, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(24.5, -9, 1.5, 0, Math.PI * 2); ctx.fill();
             
             // Eyebrow
-            ctx.strokeStyle = '#a86830';
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#a86830'; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(22, -12, 5, Math.PI * 1.2, Math.PI * 1.7); ctx.stroke();
+            
+            // Floppy ear
+            ctx.fillStyle = '#c9874d';
+            ctx.save();
+            ctx.translate(10, -8);
+            ctx.rotate((-earFlap + 15) * Math.PI / 180);
             ctx.beginPath();
-            ctx.arc(22, -12, 5, Math.PI * 1.2, Math.PI * 1.7);
-            ctx.stroke();
+            ctx.moveTo(0, 0); ctx.quadraticCurveTo(11, 7, 9, 16); ctx.quadraticCurveTo(6, 21, 1, 18); ctx.quadraticCurveTo(-4, 12, 0, 0);
+            ctx.fill();
+            ctx.fillStyle = '#a86830';
+            ctx.beginPath();
+            ctx.moveTo(1, 3); ctx.quadraticCurveTo(6, 8, 5, 13); ctx.quadraticCurveTo(4, 15, 2, 13); ctx.quadraticCurveTo(0, 9, 1, 3);
+            ctx.fill();
+            ctx.restore();
 
             ctx.restore();
 
-            // Ground line with pulse
-            const groundPulse = Math.sin(animTime * 2) * 0.3 + 0.7;
-            ctx.strokeStyle = '#ff00ff';
-            ctx.shadowColor = '#ff00ff';
-            ctx.shadowBlur = 8 + groundPulse * 6;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(0, 598);
-            ctx.lineTo(400, 598);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
+            // Ground line
+            ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(0, 598); ctx.lineTo(400, 598); ctx.stroke();
             
-            // Score pop flash effect
-            if (scorePop > 0.1) {
-                ctx.globalAlpha = scorePop * 0.15;
-                ctx.fillStyle = '#00ffcc';
-                ctx.fillRect(0, 0, 400, 600);
+            // Instructions
+            if (gameState === 'playing' && playTime < 5) {
+                const fadeOpacity = playTime < 3 ? 1 : 1 - (playTime - 3) / 2;
+                ctx.globalAlpha = fadeOpacity;
+                ctx.fillStyle = '#fff';
+                ctx.font = '24px "Bebas Neue", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('KEEP TAPPING...', bird.x + bird.width / 2, bird.y - 35);
                 ctx.globalAlpha = 1;
             }
 
@@ -910,26 +1086,25 @@
         startBtn.addEventListener('click', startGame);
         restartBtn.addEventListener('click', startGame);
         
-        // Intro screen transition
         introBtn.addEventListener('click', () => {
             introScreen.classList.add('hidden');
             startScreen.classList.remove('hidden');
             gameState = 'start';
         });
         
-        // Back to intro button
         backToIntroBtn.addEventListener('click', () => {
             startScreen.classList.add('hidden');
             introScreen.classList.remove('hidden');
             gameState = 'intro';
         });
 
-        // Input handlers
+        // Input handlers with throttling
         function handleInput(e) {
             e.preventDefault();
-            if (gameState === 'playing') {
-                flap();
-            }
+            const now = performance.now();
+            if (now - lastTouchTime < TOUCH_THROTTLE) return;
+            lastTouchTime = now;
+            if (gameState === 'playing') flap();
         }
 
         canvas.addEventListener('click', handleInput);
