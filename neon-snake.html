@@ -262,7 +262,10 @@
         }
         let gameRunning = false;
         let gameLoop = null;
-        let speed = 120;
+        let speed = 200;  // Slower starting speed
+        let lastUpdateTime = 0;
+        let interpolation = 0;  // 0-1 progress between updates
+        let prevSnake = [];  // Previous snake positions for smooth interpolation
 
         highScoreEl.textContent = highScore;
 
@@ -282,10 +285,12 @@
                 { x: 9, y: 10 },
                 { x: 8, y: 10 }
             ];
+            prevSnake = snake.map(s => ({ ...s }));  // Copy for interpolation
             direction = { x: 1, y: 0 };
             nextDirection = { x: 1, y: 0 };
             score = 0;
-            speed = 120;
+            speed = 200;  // Slower starting speed
+            interpolation = 0;
             scoreEl.textContent = '0';
             gameOverEl.classList.remove('active');
             spawnFood();
@@ -332,10 +337,25 @@
             ctx.fill();
             ctx.shadowBlur = 0;
 
-            // Draw snake
+            // Draw snake with smooth interpolation
             snake.forEach((segment, index) => {
-                const x = segment.x * GRID_SIZE + 2;
-                const y = segment.y * GRID_SIZE + 2;
+                // Get previous position for interpolation
+                const prev = prevSnake[index] || segment;
+                
+                // Calculate interpolated position
+                let interpX = prev.x + (segment.x - prev.x) * interpolation;
+                let interpY = prev.y + (segment.y - prev.y) * interpolation;
+                
+                // Handle wrap-around interpolation
+                if (Math.abs(segment.x - prev.x) > 1) {
+                    interpX = segment.x;  // Skip interpolation on wrap
+                }
+                if (Math.abs(segment.y - prev.y) > 1) {
+                    interpY = segment.y;  // Skip interpolation on wrap
+                }
+                
+                const x = interpX * GRID_SIZE + 2;
+                const y = interpY * GRID_SIZE + 2;
                 const size = GRID_SIZE - 4;
 
                 if (index === 0) {
@@ -360,6 +380,10 @@
         }
 
         function update() {
+            // Save previous positions for interpolation
+            prevSnake = snake.map(s => ({ ...s }));
+            interpolation = 0;
+            
             direction = { ...nextDirection };
 
             // New head position
@@ -387,18 +411,15 @@
                 score += 10;
                 scoreEl.textContent = score;
                 spawnFood();
-                // Speed up slightly
-                if (speed > 60) speed -= 2;
+                // Speed up very slightly (stays playable)
+                if (speed > 120) speed -= 1;
             } else {
                 snake.pop();
             }
-
-            draw();
         }
 
         function gameOver() {
             gameRunning = false;
-            clearInterval(gameLoop);
             
             if (score > highScore) {
                 highScore = score;
@@ -421,20 +442,31 @@
             initGame();
             gameRunning = true;
             startBtn.textContent = 'PLAYING...';
+            lastUpdateTime = performance.now();
             
-            gameLoop = setInterval(() => {
-                update();
-            }, speed);
-
-            // Adjust speed dynamically
-            const speedCheck = setInterval(() => {
-                if (!gameRunning) {
-                    clearInterval(speedCheck);
-                    return;
+            // Smooth game loop using requestAnimationFrame
+            function gameLoopFn(currentTime) {
+                if (!gameRunning) return;
+                
+                const elapsed = currentTime - lastUpdateTime;
+                
+                // Calculate interpolation (0 to 1) for smooth movement
+                // Use ease-out for snappier feel
+                const rawInterp = Math.min(elapsed / speed, 1);
+                interpolation = 1 - Math.pow(1 - rawInterp, 2);
+                
+                // Render every frame for smooth visuals
+                draw();
+                
+                if (elapsed >= speed) {
+                    update();
+                    lastUpdateTime = currentTime;
                 }
-                clearInterval(gameLoop);
-                gameLoop = setInterval(update, speed);
-            }, 1000);
+                
+                requestAnimationFrame(gameLoopFn);
+            }
+            
+            requestAnimationFrame(gameLoopFn);
         }
 
         // Keyboard controls
