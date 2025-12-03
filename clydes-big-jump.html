@@ -250,7 +250,8 @@
         
         .btn-secondary {
             font-size: 16px;
-            padding: 6px 24px;
+            padding: 8px 20px;
+            width: 240px;
         }
         
         .btn-secondary:hover, .btn-secondary:active {
@@ -765,9 +766,9 @@
         
         /* Leaderboard button */
         .btn-leaderboard {
-            margin-top: 12px;
             font-size: 16px;
             padding: 8px 20px;
+            width: 240px;
             border-color: #ffaa00;
             color: #ffaa00;
             box-shadow: 0 0 10px rgba(255, 170, 0, 0.3);
@@ -803,9 +804,9 @@
             <div class="title">CLYDE'S BIG JUMP</div>
             <div class="subtitle">TAP TO JUMP</div>
             <p class="instructions">Tap, click, or press space to help Clyde reach the lake</p>
-            <div style="margin-top: 30px; display: flex; flex-direction: column; align-items: center; gap: 12px;">
+            <div style="margin-top: 30px; display: flex; flex-direction: column; align-items: center; gap: 14px;">
                 <button class="btn" id="startBtn">PLAY</button>
-                <button class="btn btn-leaderboard" id="leaderboardBtn">🏆 LEADERBOARD</button>
+                <button class="btn btn-leaderboard" id="leaderboardBtn">🏆 LEADERBOARD 🏆</button>
                 <button class="btn btn-secondary" id="backToIntroBtn">BACK TO STORY</button>
             </div>
         </div>
@@ -815,9 +816,11 @@
             <div class="title">GAME OVER</div>
             <div class="score-display" id="finalScore">SCORE: 0</div>
             <div class="high-score" id="highScore">BEST: 0</div>
-            <button class="btn" id="restartBtn">RETRY</button>
-            <button class="btn btn-leaderboard" id="leaderboardBtn2">🏆 LEADERBOARD</button>
-            <button class="btn btn-secondary" id="backToIntroBtn2">BACK TO STORY</button>
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+                <button class="btn" id="restartBtn">RETRY</button>
+                <button class="btn btn-leaderboard" id="leaderboardBtn2">🏆 LEADERBOARD 🏆</button>
+                <button class="btn btn-secondary" id="backToIntroBtn2">BACK TO STORY</button>
+            </div>
         </div>
         
         <!-- Intro Screen -->
@@ -894,8 +897,8 @@
         const isLowPerf = isMobile || isSafari || isIOS || isOldDevice || hasSlowConnection;
         
         const PERF = {
-            particleMultiplier: isLowPerf ? 0.4 : 1.0,
-            maxParticles: isLowPerf ? 10 : 30
+            particleMultiplier: isLowPerf ? 0.2 : 1.0,
+            maxParticles: isLowPerf ? 5 : 30
         };
 
         // Canvas setup with Safari optimizations
@@ -1006,6 +1009,22 @@
         // Play time tracker for instructions
         let playTime = 0;
         
+        // Thought bubble system
+        const thoughtMessages = [
+            "I must be getting closer to the lake!",
+            "Only a few more steps to the water",
+            "Any minute now",
+            "I don't remember all these giant mushrooms being here"
+        ];
+        let currentThought = '';
+        let thoughtTimer = 0;
+        let thoughtDisplayTime = 0;
+        let lastThoughtIndex = -1;
+        let thoughtBubbleX = 0; // Starting X position when thought appears
+        let thoughtBubbleY = 0; // Starting Y position when thought appears
+        const THOUGHT_INTERVAL = 15; // seconds between thoughts
+        const THOUGHT_DISPLAY_DURATION = 3.5; // total animation time
+        
         // Touch throttling
         let lastTouchTime = 0;
         const TOUCH_THROTTLE = 50;
@@ -1040,6 +1059,10 @@
             scorePop = 0;
             pipeSpawnTimer = 0;
             playTime = 0;
+            thoughtTimer = 0;
+            thoughtDisplayTime = 0;
+            currentThought = '';
+            lastThoughtIndex = -1;
             capColorSequence = 0;
             lastMushroom = { capColorIndex: -1, stemColorIndex: -1, spotPattern: '', stalkType: '', stalkPattern: '' };
             hud.textContent = '0';
@@ -1115,7 +1138,7 @@
                 stalkPattern: stalkPattern
             };
             
-            pipes.push({
+            const pipeObj = {
                 x: 400,
                 gapY: gapY,
                 pattern: pattern,
@@ -1126,8 +1149,77 @@
                 topSpots: Math.floor(Math.random() * 8) + 1,
                 topSpotColor: Math.floor(Math.random() * topSpotColors.length),
                 highlightCount: [1, 2, 2, 3, 3, 3, 5, 5][Math.floor(Math.random() * 8)],
-                scored: false
-            });
+                scored: false,
+                cachedCapTop: null,
+                cachedCapBottom: null
+            };
+            
+            // Cache the mushroom caps to off-screen canvases
+            pipeObj.cachedCapTop = createCachedCap(pipeObj, true);
+            pipeObj.cachedCapBottom = createCachedCap(pipeObj, false);
+            
+            pipes.push(pipeObj);
+        }
+        
+        // Create cached mushroom cap canvas
+        function createCachedCap(pipe, isTop) {
+            const capWidth = 95;
+            const capHeight = 48;
+            const padding = 10; // Extra padding for outline
+            const canvasWidth = capWidth + padding * 2;
+            const canvasHeight = capHeight + padding * 2;
+            
+            const capCanvas = document.createElement('canvas');
+            capCanvas.width = canvasWidth;
+            capCanvas.height = canvasHeight;
+            const capCtx = capCanvas.getContext('2d');
+            
+            const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
+            const pattern = pipe.pattern || 'classic-4';
+            const highlightCount = pipe.highlightCount || 1;
+            
+            // Draw cap centered in the canvas
+            const centerX = canvasWidth / 2;
+            const capY = padding;
+            
+            // Outline
+            capCtx.strokeStyle = colors.outline;
+            capCtx.lineWidth = 3;
+            capCtx.beginPath();
+            capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2);
+            capCtx.stroke();
+            
+            // Cap fill
+            capCtx.fillStyle = colors.cap;
+            if (isTop) {
+                capCtx.beginPath();
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI);
+                capCtx.fill();
+                capCtx.beginPath();
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, Math.PI, Math.PI * 2);
+                capCtx.fill();
+            } else {
+                capCtx.beginPath();
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, Math.PI, Math.PI * 2);
+                capCtx.fill();
+                capCtx.beginPath();
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, Math.PI);
+                capCtx.fill();
+            }
+            
+            // Cap dark underside
+            capCtx.fillStyle = colors.capDark;
+            capCtx.beginPath();
+            capCtx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI);
+            capCtx.fill();
+            
+            // Spots
+            drawSpots(capCtx, pattern, centerX, capY, capWidth, capHeight, colors.spot, isTop);
+            
+            // Highlights
+            drawCapHighlights(capCtx, centerX, capY, capWidth, capHeight, highlightCount, colors.capLight, isTop);
+            
+            return capCanvas;
         }
 
         // Update game
@@ -1150,6 +1242,29 @@
 
             // Increment play time with actual delta
             playTime += dt;
+            
+            // Thought bubble timer
+            thoughtTimer += dt;
+            if (currentThought) {
+                thoughtDisplayTime += dt;
+                if (thoughtDisplayTime >= THOUGHT_DISPLAY_DURATION) {
+                    currentThought = '';
+                    thoughtDisplayTime = 0;
+                }
+            } else if (thoughtTimer >= THOUGHT_INTERVAL) {
+                // Pick a random thought that's different from the last one
+                let newIndex;
+                do {
+                    newIndex = Math.floor(Math.random() * thoughtMessages.length);
+                } while (newIndex === lastThoughtIndex);
+                currentThought = thoughtMessages[newIndex];
+                lastThoughtIndex = newIndex;
+                thoughtTimer = 0;
+                thoughtDisplayTime = 0;
+                // Capture starting position near Clyde
+                thoughtBubbleX = bird.x + bird.width + 15;
+                thoughtBubbleY = bird.y - 20;
+            }
 
             const scale = getScale();
 
@@ -1297,54 +1412,44 @@
             const flip = isTop ? 1 : -1;
             const baseY = isTop ? y + height * 0.28 : y + height * 0.72;
             
-            // Simplified spots on mobile - just draw 2-3 basic circles
+            // Simplified spots on mobile - just 1 circle
             if (isLowPerf) {
-                ctx.beginPath(); ctx.arc(x - width * 0.15, baseY, 8, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(x + width * 0.18, baseY - height * 0.04 * flip, 7, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(x, baseY, 8, 0, Math.PI * 2); ctx.fill();
                 return;
             }
             
+            // All patterns reduced to ~half the spots
             switch(pattern) {
                 case 'classic-4':
                     ctx.beginPath(); ctx.arc(x - width * 0.22, baseY - height * 0.02 * flip, 8, 0, Math.PI * 2); ctx.fill();
                     ctx.beginPath(); ctx.arc(x + width * 0.18, baseY - height * 0.1 * flip, 7, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.02, baseY + height * 0.08 * flip, 6, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.28, baseY + height * 0.02 * flip, 6, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'many-small':
-                    const smallSpots = [[-0.28, -0.04, 4], [-0.14, -0.1, 3], [0.02, -0.06, 4], [0.18, -0.02, 3], [0.30, 0.04, 3], [-0.20, 0.08, 3], [0.0, 0.1, 4], [0.14, 0.08, 3], [-0.06, 0.02, 3]];
+                    const smallSpots = [[-0.28, -0.04, 4], [0.02, -0.06, 4], [0.30, 0.04, 3], [0.0, 0.1, 4]];
                     smallSpots.forEach(([ox, oy, r]) => { ctx.beginPath(); ctx.arc(x + width * ox, baseY + height * oy * flip, r, 0, Math.PI * 2); ctx.fill(); });
                     break;
                 case 'few-large':
                     ctx.beginPath(); ctx.arc(x - width * 0.15, baseY, 12, 0, Math.PI * 2); ctx.fill();
                     ctx.beginPath(); ctx.arc(x + width * 0.18, baseY - height * 0.04 * flip, 11, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.02, baseY + height * 0.1 * flip, 9, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'scattered-mix':
                     ctx.beginPath(); ctx.arc(x - width * 0.18, baseY - height * 0.02 * flip, 10, 0, Math.PI * 2); ctx.fill();
                     ctx.beginPath(); ctx.arc(x + width * 0.2, baseY + height * 0.04 * flip, 8, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.02, baseY - height * 0.08 * flip, 4, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.06, baseY + height * 0.1 * flip, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.30, baseY - height * 0.04 * flip, 4, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'dense-dots':
-                    const denseSpots = [[-0.26, -0.06, 3], [-0.16, -0.02, 3], [-0.06, -0.08, 3], [0.04, -0.04, 3], [0.14, 0.0, 3], [0.24, -0.06, 3], [-0.22, 0.06, 3], [-0.10, 0.1, 3], [0.0, 0.06, 3], [0.12, 0.1, 3], [0.22, 0.04, 3], [0.30, 0.08, 3]];
+                    const denseSpots = [[-0.26, -0.06, 3], [0.04, -0.04, 3], [0.24, -0.06, 3], [-0.10, 0.1, 3], [0.12, 0.1, 3], [0.30, 0.08, 3]];
                     denseSpots.forEach(([ox, oy, r]) => { ctx.beginPath(); ctx.arc(x + width * ox, baseY + height * oy * flip, r, 0, Math.PI * 2); ctx.fill(); });
                     break;
                 case 'giant-spot':
                     ctx.beginPath(); ctx.arc(x - width * 0.05, baseY, 14, 0, Math.PI * 2); ctx.fill();
                     ctx.beginPath(); ctx.arc(x + width * 0.28, baseY - height * 0.06 * flip, 5, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.26, baseY + height * 0.06 * flip, 4, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'asymmetric':
                     ctx.beginPath(); ctx.ellipse(x - width * 0.2, baseY - height * 0.04 * flip, 10, 7, 0.3, 0, Math.PI * 2); ctx.fill();
                     ctx.beginPath(); ctx.ellipse(x + width * 0.15, baseY + height * 0.02 * flip, 7, 9, -0.2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.28, baseY - height * 0.08 * flip, 5, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.02, baseY + height * 0.1 * flip, 4, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'minimal':
-                    ctx.beginPath(); ctx.arc(x - width * 0.12, baseY - height * 0.02 * flip, 6, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.16, baseY + height * 0.04 * flip, 5, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x, baseY, 6, 0, Math.PI * 2); ctx.fill();
                     break;
             }
         }
@@ -1646,40 +1751,27 @@
             const capHeight = 48;
             const stemWidth = 26;
             const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
-            const pattern = pipe.pattern || 'classic-4';
             const stalkType = pipe.stalkType || 'straight';
             const stalkPattern = pipe.stalkPattern || 'plain';
-            const topSpots = pipe.topSpots || 0;
-            const topSpotColor = pipe.topSpotColor || 0;
-            const highlightCount = pipe.highlightCount || 1;
             const centerX = x + pipeWidth / 2;
+            const padding = 10; // Must match createCachedCap padding
             
             if (isTop) {
                 const capY = gapY - capHeight;
+                // Draw stalk (procedural - varies by height)
                 drawStalk(ctx, centerX, 0, capY + 12, stemWidth, colors, stalkType, stalkPattern, true);
-                ctx.strokeStyle = colors.outline; ctx.lineWidth = 3;
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2); ctx.stroke();
-                ctx.fillStyle = colors.cap;
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI); ctx.fill();
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, Math.PI, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = colors.capDark;
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI); ctx.fill();
-                drawSpots(ctx, pattern, centerX, capY, capWidth, capHeight, colors.spot, true);
-                drawCapHighlights(ctx, centerX, capY, capWidth, capHeight, highlightCount, colors.capLight, true);
-                drawTopSpots(ctx, topSpots, centerX, capY, capWidth, capHeight, true, topSpotColor);
+                // Draw cached cap
+                if (pipe.cachedCapTop) {
+                    ctx.drawImage(pipe.cachedCapTop, centerX - capWidth/2 - padding, capY - padding);
+                }
             } else {
                 const capY = gapY;
+                // Draw stalk (procedural - varies by height)
                 drawStalk(ctx, centerX, capY + capHeight - 12, 600, stemWidth, colors, stalkType, stalkPattern, false);
-                ctx.strokeStyle = colors.outline; ctx.lineWidth = 3;
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2); ctx.stroke();
-                ctx.fillStyle = colors.cap;
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, Math.PI, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, Math.PI); ctx.fill();
-                ctx.fillStyle = colors.capDark;
-                ctx.beginPath(); ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI); ctx.fill();
-                drawSpots(ctx, pattern, centerX, capY, capWidth, capHeight, colors.spot, false);
-                drawCapHighlights(ctx, centerX, capY, capWidth, capHeight, highlightCount, colors.capLight, false);
-                drawTopSpots(ctx, topSpots, centerX, capY, capWidth, capHeight, false, topSpotColor);
+                // Draw cached cap
+                if (pipe.cachedCapBottom) {
+                    ctx.drawImage(pipe.cachedCapBottom, centerX - capWidth/2 - padding, capY - padding);
+                }
             }
         }
 
@@ -1832,6 +1924,71 @@
             ctx.restore();
 
             ctx.restore();
+
+            // Thought bubble (cloud shape, floats slowly)
+            if (currentThought && gameState === 'playing') {
+                // Fade in/out within 3.5 second total
+                let bubbleAlpha = 1;
+                if (thoughtDisplayTime < 0.4) {
+                    bubbleAlpha = thoughtDisplayTime / 0.4; // fade in
+                } else if (thoughtDisplayTime > THOUGHT_DISPLAY_DURATION - 0.6) {
+                    bubbleAlpha = (THOUGHT_DISPLAY_DURATION - thoughtDisplayTime) / 0.6; // fade out
+                }
+                
+                ctx.globalAlpha = bubbleAlpha;
+                
+                // Float slowly upward and slightly right from initial position
+                const floatX = thoughtBubbleX + thoughtDisplayTime * 8;
+                const floatY = thoughtBubbleY - thoughtDisplayTime * 15;
+                
+                // Measure text for bubble sizing - larger font
+                ctx.font = '16px "Bebas Neue", sans-serif';
+                const textWidth = ctx.measureText(currentThought).width;
+                const bubbleWidth = textWidth + 70;
+                const bubbleHeight = 55;
+                
+                // Clamp bubble to stay on screen
+                const clampedX = Math.min(Math.max(floatX, 8), 400 - bubbleWidth - 8);
+                const clampedY = Math.max(floatY, 12);
+                
+                // Center of bubble
+                const centerX = clampedX + bubbleWidth / 2;
+                const centerY = clampedY + bubbleHeight / 2;
+                
+                // Draw cloud shape (overlapping circles) - much larger puffs
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                ctx.strokeStyle = '#0ff';
+                ctx.lineWidth = 2;
+                
+                // Cloud puffs - main body with larger radii
+                ctx.beginPath();
+                ctx.arc(centerX - bubbleWidth * 0.32, centerY, bubbleHeight * 0.55, 0, Math.PI * 2);
+                ctx.arc(centerX - bubbleWidth * 0.12, centerY - 8, bubbleHeight * 0.6, 0, Math.PI * 2);
+                ctx.arc(centerX + bubbleWidth * 0.12, centerY - 6, bubbleHeight * 0.62, 0, Math.PI * 2);
+                ctx.arc(centerX + bubbleWidth * 0.32, centerY, bubbleHeight * 0.52, 0, Math.PI * 2);
+                ctx.arc(centerX - bubbleWidth * 0.2, centerY + 10, bubbleHeight * 0.5, 0, Math.PI * 2);
+                ctx.arc(centerX + bubbleWidth * 0.05, centerY + 12, bubbleHeight * 0.52, 0, Math.PI * 2);
+                ctx.arc(centerX + bubbleWidth * 0.25, centerY + 8, bubbleHeight * 0.48, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                
+                // Small thought trail circles (leading toward where Clyde was)
+                const trailStartX = clampedX + 15;
+                const trailStartY = clampedY + bubbleHeight + 8;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.strokeStyle = '#0ff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath(); ctx.arc(trailStartX, trailStartY, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(trailStartX - 12, trailStartY + 14, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(trailStartX - 20, trailStartY + 26, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                
+                // Draw text centered in cloud
+                ctx.fillStyle = '#1a1a1a';
+                ctx.textAlign = 'center';
+                ctx.fillText(currentThought, centerX, centerY + 4);
+                
+                ctx.globalAlpha = 1;
+            }
 
             // Ground line
             ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 3;
