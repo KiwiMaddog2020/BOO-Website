@@ -514,7 +514,7 @@
         .game-subtitle {
             font-size: 14px;
             color: #0ff;
-            margin-bottom: 60px;
+            margin-bottom: 80px;
             letter-spacing: 2px;
         }
 
@@ -530,7 +530,7 @@
             letter-spacing: 2px;
             transition: all 0.2s;
             box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
-            margin: 8px;
+            margin: 12px;
             touch-action: manipulation;
         }
 
@@ -1417,7 +1417,7 @@
                 color: COLORS.teal,
                 desc: 'Damages all nearby enemies',
                 baseDamage: 10,
-                baseRadius: 100,
+                baseRadius: 130,
                 baseFireRate: 1200,
                 type: 'aoe'
             },
@@ -1460,7 +1460,7 @@
                 baseDamage: 6,
                 baseFireRate: 120,
                 baseAngle: 0.7,
-                baseRange: 140,
+                baseRange: 160,
                 type: 'flame'
             },
             boomerang: {
@@ -1489,7 +1489,7 @@
                 color: '#32cd32',
                 desc: 'Poison nearby enemies',
                 baseDamage: 3,
-                baseRadius: 80,
+                baseRadius: 110,
                 tickRate: 350,
                 type: 'aura'
             }
@@ -1645,11 +1645,6 @@
                     this.xp -= this.xpToNext;
                     this.level++;
                     this.xpToNext = Math.floor(this.xpToNext * 1.3) + 5;
-                    
-                    // Level 50 final swarm warning
-                    if (this.level === 50) {
-                        showFinalSwarmWarning();
-                    }
                     
                     showUpgradeSelection();
                 }
@@ -1812,7 +1807,7 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 state.lastFire = now;
-                const radius = def.baseRadius + level * 15;
+                const radius = def.baseRadius + level * 25;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.2);
                 
                 // Visual wave
@@ -1904,7 +1899,7 @@
                 
                 state.lastFire = now;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.15);
-                const range = def.baseRange + level * 20;
+                const range = def.baseRange + level * 28;
                 const coneAngle = def.baseAngle + level * 0.1;
                 
                 // Get facing direction (towards nearest enemy or last move direction)
@@ -2004,7 +1999,7 @@
                 if (now - (state.lastTick || 0) < tickRate) return;
                 
                 state.lastTick = now;
-                const radius = def.baseRadius + level * 15;
+                const radius = def.baseRadius + level * 25;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.2);
                 
                 // Store for rendering
@@ -2049,10 +2044,10 @@
                 // Sunglasses image 😎
                 ctx.shadowBlur = 0;
                 if (sunglassesImg.complete) {
-                    const shadeWidth = r * 2.6;  // Scale to player size
+                    const shadeWidth = r * 3.2;  // Scale to player size
                     const shadeHeight = shadeWidth * (sunglassesImg.height / sunglassesImg.width);
                     const shadeX = sx - shadeWidth / 2;
-                    const shadeY = sy - r * 0.25 - shadeHeight / 2;
+                    const shadeY = sy - r * 0.25 - shadeHeight / 2 + 2;
                     ctx.drawImage(sunglassesImg, shadeX, shadeY, shadeWidth, shadeHeight);
                 }
                 
@@ -3026,12 +3021,20 @@
             // Floor raised to 800ms (was 400), slower scaling
             let currentInterval = Math.max(800, spawnInterval - gameTime * 1.5);
             
-            // FINAL SWARM: Level 50+ - spawn rate ramps twice as fast per level
-            if (player && player.level >= 50) {
-                const levelsOver50 = player.level - 50;
-                // Each level over 50 reduces interval by 2x the normal rate
-                const finalSwarmReduction = levelsOver50 * 40; // Aggressive reduction
-                currentInterval = Math.max(200, currentInterval - finalSwarmReduction);
+            // FINAL HORDE: 30 minutes (1800s) - spawn rate doubles every minute gradually
+            const finalSwarmTime = 1800; // 30 minutes
+            if (gameTime >= finalSwarmTime) {
+                const secondsOver30Min = gameTime - finalSwarmTime;
+                // Gradual doubling: every 60 seconds, spawn rate doubles
+                // Using exponential decay: interval = base * 0.5^(minutes)
+                const minutesOver = secondsOver30Min / 60;
+                const multiplier = Math.pow(0.5, minutesOver);
+                currentInterval = Math.max(150, currentInterval * multiplier);
+                
+                // Show warning once
+                if (!finalSwarmWarningShown) {
+                    showFinalSwarmWarning();
+                }
             }
             
             if (spawnTimer >= currentInterval) {
@@ -3043,23 +3046,23 @@
                 if (gameTime > 60) types.push('tank');
                 if (gameTime > 90) types.push('swarm', 'swarm');
                 
-                // FINAL SWARM: Level 50+ heavily favors swarm enemies
-                if (player && player.level >= 50) {
+                // FINAL HORDE: 30 minutes+ heavily favors swarm enemies
+                if (gameTime >= finalSwarmTime) {
                     types.push('swarm', 'swarm', 'swarm', 'fast');
                 }
                 
                 // Spawn count increases slower: every 90s instead of 45s
                 let count = 1 + Math.floor(gameTime / 90);
                 
-                // FINAL SWARM: Level 50+ spawns more enemies per wave
-                if (player && player.level >= 50) {
-                    const levelsOver50 = player.level - 50;
-                    count += Math.floor(levelsOver50 / 2); // +1 enemy per 2 levels over 50
+                // FINAL HORDE: 30 minutes+ spawns more enemies per wave
+                if (gameTime >= finalSwarmTime) {
+                    const secondsOver30Min = gameTime - finalSwarmTime;
+                    count += Math.floor(secondsOver30Min / 20); // +1 enemy per 20 seconds over 30 min
                 }
                 
                 for (let i = 0; i < count; i++) {
-                    // Enforce enemy limit (raised for final swarm)
-                    const maxEnemies = (player && player.level >= 50) ? LIMITS.enemies + 50 : LIMITS.enemies;
+                    // Enforce enemy limit (raised for final horde)
+                    const maxEnemies = (gameTime >= finalSwarmTime) ? LIMITS.enemies + 50 : LIMITS.enemies;
                     if (enemies.length >= maxEnemies) break;
                     
                     const type = types[Math.floor(Math.random() * types.length)];
@@ -3083,7 +3086,7 @@
             }
         }
 
-        // ===== FINAL SWARM WARNING =====
+        // ===== FINAL HORDE WARNING =====
         let finalSwarmWarningShown = false;
         
         function showFinalSwarmWarning() {
@@ -3094,9 +3097,9 @@
             const warning = document.createElement('div');
             warning.id = 'finalSwarmWarning';
             warning.innerHTML = `
-                <div class="warning-text">⚠️ LEVEL 50 ⚠️</div>
+                <div class="warning-text">⚠️ FINAL HORDE ⚠️</div>
                 <div class="warning-subtext">THE FINAL SWARM APPROACHES</div>
-                <div class="warning-desc">Enemy spawns will now increase exponentially!</div>
+                <div class="warning-desc">Enemy spawns will now double every minute!</div>
             `;
             warning.style.cssText = `
                 position: fixed;
