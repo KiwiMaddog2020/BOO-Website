@@ -1396,7 +1396,7 @@
         const bossConfig = {
             width: 50,
             height: 25,
-            speed: 1.8, // 20% slower than previous 2.25
+            speed: 1.5, // Boss movement speed
             speedPenaltyPerBoss: 0.15, // 15% slower per additional boss
             minSpeedMultiplier: 0.25, // Never slower than 25% speed
             dropDistance: 20,
@@ -1410,7 +1410,7 @@
             // Laser settings
             laserCooldown: 8000, // 8 seconds per boss
             globalLaserCooldown: 6000, // 6 seconds minimum between any laser
-            laserSpeed: 3.34, // 15% faster than previous 2.9
+            laserSpeed: 4, // Boss projectile speed
             laserWidth: 8,
             laserHeight: 12, // Shorter than before
             laserColor: '#ff0000'
@@ -2017,10 +2017,18 @@
             
             const now = performance.now();
             
+            // Edge margin - bosses won't fire if too close to screen edges
+            const edgeMargin = 60;
+            
             // Check if any boss can fire (respects global cooldown)
             if (now >= lastGlobalLaserTime + bossConfig.globalLaserCooldown) {
-                // Get all bosses that are ready to fire
-                const readyBosses = bosses.filter(b => b.alive && now >= b.nextLaserTime);
+                // Get all bosses that are ready to fire AND not too close to edges
+                const readyBosses = bosses.filter(b => 
+                    b.alive && 
+                    now >= b.nextLaserTime &&
+                    b.x + b.width / 2 > edgeMargin &&
+                    b.x + b.width / 2 < canvas.width - edgeMargin
+                );
                 
                 if (readyBosses.length > 0) {
                     // Pick a random ready boss to fire (keeps player guessing)
@@ -2308,16 +2316,38 @@
             ctx.shadowBlur = 0;
         }
 
+        // Ball color alternation duration for multiple power-ups
+        const ballColorAlternateDuration = 800; // ms per color
+
         function drawBall() {
-            // Determine target ball color based on active power-ups (excluding big paddle)
-            let targetR = 255, targetG = 255, targetB = 255;
+            // Collect all active power-up colors (excluding big paddle which doesn't change ball color)
+            const activeColors = [];
             
             if (activePowerUps.crusher.active) {
-                // #ff0028
-                targetR = 255; targetG = 0; targetB = 40;
-            } else if (activePowerUps.multiBall.active) {
-                // #ff6a00
-                targetR = 255; targetG = 106; targetB = 0;
+                activeColors.push({ r: 255, g: 0, b: 40 }); // #ff0028
+            }
+            if (activePowerUps.multiBall.active) {
+                activeColors.push({ r: 255, g: 106, b: 0 }); // #ff6a00
+            }
+            
+            // Determine target ball color
+            let targetR = 255, targetG = 255, targetB = 255; // Default white
+            
+            if (activeColors.length === 1) {
+                // Single power-up: use its color
+                targetR = activeColors[0].r;
+                targetG = activeColors[0].g;
+                targetB = activeColors[0].b;
+            } else if (activeColors.length > 1) {
+                // Multiple power-ups: alternate between colors based on time
+                const now = performance.now();
+                const cycleLength = ballColorAlternateDuration * activeColors.length;
+                const cyclePosition = (now % cycleLength) / ballColorAlternateDuration;
+                const colorIndex = Math.floor(cyclePosition) % activeColors.length;
+                
+                targetR = activeColors[colorIndex].r;
+                targetG = activeColors[colorIndex].g;
+                targetB = activeColors[colorIndex].b;
             }
             
             // Smoothly transition current color toward target
