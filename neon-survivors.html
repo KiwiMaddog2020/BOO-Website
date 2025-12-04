@@ -2319,6 +2319,27 @@
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
                 
+                // Terrain collision - push player out of lakes/mountains
+                const terrain = isInTerrain(this.x, this.y, this.radius);
+                if (terrain) {
+                    // Calculate direction from terrain center to player
+                    const dx2 = this.x - terrain.x;
+                    const dy2 = this.y - terrain.y;
+                    
+                    // Normalize by ellipse radii
+                    const normX = dx2 / terrain.radiusX;
+                    const normY = dy2 / terrain.radiusY;
+                    const dist = Math.sqrt(normX * normX + normY * normY);
+                    
+                    if (dist > 0) {
+                        // Push to edge of terrain + player radius
+                        const pushX = (normX / dist) * (terrain.radiusX + this.radius + 5);
+                        const pushY = (normY / dist) * (terrain.radiusY + this.radius + 5);
+                        this.x = terrain.x + pushX;
+                        this.y = terrain.y + pushY;
+                    }
+                }
+                
                 // Invincibility timer
                 if (this.invincible > 0) this.invincible -= dt;
                 
@@ -4542,18 +4563,8 @@
             const chestCount = 15 + Math.floor(Math.random() * 6); // 15-20 chests
             
             for (let i = 0; i < chestCount; i++) {
-                // Scatter across map, avoiding center spawn area
-                let x, y, attempts = 0;
-                do {
-                    x = 100 + Math.random() * (WORLD.width - 200);
-                    y = 100 + Math.random() * (WORLD.height - 200);
-                    attempts++;
-                } while (
-                    Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 300 && 
-                    attempts < 20
-                );
-                
-                chests.push(new TreasureChest(x, y));
+                const pos = getValidSpawnPosition(100, WORLD.width - 100, 100, WORLD.height - 100, 50, 300);
+                chests.push(new TreasureChest(pos.x, pos.y));
             }
         }
 
@@ -4567,18 +4578,13 @@
             if (chestRespawnTimer >= CHEST_RESPAWN_INTERVAL) {
                 chestRespawnTimer = 0;
                 
-                // Spawn new chest away from player
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 400 + Math.random() * 400;
+                // Spawn new chest away from player, avoiding terrain
+                const pos = getValidSpawnPosition(100, WORLD.width - 100, 100, WORLD.height - 100, 50, 0);
                 
-                let x = player.x + Math.cos(angle) * dist;
-                let y = player.y + Math.sin(angle) * dist;
-                
-                // Clamp to world
-                x = Math.max(100, Math.min(WORLD.width - 100, x));
-                y = Math.max(100, Math.min(WORLD.height - 100, y));
-                
-                chests.push(new TreasureChest(x, y));
+                // Make sure it's not too close to player
+                if (Math.hypot(pos.x - player.x, pos.y - player.y) > 300) {
+                    chests.push(new TreasureChest(pos.x, pos.y));
+                }
             }
             
             // Bad luck protection check
@@ -4587,17 +4593,22 @@
             }
         }
 
-        // ===== ENVIRONMENT DECORATIONS (TRON STYLE) =====
-        let decorations = [];
+        // ===== TERRAIN OBSTACLES (Lakes & Mountains) =====
+        let terrainObstacles = [];
+        let decorations = []; // Trees only
         
-        const DECORATION_TYPES = {
-            holoLake: {
-                draw: function(ctx, sx, sy, scale, time, variant) {
-                    const pulse = 0.4 + Math.sin(time * 0.001 + variant) * 0.15;
-                    const colors = ['#00ffff', '#0088ff', '#00ffaa'];
-                    const color = colors[variant % colors.length];
-                    const width = scale(120 + (variant % 3) * 40);
-                    const height = scale(80 + (variant % 2) * 30);
+        // Map area: 4320 x 4320 = 18,662,400 sq units
+        // Large lake: 2-3% = 373,248 - 559,872 sq units each (radius ~345-422)
+        // Mountain range: 3-4% = 559,872 - 746,496 sq units each (radius ~422-487)
+        
+        const TERRAIN_TYPES = {
+            lake: {
+                draw: function(ctx, sx, sy, scale, time, obstacle) {
+                    const pulse = 0.4 + Math.sin(time * 0.001 + obstacle.variant) * 0.15;
+                    const colors = ['#00ffff', '#0088ff'];
+                    const color = colors[obstacle.variant % colors.length];
+                    const radiusX = scale(obstacle.radiusX);
+                    const radiusY = scale(obstacle.radiusY);
                     
                     ctx.save();
                     ctx.globalAlpha = pulse * 0.4;
@@ -4607,141 +4618,82 @@
                     
                     // Lake body (ellipse)
                     ctx.beginPath();
-                    ctx.ellipse(sx, sy, width/2, height/2, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Inner glow rings
-                    ctx.globalAlpha = pulse * 0.6;
+                    ctx.globalAlpha = pulse * 0.5;
                     ctx.strokeStyle = color;
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = 3;
                     ctx.beginPath();
-                    ctx.ellipse(sx, sy, width/3, height/3, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx, sy, radiusX * 0.7, radiusY * 0.7, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    ctx.globalAlpha = pulse * 0.3;
+                    ctx.beginPath();
+                    ctx.ellipse(sx, sy, radiusX * 0.4, radiusY * 0.4, 0, 0, Math.PI * 2);
                     ctx.stroke();
                     
                     // Ripple effect
-                    const ripple = ((time * 0.001 + variant) % 2) / 2;
+                    const ripple = ((time * 0.0006 + obstacle.variant) % 2) / 2;
                     ctx.globalAlpha = (1 - ripple) * 0.3;
-                    ctx.beginPath();
-                    ctx.ellipse(sx, sy, width/2 * ripple, height/2 * ripple, 0, 0, Math.PI * 2);
-                    ctx.stroke();
-                    
-                    ctx.restore();
-                }
-            },
-            circuitCluster: {
-                draw: function(ctx, sx, sy, scale, time, variant) {
-                    const pulse = (time * 0.002 + variant) % 1;
-                    const size = scale(100 + (variant % 3) * 30);
-                    
-                    ctx.save();
-                    ctx.globalAlpha = 0.35;
-                    ctx.strokeStyle = '#00ff88';
-                    ctx.shadowBlur = 8;
-                    ctx.shadowColor = '#00ff88';
                     ctx.lineWidth = 2;
-                    
-                    // Main circuit lines
-                    const gridSize = size / 5;
-                    
-                    // Horizontal lines
-                    for (let i = 0; i < 4; i++) {
-                        const y = sy - size/2 + gridSize + i * gridSize;
-                        const startX = sx - size/2 + (variant + i) % 2 * gridSize;
-                        const endX = sx + size/2 - (variant + i + 1) % 2 * gridSize;
-                        ctx.beginPath();
-                        ctx.moveTo(startX, y);
-                        ctx.lineTo(endX, y);
-                        ctx.stroke();
-                    }
-                    
-                    // Vertical connectors
-                    for (let i = 0; i < 3; i++) {
-                        const x = sx - size/3 + i * size/3;
-                        ctx.beginPath();
-                        ctx.moveTo(x, sy - size/3);
-                        ctx.lineTo(x, sy + size/3);
-                        ctx.stroke();
-                    }
-                    
-                    // Node points
-                    ctx.fillStyle = '#00ffaa';
-                    ctx.globalAlpha = 0.6;
-                    for (let i = 0; i < 5; i++) {
-                        const nx = sx - size/3 + (i % 3) * size/3;
-                        const ny = sy - size/4 + Math.floor(i / 3) * size/2;
-                        ctx.beginPath();
-                        ctx.arc(nx, ny, scale(4), 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    
-                    // Traveling data pulse
-                    ctx.globalAlpha = 0.9;
-                    ctx.fillStyle = '#88ffaa';
-                    ctx.shadowBlur = 15;
-                    const pulseX = sx - size/2 + pulse * size;
-                    const pulseY = sy - size/4 + Math.sin(pulse * Math.PI * 2) * size/4;
                     ctx.beginPath();
-                    ctx.arc(pulseX, pulseY, scale(5), 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    ctx.restore();
-                }
-            },
-            lightBarrier: {
-                draw: function(ctx, sx, sy, scale, time, variant) {
-                    const colors = ['#ff00ff', '#00ffff', '#ff6600'];
-                    const color = colors[variant % colors.length];
-                    const isVertical = variant % 2 === 0;
-                    const length = scale(150 + (variant % 4) * 30);
-                    const pulse = 0.6 + Math.sin(time * 0.003 + variant) * 0.4;
-                    
-                    ctx.save();
-                    ctx.globalAlpha = 0.5 * pulse;
-                    ctx.shadowBlur = 20;
-                    ctx.shadowColor = color;
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = scale(4);
-                    
-                    // Main barrier line
-                    ctx.beginPath();
-                    if (isVertical) {
-                        ctx.moveTo(sx, sy - length/2);
-                        ctx.lineTo(sx, sy + length/2);
-                    } else {
-                        ctx.moveTo(sx - length/2, sy);
-                        ctx.lineTo(sx + length/2, sy);
-                    }
+                    ctx.ellipse(sx, sy, radiusX * ripple, radiusY * ripple, 0, 0, Math.PI * 2);
                     ctx.stroke();
                     
-                    // End nodes
-                    ctx.fillStyle = color;
-                    ctx.globalAlpha = 0.8;
+                    ctx.restore();
+                }
+            },
+            mountain: {
+                draw: function(ctx, sx, sy, scale, time, obstacle) {
+                    const pulse = 0.6 + Math.sin(time * 0.0015 + obstacle.variant) * 0.1;
+                    const radiusX = scale(obstacle.radiusX);
+                    const radiusY = scale(obstacle.radiusY);
+                    
+                    ctx.save();
+                    
+                    // Mountain base (dark with magenta glow)
+                    ctx.globalAlpha = 0.5;
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#ff00ff';
+                    ctx.fillStyle = '#1a0a2e';
                     ctx.beginPath();
-                    if (isVertical) {
-                        ctx.arc(sx, sy - length/2, scale(8), 0, Math.PI * 2);
-                        ctx.arc(sx, sy + length/2, scale(8), 0, Math.PI * 2);
-                    } else {
-                        ctx.arc(sx - length/2, sy, scale(8), 0, Math.PI * 2);
-                        ctx.arc(sx + length/2, sy, scale(8), 0, Math.PI * 2);
-                    }
+                    ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    // Inner glow
-                    ctx.fillStyle = '#ffffff';
-                    ctx.globalAlpha = 0.9;
-                    ctx.beginPath();
-                    if (isVertical) {
-                        ctx.arc(sx, sy - length/2, scale(3), 0, Math.PI * 2);
-                        ctx.arc(sx, sy + length/2, scale(3), 0, Math.PI * 2);
-                    } else {
-                        ctx.arc(sx - length/2, sy, scale(3), 0, Math.PI * 2);
-                        ctx.arc(sx + length/2, sy, scale(3), 0, Math.PI * 2);
+                    // Glowing contour lines
+                    ctx.strokeStyle = '#ff00ff';
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = pulse * 0.4;
+                    
+                    for (let i = 0.3; i <= 0.9; i += 0.2) {
+                        ctx.beginPath();
+                        ctx.ellipse(sx, sy, radiusX * i, radiusY * i, 0, 0, Math.PI * 2);
+                        ctx.stroke();
                     }
+                    
+                    // Peak glow
+                    ctx.globalAlpha = pulse * 0.6;
+                    ctx.fillStyle = '#ff44ff';
+                    ctx.shadowBlur = 30;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, scale(30), 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Inner peak
+                    ctx.globalAlpha = 0.8;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, scale(12), 0, Math.PI * 2);
                     ctx.fill();
                     
                     ctx.restore();
                 }
-            },
+            }
+        };
+        
+        const DECORATION_TYPES = {
             digitalTree: {
                 draw: function(ctx, sx, sy, scale, time, variant) {
                     const colors = ['#00ffaa', '#00ff66', '#88ff00'];
@@ -4795,123 +4747,113 @@
                     
                     ctx.restore();
                 }
-            },
-            dataStream: {
-                draw: function(ctx, sx, sy, scale, time, variant) {
-                    const isVertical = variant % 2 === 0;
-                    const length = scale(200 + (variant % 3) * 50);
-                    const color = '#00ffff';
-                    
-                    ctx.save();
-                    ctx.globalAlpha = 0.25;
-                    ctx.strokeStyle = color;
-                    ctx.shadowBlur = 6;
-                    ctx.shadowColor = color;
-                    ctx.lineWidth = scale(20);
-                    ctx.lineCap = 'round';
-                    
-                    // Stream path
-                    ctx.beginPath();
-                    if (isVertical) {
-                        ctx.moveTo(sx, sy - length/2);
-                        ctx.lineTo(sx, sy + length/2);
-                    } else {
-                        ctx.moveTo(sx - length/2, sy);
-                        ctx.lineTo(sx + length/2, sy);
-                    }
-                    ctx.stroke();
-                    
-                    // Flowing data packets
-                    ctx.globalAlpha = 0.8;
-                    ctx.fillStyle = '#88ffff';
-                    ctx.shadowBlur = 12;
-                    
-                    for (let i = 0; i < 5; i++) {
-                        const t = ((time * 0.003 + variant + i * 0.2) % 1);
-                        let px, py;
-                        if (isVertical) {
-                            px = sx;
-                            py = sy - length/2 + t * length;
-                        } else {
-                            px = sx - length/2 + t * length;
-                            py = sy;
-                        }
-                        ctx.beginPath();
-                        ctx.arc(px, py, scale(4), 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    
-                    ctx.restore();
-                }
             }
         };
+        
+        // Check if a point is inside any terrain obstacle
+        function isInTerrain(x, y, padding = 0) {
+            for (const obs of terrainObstacles) {
+                const dx = (x - obs.x) / (obs.radiusX + padding);
+                const dy = (y - obs.y) / (obs.radiusY + padding);
+                if (dx * dx + dy * dy < 1) {
+                    return obs;
+                }
+            }
+            return null;
+        }
+        
+        // Get valid spawn position avoiding terrain
+        function getValidSpawnPosition(minX, maxX, minY, maxY, padding = 50, avoidCenter = 0) {
+            let attempts = 0;
+            while (attempts < 50) {
+                const x = minX + Math.random() * (maxX - minX);
+                const y = minY + Math.random() * (maxY - minY);
+                
+                // Check center avoidance
+                if (avoidCenter > 0 && Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < avoidCenter) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check terrain
+                if (!isInTerrain(x, y, padding)) {
+                    return { x, y };
+                }
+                attempts++;
+            }
+            // Fallback - return position anyway
+            return { x: minX + Math.random() * (maxX - minX), y: minY + Math.random() * (maxY - minY) };
+        }
+        
+        function spawnTerrain() {
+            terrainObstacles = [];
+            
+            // Map area = 4320 * 4320 = 18,662,400
+            // Lake 2-3% each = ~370k-560k sq units -> ellipse with avg radius ~380-420
+            // Mountain 3-4% each = ~560k-747k sq units -> ellipse with avg radius ~420-490
+            
+            // 2 Large Lakes (2.5% each average)
+            const lakePositions = [
+                { x: WORLD.width * 0.25, y: WORLD.height * 0.3 },
+                { x: WORLD.width * 0.75, y: WORLD.height * 0.7 }
+            ];
+            
+            for (let i = 0; i < 2; i++) {
+                const baseRadius = 380 + Math.random() * 40;
+                terrainObstacles.push({
+                    type: 'lake',
+                    x: lakePositions[i].x + (Math.random() - 0.5) * 400,
+                    y: lakePositions[i].y + (Math.random() - 0.5) * 400,
+                    radiusX: baseRadius * (0.9 + Math.random() * 0.3),
+                    radiusY: baseRadius * (0.7 + Math.random() * 0.3),
+                    variant: i
+                });
+            }
+            
+            // 2 Mountain Ranges (3.5% each average)
+            const mountainPositions = [
+                { x: WORLD.width * 0.7, y: WORLD.height * 0.25 },
+                { x: WORLD.width * 0.3, y: WORLD.height * 0.75 }
+            ];
+            
+            for (let i = 0; i < 2; i++) {
+                const baseRadius = 450 + Math.random() * 40;
+                terrainObstacles.push({
+                    type: 'mountain',
+                    x: mountainPositions[i].x + (Math.random() - 0.5) * 300,
+                    y: mountainPositions[i].y + (Math.random() - 0.5) * 300,
+                    radiusX: baseRadius * (1.0 + Math.random() * 0.4),
+                    radiusY: baseRadius * (0.7 + Math.random() * 0.3),
+                    variant: i
+                });
+            }
+        }
         
         function spawnDecorations() {
             decorations = [];
             
-            // Spawn holographic lakes (3-5)
-            const lakeCount = 3 + Math.floor(Math.random() * 3);
-            for (let i = 0; i < lakeCount; i++) {
-                let x, y, attempts = 0;
-                do {
-                    x = 200 + Math.random() * (WORLD.width - 400);
-                    y = 200 + Math.random() * (WORLD.height - 400);
-                    attempts++;
-                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 400 && attempts < 20);
-                
-                decorations.push({ x, y, type: 'holoLake', variant: i });
-            }
-            
-            // Spawn circuit clusters (5-8)
-            const circuitCount = 5 + Math.floor(Math.random() * 4);
-            for (let i = 0; i < circuitCount; i++) {
-                let x, y, attempts = 0;
-                do {
-                    x = 150 + Math.random() * (WORLD.width - 300);
-                    y = 150 + Math.random() * (WORLD.height - 300);
-                    attempts++;
-                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 350 && attempts < 20);
-                
-                decorations.push({ x, y, type: 'circuitCluster', variant: i });
-            }
-            
-            // Spawn light barriers (8-12)
-            const barrierCount = 8 + Math.floor(Math.random() * 5);
-            for (let i = 0; i < barrierCount; i++) {
-                let x, y, attempts = 0;
-                do {
-                    x = 150 + Math.random() * (WORLD.width - 300);
-                    y = 150 + Math.random() * (WORLD.height - 300);
-                    attempts++;
-                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 300 && attempts < 20);
-                
-                decorations.push({ x, y, type: 'lightBarrier', variant: i });
-            }
-            
-            // Spawn digital trees (10-15)
-            const treeCount = 10 + Math.floor(Math.random() * 6);
+            // Spawn digital trees (25-35), avoiding terrain
+            const treeCount = 25 + Math.floor(Math.random() * 11);
             for (let i = 0; i < treeCount; i++) {
-                let x, y, attempts = 0;
-                do {
-                    x = 100 + Math.random() * (WORLD.width - 200);
-                    y = 100 + Math.random() * (WORLD.height - 200);
-                    attempts++;
-                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 300 && attempts < 20);
-                
-                decorations.push({ x, y, type: 'digitalTree', variant: i });
+                const pos = getValidSpawnPosition(100, WORLD.width - 100, 100, WORLD.height - 100, 80, 300);
+                decorations.push({ x: pos.x, y: pos.y, type: 'digitalTree', variant: i });
             }
+        }
+        
+        function drawTerrain() {
+            const time = Date.now();
             
-            // Spawn data streams (4-6)
-            const streamCount = 4 + Math.floor(Math.random() * 3);
-            for (let i = 0; i < streamCount; i++) {
-                let x, y, attempts = 0;
-                do {
-                    x = 200 + Math.random() * (WORLD.width - 400);
-                    y = 200 + Math.random() * (WORLD.height - 400);
-                    attempts++;
-                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 350 && attempts < 20);
+            for (const obs of terrainObstacles) {
+                if (!camera.isVisible(obs.x, obs.y, Math.max(obs.radiusX, obs.radiusY) + 50)) continue;
                 
-                decorations.push({ x, y, type: 'dataStream', variant: i });
+                const sx = camera.screenX(obs.x);
+                const sy = camera.screenY(obs.y);
+                const scaleFn = (val) => camera.scale(val);
+                
+                const terrainType = TERRAIN_TYPES[obs.type];
+                if (terrainType && terrainType.draw) {
+                    terrainType.draw(ctx, sx, sy, scaleFn, time, obs);
+                }
             }
         }
         
@@ -4919,7 +4861,7 @@
             const time = Date.now();
             
             for (const dec of decorations) {
-                if (!camera.isVisible(dec.x, dec.y, 150)) continue;
+                if (!camera.isVisible(dec.x, dec.y, 100)) continue;
                 
                 const sx = camera.screenX(dec.x);
                 const sy = camera.screenY(dec.y);
@@ -5375,8 +5317,8 @@
             constructor(x, y) {
                 this.x = x;
                 this.y = y;
-                this.radius = 230;      // Outer ring
-                this.innerRadius = 220; // Inner ring - almost same size
+                this.radius = 195;      // Outer ring (15% smaller)
+                this.innerRadius = 187; // Inner ring - almost same size
                 this.chargeTime = 0;
                 this.chargeRequired = 5000;
                 this.activated = false;
@@ -5575,7 +5517,7 @@
         }
         
         function spawnSingleShrine() {
-            const candidateCount = 5;
+            const candidateCount = 8; // Increased to account for terrain
             let bestCandidate = null;
             let bestScore = -Infinity;
             
@@ -5586,6 +5528,9 @@
             for (let c = 0; c < candidateCount; c++) {
                 const x = SHRINE_CONFIG.edgeBuffer + Math.random() * (WORLD.width - SHRINE_CONFIG.edgeBuffer * 2);
                 const y = SHRINE_CONFIG.edgeBuffer + Math.random() * (WORLD.height - SHRINE_CONFIG.edgeBuffer * 2);
+                
+                // Skip if in terrain (shrines need large clear area)
+                if (isInTerrain(x, y, 250)) continue;
                 
                 // Calculate score based on distances to existing active shrines
                 let minDistToShrine = Infinity;
@@ -5857,18 +5802,21 @@
                     const type = types[Math.floor(Math.random() * types.length)];
                     
                     // Spawn well outside visible area (accounting for zoom)
-                    let x, y;
+                    let x, y, spawnAttempts = 0;
                     const visibleWidth = canvas.width / camera.zoom;
                     const visibleHeight = canvas.height / camera.zoom;
                     const spawnDist = Math.max(visibleWidth, visibleHeight) / 2 + 150;
-                    const angle = Math.random() * Math.PI * 2;
                     
-                    x = player.x + Math.cos(angle) * spawnDist;
-                    y = player.y + Math.sin(angle) * spawnDist;
-                    
-                    // Clamp to world bounds
-                    x = Math.max(20, Math.min(WORLD.width - 20, x));
-                    y = Math.max(20, Math.min(WORLD.height - 20, y));
+                    do {
+                        const angle = Math.random() * Math.PI * 2;
+                        x = player.x + Math.cos(angle) * spawnDist;
+                        y = player.y + Math.sin(angle) * spawnDist;
+                        
+                        // Clamp to world bounds
+                        x = Math.max(20, Math.min(WORLD.width - 20, x));
+                        y = Math.max(20, Math.min(WORLD.height - 20, y));
+                        spawnAttempts++;
+                    } while (isInTerrain(x, y, 30) && spawnAttempts < 10);
                     
                     enemies.push(new Enemy(type, x, y));
                 }
@@ -5877,16 +5825,21 @@
 
         // ===== LEPRECHAUN SPAWNING =====
         function spawnLeprechaun() {
-            // Spawn at a distance from player
-            const angle = Math.random() * Math.PI * 2;
-            const spawnDist = 400 + Math.random() * 200;
+            // Spawn at a distance from player, avoiding terrain
+            let potX, potY, attempts = 0;
             
-            let potX = player.x + Math.cos(angle) * spawnDist;
-            let potY = player.y + Math.sin(angle) * spawnDist;
-            
-            // Clamp to world bounds
-            potX = Math.max(150, Math.min(WORLD.width - 150, potX));
-            potY = Math.max(150, Math.min(WORLD.height - 150, potY));
+            do {
+                const angle = Math.random() * Math.PI * 2;
+                const spawnDist = 400 + Math.random() * 200;
+                
+                potX = player.x + Math.cos(angle) * spawnDist;
+                potY = player.y + Math.sin(angle) * spawnDist;
+                
+                // Clamp to world bounds
+                potX = Math.max(150, Math.min(WORLD.width - 150, potX));
+                potY = Math.max(150, Math.min(WORLD.height - 150, potY));
+                attempts++;
+            } while (isInTerrain(potX, potY, 100) && attempts < 20);
             
             // Create rainbow/pot at spawn location
             const rainbow = new Rainbow(potX, potY);
@@ -6742,7 +6695,10 @@
             
             if (!gameRunning) return;
             
-            // Draw environment decorations (background)
+            // Draw terrain obstacles (lakes/mountains - background)
+            drawTerrain();
+            
+            // Draw environment decorations (trees)
             drawDecorations();
             
             // Draw shrines first (under everything)
@@ -6997,6 +6953,7 @@
             };
             
             player = new Player();
+            spawnTerrain();
             spawnShrines();
             spawnDecorations();
             spawnInitialChests();
