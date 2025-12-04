@@ -1868,8 +1868,11 @@
             height: 4320
         };
         
-        // Target visible world area (based on desktop 800x600 at zoom 0.665)
-        const TARGET_VISIBLE_WIDTH = 800 / 0.665; // ~1203 world units
+        // Target visible world area - consistent across all devices
+        // Desktop baseline: 800x600 canvas at 0.665 zoom shows ~1203x903 world units
+        const TARGET_VISIBLE_WIDTH = 1203;
+        const TARGET_VISIBLE_HEIGHT = 903;
+        const BASE_ZOOM = 0.665; // Reference zoom level
         
         const camera = {
             x: 0,
@@ -1877,8 +1880,18 @@
             zoom: 0.665, // Will be recalculated based on canvas size
             
             // Recalculate zoom to show consistent world area
+            // Uses the larger of width or height ratio to ensure player appears same size
             updateZoom() {
-                this.zoom = canvas.width / TARGET_VISIBLE_WIDTH;
+                // Calculate zoom needed to fit target visible area
+                const zoomForWidth = canvas.width / TARGET_VISIBLE_WIDTH;
+                const zoomForHeight = canvas.height / TARGET_VISIBLE_HEIGHT;
+                
+                // Use the LARGER zoom to keep player consistently sized
+                // This means on smaller screens, you see less of the world but player is same size
+                this.zoom = Math.max(zoomForWidth, zoomForHeight);
+                
+                // Ensure minimum zoom so things don't get too small
+                this.zoom = Math.max(this.zoom, 0.35);
             },
             
             update() {
@@ -2319,24 +2332,37 @@
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
                 
-                // Terrain collision - push player out of lakes/mountains
+                // Terrain collision - push player out of lakes/mountains/trees
                 const terrain = isInTerrain(this.x, this.y, this.radius);
                 if (terrain) {
-                    // Calculate direction from terrain center to player
-                    const dx2 = this.x - terrain.x;
-                    const dy2 = this.y - terrain.y;
-                    
-                    // Normalize by ellipse radii
-                    const normX = dx2 / terrain.radiusX;
-                    const normY = dy2 / terrain.radiusY;
-                    const dist = Math.sqrt(normX * normX + normY * normY);
-                    
-                    if (dist > 0) {
-                        // Push to edge of terrain + player radius
-                        const pushX = (normX / dist) * (terrain.radiusX + this.radius + 5);
-                        const pushY = (normY / dist) * (terrain.radiusY + this.radius + 5);
-                        this.x = terrain.x + pushX;
-                        this.y = terrain.y + pushY;
+                    if (terrain.type === 'tree') {
+                        // Circular collision for trees
+                        const dx2 = this.x - terrain.x;
+                        const dy2 = this.y - terrain.y;
+                        const dist = Math.hypot(dx2, dy2);
+                        
+                        if (dist > 0) {
+                            const pushDist = terrain.radius + this.radius + 2;
+                            this.x = terrain.x + (dx2 / dist) * pushDist;
+                            this.y = terrain.y + (dy2 / dist) * pushDist;
+                        }
+                    } else {
+                        // Ellipse collision for lakes/mountains
+                        const dx2 = this.x - terrain.x;
+                        const dy2 = this.y - terrain.y;
+                        
+                        // Normalize by ellipse radii
+                        const normX = dx2 / terrain.radiusX;
+                        const normY = dy2 / terrain.radiusY;
+                        const dist = Math.sqrt(normX * normX + normY * normY);
+                        
+                        if (dist > 0) {
+                            // Push to edge of terrain + player radius
+                            const pushX = (normX / dist) * (terrain.radiusX + this.radius + 5);
+                            const pushY = (normY / dist) * (terrain.radiusY + this.radius + 5);
+                            this.x = terrain.x + pushX;
+                            this.y = terrain.y + pushY;
+                        }
                     }
                 }
                 
@@ -4647,59 +4673,120 @@
             },
             mountain: {
                 draw: function(ctx, sx, sy, scale, time, obstacle) {
-                    const pulse = 0.6 + Math.sin(time * 0.0015 + obstacle.variant) * 0.1;
+                    const pulse = 0.7 + Math.sin(time * 0.001 + obstacle.variant) * 0.1;
                     const radiusX = scale(obstacle.radiusX);
                     const radiusY = scale(obstacle.radiusY);
                     
                     ctx.save();
                     
-                    // Mountain base (dark with magenta glow)
-                    ctx.globalAlpha = 0.5;
-                    ctx.shadowBlur = 20;
-                    ctx.shadowColor = '#ff00ff';
-                    ctx.fillStyle = '#1a0a2e';
+                    // Mountain base - dark rocky terrain
+                    ctx.globalAlpha = 0.6;
+                    ctx.fillStyle = '#1a1a2e';
                     ctx.beginPath();
                     ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    // Glowing contour lines
-                    ctx.strokeStyle = '#ff00ff';
-                    ctx.lineWidth = 2;
-                    ctx.globalAlpha = pulse * 0.4;
+                    // Draw multiple mountain peaks
+                    const peakCount = 5 + (obstacle.variant % 3);
+                    const peaks = [];
                     
-                    for (let i = 0.3; i <= 0.9; i += 0.2) {
+                    // Generate peak positions within the mountain range
+                    for (let i = 0; i < peakCount; i++) {
+                        const angle = (i / peakCount) * Math.PI * 2 + obstacle.variant;
+                        const distFromCenter = 0.3 + Math.random() * 0.5;
+                        const px = sx + Math.cos(angle) * radiusX * distFromCenter * 0.6;
+                        const py = sy + Math.sin(angle) * radiusY * distFromCenter * 0.6;
+                        const peakHeight = scale(80 + Math.random() * 60);
+                        const peakWidth = scale(50 + Math.random() * 40);
+                        peaks.push({ x: px, y: py, height: peakHeight, width: peakWidth });
+                    }
+                    
+                    // Add central peak (tallest)
+                    peaks.push({ 
+                        x: sx, 
+                        y: sy, 
+                        height: scale(120 + obstacle.variant * 10), 
+                        width: scale(70) 
+                    });
+                    
+                    // Draw peaks from back to front (sort by y)
+                    peaks.sort((a, b) => a.y - b.y);
+                    
+                    for (const peak of peaks) {
+                        // Mountain shadow/depth
+                        ctx.globalAlpha = 0.4;
+                        ctx.fillStyle = '#0a0a1a';
                         ctx.beginPath();
-                        ctx.ellipse(sx, sy, radiusX * i, radiusY * i, 0, 0, Math.PI * 2);
+                        ctx.moveTo(peak.x - peak.width, peak.y);
+                        ctx.lineTo(peak.x, peak.y - peak.height);
+                        ctx.lineTo(peak.x + peak.width, peak.y);
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        // Mountain body - gradient from dark to lighter
+                        ctx.globalAlpha = 0.7;
+                        const gradient = ctx.createLinearGradient(
+                            peak.x - peak.width, peak.y,
+                            peak.x + peak.width * 0.5, peak.y - peak.height
+                        );
+                        gradient.addColorStop(0, '#2a1a4a');
+                        gradient.addColorStop(0.5, '#3d2a6d');
+                        gradient.addColorStop(1, '#5a3d8a');
+                        ctx.fillStyle = gradient;
+                        ctx.beginPath();
+                        ctx.moveTo(peak.x - peak.width * 0.9, peak.y);
+                        ctx.lineTo(peak.x - peak.width * 0.1, peak.y - peak.height * 0.95);
+                        ctx.lineTo(peak.x + peak.width * 0.1, peak.y - peak.height);
+                        ctx.lineTo(peak.x + peak.width * 0.9, peak.y);
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        // Snow cap
+                        ctx.globalAlpha = 0.8 * pulse;
+                        ctx.fillStyle = '#ffffff';
+                        ctx.shadowBlur = 10;
+                        ctx.shadowColor = '#aaaaff';
+                        ctx.beginPath();
+                        ctx.moveTo(peak.x - peak.width * 0.25, peak.y - peak.height * 0.7);
+                        ctx.lineTo(peak.x, peak.y - peak.height);
+                        ctx.lineTo(peak.x + peak.width * 0.25, peak.y - peak.height * 0.7);
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        // Glowing edge highlight
+                        ctx.globalAlpha = 0.3 * pulse;
+                        ctx.strokeStyle = '#ff88ff';
+                        ctx.shadowBlur = 8;
+                        ctx.shadowColor = '#ff00ff';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(peak.x - peak.width * 0.9, peak.y);
+                        ctx.lineTo(peak.x, peak.y - peak.height);
                         ctx.stroke();
                     }
                     
-                    // Peak glow
-                    ctx.globalAlpha = pulse * 0.6;
-                    ctx.fillStyle = '#ff44ff';
-                    ctx.shadowBlur = 30;
+                    // Outer glow ring
+                    ctx.globalAlpha = 0.15;
+                    ctx.strokeStyle = '#ff00ff';
+                    ctx.lineWidth = 3;
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = '#ff00ff';
                     ctx.beginPath();
-                    ctx.arc(sx, sy, scale(30), 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // Inner peak
-                    ctx.globalAlpha = 0.8;
-                    ctx.fillStyle = '#ffffff';
-                    ctx.beginPath();
-                    ctx.arc(sx, sy, scale(12), 0, Math.PI * 2);
-                    ctx.fill();
+                    ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
+                    ctx.stroke();
                     
                     ctx.restore();
                 }
             }
         };
         
-        const DECORATION_TYPES = {
-            digitalTree: {
-                draw: function(ctx, sx, sy, scale, time, variant) {
+            tree: {
+                draw: function(ctx, sx, sy, scale, time, obstacle) {
                     const colors = ['#00ffaa', '#00ff66', '#88ff00'];
-                    const color = colors[variant % colors.length];
-                    const sway = Math.sin(time * 0.001 + variant) * scale(2);
-                    const height = scale(60 + (variant % 3) * 20);
+                    const color = colors[obstacle.variant % colors.length];
+                    const sway = Math.sin(time * 0.001 + obstacle.variant) * scale(2);
+                    const height = scale(60 + (obstacle.variant % 3) * 20);
+                    const radius = scale(obstacle.radius);
                     
                     ctx.save();
                     ctx.globalAlpha = 0.45;
@@ -4736,10 +4823,10 @@
                     
                     // Glowing points (data nodes)
                     ctx.fillStyle = color;
-                    ctx.globalAlpha = 0.7 + Math.sin(time * 0.005 + variant) * 0.3;
+                    ctx.globalAlpha = 0.7 + Math.sin(time * 0.005 + obstacle.variant) * 0.3;
                     for (let i = 0; i < 4; i++) {
                         const nodeY = sy - height * 0.4 - i * height * 0.15;
-                        const nodeX = sx + sway + (Math.sin(i * 2 + variant) * scale(15));
+                        const nodeX = sx + sway + (Math.sin(i * 2 + obstacle.variant) * scale(15));
                         ctx.beginPath();
                         ctx.arc(nodeX, nodeY, scale(3), 0, Math.PI * 2);
                         ctx.fill();
@@ -4750,13 +4837,22 @@
             }
         };
         
-        // Check if a point is inside any terrain obstacle
+        // Check if a point is inside any terrain obstacle (including trees)
         function isInTerrain(x, y, padding = 0) {
             for (const obs of terrainObstacles) {
-                const dx = (x - obs.x) / (obs.radiusX + padding);
-                const dy = (y - obs.y) / (obs.radiusY + padding);
-                if (dx * dx + dy * dy < 1) {
-                    return obs;
+                if (obs.type === 'tree') {
+                    // Trees use circular collision
+                    const dist = Math.hypot(x - obs.x, y - obs.y);
+                    if (dist < obs.radius + padding) {
+                        return obs;
+                    }
+                } else {
+                    // Lakes and mountains use ellipse collision
+                    const dx = (x - obs.x) / (obs.radiusX + padding);
+                    const dy = (y - obs.y) / (obs.radiusY + padding);
+                    if (dx * dx + dy * dy < 1) {
+                        return obs;
+                    }
                 }
             }
             return null;
@@ -4827,24 +4923,60 @@
                     variant: i
                 });
             }
+            
+            // Spawn trees (25-35) - these are small circular obstacles
+            const treeCount = 25 + Math.floor(Math.random() * 11);
+            for (let i = 0; i < treeCount; i++) {
+                let x, y, attempts = 0;
+                const treeRadius = 20 + Math.random() * 10; // Small collision radius
+                
+                do {
+                    x = 150 + Math.random() * (WORLD.width - 300);
+                    y = 150 + Math.random() * (WORLD.height - 300);
+                    attempts++;
+                    
+                    // Check not in center spawn area
+                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 350) continue;
+                    
+                    // Check not overlapping existing terrain (lakes/mountains)
+                    let overlaps = false;
+                    for (const obs of terrainObstacles) {
+                        if (obs.type !== 'tree') {
+                            const dx = (x - obs.x) / (obs.radiusX + 100);
+                            const dy = (y - obs.y) / (obs.radiusY + 100);
+                            if (dx * dx + dy * dy < 1) {
+                                overlaps = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!overlaps) break;
+                } while (attempts < 30);
+                
+                if (attempts < 30) {
+                    terrainObstacles.push({
+                        type: 'tree',
+                        x: x,
+                        y: y,
+                        radius: treeRadius,
+                        variant: i
+                    });
+                }
+            }
         }
         
         function spawnDecorations() {
+            // Trees are now part of terrain, this is kept for compatibility
             decorations = [];
-            
-            // Spawn digital trees (25-35), avoiding terrain
-            const treeCount = 25 + Math.floor(Math.random() * 11);
-            for (let i = 0; i < treeCount; i++) {
-                const pos = getValidSpawnPosition(100, WORLD.width - 100, 100, WORLD.height - 100, 80, 300);
-                decorations.push({ x: pos.x, y: pos.y, type: 'digitalTree', variant: i });
-            }
         }
         
         function drawTerrain() {
             const time = Date.now();
             
             for (const obs of terrainObstacles) {
-                if (!camera.isVisible(obs.x, obs.y, Math.max(obs.radiusX, obs.radiusY) + 50)) continue;
+                // Different visibility check for trees vs large terrain
+                const visMargin = obs.type === 'tree' ? 100 : Math.max(obs.radiusX || 0, obs.radiusY || 0) + 150;
+                if (!camera.isVisible(obs.x, obs.y, visMargin)) continue;
                 
                 const sx = camera.screenX(obs.x);
                 const sy = camera.screenY(obs.y);
@@ -4858,20 +4990,7 @@
         }
         
         function drawDecorations() {
-            const time = Date.now();
-            
-            for (const dec of decorations) {
-                if (!camera.isVisible(dec.x, dec.y, 100)) continue;
-                
-                const sx = camera.screenX(dec.x);
-                const sy = camera.screenY(dec.y);
-                const scaleFn = (val) => camera.scale(val);
-                
-                const decType = DECORATION_TYPES[dec.type];
-                if (decType && decType.draw) {
-                    decType.draw(ctx, sx, sy, scaleFn, time, dec.variant);
-                }
-            }
+            // Trees are now drawn as terrain, keeping for compatibility
         }
 
         // ===== LEGENDARY UPGRADE SYSTEM =====
