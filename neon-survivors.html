@@ -4859,56 +4859,70 @@
                         const dist = Math.hypot(x - obs.x, y - obs.y);
                         if (dist < Math.max(radiusX, radiusY) + obs.radius + padding) return true;
                     } else {
-                        const dx = (x - obs.x) / (obs.radiusX + radiusX + padding);
-                        const dy = (y - obs.y) / (obs.radiusY + radiusY + padding);
+                        // Ellipse overlap check with padding
+                        const combinedRadiusX = obs.radiusX + radiusX + padding;
+                        const combinedRadiusY = obs.radiusY + radiusY + padding;
+                        const dx = (x - obs.x) / combinedRadiusX;
+                        const dy = (y - obs.y) / combinedRadiusY;
                         if (dx * dx + dy * dy < 1) return true;
                     }
                 }
                 return false;
             }
             
-            // ===== STEP 1: Spawn 3 Large Lakes (largest elements first) =====
-            // 3x larger than before: base radius ~1000-1200
-            const lakePositions = [
-                { x: WORLD.width * 0.22, y: WORLD.height * 0.25 },
-                { x: WORLD.width * 0.78, y: WORLD.height * 0.72 },
-                { x: WORLD.width * 0.5, y: WORLD.height * 0.5 }  // Third lake near center but offset
+            // ===== STEP 1: Spawn 3 Large Lakes (spread across map quadrants) =====
+            // Lakes placed in different zones to ensure spread
+            const lakeZones = [
+                { minX: 0.1, maxX: 0.4, minY: 0.1, maxY: 0.4 },      // Top-left quadrant
+                { minX: 0.6, maxX: 0.9, minY: 0.6, maxY: 0.9 },      // Bottom-right quadrant
+                { minX: 0.6, maxX: 0.9, minY: 0.1, maxY: 0.4 }       // Top-right quadrant
             ];
             
             for (let i = 0; i < 3; i++) {
-                const baseRadius = 1000 + Math.random() * 200; // 3x larger
+                const baseRadius = 900 + Math.random() * 200;
+                const radiusX = baseRadius * (0.9 + Math.random() * 0.2);
+                const radiusY = baseRadius * (0.7 + Math.random() * 0.2);
+                
                 let x, y, attempts = 0;
+                let placed = false;
+                
+                const zone = lakeZones[i];
                 
                 do {
-                    x = lakePositions[i].x + (Math.random() - 0.5) * 600;
-                    y = lakePositions[i].y + (Math.random() - 0.5) * 600;
+                    // Random position within assigned zone
+                    x = WORLD.width * (zone.minX + Math.random() * (zone.maxX - zone.minX));
+                    y = WORLD.height * (zone.minY + Math.random() * (zone.maxY - zone.minY));
                     
                     // Keep away from map edges
-                    x = Math.max(baseRadius + 100, Math.min(WORLD.width - baseRadius - 100, x));
-                    y = Math.max(baseRadius + 100, Math.min(WORLD.height - baseRadius - 100, y));
+                    x = Math.max(radiusX + 150, Math.min(WORLD.width - radiusX - 150, x));
+                    y = Math.max(radiusY + 150, Math.min(WORLD.height - radiusY - 150, y));
                     
-                    // Third lake: offset from center spawn area
-                    if (i === 2) {
-                        const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
-                        if (centerDist < 600) {
-                            // Push away from center
-                            const angle = Math.atan2(y - WORLD.height/2, x - WORLD.width/2);
-                            x = WORLD.width/2 + Math.cos(angle) * 800;
-                            y = WORLD.height/2 + Math.sin(angle) * 800;
-                        }
+                    // Keep away from center spawn area (600 unit radius)
+                    const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
+                    if (centerDist < 600 + Math.max(radiusX, radiusY)) {
+                        attempts++;
+                        continue;
+                    }
+                    
+                    // Check no overlap with existing lakes (200 unit padding between lakes)
+                    if (!overlapsExisting(x, y, radiusX, radiusY, 200)) {
+                        placed = true;
+                        break;
                     }
                     
                     attempts++;
-                } while (overlapsExisting(x, y, baseRadius, baseRadius * 0.8, 100) && attempts < 20);
+                } while (attempts < 30);
                 
-                terrainObstacles.push({
-                    type: 'lake',
-                    x: x,
-                    y: y,
-                    radiusX: baseRadius * (0.9 + Math.random() * 0.2),
-                    radiusY: baseRadius * (0.7 + Math.random() * 0.2),
-                    variant: i
-                });
+                if (placed) {
+                    terrainObstacles.push({
+                        type: 'lake',
+                        x: x,
+                        y: y,
+                        radiusX: radiusX,
+                        radiusY: radiusY,
+                        variant: i
+                    });
+                }
             }
             
             // ===== STEP 2: Spawn Trees (avoiding lakes and center) =====
