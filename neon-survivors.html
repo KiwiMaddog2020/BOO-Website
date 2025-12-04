@@ -1758,11 +1758,6 @@
                     dy = inputObj.joystickY;
                 }
                 
-                // Debug: log if we have joystick movement
-                if (dx !== 0 || dy !== 0) {
-                    console.log('Player moving: dx=' + dx.toFixed(2) + ' dy=' + dy.toFixed(2) + ' speed=' + this.speed);
-                }
-                
                 // Normalize diagonal
                 if (dx && dy) {
                     dx *= 0.707;
@@ -3462,7 +3457,6 @@
             if (dist > 5) { // Small deadzone
                 input.joystickX = (clampedDist / knobMaxDist) * Math.cos(angle);
                 input.joystickY = (clampedDist / knobMaxDist) * Math.sin(angle);
-                console.log('Joystick updated:', input.joystickX.toFixed(2), input.joystickY.toFixed(2), 'dist:', dist.toFixed(1));
             } else {
                 input.joystickX = 0;
                 input.joystickY = 0;
@@ -3476,7 +3470,6 @@
         
         // Simple touch handling without complex ID tracking
         trackpadZone.addEventListener('touchstart', e => {
-            console.log('touchstart fired, gamePaused:', gamePaused);
             if (gamePaused) return;
             e.preventDefault();
             
@@ -3487,7 +3480,6 @@
             touchActive = true;
             
             const rect = trackpadZone.getBoundingClientRect();
-            console.log('Touch at:', touch.clientX, touch.clientY, 'Rect:', rect.left, rect.top);
             
             // Position joystick at touch point
             joystickCenter = { 
@@ -3513,7 +3505,6 @@
             
             const touch = e.touches[0];
             if (touch) {
-                console.log('trackpad touchmove:', touch.clientX, touch.clientY);
                 updateJoystick(touch.clientX, touch.clientY);
             }
         }, { passive: false });
@@ -3524,7 +3515,6 @@
             
             const touch = e.touches[0];
             if (touch) {
-                console.log('document touchmove:', touch.clientX, touch.clientY);
                 updateJoystick(touch.clientX, touch.clientY);
             }
         }, { passive: false });
@@ -3564,8 +3554,8 @@
         `;
         document.body.appendChild(debugDiv);
         
-        let lastLog = '';
         let frameCount = 0;
+        let lastError = '';
         function updateDebug() {
             const px = player ? player.x.toFixed(0) : '?';
             const py = player ? player.y.toFixed(0) : '?';
@@ -3577,18 +3567,11 @@
                 Player: ${px},${py}<br>
                 Run: ${gameRunning}<br>
                 Frame: ${frameCount}<br>
-                <div style="color:#ff0;font-size:10px;margin-top:4px">${lastLog}</div>
+                ${lastError ? '<div style="color:#f00;font-size:10px;margin-top:4px">' + lastError + '</div>' : ''}
             `;
             requestAnimationFrame(updateDebug);
         }
         updateDebug();
-        
-        // Capture logs for debug display
-        const origLog = console.log;
-        console.log = function(...args) {
-            lastLog = args.join(' ').substring(0, 50);
-            origLog.apply(console, args);
-        };
 
         // ===== GAME LOOP =====
         let lastTime = performance.now(); // Fix: Initialize properly to avoid first-frame spike
@@ -3668,17 +3651,13 @@
         }
 
         function gameLoop(timestamp) {
-            const dt = Math.min(timestamp - lastTime, 50); // Cap dt to prevent spiral of death
-            lastTime = timestamp;
-            frameCount++;
-            
-            // Log input every 60 frames when touch is active
-            if (touchActive && frameCount % 60 === 0) {
-                console.log('Frame ' + frameCount + ' input: JX=' + input.joystickX.toFixed(2) + ' JY=' + input.joystickY.toFixed(2));
-            }
-            
-            if (gameRunning && !gamePaused) {
-                gameTime += dt / 1000;
+            try {
+                const dt = Math.min(timestamp - lastTime, 50); // Cap dt to prevent spiral of death
+                lastTime = timestamp;
+                frameCount++;
+                
+                if (gameRunning && !gamePaused) {
+                    gameTime += dt / 1000;
                 
                 // 60-second magnet pulse - suck up all coins
                 const currentMinute = Math.floor(gameTime / 60);
@@ -3696,9 +3675,6 @@
                 }
                 
                 // Update
-                if (input.joystickX !== 0 || input.joystickY !== 0) {
-                    console.log('GameLoop input: JX=' + input.joystickX.toFixed(2) + ' JY=' + input.joystickY.toFixed(2));
-                }
                 player.update(dt, input);
                 camera.update();
                 spawnEnemies(dt);
@@ -3759,6 +3735,11 @@
             
             // Render
             render();
+            
+            } catch (err) {
+                lastError = 'ERROR: ' + err.message;
+                console.error('Game loop error:', err);
+            }
             
             requestAnimationFrame(gameLoop);
         }
