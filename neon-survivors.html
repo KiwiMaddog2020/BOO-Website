@@ -1053,36 +1053,34 @@
             .weapon-icon { width: 28px; height: 28px; font-size: 14px; }
             .weapons-display { max-width: 100px; gap: 3px; }
             
-            /* Scale HUD overlay */
+            /* Hide minimap on mobile */
+            .minimap-container {
+                display: none !important;
+            }
+            
+            /* Center HUD overlay */
             .hud-overlay {
-                top: 14px;
-                left: 6px;
+                top: 10px;
+                left: 50%;
+                transform: translateX(-50%);
+                align-items: center;
             }
             
             .hud-stats-row {
-                width: 110px;
+                width: auto;
+                gap: 12px;
                 margin-bottom: 4px;
+                justify-content: center;
             }
             
             .hud-stat {
-                font-size: 9px;
+                font-size: 10px;
             }
             
             .hud-hp-bar {
-                width: 110px;
+                width: 180px;
                 height: 10px;
                 margin-bottom: 6px;
-            }
-            
-            /* Smaller minimap on mobile */
-            .minimap-container {
-                top: 14px;
-                right: 6px;
-            }
-            
-            .minimap-canvas {
-                width: 100px !important;
-                height: 100px !important;
             }
             
             /* Scale XP bar */
@@ -1123,34 +1121,24 @@
         
         /* Extra small screens */
         @media (max-width: 400px) {
+            /* Keep HUD centered */
             .hud-overlay {
-                top: 10px;
-                left: 4px;
+                top: 8px;
             }
             
             .hud-stats-row {
-                width: 90px;
+                gap: 8px;
                 margin-bottom: 3px;
             }
             
             .hud-stat {
-                font-size: 8px;
+                font-size: 9px;
             }
             
             .hud-hp-bar {
-                width: 90px;
+                width: 150px;
                 height: 8px;
                 margin-bottom: 4px;
-            }
-            
-            .minimap-container {
-                top: 10px;
-                right: 4px;
-            }
-            
-            .minimap-canvas {
-                width: 80px !important;
-                height: 80px !important;
             }
             
             .game-xp-bar {
@@ -1937,6 +1925,55 @@
         let particles = [];
         let shrines = [];
         let magnetPulseActive = false; // Is magnet pulse currently active
+        
+        // Fog of War system - tracks explored areas
+        const FOG_CELL_SIZE = 100; // Each cell is 100x100 world units
+        const FOG_GRID_SIZE = Math.ceil(WORLD.width / FOG_CELL_SIZE);
+        let fogGrid = []; // 2D array: true = explored, false = unexplored
+        
+        function initFogGrid() {
+            fogGrid = [];
+            for (let y = 0; y < FOG_GRID_SIZE; y++) {
+                fogGrid[y] = [];
+                for (let x = 0; x < FOG_GRID_SIZE; x++) {
+                    fogGrid[y][x] = false;
+                }
+            }
+        }
+        
+        function updateFogOfWar() {
+            if (!player) return;
+            
+            // Calculate visible range (based on camera view)
+            const viewRadius = Math.max(canvas.width, canvas.height) / camera.zoom / 2 + 100;
+            
+            // Mark cells within view as explored
+            const minCellX = Math.max(0, Math.floor((player.x - viewRadius) / FOG_CELL_SIZE));
+            const maxCellX = Math.min(FOG_GRID_SIZE - 1, Math.floor((player.x + viewRadius) / FOG_CELL_SIZE));
+            const minCellY = Math.max(0, Math.floor((player.y - viewRadius) / FOG_CELL_SIZE));
+            const maxCellY = Math.min(FOG_GRID_SIZE - 1, Math.floor((player.y + viewRadius) / FOG_CELL_SIZE));
+            
+            for (let cy = minCellY; cy <= maxCellY; cy++) {
+                for (let cx = minCellX; cx <= maxCellX; cx++) {
+                    // Check if cell center is within circular view
+                    const cellCenterX = (cx + 0.5) * FOG_CELL_SIZE;
+                    const cellCenterY = (cy + 0.5) * FOG_CELL_SIZE;
+                    const dist = Math.hypot(cellCenterX - player.x, cellCenterY - player.y);
+                    if (dist < viewRadius) {
+                        fogGrid[cy][cx] = true;
+                    }
+                }
+            }
+        }
+        
+        function isExplored(worldX, worldY) {
+            const cellX = Math.floor(worldX / FOG_CELL_SIZE);
+            const cellY = Math.floor(worldY / FOG_CELL_SIZE);
+            if (cellX < 0 || cellX >= FOG_GRID_SIZE || cellY < 0 || cellY >= FOG_GRID_SIZE) {
+                return false;
+            }
+            return fogGrid[cellY][cellX];
+        }
         
         // Leprechaun system
         let leprechauns = [];
@@ -4711,113 +4748,6 @@
                     ctx.restore();
                 }
             },
-            mountain: {
-                draw: function(ctx, sx, sy, scale, time, obstacle) {
-                    const pulse = 0.7 + Math.sin(time * 0.001 + obstacle.variant) * 0.1;
-                    const radiusX = scale(obstacle.radiusX);
-                    const radiusY = scale(obstacle.radiusY);
-                    
-                    ctx.save();
-                    
-                    // Mountain base - dark rocky terrain
-                    ctx.globalAlpha = 0.6;
-                    ctx.fillStyle = '#1a1a2e';
-                    ctx.beginPath();
-                    ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // Draw multiple mountain peaks
-                    const peakCount = 5 + (obstacle.variant % 3);
-                    const peaks = [];
-                    
-                    // Generate peak positions within the mountain range
-                    for (let i = 0; i < peakCount; i++) {
-                        const angle = (i / peakCount) * Math.PI * 2 + obstacle.variant;
-                        const distFromCenter = 0.3 + Math.random() * 0.5;
-                        const px = sx + Math.cos(angle) * radiusX * distFromCenter * 0.6;
-                        const py = sy + Math.sin(angle) * radiusY * distFromCenter * 0.6;
-                        const peakHeight = scale(80 + Math.random() * 60);
-                        const peakWidth = scale(50 + Math.random() * 40);
-                        peaks.push({ x: px, y: py, height: peakHeight, width: peakWidth });
-                    }
-                    
-                    // Add central peak (tallest)
-                    peaks.push({ 
-                        x: sx, 
-                        y: sy, 
-                        height: scale(120 + obstacle.variant * 10), 
-                        width: scale(70) 
-                    });
-                    
-                    // Draw peaks from back to front (sort by y)
-                    peaks.sort((a, b) => a.y - b.y);
-                    
-                    for (const peak of peaks) {
-                        // Mountain shadow/depth
-                        ctx.globalAlpha = 0.4;
-                        ctx.fillStyle = '#0a0a1a';
-                        ctx.beginPath();
-                        ctx.moveTo(peak.x - peak.width, peak.y);
-                        ctx.lineTo(peak.x, peak.y - peak.height);
-                        ctx.lineTo(peak.x + peak.width, peak.y);
-                        ctx.closePath();
-                        ctx.fill();
-                        
-                        // Mountain body - gradient from dark to lighter
-                        ctx.globalAlpha = 0.7;
-                        const gradient = ctx.createLinearGradient(
-                            peak.x - peak.width, peak.y,
-                            peak.x + peak.width * 0.5, peak.y - peak.height
-                        );
-                        gradient.addColorStop(0, '#2a1a4a');
-                        gradient.addColorStop(0.5, '#3d2a6d');
-                        gradient.addColorStop(1, '#5a3d8a');
-                        ctx.fillStyle = gradient;
-                        ctx.beginPath();
-                        ctx.moveTo(peak.x - peak.width * 0.9, peak.y);
-                        ctx.lineTo(peak.x - peak.width * 0.1, peak.y - peak.height * 0.95);
-                        ctx.lineTo(peak.x + peak.width * 0.1, peak.y - peak.height);
-                        ctx.lineTo(peak.x + peak.width * 0.9, peak.y);
-                        ctx.closePath();
-                        ctx.fill();
-                        
-                        // Snow cap
-                        ctx.globalAlpha = 0.8 * pulse;
-                        ctx.fillStyle = '#ffffff';
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = '#aaaaff';
-                        ctx.beginPath();
-                        ctx.moveTo(peak.x - peak.width * 0.25, peak.y - peak.height * 0.7);
-                        ctx.lineTo(peak.x, peak.y - peak.height);
-                        ctx.lineTo(peak.x + peak.width * 0.25, peak.y - peak.height * 0.7);
-                        ctx.closePath();
-                        ctx.fill();
-                        
-                        // Glowing edge highlight
-                        ctx.globalAlpha = 0.3 * pulse;
-                        ctx.strokeStyle = '#ff88ff';
-                        ctx.shadowBlur = 8;
-                        ctx.shadowColor = '#ff00ff';
-                        ctx.lineWidth = 2;
-                        ctx.beginPath();
-                        ctx.moveTo(peak.x - peak.width * 0.9, peak.y);
-                        ctx.lineTo(peak.x, peak.y - peak.height);
-                        ctx.stroke();
-                    }
-                    
-                    // Outer glow ring
-                    ctx.globalAlpha = 0.15;
-                    ctx.strokeStyle = '#ff00ff';
-                    ctx.lineWidth = 3;
-                    ctx.shadowBlur = 15;
-                    ctx.shadowColor = '#ff00ff';
-                    ctx.beginPath();
-                    ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
-                    ctx.stroke();
-                    
-                    ctx.restore();
-                }
-            },
             tree: {
                 draw: function(ctx, sx, sy, scale, time, obstacle) {
                     const colors = ['#00ffaa', '#00ff66', '#88ff00'];
@@ -4922,51 +4852,72 @@
         function spawnTerrain() {
             terrainObstacles = [];
             
-            // Map area = 4320 * 4320 = 18,662,400
-            // Lake 2-3% each = ~370k-560k sq units -> ellipse with avg radius ~380-420
-            // Mountain 3-4% each = ~560k-747k sq units -> ellipse with avg radius ~420-490
+            // Helper to check if position overlaps existing terrain
+            function overlapsExisting(x, y, radiusX, radiusY, padding = 50) {
+                for (const obs of terrainObstacles) {
+                    if (obs.type === 'tree') {
+                        const dist = Math.hypot(x - obs.x, y - obs.y);
+                        if (dist < Math.max(radiusX, radiusY) + obs.radius + padding) return true;
+                    } else {
+                        const dx = (x - obs.x) / (obs.radiusX + radiusX + padding);
+                        const dy = (y - obs.y) / (obs.radiusY + radiusY + padding);
+                        if (dx * dx + dy * dy < 1) return true;
+                    }
+                }
+                return false;
+            }
             
-            // 2 Large Lakes (2.5% each average)
+            // ===== STEP 1: Spawn 3 Large Lakes (largest elements first) =====
+            // 3x larger than before: base radius ~1000-1200
             const lakePositions = [
-                { x: WORLD.width * 0.25, y: WORLD.height * 0.3 },
-                { x: WORLD.width * 0.75, y: WORLD.height * 0.7 }
+                { x: WORLD.width * 0.22, y: WORLD.height * 0.25 },
+                { x: WORLD.width * 0.78, y: WORLD.height * 0.72 },
+                { x: WORLD.width * 0.5, y: WORLD.height * 0.5 }  // Third lake near center but offset
             ];
             
-            for (let i = 0; i < 2; i++) {
-                const baseRadius = 380 + Math.random() * 40;
+            for (let i = 0; i < 3; i++) {
+                const baseRadius = 1000 + Math.random() * 200; // 3x larger
+                let x, y, attempts = 0;
+                
+                do {
+                    x = lakePositions[i].x + (Math.random() - 0.5) * 600;
+                    y = lakePositions[i].y + (Math.random() - 0.5) * 600;
+                    
+                    // Keep away from map edges
+                    x = Math.max(baseRadius + 100, Math.min(WORLD.width - baseRadius - 100, x));
+                    y = Math.max(baseRadius + 100, Math.min(WORLD.height - baseRadius - 100, y));
+                    
+                    // Third lake: offset from center spawn area
+                    if (i === 2) {
+                        const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
+                        if (centerDist < 600) {
+                            // Push away from center
+                            const angle = Math.atan2(y - WORLD.height/2, x - WORLD.width/2);
+                            x = WORLD.width/2 + Math.cos(angle) * 800;
+                            y = WORLD.height/2 + Math.sin(angle) * 800;
+                        }
+                    }
+                    
+                    attempts++;
+                } while (overlapsExisting(x, y, baseRadius, baseRadius * 0.8, 100) && attempts < 20);
+                
                 terrainObstacles.push({
                     type: 'lake',
-                    x: lakePositions[i].x + (Math.random() - 0.5) * 400,
-                    y: lakePositions[i].y + (Math.random() - 0.5) * 400,
-                    radiusX: baseRadius * (0.9 + Math.random() * 0.3),
-                    radiusY: baseRadius * (0.7 + Math.random() * 0.3),
+                    x: x,
+                    y: y,
+                    radiusX: baseRadius * (0.9 + Math.random() * 0.2),
+                    radiusY: baseRadius * (0.7 + Math.random() * 0.2),
                     variant: i
                 });
             }
             
-            // 2 Mountain Ranges (3.5% each average)
-            const mountainPositions = [
-                { x: WORLD.width * 0.7, y: WORLD.height * 0.25 },
-                { x: WORLD.width * 0.3, y: WORLD.height * 0.75 }
-            ];
+            // ===== STEP 2: Spawn Trees (avoiding lakes and center) =====
+            const treeCount = 30 + Math.floor(Math.random() * 10);
+            const minTreeSpacing = 80; // Minimum distance between trees
             
-            for (let i = 0; i < 2; i++) {
-                const baseRadius = 450 + Math.random() * 40;
-                terrainObstacles.push({
-                    type: 'mountain',
-                    x: mountainPositions[i].x + (Math.random() - 0.5) * 300,
-                    y: mountainPositions[i].y + (Math.random() - 0.5) * 300,
-                    radiusX: baseRadius * (1.0 + Math.random() * 0.4),
-                    radiusY: baseRadius * (0.7 + Math.random() * 0.3),
-                    variant: i
-                });
-            }
-            
-            // Spawn trees (25-35) - these are small circular obstacles
-            const treeCount = 25 + Math.floor(Math.random() * 11);
             for (let i = 0; i < treeCount; i++) {
                 let x, y, attempts = 0;
-                const treeRadius = 20 + Math.random() * 10; // Small collision radius
+                const treeRadius = 20 + Math.random() * 10;
                 
                 do {
                     x = 150 + Math.random() * (WORLD.width - 300);
@@ -4974,24 +4925,31 @@
                     attempts++;
                     
                     // Check not in center spawn area
-                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 350) continue;
+                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 400) continue;
                     
-                    // Check not overlapping existing terrain (lakes/mountains)
+                    // Check not overlapping lakes (with padding)
                     let overlaps = false;
                     for (const obs of terrainObstacles) {
-                        if (obs.type !== 'tree') {
-                            const dx = (x - obs.x) / (obs.radiusX + 100);
-                            const dy = (y - obs.y) / (obs.radiusY + 100);
+                        if (obs.type === 'lake') {
+                            const dx = (x - obs.x) / (obs.radiusX + treeRadius + 50);
+                            const dy = (y - obs.y) / (obs.radiusY + treeRadius + 50);
                             if (dx * dx + dy * dy < 1) {
+                                overlaps = true;
+                                break;
+                            }
+                        } else if (obs.type === 'tree') {
+                            // Check spacing between trees
+                            const dist = Math.hypot(x - obs.x, y - obs.y);
+                            if (dist < minTreeSpacing) {
                                 overlaps = true;
                                 break;
                             }
                         }
                     }
                     if (!overlaps) break;
-                } while (attempts < 30);
+                } while (attempts < 50);
                 
-                if (attempts < 30) {
+                if (attempts < 50) {
                     terrainObstacles.push({
                         type: 'tree',
                         x: x,
@@ -5009,11 +4967,11 @@
         }
         
         function drawTerrain() {
-            // Draw only lakes and mountains (background layer)
+            // Draw only lakes (background layer - player walks over these)
             const time = Date.now();
             
             for (const obs of terrainObstacles) {
-                if (obs.type === 'tree') continue; // Trees drawn separately
+                if (obs.type !== 'lake') continue; // Only lakes in background
                 
                 const visMargin = Math.max(obs.radiusX || 0, obs.radiusY || 0) + 150;
                 if (!camera.isVisible(obs.x, obs.y, visMargin)) continue;
@@ -5034,7 +4992,7 @@
             const time = Date.now();
             
             for (const obs of terrainObstacles) {
-                if (obs.type !== 'tree') continue;
+                if (obs.type !== 'tree') continue; // Only trees in foreground
                 
                 if (!camera.isVisible(obs.x, obs.y, 100)) continue;
                 
@@ -6740,6 +6698,7 @@
                 // Update
                 player.update(dt, input);
                 camera.update();
+                updateFogOfWar();
                 spawnEnemies(effectiveDt);
                 updateShrineSpawning(dt);
                 updateLeprechaunSpawning(dt);
@@ -6979,15 +6938,31 @@
         
         function drawMinimap() {
             const scale = mapSize / WORLD.width;
+            const fogCellScale = FOG_CELL_SIZE * scale;
             
             // Clear minimap
             minimapCtx.clearRect(0, 0, mapSize, mapSize);
             
-            // Background
-            minimapCtx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            // Draw fog of war (unexplored = dark, explored = slightly visible)
+            minimapCtx.fillStyle = 'rgba(0, 0, 0, 0.95)';
             minimapCtx.fillRect(0, 0, mapSize, mapSize);
             
-            // Viewport indicator (accounting for zoom)
+            // Draw explored areas
+            minimapCtx.fillStyle = 'rgba(20, 20, 40, 0.9)';
+            for (let cy = 0; cy < FOG_GRID_SIZE; cy++) {
+                for (let cx = 0; cx < FOG_GRID_SIZE; cx++) {
+                    if (fogGrid[cy] && fogGrid[cy][cx]) {
+                        minimapCtx.fillRect(
+                            cx * fogCellScale,
+                            cy * fogCellScale,
+                            fogCellScale + 0.5,
+                            fogCellScale + 0.5
+                        );
+                    }
+                }
+            }
+            
+            // Viewport indicator (always visible)
             const viewWidth = canvas.width / camera.zoom;
             const viewHeight = canvas.height / camera.zoom;
             minimapCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
@@ -6999,27 +6974,32 @@
                 viewHeight * scale
             );
             
-            // Enemies (as small dots)
+            // Only show entities in explored areas
+            
+            // Enemies (as small dots) - only in explored areas
             minimapCtx.fillStyle = COLORS.magenta;
             for (const enemy of enemies) {
                 if (enemy.dead) continue;
+                if (!isExplored(enemy.x, enemy.y)) continue;
                 const ex = enemy.x * scale;
                 const ey = enemy.y * scale;
                 minimapCtx.fillRect(ex - 1, ey - 1, 2, 2);
             }
             
-            // Gold coins (XP)
-            minimapCtx.fillStyle = '#ffd700';
+            // XP gems - only in explored areas
+            minimapCtx.fillStyle = COLORS.cyan;
             for (const gem of xpGems) {
+                if (!isExplored(gem.x, gem.y)) continue;
                 const gx = gem.x * scale;
                 const gy = gem.y * scale;
                 minimapCtx.fillRect(gx, gy, 1, 1);
             }
             
-            // Shrines (as purple circles)
+            // Shrines - only in explored areas
             minimapCtx.fillStyle = COLORS.shrine;
             for (const shrine of shrines) {
                 if (shrine.activated) continue;
+                if (!isExplored(shrine.x, shrine.y)) continue;
                 const shx = shrine.x * scale;
                 const shy = shrine.y * scale;
                 minimapCtx.beginPath();
@@ -7027,18 +7007,20 @@
                 minimapCtx.fill();
             }
             
-            // Treasure chests (gold = free, silver = paid)
+            // Treasure chests - only in explored areas
             for (const chest of chests) {
                 if (chest.dead || chest.opened) continue;
+                if (!isExplored(chest.x, chest.y)) continue;
                 minimapCtx.fillStyle = chest.isFree ? COLORS.gold : '#c0c0c0';
                 const cx = chest.x * scale;
                 const cy = chest.y * scale;
                 minimapCtx.fillRect(cx - 2, cy - 2, 4, 4);
             }
             
-            // Leprechauns (as green circles with gold border)
+            // Leprechauns - only in explored areas
             for (const lep of leprechauns) {
                 if (lep.dead) continue;
+                if (!isExplored(lep.x, lep.y)) continue;
                 const lx = lep.x * scale;
                 const ly = lep.y * scale;
                 minimapCtx.fillStyle = COLORS.green;
@@ -7050,9 +7032,10 @@
                 minimapCtx.stroke();
             }
             
-            // Bosses (large colored circles with white border)
+            // Bosses - only in explored areas
             for (const boss of bosses) {
                 if (boss.dead) continue;
+                if (!isExplored(boss.x, boss.y)) continue;
                 const bx = boss.x * scale;
                 const by = boss.y * scale;
                 minimapCtx.fillStyle = boss.color;
@@ -7064,7 +7047,7 @@
                 minimapCtx.stroke();
             }
             
-            // Player
+            // Player (always visible)
             minimapCtx.fillStyle = COLORS.cyan;
             minimapCtx.shadowBlur = 5;
             minimapCtx.shadowColor = COLORS.cyan;
@@ -7135,6 +7118,7 @@
             };
             
             player = new Player();
+            initFogGrid();
             spawnTerrain();
             spawnShrines();
             spawnDecorations();
