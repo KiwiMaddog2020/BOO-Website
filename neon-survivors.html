@@ -3457,6 +3457,7 @@
             if (dist > 5) { // Small deadzone
                 input.joystickX = (clampedDist / knobMaxDist) * Math.cos(angle);
                 input.joystickY = (clampedDist / knobMaxDist) * Math.sin(angle);
+                console.log('Joystick updated:', input.joystickX.toFixed(2), input.joystickY.toFixed(2), 'dist:', dist.toFixed(1));
             } else {
                 input.joystickX = 0;
                 input.joystickY = 0;
@@ -3470,6 +3471,7 @@
         
         // Simple touch handling without complex ID tracking
         trackpadZone.addEventListener('touchstart', e => {
+            console.log('touchstart fired, gamePaused:', gamePaused);
             if (gamePaused) return;
             e.preventDefault();
             
@@ -3480,6 +3482,7 @@
             touchActive = true;
             
             const rect = trackpadZone.getBoundingClientRect();
+            console.log('Touch at:', touch.clientX, touch.clientY, 'Rect:', rect.left, rect.top);
             
             // Position joystick at touch point
             joystickCenter = { 
@@ -3505,6 +3508,7 @@
             
             const touch = e.touches[0];
             if (touch) {
+                console.log('trackpad touchmove:', touch.clientX, touch.clientY);
                 updateJoystick(touch.clientX, touch.clientY);
             }
         }, { passive: false });
@@ -3515,6 +3519,7 @@
             
             const touch = e.touches[0];
             if (touch) {
+                console.log('document touchmove:', touch.clientX, touch.clientY);
                 updateJoystick(touch.clientX, touch.clientY);
             }
         }, { passive: false });
@@ -3534,29 +3539,48 @@
         document.addEventListener('touchend', endJoystick);
         document.addEventListener('touchcancel', endJoystick);
         
-        // Debug display for mobile testing - shows joystick values
+        // Debug display for mobile testing
         const debugDiv = document.createElement('div');
         debugDiv.id = 'joystickDebug';
         debugDiv.style.cssText = `
             position: fixed;
             top: 5px;
             right: 5px;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.9);
             color: #0ff;
-            padding: 5px 10px;
-            font-size: 11px;
+            padding: 8px 12px;
+            font-size: 12px;
             font-family: monospace;
             border-radius: 4px;
             z-index: 9999;
             pointer-events: none;
+            max-width: 200px;
+            border: 1px solid #0ff;
         `;
         document.body.appendChild(debugDiv);
         
+        let lastLog = '';
         function updateDebug() {
-            debugDiv.innerHTML = `JX: ${input.joystickX.toFixed(2)}<br>JY: ${input.joystickY.toFixed(2)}<br>Touch: ${touchActive}<br>Run: ${gameRunning}<br>Pause: ${gamePaused}`;
+            debugDiv.innerHTML = `
+                <div style="color:#f0f;font-weight:bold;margin-bottom:4px">DEBUG</div>
+                JX: ${input.joystickX.toFixed(2)}<br>
+                JY: ${input.joystickY.toFixed(2)}<br>
+                Touch: ${touchActive}<br>
+                Center: ${joystickCenter.x.toFixed(0)},${joystickCenter.y.toFixed(0)}<br>
+                Run: ${gameRunning}<br>
+                Pause: ${gamePaused}<br>
+                <div style="color:#ff0;font-size:10px;margin-top:4px">${lastLog}</div>
+            `;
             requestAnimationFrame(updateDebug);
         }
         updateDebug();
+        
+        // Capture logs for debug display
+        const origLog = console.log;
+        console.log = function(...args) {
+            lastLog = args.join(' ').substring(0, 50);
+            origLog.apply(console, args);
+        };
 
         // ===== GAME LOOP =====
         let lastTime = performance.now(); // Fix: Initialize properly to avoid first-frame spike
@@ -3837,21 +3861,10 @@
         // ===== MINIMAP =====
         const minimapCanvas = document.getElementById('minimapCanvas');
         const minimapCtx = minimapCanvas.getContext('2d');
-        
-        // Get actual minimap size (may be scaled by CSS)
-        function getMinimapSize() {
-            return minimapCanvas.offsetWidth || 156;
-        }
+        const mapSize = 156; // Fixed size - CSS handles display scaling
         
         function drawMinimap() {
-            const mapSize = getMinimapSize();
             const scale = mapSize / WORLD.width;
-            
-            // Update canvas internal resolution to match display size
-            if (minimapCanvas.width !== mapSize) {
-                minimapCanvas.width = mapSize;
-                minimapCanvas.height = mapSize;
-            }
             
             // Clear minimap
             minimapCtx.clearRect(0, 0, mapSize, mapSize);
