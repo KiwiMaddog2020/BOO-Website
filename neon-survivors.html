@@ -778,7 +778,7 @@
         }
 
         .menu-btn {
-            padding: 12px 32px;
+            padding: 12px 20px;
             font-size: 16px;
             background: transparent;
             color: #f0f;
@@ -791,14 +791,15 @@
             box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
             margin: 12px;
             touch-action: manipulation;
-            height: 48px;
+            height: 56px;
+            width: 245px;
             display: flex;
             align-items: center;
             justify-content: center;
         }
 
         .menu-btn:hover {
-            background: #0ff;
+            background: rgba(0, 255, 255, 0.5);
             color: #fff;
             box-shadow: 0 0 25px #0ff;
             -webkit-text-stroke: 1px #fff;
@@ -1458,7 +1459,7 @@
         }
         
         .btn-leaderboard:hover {
-            background: #ffaa00;
+            background: rgba(255, 170, 0, 0.5);
             color: #fff;
             box-shadow: 0 0 20px rgba(255, 170, 0, 0.6);
         }
@@ -1709,7 +1710,7 @@
     <div class="menu-overlay" id="menuOverlay">
         <div class="game-title">NEON SURVIVORS</div>
         <div class="game-subtitle">Survive the neon horde</div>
-        <button class="menu-btn" id="startBtn">START</button>
+        <button class="menu-btn" id="startBtn">🎮 START GAME 🎮</button>
         <button class="menu-btn btn-leaderboard" id="leaderboardBtn">🏆 LEADERBOARD 🏆</button>
         <div class="final-stats" id="finalStats" style="display: none;"></div>
     </div>
@@ -1900,6 +1901,16 @@
         
         // Time slow effect multiplier (1 = normal, 0.4 = 60% slower)
         let timeSlowMultiplier = 1;
+        
+        // Boss system
+        let bosses = [];
+        let nextBossTime = 150; // First boss at 2.5 mins (150s)
+        let bossCount = 0; // Track how many bosses spawned
+        
+        // Swarm system (1 min before boss, lasts 30s)
+        let swarmActive = false;
+        let swarmEndTime = 0;
+        let swarmTriggeredForBoss = 0; // Which boss # triggered the current swarm
 
         // Entity limits for performance
         const LIMITS = {
@@ -2369,6 +2380,19 @@
                             spawnParticles(ox, oy, COLORS.gold, 6);
                         }
                     }
+                    
+                    // Check collision with bosses
+                    for (const boss of bosses) {
+                        if (boss.dead) continue;
+                        const dist = Math.hypot(boss.x - ox, boss.y - oy);
+                        if (dist < boss.radius + 14 && boss.orbHitCooldown <= 0) {
+                            const { damage, isCrit } = this.calcDamage(baseDamage);
+                            boss.takeDamage(damage, isCrit);
+                            this.onDealDamage(damage);
+                            boss.orbHitCooldown = 250;
+                            spawnParticles(ox, oy, boss.color, 6);
+                        }
+                    }
                 }
                 
                 // Store for rendering
@@ -2410,6 +2434,17 @@
                         this.onDealDamage(damage);
                     }
                 }
+                
+                // Also hit bosses
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist < radius) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        boss.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                    }
+                }
             }
 
             fireLaser(id, def, state, level, now) {
@@ -2433,25 +2468,27 @@
                 const fireRate = def.baseFireRate * Math.pow(0.92, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
-                // Filter out dead enemies
+                // Filter out dead enemies and include bosses
                 const aliveEnemies = enemies.filter(e => !e.dead);
-                if (aliveEnemies.length === 0) return;
+                const aliveBosses = bosses.filter(b => !b.dead);
+                const allTargets = [...aliveEnemies, ...aliveBosses];
+                if (allTargets.length === 0) return;
                 
                 state.lastFire = now;
                 const targetCount = def.baseTargets + Math.floor(level / 2);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.25);
                 
                 // Efficient random sample instead of full shuffle
-                const targets = randomSample(aliveEnemies, targetCount);
-                for (const enemy of targets) {
+                const targets = randomSample(allTargets, targetCount);
+                for (const target of targets) {
                     const { damage, isCrit } = this.calcDamage(baseDamage);
-                    enemy.takeDamage(damage, isCrit);
+                    target.takeDamage(damage, isCrit);
                     this.onDealDamage(damage);
                     
                     // Visual lightning (with cleanup)
                     if (!state.chainTargets) state.chainTargets = [];
-                    state.chainTargets.push({ x: enemy.x, y: enemy.y, time: now });
-                    spawnParticles(enemy.x, enemy.y, def.color, 8);
+                    state.chainTargets.push({ x: target.x, y: target.y, time: now });
+                    spawnParticles(target.x, target.y, def.color, 8);
                 }
                 
                 // Clean up old chain targets (older than 100ms)
@@ -2518,6 +2555,23 @@
                         this.onDealDamage(damage);
                     }
                 }
+                
+                // Damage bosses in cone
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist > range) continue;
+                    
+                    const angleToBoss = Math.atan2(boss.y - this.y, boss.x - this.x);
+                    let angleDiff = Math.abs(angleToBoss - facing);
+                    if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+                    
+                    if (angleDiff < coneAngle / 2) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        boss.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                    }
+                }
             }
             
             fireBoomerang(id, def, state, level, now) {
@@ -2550,8 +2604,11 @@
                 const fireRate = def.baseFireRate * Math.pow(0.9, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
+                // Include bosses as potential targets
                 const aliveEnemies = enemies.filter(e => !e.dead);
-                if (aliveEnemies.length === 0) return;
+                const aliveBosses = bosses.filter(b => !b.dead);
+                const allTargets = [...aliveEnemies, ...aliveBosses];
+                if (allTargets.length === 0) return;
                 
                 state.lastFire = now;
                 const strikeCount = def.baseStrikes + Math.floor(level / 2);
@@ -2560,20 +2617,20 @@
                 // Store strikes for rendering
                 if (!state.strikes) state.strikes = [];
                 
-                const targets = randomSample(aliveEnemies, strikeCount);
-                for (const enemy of targets) {
+                const targets = randomSample(allTargets, strikeCount);
+                for (const target of targets) {
                     const { damage, isCrit } = this.calcDamage(baseDamage);
-                    enemy.takeDamage(damage, isCrit);
+                    target.takeDamage(damage, isCrit);
                     this.onDealDamage(damage);
                     
                     // Visual lightning strike
                     state.strikes.push({ 
-                        x: enemy.x, 
-                        y: enemy.y, 
+                        x: target.x, 
+                        y: target.y, 
                         time: now,
-                        segments: generateLightning(enemy.x, enemy.y - 400, enemy.x, enemy.y)
+                        segments: generateLightning(target.x, target.y - 400, target.x, target.y)
                     });
-                    spawnParticles(enemy.x, enemy.y, def.color, 12);
+                    spawnParticles(target.x, target.y, def.color, 12);
                 }
                 
                 // Cleanup old strikes
@@ -3667,6 +3724,490 @@
             }
         }
 
+        // ===== MINI BOSS CLASS =====
+        class MiniBoss {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 35;
+                this.speed = 1.2;
+                this.maxHp = 800 + bossCount * 200;
+                this.hp = this.maxHp;
+                this.color = '#ff6600';
+                this.dead = false;
+                this.orbHitCooldown = 0;
+                this.attackCooldown = 0;
+                this.isBoss = true;
+                this.bossType = 'mini';
+            }
+            
+            update(dt) {
+                if (this.dead) return;
+                
+                // Chase player
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const dist = Math.hypot(dx, dy);
+                
+                if (dist > 0) {
+                    this.x += (dx / dist) * this.speed;
+                    this.y += (dy / dist) * this.speed;
+                }
+                
+                // Clamp to world
+                this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
+                
+                // Collision damage
+                if (dist < this.radius + player.radius) {
+                    player.takeDamage(25);
+                }
+                
+                // Spawn minions periodically
+                if (this.attackCooldown <= 0) {
+                    this.spawnMinions();
+                    this.attackCooldown = 5000; // Every 5 seconds
+                }
+                
+                if (this.attackCooldown > 0) this.attackCooldown -= dt;
+                if (this.orbHitCooldown > 0) this.orbHitCooldown -= dt;
+            }
+            
+            spawnMinions() {
+                // Spawn 3-5 swarm enemies around boss
+                const count = 3 + Math.floor(Math.random() * 3);
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2;
+                    const spawnX = this.x + Math.cos(angle) * 60;
+                    const spawnY = this.y + Math.sin(angle) * 60;
+                    enemies.push(new Enemy('swarm', spawnX, spawnY));
+                }
+                spawnParticles(this.x, this.y, this.color, 15);
+            }
+            
+            takeDamage(amount, isCrit = false) {
+                this.hp -= amount;
+                spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
+                
+                if (this.hp <= 0 && !this.dead) {
+                    this.die();
+                }
+            }
+            
+            die() {
+                if (this.dead) return;
+                this.dead = true;
+                kills += 10;
+                DOM.killCount.textContent = kills;
+                
+                // Big explosion
+                spawnParticles(this.x, this.y, this.color, 40);
+                spawnParticles(this.x, this.y, '#ffffff', 25);
+                spawnParticles(this.x, this.y, COLORS.gold, 20);
+                
+                // Drop lots of gold and XP
+                playerGold += 100;
+                updateGoldDisplay();
+                
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    const gemX = this.x + Math.cos(angle) * 30;
+                    const gemY = this.y + Math.sin(angle) * 30;
+                    xpGems.push(new XPGem(gemX, gemY, 15));
+                }
+                
+                showBossDefeatMessage('MINI BOSS');
+            }
+            
+            draw() {
+                if (!camera.isVisible(this.x, this.y)) return;
+                
+                const sx = camera.screenX(this.x);
+                const sy = camera.screenY(this.y);
+                const r = camera.scale(this.radius);
+                
+                ctx.save();
+                
+                // Pulsing glow
+                const pulse = 0.8 + Math.sin(Date.now() * 0.005) * 0.2;
+                ctx.shadowBlur = 30 * pulse;
+                ctx.shadowColor = this.color;
+                
+                // Main body
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner ring
+                ctx.strokeStyle = '#ffaa00';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r * 0.7, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Eyes
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(sx - r * 0.3, sy - r * 0.1, r * 0.15, 0, Math.PI * 2);
+                ctx.arc(sx + r * 0.3, sy - r * 0.1, r * 0.15, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Red pupils
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(sx - r * 0.3, sy - r * 0.1, r * 0.08, 0, Math.PI * 2);
+                ctx.arc(sx + r * 0.3, sy - r * 0.1, r * 0.08, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // HP bar
+                ctx.shadowBlur = 0;
+                const barWidth = r * 2;
+                ctx.fillStyle = '#333';
+                ctx.fillRect(sx - barWidth/2, sy - r - 20, barWidth, 8);
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(sx - barWidth/2, sy - r - 20, barWidth * (this.hp / this.maxHp), 8);
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(sx - barWidth/2, sy - r - 20, barWidth, 8);
+                
+                // "MINI BOSS" label
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${camera.scale(10)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('MINI BOSS', sx, sy - r - 25);
+                
+                ctx.restore();
+            }
+        }
+        
+        // ===== MAJOR BOSS CLASS =====
+        class MajorBoss {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 55;
+                this.speed = 0.8;
+                this.maxHp = 2500 + bossCount * 500;
+                this.hp = this.maxHp;
+                this.color = '#ff00ff';
+                this.dead = false;
+                this.orbHitCooldown = 0;
+                this.attackCooldown = 0;
+                this.chargeTimer = 0;
+                this.isCharging = false;
+                this.chargeTarget = { x: 0, y: 0 };
+                this.isBoss = true;
+                this.bossType = 'major';
+                this.phase = 1; // Phases at 66% and 33% HP
+            }
+            
+            update(dt) {
+                if (this.dead) return;
+                
+                // Phase transitions
+                const hpPercent = this.hp / this.maxHp;
+                if (hpPercent <= 0.33 && this.phase < 3) {
+                    this.phase = 3;
+                    this.speed = 1.4;
+                    spawnParticles(this.x, this.y, '#ff0000', 30);
+                    showBossPhaseWarning('ENRAGED!');
+                } else if (hpPercent <= 0.66 && this.phase < 2) {
+                    this.phase = 2;
+                    this.speed = 1.1;
+                    spawnParticles(this.x, this.y, '#ffaa00', 20);
+                    showBossPhaseWarning('PHASE 2');
+                }
+                
+                // Charge attack
+                if (this.isCharging) {
+                    const dx = this.chargeTarget.x - this.x;
+                    const dy = this.chargeTarget.y - this.y;
+                    const dist = Math.hypot(dx, dy);
+                    
+                    if (dist > 20) {
+                        this.x += (dx / dist) * 8;
+                        this.y += (dy / dist) * 8;
+                    } else {
+                        this.isCharging = false;
+                        // Shockwave on landing
+                        spawnParticles(this.x, this.y, this.color, 25);
+                        // Damage player if close
+                        const playerDist = Math.hypot(player.x - this.x, player.y - this.y);
+                        if (playerDist < 100) {
+                            player.takeDamage(40);
+                            // Knockback
+                            const kbDx = player.x - this.x;
+                            const kbDy = player.y - this.y;
+                            const kbDist = Math.hypot(kbDx, kbDy);
+                            if (kbDist > 0) {
+                                player.x += (kbDx / kbDist) * 80;
+                                player.y += (kbDy / kbDist) * 80;
+                            }
+                        }
+                    }
+                } else {
+                    // Normal chase
+                    const dx = player.x - this.x;
+                    const dy = player.y - this.y;
+                    const dist = Math.hypot(dx, dy);
+                    
+                    if (dist > 0) {
+                        this.x += (dx / dist) * this.speed;
+                        this.y += (dy / dist) * this.speed;
+                    }
+                }
+                
+                // Clamp to world
+                this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
+                
+                // Collision damage
+                const dist = Math.hypot(player.x - this.x, player.y - this.y);
+                if (dist < this.radius + player.radius) {
+                    player.takeDamage(35);
+                }
+                
+                // Attack patterns
+                if (this.attackCooldown <= 0 && !this.isCharging) {
+                    const attack = Math.random();
+                    if (attack < 0.3) {
+                        // Charge attack
+                        this.isCharging = true;
+                        this.chargeTarget = { x: player.x, y: player.y };
+                        spawnParticles(this.x, this.y, '#ff0000', 15);
+                    } else if (attack < 0.6) {
+                        // Spawn minions
+                        this.spawnMinions();
+                    } else {
+                        // Ring of projectiles
+                        this.fireRing();
+                    }
+                    this.attackCooldown = this.phase === 3 ? 2500 : (this.phase === 2 ? 3500 : 4500);
+                }
+                
+                if (this.attackCooldown > 0) this.attackCooldown -= dt;
+                if (this.orbHitCooldown > 0) this.orbHitCooldown -= dt;
+            }
+            
+            spawnMinions() {
+                const count = 4 + this.phase * 2;
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2;
+                    const spawnX = this.x + Math.cos(angle) * 80;
+                    const spawnY = this.y + Math.sin(angle) * 80;
+                    const type = Math.random() < 0.3 ? 'fast' : 'swarm';
+                    enemies.push(new Enemy(type, spawnX, spawnY));
+                }
+                spawnParticles(this.x, this.y, COLORS.green, 20);
+            }
+            
+            fireRing() {
+                // Fire projectiles in a ring (visual effect - damages on contact)
+                const count = 8 + this.phase * 4;
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2;
+                    // Create enemy projectile (use basic enemy that dies fast)
+                    const projX = this.x + Math.cos(angle) * 40;
+                    const projY = this.y + Math.sin(angle) * 40;
+                    const proj = new Enemy('swarm', projX, projY);
+                    proj.hp = 1;
+                    proj.speed = 4;
+                    // Override movement to go in straight line
+                    proj.fixedAngle = angle;
+                    enemies.push(proj);
+                }
+                spawnParticles(this.x, this.y, this.color, 20);
+            }
+            
+            takeDamage(amount, isCrit = false) {
+                this.hp -= amount;
+                spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
+                
+                if (this.hp <= 0 && !this.dead) {
+                    this.die();
+                }
+            }
+            
+            die() {
+                if (this.dead) return;
+                this.dead = true;
+                kills += 25;
+                DOM.killCount.textContent = kills;
+                
+                // Massive explosion
+                for (let i = 0; i < 5; i++) {
+                    setTimeout(() => {
+                        const ox = (Math.random() - 0.5) * 60;
+                        const oy = (Math.random() - 0.5) * 60;
+                        spawnParticles(this.x + ox, this.y + oy, this.color, 30);
+                        spawnParticles(this.x + ox, this.y + oy, '#ffffff', 20);
+                    }, i * 100);
+                }
+                spawnParticles(this.x, this.y, COLORS.gold, 40);
+                
+                // Drop lots of gold and XP
+                playerGold += 250;
+                updateGoldDisplay();
+                
+                for (let i = 0; i < 15; i++) {
+                    const angle = (i / 15) * Math.PI * 2;
+                    const dist = 30 + Math.random() * 40;
+                    const gemX = this.x + Math.cos(angle) * dist;
+                    const gemY = this.y + Math.sin(angle) * dist;
+                    xpGems.push(new XPGem(gemX, gemY, 20));
+                }
+                
+                showBossDefeatMessage('BOSS');
+            }
+            
+            draw() {
+                if (!camera.isVisible(this.x, this.y)) return;
+                
+                const sx = camera.screenX(this.x);
+                const sy = camera.screenY(this.y);
+                const r = camera.scale(this.radius);
+                
+                ctx.save();
+                
+                // Intense pulsing glow (faster in higher phases)
+                const pulseSpeed = 0.003 + this.phase * 0.002;
+                const pulse = 0.7 + Math.sin(Date.now() * pulseSpeed) * 0.3;
+                ctx.shadowBlur = 40 * pulse;
+                ctx.shadowColor = this.phase === 3 ? '#ff0000' : this.color;
+                
+                // Main body
+                const bodyColor = this.phase === 3 ? '#ff0044' : (this.phase === 2 ? '#ff44aa' : this.color);
+                ctx.fillStyle = bodyColor;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner rings
+                ctx.strokeStyle = '#ffaaff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r * 0.75, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r * 0.5, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Core
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(sx, sy, r * 0.25, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Eyes (menacing)
+                ctx.fillStyle = '#000';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(sx - r * 0.35, sy - r * 0.15, r * 0.12, 0, Math.PI * 2);
+                ctx.arc(sx + r * 0.35, sy - r * 0.15, r * 0.12, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Glowing pupils
+                ctx.fillStyle = this.phase === 3 ? '#ff0000' : '#ff00ff';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.beginPath();
+                ctx.arc(sx - r * 0.35, sy - r * 0.15, r * 0.06, 0, Math.PI * 2);
+                ctx.arc(sx + r * 0.35, sy - r * 0.15, r * 0.06, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // HP bar
+                ctx.shadowBlur = 0;
+                const barWidth = r * 2.5;
+                ctx.fillStyle = '#333';
+                ctx.fillRect(sx - barWidth/2, sy - r - 25, barWidth, 10);
+                
+                // HP bar color based on phase
+                const hpColor = this.phase === 3 ? '#ff0000' : (this.phase === 2 ? '#ffaa00' : '#00ff00');
+                ctx.fillStyle = hpColor;
+                ctx.fillRect(sx - barWidth/2, sy - r - 25, barWidth * (this.hp / this.maxHp), 10);
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(sx - barWidth/2, sy - r - 25, barWidth, 10);
+                
+                // "BOSS" label
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${camera.scale(14)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillText('★ BOSS ★', sx, sy - r - 32);
+                
+                ctx.restore();
+            }
+        }
+        
+        // Boss defeat message
+        function showBossDefeatMessage(type) {
+            const msg = document.createElement('div');
+            msg.innerHTML = `<div style="font-size: 32px;">💀 ${type} DEFEATED! 💀</div>`;
+            msg.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: ${COLORS.gold};
+                text-shadow: 0 0 30px ${COLORS.gold}, 0 0 60px #ff00ff;
+                z-index: 9999;
+                pointer-events: none;
+                animation: bossDefeat 2s ease-out forwards;
+            `;
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes bossDefeat {
+                    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+                    20% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+                    80% { opacity: 1; }
+                    100% { opacity: 0; transform: translate(-50%, -80%) scale(1); }
+                }
+            `;
+            document.head.appendChild(style);
+            document.body.appendChild(msg);
+            setTimeout(() => msg.remove(), 2000);
+        }
+        
+        // Boss phase warning
+        function showBossPhaseWarning(text) {
+            const msg = document.createElement('div');
+            msg.innerHTML = `<div style="font-size: 26px;">⚠️ ${text} ⚠️</div>`;
+            msg.style.cssText = `
+                position: fixed;
+                top: 40%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: #ff4444;
+                text-shadow: 0 0 20px #ff0000;
+                z-index: 9999;
+                pointer-events: none;
+                animation: phaseWarn 1.5s ease-out forwards;
+            `;
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes phaseWarn {
+                    0% { opacity: 0; transform: translate(-50%, -50%) scale(2); }
+                    30% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+                    70% { opacity: 1; }
+                    100% { opacity: 0; }
+                }
+            `;
+            document.head.appendChild(style);
+            document.body.appendChild(msg);
+            setTimeout(() => msg.remove(), 1500);
+        }
+
         // ===== TREASURE CHEST CLASS =====
         class TreasureChest {
             constructor(x, y) {
@@ -3729,6 +4270,9 @@
                 const canAfford = this.isFree || playerGold >= this.cost;
                 DOM.chestAccept.disabled = !canAfford;
                 DOM.chestAccept.textContent = this.isFree ? 'TAKE' : (canAfford ? `BUY (${this.cost})` : 'NOT ENOUGH GOLD');
+                
+                // Ensure skip/leave button is visible for regular chests
+                DOM.chestSkip.style.display = '';
                 
                 DOM.chestOverlay.classList.add('active');
             }
@@ -3980,6 +4524,351 @@
             // Bad luck protection check
             if (gameTime >= 600 && legendaryCount === 0 && !guaranteedLegendaryNext) {
                 guaranteedLegendaryNext = true;
+            }
+        }
+
+        // ===== ENVIRONMENT DECORATIONS (TRON STYLE) =====
+        let decorations = [];
+        
+        const DECORATION_TYPES = {
+            holoLake: {
+                draw: function(ctx, sx, sy, scale, time, variant) {
+                    const pulse = 0.4 + Math.sin(time * 0.001 + variant) * 0.15;
+                    const colors = ['#00ffff', '#0088ff', '#00ffaa'];
+                    const color = colors[variant % colors.length];
+                    const width = scale(120 + (variant % 3) * 40);
+                    const height = scale(80 + (variant % 2) * 30);
+                    
+                    ctx.save();
+                    ctx.globalAlpha = pulse * 0.4;
+                    ctx.shadowBlur = 30;
+                    ctx.shadowColor = color;
+                    ctx.fillStyle = color;
+                    
+                    // Lake body (ellipse)
+                    ctx.beginPath();
+                    ctx.ellipse(sx, sy, width/2, height/2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Inner glow rings
+                    ctx.globalAlpha = pulse * 0.6;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(sx, sy, width/3, height/3, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Ripple effect
+                    const ripple = ((time * 0.001 + variant) % 2) / 2;
+                    ctx.globalAlpha = (1 - ripple) * 0.3;
+                    ctx.beginPath();
+                    ctx.ellipse(sx, sy, width/2 * ripple, height/2 * ripple, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    ctx.restore();
+                }
+            },
+            circuitCluster: {
+                draw: function(ctx, sx, sy, scale, time, variant) {
+                    const pulse = (time * 0.002 + variant) % 1;
+                    const size = scale(100 + (variant % 3) * 30);
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 0.35;
+                    ctx.strokeStyle = '#00ff88';
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#00ff88';
+                    ctx.lineWidth = 2;
+                    
+                    // Main circuit lines
+                    const gridSize = size / 5;
+                    
+                    // Horizontal lines
+                    for (let i = 0; i < 4; i++) {
+                        const y = sy - size/2 + gridSize + i * gridSize;
+                        const startX = sx - size/2 + (variant + i) % 2 * gridSize;
+                        const endX = sx + size/2 - (variant + i + 1) % 2 * gridSize;
+                        ctx.beginPath();
+                        ctx.moveTo(startX, y);
+                        ctx.lineTo(endX, y);
+                        ctx.stroke();
+                    }
+                    
+                    // Vertical connectors
+                    for (let i = 0; i < 3; i++) {
+                        const x = sx - size/3 + i * size/3;
+                        ctx.beginPath();
+                        ctx.moveTo(x, sy - size/3);
+                        ctx.lineTo(x, sy + size/3);
+                        ctx.stroke();
+                    }
+                    
+                    // Node points
+                    ctx.fillStyle = '#00ffaa';
+                    ctx.globalAlpha = 0.6;
+                    for (let i = 0; i < 5; i++) {
+                        const nx = sx - size/3 + (i % 3) * size/3;
+                        const ny = sy - size/4 + Math.floor(i / 3) * size/2;
+                        ctx.beginPath();
+                        ctx.arc(nx, ny, scale(4), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    // Traveling data pulse
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillStyle = '#88ffaa';
+                    ctx.shadowBlur = 15;
+                    const pulseX = sx - size/2 + pulse * size;
+                    const pulseY = sy - size/4 + Math.sin(pulse * Math.PI * 2) * size/4;
+                    ctx.beginPath();
+                    ctx.arc(pulseX, pulseY, scale(5), 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.restore();
+                }
+            },
+            lightBarrier: {
+                draw: function(ctx, sx, sy, scale, time, variant) {
+                    const colors = ['#ff00ff', '#00ffff', '#ff6600'];
+                    const color = colors[variant % colors.length];
+                    const isVertical = variant % 2 === 0;
+                    const length = scale(150 + (variant % 4) * 30);
+                    const pulse = 0.6 + Math.sin(time * 0.003 + variant) * 0.4;
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 0.5 * pulse;
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = color;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = scale(4);
+                    
+                    // Main barrier line
+                    ctx.beginPath();
+                    if (isVertical) {
+                        ctx.moveTo(sx, sy - length/2);
+                        ctx.lineTo(sx, sy + length/2);
+                    } else {
+                        ctx.moveTo(sx - length/2, sy);
+                        ctx.lineTo(sx + length/2, sy);
+                    }
+                    ctx.stroke();
+                    
+                    // End nodes
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.8;
+                    ctx.beginPath();
+                    if (isVertical) {
+                        ctx.arc(sx, sy - length/2, scale(8), 0, Math.PI * 2);
+                        ctx.arc(sx, sy + length/2, scale(8), 0, Math.PI * 2);
+                    } else {
+                        ctx.arc(sx - length/2, sy, scale(8), 0, Math.PI * 2);
+                        ctx.arc(sx + length/2, sy, scale(8), 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                    
+                    // Inner glow
+                    ctx.fillStyle = '#ffffff';
+                    ctx.globalAlpha = 0.9;
+                    ctx.beginPath();
+                    if (isVertical) {
+                        ctx.arc(sx, sy - length/2, scale(3), 0, Math.PI * 2);
+                        ctx.arc(sx, sy + length/2, scale(3), 0, Math.PI * 2);
+                    } else {
+                        ctx.arc(sx - length/2, sy, scale(3), 0, Math.PI * 2);
+                        ctx.arc(sx + length/2, sy, scale(3), 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                    
+                    ctx.restore();
+                }
+            },
+            digitalTree: {
+                draw: function(ctx, sx, sy, scale, time, variant) {
+                    const colors = ['#00ffaa', '#00ff66', '#88ff00'];
+                    const color = colors[variant % colors.length];
+                    const sway = Math.sin(time * 0.001 + variant) * scale(2);
+                    const height = scale(60 + (variant % 3) * 20);
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 0.45;
+                    ctx.shadowBlur = 12;
+                    ctx.shadowColor = color;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    
+                    // Trunk
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(sx + sway * 0.3, sy - height * 0.6);
+                    ctx.stroke();
+                    
+                    // Main branches (triangular canopy made of lines)
+                    const levels = 3;
+                    for (let i = 0; i < levels; i++) {
+                        const levelY = sy - height * 0.3 - i * height * 0.25;
+                        const spread = scale(25 - i * 5);
+                        const levelSway = sway * (1 + i * 0.3);
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(sx + levelSway - spread, levelY + scale(15));
+                        ctx.lineTo(sx + levelSway, levelY - scale(10));
+                        ctx.lineTo(sx + levelSway + spread, levelY + scale(15));
+                        ctx.stroke();
+                        
+                        // Horizontal line at base
+                        ctx.beginPath();
+                        ctx.moveTo(sx + levelSway - spread, levelY + scale(15));
+                        ctx.lineTo(sx + levelSway + spread, levelY + scale(15));
+                        ctx.stroke();
+                    }
+                    
+                    // Glowing points (data nodes)
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.7 + Math.sin(time * 0.005 + variant) * 0.3;
+                    for (let i = 0; i < 4; i++) {
+                        const nodeY = sy - height * 0.4 - i * height * 0.15;
+                        const nodeX = sx + sway + (Math.sin(i * 2 + variant) * scale(15));
+                        ctx.beginPath();
+                        ctx.arc(nodeX, nodeY, scale(3), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                }
+            },
+            dataStream: {
+                draw: function(ctx, sx, sy, scale, time, variant) {
+                    const isVertical = variant % 2 === 0;
+                    const length = scale(200 + (variant % 3) * 50);
+                    const color = '#00ffff';
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 0.25;
+                    ctx.strokeStyle = color;
+                    ctx.shadowBlur = 6;
+                    ctx.shadowColor = color;
+                    ctx.lineWidth = scale(20);
+                    ctx.lineCap = 'round';
+                    
+                    // Stream path
+                    ctx.beginPath();
+                    if (isVertical) {
+                        ctx.moveTo(sx, sy - length/2);
+                        ctx.lineTo(sx, sy + length/2);
+                    } else {
+                        ctx.moveTo(sx - length/2, sy);
+                        ctx.lineTo(sx + length/2, sy);
+                    }
+                    ctx.stroke();
+                    
+                    // Flowing data packets
+                    ctx.globalAlpha = 0.8;
+                    ctx.fillStyle = '#88ffff';
+                    ctx.shadowBlur = 12;
+                    
+                    for (let i = 0; i < 5; i++) {
+                        const t = ((time * 0.003 + variant + i * 0.2) % 1);
+                        let px, py;
+                        if (isVertical) {
+                            px = sx;
+                            py = sy - length/2 + t * length;
+                        } else {
+                            px = sx - length/2 + t * length;
+                            py = sy;
+                        }
+                        ctx.beginPath();
+                        ctx.arc(px, py, scale(4), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                }
+            }
+        };
+        
+        function spawnDecorations() {
+            decorations = [];
+            
+            // Spawn holographic lakes (3-5)
+            const lakeCount = 3 + Math.floor(Math.random() * 3);
+            for (let i = 0; i < lakeCount; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = 200 + Math.random() * (WORLD.width - 400);
+                    y = 200 + Math.random() * (WORLD.height - 400);
+                    attempts++;
+                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 400 && attempts < 20);
+                
+                decorations.push({ x, y, type: 'holoLake', variant: i });
+            }
+            
+            // Spawn circuit clusters (5-8)
+            const circuitCount = 5 + Math.floor(Math.random() * 4);
+            for (let i = 0; i < circuitCount; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = 150 + Math.random() * (WORLD.width - 300);
+                    y = 150 + Math.random() * (WORLD.height - 300);
+                    attempts++;
+                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 350 && attempts < 20);
+                
+                decorations.push({ x, y, type: 'circuitCluster', variant: i });
+            }
+            
+            // Spawn light barriers (8-12)
+            const barrierCount = 8 + Math.floor(Math.random() * 5);
+            for (let i = 0; i < barrierCount; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = 150 + Math.random() * (WORLD.width - 300);
+                    y = 150 + Math.random() * (WORLD.height - 300);
+                    attempts++;
+                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 300 && attempts < 20);
+                
+                decorations.push({ x, y, type: 'lightBarrier', variant: i });
+            }
+            
+            // Spawn digital trees (10-15)
+            const treeCount = 10 + Math.floor(Math.random() * 6);
+            for (let i = 0; i < treeCount; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = 100 + Math.random() * (WORLD.width - 200);
+                    y = 100 + Math.random() * (WORLD.height - 200);
+                    attempts++;
+                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 300 && attempts < 20);
+                
+                decorations.push({ x, y, type: 'digitalTree', variant: i });
+            }
+            
+            // Spawn data streams (4-6)
+            const streamCount = 4 + Math.floor(Math.random() * 3);
+            for (let i = 0; i < streamCount; i++) {
+                let x, y, attempts = 0;
+                do {
+                    x = 200 + Math.random() * (WORLD.width - 400);
+                    y = 200 + Math.random() * (WORLD.height - 400);
+                    attempts++;
+                } while (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 350 && attempts < 20);
+                
+                decorations.push({ x, y, type: 'dataStream', variant: i });
+            }
+        }
+        
+        function drawDecorations() {
+            const time = Date.now();
+            
+            for (const dec of decorations) {
+                if (!camera.isVisible(dec.x, dec.y, 150)) continue;
+                
+                const sx = camera.screenX(dec.x);
+                const sy = camera.screenY(dec.y);
+                const scaleFn = (val) => camera.scale(val);
+                
+                const decType = DECORATION_TYPES[dec.type];
+                if (decType && decType.draw) {
+                    decType.draw(ctx, sx, sy, scaleFn, time, dec.variant);
+                }
             }
         }
 
@@ -4250,6 +5139,26 @@
                         player.onDealDamage(damage);
                         this.pierce--;
                         spawnParticles(this.x, this.y, COLORS.gold, 5);
+                        if (this.pierce <= 0) {
+                            this.dead = true;
+                            return;
+                        }
+                    }
+                }
+                
+                // Check collision with bosses
+                for (const boss of bosses) {
+                    if (boss.dead || this.hitEnemies.has(boss)) continue;
+                    
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist < boss.radius + this.radius) {
+                        this.hitEnemies.add(boss);
+                        
+                        const { damage, isCrit } = player.calcDamage(this.damage);
+                        boss.takeDamage(damage, isCrit);
+                        player.onDealDamage(damage);
+                        this.pierce--;
+                        spawnParticles(this.x, this.y, boss.color, 5);
                         if (this.pierce <= 0) {
                             this.dead = true;
                             return;
@@ -4826,6 +5735,11 @@
             // Floor raised to 800ms (was 400), slower scaling
             let currentInterval = Math.max(800, spawnInterval - gameTime * 1.5);
             
+            // SWARM EVENT: 2x spawn rate for 30 seconds before boss
+            if (swarmActive) {
+                currentInterval = currentInterval / 2;
+            }
+            
             // FINAL HORDE: 30 minutes (1800s) - spawn rate doubles every minute gradually
             const finalSwarmTime = 1800; // 30 minutes
             if (gameTime >= finalSwarmTime) {
@@ -4851,6 +5765,11 @@
                 if (gameTime > 60) types.push('tank');
                 if (gameTime > 90) types.push('swarm', 'swarm');
                 
+                // SWARM EVENT: More swarm-type enemies
+                if (swarmActive) {
+                    types.push('swarm', 'swarm', 'fast');
+                }
+                
                 // FINAL HORDE: 30 minutes+ heavily favors swarm enemies
                 if (gameTime >= finalSwarmTime) {
                     types.push('swarm', 'swarm', 'swarm', 'fast');
@@ -4858,6 +5777,11 @@
                 
                 // Spawn count increases slower: every 90s instead of 45s
                 let count = 1 + Math.floor(gameTime / 90);
+                
+                // SWARM EVENT: +50% enemies per wave
+                if (swarmActive) {
+                    count = Math.ceil(count * 1.5);
+                }
                 
                 // FINAL HORDE: 30 minutes+ spawns more enemies per wave
                 if (gameTime >= finalSwarmTime) {
@@ -4921,33 +5845,12 @@
         }
 
         function showLeprechaunWarning() {
-            const warning = document.createElement('div');
-            warning.innerHTML = `<div style="font-size: 28px;">🍀 A LEPRECHAUN APPEARS! 🍀</div>`;
-            warning.style.cssText = `
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                color: ${COLORS.gold};
-                text-shadow: 0 0 20px ${COLORS.gold}, 0 0 40px ${COLORS.green};
-                z-index: 9999;
-                pointer-events: none;
-                animation: lepWarn 2s ease-out forwards;
-            `;
-            
-            const style = document.createElement('style');
-            style.textContent = `
-                @keyframes lepWarn {
-                    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
-                    20% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
-                    80% { opacity: 1; }
-                    100% { opacity: 0; transform: translate(-50%, -80%) scale(1); }
-                }
-            `;
-            document.head.appendChild(style);
-            document.body.appendChild(warning);
-            
-            setTimeout(() => warning.remove(), 2000);
+            showStackedWarning({
+                html: `<div style="font-size: 28px;">🍀 A LEPRECHAUN APPEARS! 🍀</div>`,
+                color: COLORS.gold,
+                textShadow: `0 0 20px ${COLORS.gold}, 0 0 40px ${COLORS.green}`,
+                duration: 2000
+            });
         }
 
         function updateLeprechaunSpawning(dt) {
@@ -4958,6 +5861,162 @@
                 nextLeprechaunSpawn = 120000; // 2 minutes between spawns after first
                 spawnLeprechaun();
             }
+        }
+        
+        // ===== STACKING WARNING SYSTEM =====
+        let activeWarnings = [];
+        
+        function showStackedWarning(options) {
+            const warning = document.createElement('div');
+            warning.className = 'stacked-warning';
+            warning.innerHTML = options.html;
+            warning.style.cssText = `
+                position: fixed;
+                left: 50%;
+                transform: translateX(-50%);
+                color: ${options.color};
+                text-shadow: ${options.textShadow};
+                text-align: center;
+                z-index: 9999;
+                pointer-events: none;
+                opacity: 0;
+                transition: top 0.3s ease-out;
+            `;
+            
+            document.body.appendChild(warning);
+            
+            // Add to active warnings at the beginning (newest first)
+            activeWarnings.unshift(warning);
+            repositionWarnings();
+            
+            // Animate in
+            requestAnimationFrame(() => {
+                warning.style.opacity = '1';
+                warning.style.animation = 'warningPulse 0.5s ease-out';
+            });
+            
+            // Remove after duration
+            setTimeout(() => {
+                warning.style.opacity = '0';
+                warning.style.transform = 'translateX(-50%) translateY(-20px)';
+                setTimeout(() => {
+                    const idx = activeWarnings.indexOf(warning);
+                    if (idx > -1) activeWarnings.splice(idx, 1);
+                    warning.remove();
+                    repositionWarnings();
+                }, 300);
+            }, options.duration - 300);
+        }
+        
+        function repositionWarnings() {
+            const startY = 25; // Start from 25% down
+            const spacing = 60; // Pixels between warnings
+            
+            activeWarnings.forEach((warning, index) => {
+                warning.style.top = `calc(${startY}% + ${index * spacing}px)`;
+            });
+        }
+        
+        // Add warning animation styles once
+        (function() {
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes warningPulse {
+                    0% { transform: translateX(-50%) scale(0.5); }
+                    50% { transform: translateX(-50%) scale(1.15); }
+                    100% { transform: translateX(-50%) scale(1); }
+                }
+                .stacked-warning {
+                    transition: top 0.3s ease-out, opacity 0.3s ease-out, transform 0.3s ease-out;
+                }
+            `;
+            document.head.appendChild(style);
+        })();
+        
+        // ===== BOSS SPAWNING SYSTEM =====
+        function updateBossSpawning(dt) {
+            // Boss schedule: 2.5 mins, 5 mins, 7.5 mins, 10 mins, etc.
+            // Mini boss at odd intervals (2.5, 7.5, 12.5...)
+            // Major boss at even intervals (5, 10, 15...)
+            
+            // Check for swarm trigger (1 minute before next boss)
+            const nextBossNumber = bossCount + 1;
+            const nextBossTimeCalc = nextBossNumber * 150; // 150s = 2.5 mins
+            const swarmTriggerTime = nextBossTimeCalc - 60; // 1 minute before
+            
+            // Start swarm if we haven't triggered it for this boss yet
+            if (gameTime >= swarmTriggerTime && swarmTriggeredForBoss < nextBossNumber) {
+                swarmTriggeredForBoss = nextBossNumber;
+                swarmActive = true;
+                swarmEndTime = gameTime + 30; // 30 seconds duration
+                showSwarmWarning();
+            }
+            
+            // End swarm after 30 seconds
+            if (swarmActive && gameTime >= swarmEndTime) {
+                swarmActive = false;
+            }
+            
+            // Spawn boss at the right time
+            if (gameTime >= nextBossTime) {
+                bossCount++;
+                nextBossTime = (bossCount + 1) * 150; // Schedule next boss
+                
+                // Determine boss type: odd count = mini, even count = major
+                if (bossCount % 2 === 1) {
+                    spawnMiniBoss();
+                } else {
+                    spawnMajorBoss();
+                }
+            }
+        }
+        
+        function spawnMiniBoss() {
+            const angle = Math.random() * Math.PI * 2;
+            const spawnDist = 350;
+            
+            let x = player.x + Math.cos(angle) * spawnDist;
+            let y = player.y + Math.sin(angle) * spawnDist;
+            
+            // Clamp to world bounds
+            x = Math.max(100, Math.min(WORLD.width - 100, x));
+            y = Math.max(100, Math.min(WORLD.height - 100, y));
+            
+            bosses.push(new MiniBoss(x, y));
+            showBossWarning('MINI BOSS', '#ff6600');
+        }
+        
+        function spawnMajorBoss() {
+            const angle = Math.random() * Math.PI * 2;
+            const spawnDist = 400;
+            
+            let x = player.x + Math.cos(angle) * spawnDist;
+            let y = player.y + Math.sin(angle) * spawnDist;
+            
+            // Clamp to world bounds
+            x = Math.max(150, Math.min(WORLD.width - 150, x));
+            y = Math.max(150, Math.min(WORLD.height - 150, y));
+            
+            bosses.push(new MajorBoss(x, y));
+            showBossWarning('★ BOSS ★', '#ff00ff');
+        }
+        
+        function showBossWarning(text, color) {
+            showStackedWarning({
+                html: `<div style="font-size: 36px;">⚠️ ${text} INCOMING! ⚠️</div>`,
+                color: color,
+                textShadow: `0 0 30px ${color}, 0 0 60px #ffffff`,
+                duration: 2500
+            });
+        }
+        
+        function showSwarmWarning() {
+            showStackedWarning({
+                html: `<div style="font-size: 28px;">🌊 ENEMY SWARM! 🌊</div><div style="font-size: 16px; margin-top: 10px;">Enemies spawning 2x faster for 30 seconds!</div>`,
+                color: '#ff4444',
+                textShadow: '0 0 20px #ff0000',
+                duration: 2000
+            });
         }
 
         // ===== FINAL HORDE WARNING =====
@@ -5492,6 +6551,7 @@
                 spawnEnemies(effectiveDt);
                 updateShrineSpawning(dt);
                 updateLeprechaunSpawning(dt);
+                updateBossSpawning(dt);
                 
                 for (const enemy of enemies) {
                     if (!enemy.dead) enemy.update(effectiveDt);
@@ -5509,6 +6569,9 @@
                 for (const chest of chests) {
                     if (!chest.dead) chest.update(dt);
                 }
+                for (const boss of bosses) {
+                    if (!boss.dead) boss.update(effectiveDt);
+                }
                 updateChestSpawning(dt);
                 
                 // Clean up dead entities (in-place for performance)
@@ -5519,6 +6582,7 @@
                 cleanupArray(rainbows, r => r.dead);
                 cleanupArray(ghosts, g => g.dead);
                 cleanupArray(chests, c => c.dead);
+                cleanupArray(bosses, b => b.dead);
                 
                 // Fade out rainbows when their leprechaun dies
                 for (const rainbow of rainbows) {
@@ -5617,6 +6681,9 @@
             
             if (!gameRunning) return;
             
+            // Draw environment decorations (background)
+            drawDecorations();
+            
             // Draw shrines first (under everything)
             for (const shrine of shrines) shrine.draw();
             
@@ -5638,6 +6705,9 @@
             }
             for (const ghost of ghosts) {
                 if (!ghost.dead) ghost.draw();
+            }
+            for (const boss of bosses) {
+                if (!boss.dead) boss.draw();
             }
             for (const proj of projectiles) proj.draw();
             player.draw();
@@ -5781,6 +6851,20 @@
                 minimapCtx.stroke();
             }
             
+            // Bosses (large colored circles with white border)
+            for (const boss of bosses) {
+                if (boss.dead) continue;
+                const bx = boss.x * scale;
+                const by = boss.y * scale;
+                minimapCtx.fillStyle = boss.color;
+                minimapCtx.strokeStyle = '#ffffff';
+                minimapCtx.lineWidth = 2;
+                minimapCtx.beginPath();
+                minimapCtx.arc(bx, by, boss.bossType === 'major' ? 7 : 5, 0, Math.PI * 2);
+                minimapCtx.fill();
+                minimapCtx.stroke();
+            }
+            
             // Player
             minimapCtx.fillStyle = COLORS.cyan;
             minimapCtx.shadowBlur = 5;
@@ -5815,6 +6899,18 @@
             magnetPulseActive = false;
             timeSlowMultiplier = 1;
             
+            // Reset boss system
+            bosses = [];
+            bossCount = 0;
+            nextBossTime = 150; // First boss at 2.5 mins
+            swarmActive = false;
+            swarmEndTime = 0;
+            swarmTriggeredForBoss = 0;
+            
+            // Clear any active warnings
+            activeWarnings.forEach(w => w.remove());
+            activeWarnings = [];
+            
             // Reset chest/legendary tracking
             legendaryCount = 0;
             lastLegendaryTime = 0;
@@ -5841,6 +6937,7 @@
             
             player = new Player();
             spawnShrines();
+            spawnDecorations();
             spawnInitialChests();
             
             DOM.menuOverlay.classList.add('hidden');
