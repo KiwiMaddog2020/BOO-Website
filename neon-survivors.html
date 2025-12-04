@@ -37,7 +37,8 @@
             gap: 4px;
             padding: 6px;
             width: fit-content;
-            height: fit-content;
+            /* Fill available height in iframe */
+            height: 100%;
             max-width: 100%;
             max-height: 100%;
             transform: translateZ(0);
@@ -126,15 +127,16 @@
             justify-content: space-between;
             align-items: center;
             width: 100%;
-            padding: 0 4px;
+            padding: 2px 4px;
             box-sizing: border-box;
+            flex-shrink: 0;
         }
 
         .bottom-left, .bottom-right {
             display: flex;
             flex-direction: column;
             gap: 2px;
-            width: 80px;
+            min-width: 60px;
             flex-shrink: 0;
         }
 
@@ -149,6 +151,7 @@
             justify-content: center;
             gap: 2px;
             flex: 1;
+            min-width: 0;
         }
 
         .bottom-right {
@@ -562,11 +565,12 @@
             justify-content: flex-start;
             align-items: center;
             width: 100%;
-            height: 290px;
-            min-height: 290px;
+            /* Responsive height - use flex-grow to fill available space */
+            height: auto;
+            min-height: 180px;
+            flex: 1 1 auto;
             padding: 0px 12px 8px 12px;
             box-sizing: border-box;
-            flex-shrink: 0;
             /* Touch control */
             touch-action: none;
             pointer-events: auto;
@@ -816,6 +820,62 @@
             .kills { font-size: 10px; }
             .weapon-icon { width: 28px; height: 28px; font-size: 14px; }
             .weapons-display { max-width: 100px; gap: 3px; }
+            
+            /* Smaller minimap on mobile */
+            .minimap-canvas {
+                width: 120px !important;
+                height: 120px !important;
+            }
+            
+            /* Compact trackpad zone */
+            .trackpad-zone {
+                min-height: 140px;
+                padding: 4px 8px 4px 8px;
+            }
+            
+            .trackpad-spacer {
+                min-height: 30px;
+            }
+            
+            .trackpad-instructions {
+                height: 20px;
+                min-height: 20px;
+                font-size: 10px;
+            }
+            
+            /* Compact bottom bar */
+            .bottom-bar {
+                padding: 0 2px;
+            }
+            
+            .bottom-hp-bar {
+                width: 120px;
+            }
+            
+            .game-level-indicator {
+                font-size: 11px;
+                margin-top: 3px;
+            }
+        }
+        
+        /* Extra small screens */
+        @media (max-width: 400px) {
+            .minimap-canvas {
+                width: 100px !important;
+                height: 100px !important;
+            }
+            
+            .trackpad-zone {
+                min-height: 120px;
+            }
+            
+            .bottom-hp-bar {
+                width: 100px;
+            }
+            
+            .timer { font-size: 12px; }
+            .kills { font-size: 9px; }
+            .weapon-icon { width: 24px; height: 24px; font-size: 12px; }
         }
         
         /* ========== SCORE MODAL ========== */
@@ -1296,18 +1356,36 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Responsive canvas sizing based on device
+        // Responsive canvas sizing based on available space
         function resizeCanvas() {
-            const maxWidth = Math.min(window.innerWidth - 20, 800);
-            const maxHeight = Math.min(window.innerHeight - 180, 600); // Leave room for controls
+            // Calculate available space more accurately for iframe context
+            const containerPadding = 12; // game-container padding
+            const bottomBarHeight = 50; // bottom bar approximate height
+            const xpBarHeight = 10;
+            const minTrackpadHeight = 140; // minimum for touch controls
+            
+            // Available width (container width minus padding and border)
+            const availableWidth = Math.min(window.innerWidth - containerPadding * 2 - 6, 800);
+            
+            // Available height for canvas (leave room for bottom bar, xp bar, trackpad)
+            const controlsHeight = bottomBarHeight + xpBarHeight + minTrackpadHeight + 20;
+            const availableHeight = Math.min(window.innerHeight - controlsHeight, 600);
+            
             const aspect = 4 / 3;
             
-            if (maxWidth / maxHeight > aspect) {
-                canvas.height = maxHeight;
-                canvas.width = maxHeight * aspect;
+            // Size canvas to fit available space while maintaining aspect ratio
+            if (availableWidth / availableHeight > aspect) {
+                canvas.height = Math.max(200, availableHeight);
+                canvas.width = canvas.height * aspect;
             } else {
-                canvas.width = maxWidth;
-                canvas.height = maxWidth / aspect;
+                canvas.width = Math.max(270, availableWidth);
+                canvas.height = canvas.width / aspect;
+            }
+            
+            // Ensure canvas doesn't exceed available width
+            if (canvas.width > availableWidth) {
+                canvas.width = availableWidth;
+                canvas.height = canvas.width / aspect;
             }
         }
         resizeCanvas();
@@ -3362,6 +3440,7 @@
         const joystickKnob = document.getElementById('joystickKnob');
         
         let touchActive = false;
+        let activeTouchId = null; // Track specific touch for multi-touch support
         let joystickCenter = { x: 0, y: 0 };
         const joystickRadius = 60; // Half of overlay size
         const knobMaxDist = 40;    // Max distance knob can move
@@ -3390,24 +3469,36 @@
             joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
         }
         
+        // Helper to find our tracked touch in a TouchList
+        function findTouch(touches, id) {
+            for (let i = 0; i < touches.length; i++) {
+                if (touches[i].identifier === id) return touches[i];
+            }
+            return null;
+        }
+        
         trackpadZone.addEventListener('touchstart', e => {
             if (gamePaused) return; // Don't activate joystick when overlays are showing
             e.preventDefault();
             e.stopPropagation();
-            touchActive = true;
             
-            const touch = e.touches[0];
+            const touch = e.changedTouches[0];
+            touchActive = true;
+            activeTouchId = touch.identifier; // Track this specific touch
+            
             const rect = trackpadZone.getBoundingClientRect();
             
-            // Position joystick at touch point
+            // Position joystick at touch point (use pageX/pageY for iframe compatibility)
             joystickCenter = { 
                 x: touch.clientX, 
                 y: touch.clientY 
             };
             
             // Show joystick overlay at touch position (relative to trackpad)
-            joystickOverlay.style.left = (touch.clientX - rect.left - joystickRadius) + 'px';
-            joystickOverlay.style.top = (touch.clientY - rect.top - joystickRadius) + 'px';
+            const overlayLeft = touch.clientX - rect.left - joystickRadius;
+            const overlayTop = touch.clientY - rect.top - joystickRadius;
+            joystickOverlay.style.left = overlayLeft + 'px';
+            joystickOverlay.style.top = overlayTop + 'px';
             joystickOverlay.classList.add('active');
             
             // Reset knob and input
@@ -3417,37 +3508,50 @@
         }, { passive: false });
 
         trackpadZone.addEventListener('touchmove', e => {
-            if (!touchActive || gamePaused) return;
+            if (!touchActive || gamePaused || activeTouchId === null) return;
             e.preventDefault();
             e.stopPropagation();
             
-            const touch = e.touches[0];
-            updateJoystick(touch.clientX, touch.clientY);
+            const touch = findTouch(e.changedTouches, activeTouchId) || e.changedTouches[0];
+            if (touch) {
+                updateJoystick(touch.clientX, touch.clientY);
+            }
         }, { passive: false });
 
+        // Also listen on document for when finger moves outside trackpad
         document.addEventListener('touchmove', e => {
-            if (!touchActive || gamePaused) return;
-            e.preventDefault();
+            if (!touchActive || gamePaused || activeTouchId === null) return;
             
-            const touch = e.touches[0];
-            updateJoystick(touch.clientX, touch.clientY);
+            const touch = findTouch(e.changedTouches, activeTouchId);
+            if (touch) {
+                e.preventDefault();
+                updateJoystick(touch.clientX, touch.clientY);
+            }
         }, { passive: false });
 
-        document.addEventListener('touchend', e => {
+        function resetJoystick() {
             touchActive = false;
+            activeTouchId = null;
             input.joystickX = 0;
             input.joystickY = 0;
             
             // Hide joystick and reset knob
             joystickOverlay.classList.remove('active');
             joystickKnob.style.transform = 'translate(-50%, -50%)';
+        }
+
+        document.addEventListener('touchend', e => {
+            // Check if our tracked touch ended
+            if (activeTouchId !== null) {
+                const touch = findTouch(e.changedTouches, activeTouchId);
+                if (touch) {
+                    resetJoystick();
+                }
+            }
         });
         
         document.addEventListener('touchcancel', e => {
-            touchActive = false;
-            input.joystickX = 0;
-            input.joystickY = 0;
-            joystickOverlay.classList.remove('active');
+            resetJoystick();
             joystickKnob.style.transform = 'translate(-50%, -50%)';
         });
 
@@ -3730,10 +3834,21 @@
         // ===== MINIMAP =====
         const minimapCanvas = document.getElementById('minimapCanvas');
         const minimapCtx = minimapCanvas.getContext('2d');
-        const mapSize = 156;
+        
+        // Get actual minimap size (may be scaled by CSS)
+        function getMinimapSize() {
+            return minimapCanvas.offsetWidth || 156;
+        }
         
         function drawMinimap() {
+            const mapSize = getMinimapSize();
             const scale = mapSize / WORLD.width;
+            
+            // Update canvas internal resolution to match display size
+            if (minimapCanvas.width !== mapSize) {
+                minimapCanvas.width = mapSize;
+                minimapCanvas.height = mapSize;
+            }
             
             // Clear minimap
             minimapCtx.clearRect(0, 0, mapSize, mapSize);
