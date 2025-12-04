@@ -3440,7 +3440,6 @@
         const joystickKnob = document.getElementById('joystickKnob');
         
         let touchActive = false;
-        let activeTouchId = null; // Track specific touch for multi-touch support
         let joystickCenter = { x: 0, y: 0 };
         const joystickRadius = 60; // Half of overlay size
         const knobMaxDist = 40;    // Max distance knob can move
@@ -3469,36 +3468,28 @@
             joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
         }
         
-        // Helper to find our tracked touch in a TouchList
-        function findTouch(touches, id) {
-            for (let i = 0; i < touches.length; i++) {
-                if (touches[i].identifier === id) return touches[i];
-            }
-            return null;
-        }
-        
+        // Simple touch handling without complex ID tracking
         trackpadZone.addEventListener('touchstart', e => {
-            if (gamePaused) return; // Don't activate joystick when overlays are showing
+            if (gamePaused) return;
             e.preventDefault();
-            e.stopPropagation();
             
-            const touch = e.changedTouches[0];
+            // Tell parent page to lock scrolling
+            try { parent.postMessage({ type: 'gameTouch', action: 'start' }, '*'); } catch(err) {}
+            
+            const touch = e.touches[0];
             touchActive = true;
-            activeTouchId = touch.identifier; // Track this specific touch
             
             const rect = trackpadZone.getBoundingClientRect();
             
-            // Position joystick at touch point (use pageX/pageY for iframe compatibility)
+            // Position joystick at touch point
             joystickCenter = { 
                 x: touch.clientX, 
                 y: touch.clientY 
             };
             
-            // Show joystick overlay at touch position (relative to trackpad)
-            const overlayLeft = touch.clientX - rect.left - joystickRadius;
-            const overlayTop = touch.clientY - rect.top - joystickRadius;
-            joystickOverlay.style.left = overlayLeft + 'px';
-            joystickOverlay.style.top = overlayTop + 'px';
+            // Show joystick overlay at touch position
+            joystickOverlay.style.left = (touch.clientX - rect.left - joystickRadius) + 'px';
+            joystickOverlay.style.top = (touch.clientY - rect.top - joystickRadius) + 'px';
             joystickOverlay.classList.add('active');
             
             // Reset knob and input
@@ -3507,53 +3498,65 @@
             input.joystickY = 0;
         }, { passive: false });
 
+        // Handle touchmove on trackpad
         trackpadZone.addEventListener('touchmove', e => {
-            if (!touchActive || gamePaused || activeTouchId === null) return;
+            if (!touchActive) return;
             e.preventDefault();
-            e.stopPropagation();
             
-            const touch = findTouch(e.changedTouches, activeTouchId) || e.changedTouches[0];
+            const touch = e.touches[0];
             if (touch) {
                 updateJoystick(touch.clientX, touch.clientY);
             }
         }, { passive: false });
 
-        // Also listen on document for when finger moves outside trackpad
+        // Handle touchmove on entire document (for when finger leaves trackpad)
         document.addEventListener('touchmove', e => {
-            if (!touchActive || gamePaused || activeTouchId === null) return;
+            if (!touchActive) return;
             
-            const touch = findTouch(e.changedTouches, activeTouchId);
+            const touch = e.touches[0];
             if (touch) {
-                e.preventDefault();
                 updateJoystick(touch.clientX, touch.clientY);
             }
         }, { passive: false });
 
-        function resetJoystick() {
+        // Handle touch end
+        function endJoystick() {
             touchActive = false;
-            activeTouchId = null;
             input.joystickX = 0;
             input.joystickY = 0;
-            
-            // Hide joystick and reset knob
             joystickOverlay.classList.remove('active');
             joystickKnob.style.transform = 'translate(-50%, -50%)';
+            
+            // Tell parent page to unlock scrolling
+            try { parent.postMessage({ type: 'gameTouch', action: 'end' }, '*'); } catch(err) {}
         }
-
-        document.addEventListener('touchend', e => {
-            // Check if our tracked touch ended
-            if (activeTouchId !== null) {
-                const touch = findTouch(e.changedTouches, activeTouchId);
-                if (touch) {
-                    resetJoystick();
-                }
-            }
-        });
         
-        document.addEventListener('touchcancel', e => {
-            resetJoystick();
-            joystickKnob.style.transform = 'translate(-50%, -50%)';
-        });
+        document.addEventListener('touchend', endJoystick);
+        document.addEventListener('touchcancel', endJoystick);
+        
+        // Debug display for mobile testing - shows joystick values
+        const debugDiv = document.createElement('div');
+        debugDiv.id = 'joystickDebug';
+        debugDiv.style.cssText = `
+            position: fixed;
+            top: 5px;
+            right: 5px;
+            background: rgba(0,0,0,0.8);
+            color: #0ff;
+            padding: 5px 10px;
+            font-size: 11px;
+            font-family: monospace;
+            border-radius: 4px;
+            z-index: 9999;
+            pointer-events: none;
+        `;
+        document.body.appendChild(debugDiv);
+        
+        function updateDebug() {
+            debugDiv.innerHTML = `JX: ${input.joystickX.toFixed(2)}<br>JY: ${input.joystickY.toFixed(2)}<br>Touch: ${touchActive}<br>Run: ${gameRunning}<br>Pause: ${gamePaused}`;
+            requestAnimationFrame(updateDebug);
+        }
+        updateDebug();
 
         // ===== GAME LOOP =====
         let lastTime = performance.now(); // Fix: Initialize properly to avoid first-frame spike
