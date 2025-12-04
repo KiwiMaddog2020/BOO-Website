@@ -4852,6 +4852,9 @@
         function spawnTerrain() {
             terrainObstacles = [];
             
+            // Minimum corridor width for player to pass (player radius is 12)
+            const MIN_CORRIDOR = 120;
+            
             // Helper to check if position overlaps existing terrain
             function overlapsExisting(x, y, radiusX, radiusY, padding = 50) {
                 for (const obs of terrainObstacles) {
@@ -4870,16 +4873,62 @@
                 return false;
             }
             
-            // ===== STEP 1: Spawn 3 Large Lakes (spread across map quadrants) =====
-            // Lakes placed in different zones to ensure spread
+            // Check if obstacle blocks edge access (player must walk around perimeter)
+            function blocksEdge(x, y, radiusX, radiusY) {
+                const edgeBuffer = MIN_CORRIDOR + 50;
+                // Check all four edges
+                if (x - radiusX < edgeBuffer) return true;  // Too close to left
+                if (x + radiusX > WORLD.width - edgeBuffer) return true;  // Too close to right
+                if (y - radiusY < edgeBuffer) return true;  // Too close to top
+                if (y + radiusY > WORLD.height - edgeBuffer) return true;  // Too close to bottom
+                return false;
+            }
+            
+            // Check if two obstacles create a blocking corridor
+            function createsBlockage(x, y, radiusX, radiusY) {
+                for (const obs of terrainObstacles) {
+                    if (obs.type !== 'lake') continue;
+                    
+                    // Check horizontal gap (for vertical corridors)
+                    const horizontalGap = Math.abs(x - obs.x) - radiusX - obs.radiusX;
+                    const verticalOverlap = Math.abs(y - obs.y) < radiusY + obs.radiusY;
+                    
+                    // Check vertical gap (for horizontal corridors)
+                    const verticalGap = Math.abs(y - obs.y) - radiusY - obs.radiusY;
+                    const horizontalOverlap = Math.abs(x - obs.x) < radiusX + obs.radiusX;
+                    
+                    // If obstacles overlap in one axis and gap is too small in other
+                    if (verticalOverlap && horizontalGap > 0 && horizontalGap < MIN_CORRIDOR) return true;
+                    if (horizontalOverlap && verticalGap > 0 && verticalGap < MIN_CORRIDOR) return true;
+                    
+                    // Check if this creates a corner trap with map edge
+                    // Left edge trap
+                    if (x < WORLD.width * 0.3 && obs.x < WORLD.width * 0.3) {
+                        if (x - radiusX < MIN_CORRIDOR * 2 || obs.x - obs.radiusX < MIN_CORRIDOR * 2) {
+                            if (Math.abs(y - obs.y) < radiusY + obs.radiusY + MIN_CORRIDOR) return true;
+                        }
+                    }
+                    // Right edge trap
+                    if (x > WORLD.width * 0.7 && obs.x > WORLD.width * 0.7) {
+                        if (x + radiusX > WORLD.width - MIN_CORRIDOR * 2 || obs.x + obs.radiusX > WORLD.width - MIN_CORRIDOR * 2) {
+                            if (Math.abs(y - obs.y) < radiusY + obs.radiusY + MIN_CORRIDOR) return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            
+            // ===== STEP 1: Spawn 3 Lakes (spread across map, ensuring accessibility) =====
+            // Smaller lakes to ensure room for corridors
             const lakeZones = [
-                { minX: 0.1, maxX: 0.4, minY: 0.1, maxY: 0.4 },      // Top-left quadrant
-                { minX: 0.6, maxX: 0.9, minY: 0.6, maxY: 0.9 },      // Bottom-right quadrant
-                { minX: 0.6, maxX: 0.9, minY: 0.1, maxY: 0.4 }       // Top-right quadrant
+                { minX: 0.15, maxX: 0.35, minY: 0.15, maxY: 0.35 },  // Top-left
+                { minX: 0.65, maxX: 0.85, minY: 0.65, maxY: 0.85 },  // Bottom-right
+                { minX: 0.65, maxX: 0.85, minY: 0.15, maxY: 0.35 }   // Top-right
             ];
             
             for (let i = 0; i < 3; i++) {
-                const baseRadius = 900 + Math.random() * 200;
+                // Slightly smaller lakes to ensure corridors
+                const baseRadius = 700 + Math.random() * 200;
                 const radiusX = baseRadius * (0.9 + Math.random() * 0.2);
                 const radiusY = baseRadius * (0.7 + Math.random() * 0.2);
                 
@@ -4893,25 +4942,24 @@
                     x = WORLD.width * (zone.minX + Math.random() * (zone.maxX - zone.minX));
                     y = WORLD.height * (zone.minY + Math.random() * (zone.maxY - zone.minY));
                     
-                    // Keep away from map edges
-                    x = Math.max(radiusX + 150, Math.min(WORLD.width - radiusX - 150, x));
-                    y = Math.max(radiusY + 150, Math.min(WORLD.height - radiusY - 150, y));
-                    
-                    // Keep away from center spawn area (600 unit radius)
-                    const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
-                    if (centerDist < 600 + Math.max(radiusX, radiusY)) {
-                        attempts++;
-                        continue;
-                    }
-                    
-                    // Check no overlap with existing lakes (200 unit padding between lakes)
-                    if (!overlapsExisting(x, y, radiusX, radiusY, 200)) {
-                        placed = true;
-                        break;
-                    }
-                    
                     attempts++;
-                } while (attempts < 30);
+                    
+                    // Check edge access is maintained
+                    if (blocksEdge(x, y, radiusX, radiusY)) continue;
+                    
+                    // Keep away from center spawn area
+                    const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
+                    if (centerDist < 500 + Math.max(radiusX, radiusY)) continue;
+                    
+                    // Check no overlap with existing lakes
+                    if (overlapsExisting(x, y, radiusX, radiusY, MIN_CORRIDOR)) continue;
+                    
+                    // Check this doesn't create blocking corridors
+                    if (createsBlockage(x, y, radiusX, radiusY)) continue;
+                    
+                    placed = true;
+                    break;
+                } while (attempts < 40);
                 
                 if (placed) {
                     terrainObstacles.push({
@@ -4925,17 +4973,18 @@
                 }
             }
             
-            // ===== STEP 2: Spawn Trees (avoiding lakes and center) =====
-            const treeCount = 30 + Math.floor(Math.random() * 10);
-            const minTreeSpacing = 80; // Minimum distance between trees
+            // ===== STEP 2: Spawn Trees (avoiding lakes, edges, and blocking paths) =====
+            const treeCount = 25 + Math.floor(Math.random() * 10);
+            const minTreeSpacing = 100; // Increased spacing to prevent walls
+            const edgeBuffer = 200; // Keep trees away from edges
             
             for (let i = 0; i < treeCount; i++) {
                 let x, y, attempts = 0;
                 const treeRadius = 20 + Math.random() * 10;
                 
                 do {
-                    x = 150 + Math.random() * (WORLD.width - 300);
-                    y = 150 + Math.random() * (WORLD.height - 300);
+                    x = edgeBuffer + Math.random() * (WORLD.width - edgeBuffer * 2);
+                    y = edgeBuffer + Math.random() * (WORLD.height - edgeBuffer * 2);
                     attempts++;
                     
                     // Check not in center spawn area
@@ -4945,8 +4994,8 @@
                     let overlaps = false;
                     for (const obs of terrainObstacles) {
                         if (obs.type === 'lake') {
-                            const dx = (x - obs.x) / (obs.radiusX + treeRadius + 50);
-                            const dy = (y - obs.y) / (obs.radiusY + treeRadius + 50);
+                            const dx = (x - obs.x) / (obs.radiusX + treeRadius + 80);
+                            const dy = (y - obs.y) / (obs.radiusY + treeRadius + 80);
                             if (dx * dx + dy * dy < 1) {
                                 overlaps = true;
                                 break;
