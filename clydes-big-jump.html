@@ -953,10 +953,10 @@
         // Pipes
         let pipes = [];
         const pipeWidth = 52;
-        const pipeGap = 205;
+        const pipeGap = 200;
         const pipeSpeed = 1.0;
         let pipeSpawnTimer = 0;
-        const pipeSpawnInterval = 300;
+        const pipeSpawnInterval = 295;
 
         // Particles for trail effect
         let particles = [];
@@ -988,20 +988,19 @@
             for (let y = 0; y < 600; y += gridSpacing) {
                 bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(400, y); bgCtx.stroke();
             }
+            
+            // Bake static colorful stars into background
+            const starColors = ['#0ff', '#ff00ff', '#ff6600', '#00ffcc', '#ff3366', '#9b30ff', '#00ff88'];
+            bgCtx.globalAlpha = 0.6;
+            for (let i = 0; i < 25; i++) {
+                bgCtx.fillStyle = starColors[Math.floor(Math.random() * starColors.length)];
+                bgCtx.beginPath();
+                bgCtx.arc(Math.random() * 400, Math.random() * 600, Math.random() * 1.5 + 0.5, 0, Math.PI * 2);
+                bgCtx.fill();
+            }
+            bgCtx.globalAlpha = 1;
         }
         createBgGridCache();
-        
-        // Background stars (reduced for mobile/Safari performance)
-        const stars = [];
-        const starCount = isLowPerf ? 3 : 8;
-        for (let i = 0; i < starCount; i++) {
-            stars.push({
-                x: Math.random() * 400,
-                y: Math.random() * 600,
-                size: Math.random() * 1.5 + 0.5,
-                color: ['#0ff', '#ff00ff', '#ff6600', '#00ffcc'][Math.floor(Math.random() * 4)]
-            });
-        }
         
         // Score pop animation
         let scorePop = 0;
@@ -1138,6 +1137,10 @@
                 stalkPattern: stalkPattern
             };
             
+            // Wider stalks get larger caps
+            const widerStalks = ['stocky', 'bulge'];
+            const capScale = widerStalks.includes(stalkType) ? 1.12 : 1.0;
+            
             const pipeObj = {
                 x: 400,
                 gapY: gapY,
@@ -1146,6 +1149,7 @@
                 stalkPattern: stalkPattern,
                 capColorIndex: capColorIndex,
                 stemColorIndex: stemColorIndex,
+                capScale: capScale,
                 topSpots: Math.floor(Math.random() * 8) + 1,
                 topSpotColor: Math.floor(Math.random() * topSpotColors.length),
                 highlightCount: [1, 2, 2, 3, 3, 3, 5, 5][Math.floor(Math.random() * 8)],
@@ -1163,9 +1167,10 @@
         
         // Create cached mushroom cap canvas
         function createCachedCap(pipe, isTop) {
-            const capWidth = 102;  // 7% larger than original 95
-            const capHeight = 51;  // 7% larger than original 48
-            const padding = 10; // Extra padding for outline
+            const scale = pipe.capScale || 1.0;
+            const capWidth = Math.round(102 * scale);  // Base 7% larger, then scaled for wider stalks
+            const capHeight = Math.round(51 * scale);
+            const padding = 12; // Extra padding for outline
             const canvasWidth = capWidth + padding * 2;
             const canvasHeight = capHeight + padding * 2;
             
@@ -1749,14 +1754,15 @@
         }
 
         function drawPixelMushroom(ctx, x, gapY, pipe, isTop) {
-            const capWidth = 102;  // 7% larger than original 95
-            const capHeight = 51;  // 7% larger than original 48
-            const stemWidth = 28;  // 7% larger than original 26
+            const scale = pipe.capScale || 1.0;
+            const capWidth = Math.round(102 * scale);  // Base 7% larger, then scaled for wider stalks
+            const capHeight = Math.round(51 * scale);
+            const stemWidth = Math.round(28 * scale);
             const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
             const stalkType = pipe.stalkType || 'straight';
             const stalkPattern = pipe.stalkPattern || 'plain';
             const centerX = x + pipeWidth / 2;
-            const padding = 10; // Must match createCachedCap padding
+            const padding = 12; // Must match createCachedCap padding
             
             if (isTop) {
                 const capY = gapY - capHeight;
@@ -1783,13 +1789,8 @@
             ctx.save();
             ctx.scale(scale, scale);
 
-            // Use cached background with grid (much faster than drawing every frame)
+            // Use cached background with grid and static stars
             ctx.drawImage(bgGridCanvas, 0, 0);
-            
-            // Stars
-            ctx.globalAlpha = 0.6;
-            stars.forEach(star => { ctx.fillStyle = star.color; ctx.beginPath(); ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2); ctx.fill(); });
-            ctx.globalAlpha = 1;
 
             // Particles - skip frames on mobile for performance
             if (!isLowPerf || frameCount % 2 === 0) {
@@ -1995,18 +1996,8 @@
             const scale = getScale();
             ctx.save();
             ctx.scale(scale, scale);
-            ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, 400, 600);
-            
-            // Just stars, no grid on menus
-            ctx.globalAlpha = 0.6;
-            stars.forEach(star => {
-                ctx.fillStyle = star.color;
-                ctx.beginPath();
-                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-                ctx.fill();
-            });
-            ctx.globalAlpha = 1;
+            // Use cached background with static stars
+            ctx.drawImage(bgGridCanvas, 0, 0);
             ctx.restore();
         }
 
