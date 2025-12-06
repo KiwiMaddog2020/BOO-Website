@@ -341,12 +341,17 @@
             align-items: center;
             justify-content: center;
             z-index: 510;
+            touch-action: none;
         }
         
         .chest-overlay.active {
             display: flex;
             pointer-events: auto !important;
             touch-action: auto !important;
+        }
+        
+        .chest-overlay.active * {
+            pointer-events: auto !important;
         }
         
         .chest-title {
@@ -412,10 +417,13 @@
             display: flex;
             gap: 15px;
             margin-top: 15px;
+            pointer-events: auto !important;
+            z-index: 520;
+            position: relative;
         }
         
         .chest-btn {
-            padding: 10px 25px;
+            padding: 12px 28px;
             font-size: 14px;
             border: 2px solid;
             border-radius: 5px;
@@ -423,7 +431,12 @@
             text-transform: uppercase;
             letter-spacing: 1px;
             transition: all 0.2s;
-            background: transparent;
+            background: rgba(0, 0, 0, 0.8);
+            pointer-events: auto !important;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
         }
         
         .chest-btn-accept {
@@ -1690,8 +1703,8 @@
             <div class="value" id="chestValue"></div>
         </div>
         <div class="chest-buttons">
-            <button class="chest-btn chest-btn-accept" id="chestAccept">TAKE</button>
-            <button class="chest-btn chest-btn-skip" id="chestSkip">LEAVE</button>
+            <button class="chest-btn chest-btn-accept" id="chestAccept" onclick="acceptChestOffer()">TAKE</button>
+            <button class="chest-btn chest-btn-skip" id="chestSkip" onclick="skipChestOffer()">LEAVE</button>
         </div>
     </div>
 
@@ -2118,6 +2131,10 @@
                 this.invincible = 0;
                 this.invincibilityDuration = 600; // Buffed from 500ms
                 
+                // Knockback velocity (for animated knockback)
+                this.knockbackVelX = 0;
+                this.knockbackVelY = 0;
+                
                 // New stats for shrine system
                 this.critChance = 0.05;      // 5% base crit chance
                 this.critMultiplier = 2.0;   // 2x base crit damage
@@ -2305,6 +2322,21 @@
                 
                 this.x += dx * this.speed;
                 this.y += dy * this.speed;
+                
+                // Apply knockback velocity (animated knockback)
+                if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
+                    this.x += this.knockbackVelX * (dt / 16);
+                    this.y += this.knockbackVelY * (dt / 16);
+                    
+                    // Apply friction to slow down knockback
+                    const friction = 0.92;
+                    this.knockbackVelX *= friction;
+                    this.knockbackVelY *= friction;
+                    
+                    // Stop when very slow
+                    if (Math.abs(this.knockbackVelX) < 0.1) this.knockbackVelX = 0;
+                    if (Math.abs(this.knockbackVelY) < 0.1) this.knockbackVelY = 0;
+                }
                 
                 // World bounds
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
@@ -3363,18 +3395,15 @@
                 const dist = Math.hypot(dx, dy);
                 
                 if (dist > 0) {
-                    // Push player away
-                    const knockbackForce = 120;
-                    player.x += (dx / dist) * knockbackForce;
-                    player.y += (dy / dist) * knockbackForce;
+                    // Apply knockback velocity for smooth animated push
+                    const knockbackForce = 18;
+                    player.knockbackVelX = (dx / dist) * knockbackForce;
+                    player.knockbackVelY = (dy / dist) * knockbackForce;
                     
-                    // Clamp player to world
-                    player.x = Math.max(player.radius, Math.min(WORLD.width - player.radius, player.x));
-                    player.y = Math.max(player.radius, Math.min(WORLD.height - player.radius, player.y));
-                    
-                    // Visual effect
-                    spawnParticles(this.x, this.y, COLORS.gold, 15);
-                    spawnParticles(player.x, player.y, '#ffffff', 8);
+                    // Visual effect - more particles
+                    spawnParticles(this.x, this.y, COLORS.gold, 20);
+                    spawnParticles(player.x, player.y, '#ffffff', 12);
+                    spawnParticles(player.x, player.y, COLORS.green, 8);
                     
                     // Small damage
                     player.takeDamage(10);
@@ -4548,11 +4577,13 @@
         function skipChestOffer() {
             if (!pendingChest) return;
             
-            // Can't skip pot rewards
-            if (pendingChest.isPotReward) return;
+            // Can't skip pot rewards (must be explicitly true)
+            if (pendingChest.isPotReward === true) return;
             
             // Don't destroy chest - let player come back later
-            pendingChest.opened = false; // Reset so player can interact again
+            if (pendingChest.opened !== undefined) {
+                pendingChest.opened = false; // Reset so player can interact again
+            }
             pendingChest = null;
             closeChestOverlay();
         }
@@ -6603,26 +6634,30 @@
             // XP progress
             const xpPercent = (player.xp / player.xpToNext) * 100;
             
-            // Responsive sizing - stats/HP match minimap (216px), XP bar full width
+            // Responsive sizing
             const mobile = isMobile();
             const fontSize = mobile ? '9px' : '10px';
-            const rowWidth = '216px';
-            const hpWidth = '216px';
-            const hpHeight = mobile ? '14px' : '16px';
+            const hpWidth = mobile ? '120px' : '160px';
+            const hpHeight = mobile ? '12px' : '14px';
+            const sideGap = mobile ? '6px' : '10px';
             
-            // Create/update HUD HTML (order: XP bar, HP bar, stats row - all evenly spaced)
+            // Create/update HUD HTML (order: XP bar, then [left stats] [HP bar] [right stats])
             statsDisplay.innerHTML = `
-                <div style="width: 95%; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; margin-bottom: 6px; background: transparent;">
+                <div style="width: 99.5%; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; margin-bottom: 6px; background: transparent;">
                     <div style="height: 100%; width: ${xpPercent}%; background: #a8b8c8; box-shadow: 0 0 4px rgba(168, 184, 200, 0.5);"></div>
                 </div>
-                <div style="width: ${hpWidth}; height: ${hpHeight}; border: 1px solid #39ff9f; border-radius: 3px; overflow: hidden; margin-bottom: 4px; background: transparent;">
-                    <div style="height: 100%; width: ${(player.hp / player.maxHp) * 100}%; background: linear-gradient(90deg, #39ff9f, #00ff66); box-shadow: 0 0 6px #39ff9f;"></div>
-                </div>
-                <div style="display: flex; width: ${rowWidth}; justify-content: space-between; align-items: center; font-size: ${fontSize};">
-                    <span style="color: #fff; text-shadow: 0 0 4px #0ff;">${timeStr}</span>
-                    <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">${kills}K</span>
-                    <span style="color: #ffd700; text-shadow: 0 0 4px #ffd700;">🪙${playerGold}</span>
-                    <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">L${player.level}</span>
+                <div style="display: flex; align-items: center; justify-content: center; gap: ${sideGap}; font-size: ${fontSize};">
+                    <div style="display: flex; gap: ${sideGap}; min-width: 70px; justify-content: flex-end;">
+                        <span style="color: #fff; text-shadow: 0 0 4px #0ff;">${timeStr}</span>
+                        <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">${kills}K</span>
+                    </div>
+                    <div style="width: ${hpWidth}; height: ${hpHeight}; border: 1px solid #39ff9f; border-radius: 3px; overflow: hidden; background: transparent;">
+                        <div style="height: 100%; width: ${(player.hp / player.maxHp) * 100}%; background: linear-gradient(90deg, #39ff9f, #00ff66); box-shadow: 0 0 6px #39ff9f;"></div>
+                    </div>
+                    <div style="display: flex; gap: ${sideGap}; min-width: 70px; justify-content: flex-start;">
+                        <span style="color: #ffd700; text-shadow: 0 0 4px #ffd700;">🪙${playerGold}</span>
+                        <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">L${player.level}</span>
+                    </div>
                 </div>
             `;
         }
@@ -7241,14 +7276,34 @@
         });
         
         // Chest overlay buttons
-        DOM.chestAccept.addEventListener('click', acceptChestOffer);
-        DOM.chestAccept.addEventListener('touchend', (e) => {
+        DOM.chestAccept.addEventListener('click', (e) => {
+            e.stopPropagation();
             e.preventDefault();
             acceptChestOffer();
         });
-        DOM.chestSkip.addEventListener('click', skipChestOffer);
+        DOM.chestAccept.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            acceptChestOffer();
+        });
+        DOM.chestAccept.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            acceptChestOffer();
+        });
+        DOM.chestSkip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            skipChestOffer();
+        });
+        DOM.chestSkip.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            skipChestOffer();
+        });
         DOM.chestSkip.addEventListener('touchend', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             skipChestOffer();
         });
         
