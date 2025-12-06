@@ -418,7 +418,7 @@
             gap: 15px;
             margin-top: 15px;
             pointer-events: auto !important;
-            z-index: 520;
+            z-index: 99999;
             position: relative;
         }
         
@@ -437,6 +437,8 @@
             -webkit-tap-highlight-color: transparent;
             user-select: none;
             -webkit-user-select: none;
+            z-index: 99999;
+            position: relative;
         }
         
         .chest-btn-accept {
@@ -458,11 +460,18 @@
         .chest-btn-skip {
             border-color: #ff4444;
             color: #ff4444;
+            cursor: pointer !important;
+            pointer-events: auto !important;
         }
         
         .chest-btn-skip:hover {
             background: #ff4444;
             color: #fff;
+        }
+        
+        .chest-btn-skip:active {
+            background: #cc0000;
+            transform: scale(0.95);
         }
 
         .shrine-title {
@@ -1693,7 +1702,7 @@
     </div>
 
     <!-- Chest Loot Selection -->
-    <div class="chest-overlay" id="chestOverlay">
+    <div class="chest-overlay" id="chestOverlay" onclick="if(event.target===this){window.handleChestLeave && window.handleChestLeave();}">
         <div class="chest-title" id="chestTitle">📦 TREASURE FOUND! 📦</div>
         <div class="chest-cost" id="chestCost"></div>
         <div class="chest-card" id="chestCard">
@@ -1702,10 +1711,28 @@
             <div class="value" id="chestValue"></div>
         </div>
         <div class="chest-buttons">
-            <button class="chest-btn chest-btn-accept" id="chestAccept" onclick="acceptChestOffer()">TAKE</button>
-            <button class="chest-btn chest-btn-skip" id="chestSkip" onclick="skipChestOffer()">LEAVE</button>
+            <button type="button" class="chest-btn chest-btn-accept" id="chestAccept">TAKE</button>
+            <button type="button" class="chest-btn chest-btn-skip" id="chestSkip">LEAVE</button>
         </div>
+        <div style="margin-top: 15px; font-size: 11px; color: #666;">(or click outside to leave)</div>
     </div>
+    
+    <script>
+    // Early click handler - will be enhanced by main script
+    var skipBtn = document.getElementById('chestSkip');
+    function handleSkipClick(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.handleChestLeave) {
+            window.handleChestLeave();
+        } else {
+            document.getElementById('chestOverlay').classList.remove('active');
+        }
+    }
+    skipBtn.addEventListener('click', handleSkipClick, true);
+    skipBtn.addEventListener('touchend', handleSkipClick, true);
+    skipBtn.addEventListener('pointerup', handleSkipClick, true);
+    </script>
 
     <!-- Start/Game Over Menu -->
     <div class="menu-overlay" id="menuOverlay">
@@ -1805,8 +1832,8 @@
 
         // ===== WORLD & CAMERA =====
         const WORLD = {
-            width: 4320,
-            height: 4320
+            width: 8640,
+            height: 8640
         };
         
         // Target visible world area - consistent across all devices
@@ -4635,7 +4662,7 @@
 
         // Spawn chests around the map
         function spawnInitialChests() {
-            const chestCount = 15 + Math.floor(Math.random() * 6); // 15-20 chests
+            const chestCount = 40 + Math.floor(Math.random() * 20); // 40-60 chests (scaled for 4x area)
             
             for (let i = 0; i < chestCount; i++) {
                 const pos = getValidSpawnPosition(100, WORLD.width - 100, 100, WORLD.height - 100, 50, 300);
@@ -4890,15 +4917,20 @@
                 return false;
             }
             
-            // ===== STEP 1: Spawn 3 Lakes (spread across map, ensuring accessibility) =====
-            // Smaller lakes to ensure room for corridors
+            // ===== STEP 1: Spawn 8 Lakes (spread across larger map, ensuring accessibility) =====
+            // Lakes distributed across map quadrants
             const lakeZones = [
-                { minX: 0.15, maxX: 0.35, minY: 0.15, maxY: 0.35 },  // Top-left
-                { minX: 0.65, maxX: 0.85, minY: 0.65, maxY: 0.85 },  // Bottom-right
-                { minX: 0.65, maxX: 0.85, minY: 0.15, maxY: 0.35 }   // Top-right
+                { minX: 0.10, maxX: 0.25, minY: 0.10, maxY: 0.25 },  // Top-left corner
+                { minX: 0.75, maxX: 0.90, minY: 0.75, maxY: 0.90 },  // Bottom-right corner
+                { minX: 0.75, maxX: 0.90, minY: 0.10, maxY: 0.25 },  // Top-right corner
+                { minX: 0.10, maxX: 0.25, minY: 0.75, maxY: 0.90 },  // Bottom-left corner
+                { minX: 0.35, maxX: 0.50, minY: 0.10, maxY: 0.25 },  // Top-center-left
+                { minX: 0.50, maxX: 0.65, minY: 0.75, maxY: 0.90 },  // Bottom-center-right
+                { minX: 0.10, maxX: 0.25, minY: 0.40, maxY: 0.55 },  // Left-center
+                { minX: 0.75, maxX: 0.90, minY: 0.45, maxY: 0.60 }   // Right-center
             ];
             
-            for (let i = 0; i < 3; i++) {
+            for (let i = 0; i < 8; i++) {
                 // Slightly smaller lakes to ensure corridors
                 const baseRadius = 700 + Math.random() * 200;
                 const radiusX = baseRadius * (0.9 + Math.random() * 0.2);
@@ -4921,7 +4953,7 @@
                     
                     // Keep away from center spawn area
                     const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
-                    if (centerDist < 500 + Math.max(radiusX, radiusY)) continue;
+                    if (centerDist < 800 + Math.max(radiusX, radiusY)) continue;
                     
                     // Check no overlap with existing lakes
                     if (overlapsExisting(x, y, radiusX, radiusY, MIN_CORRIDOR)) continue;
@@ -4946,9 +4978,9 @@
             }
             
             // ===== STEP 2: Spawn Trees (avoiding lakes, edges, and blocking paths) =====
-            const treeCount = 25 + Math.floor(Math.random() * 10);
-            const minTreeSpacing = 100; // Increased spacing to prevent walls
-            const edgeBuffer = 200; // Keep trees away from edges
+            const treeCount = 80 + Math.floor(Math.random() * 40); // 80-120 trees (scaled for 4x area)
+            const minTreeSpacing = 120; // Increased spacing for larger map
+            const edgeBuffer = 300; // Keep trees away from edges
             
             for (let i = 0; i < treeCount; i++) {
                 let x, y, attempts = 0;
@@ -4959,8 +4991,8 @@
                     y = edgeBuffer + Math.random() * (WORLD.height - edgeBuffer * 2);
                     attempts++;
                     
-                    // Check not in center spawn area
-                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 400) continue;
+                    // Check not in center spawn area (scaled for larger map)
+                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 600) continue;
                     
                     // Check not overlapping lakes (with padding)
                     let overlaps = false;
@@ -5675,12 +5707,12 @@
         
         // ===== SHRINE SPAWNING =====
         const SHRINE_CONFIG = {
-            maxActive: 5,           // Max shrines active at once
-            spawnInterval: 15000,   // Spawn new shrine every 15 seconds
+            maxActive: 8,           // Max shrines active at once (scaled for 4x area)
+            spawnInterval: 12000,   // Spawn new shrine every 12 seconds
             initialDelay: 5000,     // Wait 5 seconds before first shrine
-            minDist: 600,           // Minimum distance between shrines
-            idealDist: 1200,        // Ideal distance between shrines
-            edgeBuffer: 400,        // Distance from world edges
+            minDist: 900,           // Minimum distance between shrines (scaled)
+            idealDist: 2000,        // Ideal distance between shrines (scaled)
+            edgeBuffer: 500,        // Distance from world edges
             exceptionChance: 0.12   // 12% chance to allow closer placement
         };
         
@@ -7270,36 +7302,25 @@
         });
         
         // Chest overlay buttons
-        DOM.chestAccept.addEventListener('click', (e) => {
-            e.stopPropagation();
+        window.handleChestLeave = function() {
+            if (pendingChest && pendingChest.isPotReward === true) return;
+            if (pendingChest && pendingChest.opened !== undefined) {
+                pendingChest.opened = false;
+            }
+            pendingChest = null;
+            closeChestOverlay();
+        };
+        
+        DOM.chestAccept.onclick = function(e) {
             e.preventDefault();
+            e.stopPropagation();
             acceptChestOffer();
-        });
-        DOM.chestAccept.addEventListener('pointerdown', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            acceptChestOffer();
-        });
-        DOM.chestAccept.addEventListener('touchend', (e) => {
+        };
+        DOM.chestSkip.onclick = function(e) {
             e.preventDefault();
             e.stopPropagation();
-            acceptChestOffer();
-        });
-        DOM.chestSkip.addEventListener('click', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            skipChestOffer();
-        });
-        DOM.chestSkip.addEventListener('pointerdown', (e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            skipChestOffer();
-        });
-        DOM.chestSkip.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            skipChestOffer();
-        });
+            window.handleChestLeave();
+        };
         
         // Move minimap to trackpad area
         setupTrackpadMinimap();
