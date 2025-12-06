@@ -943,7 +943,7 @@
             width: 70,
             height: 42,
             velocity: 0,
-            gravity: 0.10,
+            gravity: 0.11,
             jumpStrength: -4.5,
             rotation: 0,
             wingAngle: 0,
@@ -1006,7 +1006,7 @@
             bgCtx.globalAlpha = 0.10;
             bgCtx.fillStyle = '#9b30ff';
             bgCtx.beginPath();
-            bgCtx.ellipse(45, 564, 40, 22, 0, Math.PI, 0);
+            bgCtx.ellipse(65, 564, 40, 22, 0, Math.PI, 0);
             bgCtx.fill();
             bgCtx.beginPath();
             bgCtx.ellipse(235, 562, 50, 28, 0, Math.PI, 0);
@@ -1042,14 +1042,36 @@
             
             bgCtx.globalAlpha = 1;
             
-            // Bake static colorful stars into background (top 3/4 only)
+            // Bake static colorful stars into background (top 3/4 only, spaced out)
             const starColors = ['#0ff', '#ff00ff', '#ff6600', '#00ffcc', '#ff3366', '#9b30ff', '#00ff88'];
+            const placedStars = [];
+            const minDistance = 45;
+            
             bgCtx.globalAlpha = 0.6;
-            for (let i = 0; i < 25; i++) {
-                bgCtx.fillStyle = starColors[Math.floor(Math.random() * starColors.length)];
-                bgCtx.beginPath();
-                bgCtx.arc(Math.random() * 400, Math.random() * 450, Math.random() * 1.5 + 0.5, 0, Math.PI * 2);
-                bgCtx.fill();
+            let attempts = 0;
+            while (placedStars.length < 20 && attempts < 100) {
+                const x = Math.random() * 400;
+                const y = Math.random() * 450;
+                
+                // Check distance from existing stars
+                let tooClose = false;
+                for (const star of placedStars) {
+                    const dx = x - star.x;
+                    const dy = y - star.y;
+                    if (Math.sqrt(dx * dx + dy * dy) < minDistance) {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                
+                if (!tooClose) {
+                    placedStars.push({ x, y });
+                    bgCtx.fillStyle = starColors[Math.floor(Math.random() * starColors.length)];
+                    bgCtx.beginPath();
+                    bgCtx.arc(x, y, Math.random() * 1.5 + 0.5, 0, Math.PI * 2);
+                    bgCtx.fill();
+                }
+                attempts++;
             }
             bgCtx.globalAlpha = 1;
         }
@@ -1121,11 +1143,23 @@
         }
 
         // Start game
+        // Countdown state
+        let countdownTime = 0;
+        let isCountingDown = false;
+        
         function startGame() {
             resetGame();
-            gameState = 'playing';
+            gameState = 'countdown';
+            isCountingDown = true;
+            countdownTime = 0;
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
+            hud.classList.add('hidden');
+        }
+        
+        function beginPlaying() {
+            isCountingDown = false;
+            gameState = 'playing';
             hud.classList.remove('hidden');
         }
 
@@ -1286,6 +1320,17 @@
             
             // Animate Clyde's floppy ears
             bird.wingAngle *= 0.9;
+            
+            // Countdown timer
+            if (gameState === 'countdown') {
+                countdownTime += dt;
+                bird.y = 280 + Math.sin(animTime * 1.2) * 8;
+                bird.rotation = Math.sin(animTime * 0.8) * 4;
+                if (countdownTime >= 2) {
+                    beginPlaying();
+                }
+                return;
+            }
             
             // Clyde bobbing on non-playing screens
             if (gameState !== 'playing') {
@@ -2012,14 +2057,25 @@
             ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.moveTo(0, 598); ctx.lineTo(400, 598); ctx.stroke();
             
-            // Instructions
+            // Instructions during countdown
+            if (gameState === 'countdown') {
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = '#fff';
+                ctx.font = '24px "Bebas Neue", sans-serif';
+                ctx.textAlign = 'center';
+                const instructionText = isMobile ? 'TAP TO JUMP' : 'CLICK OR SPACEBAR TO JUMP';
+                ctx.fillText(instructionText, 200, 180);
+                ctx.globalAlpha = 1;
+            }
+            
+            // Instructions during play
             if (gameState === 'playing' && playTime < 5) {
                 const fadeOpacity = playTime < 3 ? 1 : 1 - (playTime - 3) / 2;
                 ctx.globalAlpha = fadeOpacity;
                 ctx.fillStyle = '#fff';
                 ctx.font = '24px "Bebas Neue", sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText('KEEP TAPPING...', bird.x + bird.width / 2, bird.y - 35);
+                ctx.fillText('KEEP JUMPING...', bird.x + bird.width / 2, bird.y - 35);
                 ctx.globalAlpha = 1;
             }
 
@@ -2033,8 +2089,8 @@
             lastFrameTime = currentTime;
             frameCount++;
             
-            // Only do heavy updates/draws when actually playing
-            if (gameState === 'playing') {
+            // Only do heavy updates/draws when actually playing or countdown
+            if (gameState === 'playing' || gameState === 'countdown') {
                 update(deltaTime);
                 draw();
             } else {
