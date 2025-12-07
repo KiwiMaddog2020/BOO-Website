@@ -6409,6 +6409,16 @@
         
         // Track if we're currently transitioning to prevent double-clicks
         let isTransitioning = false;
+        let transitionSafetyTimeout = null;
+        
+        // Safety function to reset transition state (prevents stuck state)
+        function resetTransitionState() {
+            isTransitioning = false;
+            if (transitionSafetyTimeout) {
+                clearTimeout(transitionSafetyTimeout);
+                transitionSafetyTimeout = null;
+            }
+        }
         
         // Get currently visible section
         function getCurrentSection() {
@@ -6422,14 +6432,29 @@
         const transitionOverlay = document.getElementById('transition-overlay');
         
         function menuTransitionToSection(targetId, clickedElement = null) {
-            if (isTransitioning) return;
+            // If already transitioning, force reset after a short delay and try again
+            if (isTransitioning) {
+                // Safety: if transition is stuck, reset and proceed
+                setTimeout(function() {
+                    resetTransitionState();
+                }, 100);
+                return;
+            }
             
             const currentSectionId = getCurrentSection();
             const targetSection = document.getElementById(targetId);
             
-            if (!targetSection || currentSectionId === targetId) return;
+            if (!targetSection) return;
+            
+            // Allow navigation even if same section (for mobile tap feedback)
+            const isSameSection = currentSectionId === targetId;
             
             isTransitioning = true;
+            
+            // Safety timeout - reset transition state after max 2 seconds
+            transitionSafetyTimeout = setTimeout(function() {
+                resetTransitionState();
+            }, 2000);
             
             // Detect Safari for faster timing
             const isSafariBrowser = document.body.classList.contains('is-safari') || document.body.classList.contains('is-mac-safari');
@@ -6441,7 +6466,24 @@
             const isMobile = window.innerWidth <= 768;
             const isLogo = clickedElement && clickedElement.classList.contains('nav-animated-logo-container');
             if (isMobile && clickedElement && !isLogo) {
+                // Remove from all nav links first
+                document.querySelectorAll('nav a:not(.nav-animated-logo-container)').forEach(function(link) {
+                    link.classList.remove('nav-tap-active');
+                });
                 clickedElement.classList.add('nav-tap-active');
+                
+                // Remove tap highlight after 2 seconds (not tied to section)
+                setTimeout(function() {
+                    clickedElement.classList.remove('nav-tap-active');
+                }, 2000);
+            }
+            
+            // If same section, just show tap feedback and return
+            if (isSameSection) {
+                setTimeout(function() {
+                    resetTransitionState();
+                }, 100);
+                return;
             }
             
             // Add page-transitioning class to pause animations
@@ -6482,18 +6524,11 @@
                     transitionOverlay.classList.remove('active');
                     document.body.classList.remove('page-transitioning');
                     
-                    // Remove tap highlight class after transition
-                    if (clickedElement) {
-                        setTimeout(() => {
-                            clickedElement.classList.remove('nav-tap-active');
-                        }, 500);
-                    }
-                    
                     // Re-enable scroll-snap after transition
                     setTimeout(() => {
                         scrollContainer.style.scrollSnapType = 'y mandatory';
                         scrollContainer.style.webkitScrollSnapType = 'y mandatory';
-                        isTransitioning = false;
+                        resetTransitionState();
                     }, snapReenableTime);
                 }, pauseTime);
                 
@@ -6520,9 +6555,18 @@
             });
             
             // Safari iOS fix: touchend fires more reliably than click
+            // Track touch start position to detect taps vs scrolls
+            let touchStartY = 0;
+            anchor.addEventListener('touchstart', function(e) {
+                touchStartY = e.touches[0].clientY;
+            }, { passive: true });
+            
             anchor.addEventListener('touchend', function (e) {
-                // Only handle if it was a tap (not a scroll)
-                if (e.cancelable) {
+                // Only handle if it was a tap (not a scroll - less than 10px movement)
+                const touchEndY = e.changedTouches[0].clientY;
+                const isScrollGesture = Math.abs(touchEndY - touchStartY) > 10;
+                
+                if (!isScrollGesture) {
                     e.preventDefault();
                     e.stopPropagation();
                     const targetId = this.getAttribute('href').substring(1);
@@ -7317,6 +7361,8 @@
         
         // ========== MOBILE NAV TAP HANDLER ==========
         // Bold effect only on the tapped menu item, cross-browser
+        // Note: Main tap highlight is now handled in menuTransitionToSection
+        // This is a fallback for direct touch without navigation
         (function() {
             const isMobile = window.matchMedia('(max-width: 768px), (hover: none)').matches;
             if (!isMobile) return;
@@ -7324,7 +7370,7 @@
             const navLinks = document.querySelectorAll('nav a:not(.nav-animated-logo-container)');
             
             navLinks.forEach(function(link) {
-                // Touch start - add bold class
+                // Touch start - add bold class immediately for feedback
                 link.addEventListener('touchstart', function(e) {
                     // Remove from all others first
                     navLinks.forEach(function(l) { l.classList.remove('nav-tap-active'); });
@@ -7332,17 +7378,20 @@
                     this.classList.add('nav-tap-active');
                 }, { passive: true });
                 
-                // Touch end - remove after short delay
+                // Touch end - remove after 2 seconds (matches menuTransitionToSection)
                 link.addEventListener('touchend', function(e) {
                     var el = this;
                     setTimeout(function() {
                         el.classList.remove('nav-tap-active');
-                    }, 150);
+                    }, 2000);
                 }, { passive: true });
                 
-                // Touch cancel - remove immediately
+                // Touch cancel - remove after 2 seconds as well
                 link.addEventListener('touchcancel', function(e) {
-                    this.classList.remove('nav-tap-active');
+                    var el = this;
+                    setTimeout(function() {
+                        el.classList.remove('nav-tap-active');
+                    }, 2000);
                 }, { passive: true });
             });
         })();
