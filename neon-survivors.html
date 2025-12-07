@@ -342,10 +342,32 @@
             align-items: center;
             justify-content: center;
             z-index: 999999;
+            pointer-events: auto;
+            touch-action: auto !important;
+            -webkit-touch-callout: default !important;
         }
         
         #chestModal.visible {
             display: flex;
+            pointer-events: auto;
+            touch-action: auto !important;
+        }
+        
+        #chestModal.visible * {
+            pointer-events: auto;
+            touch-action: auto !important;
+        }
+        
+        #chestModal .modal-btn {
+            touch-action: auto !important;
+            -webkit-touch-callout: default !important;
+            cursor: pointer;
+        }
+        
+        /* Disable trackpad when modal is visible */
+        #chestModal.visible ~ .game-container .trackpad-zone,
+        body:has(#chestModal.visible) .trackpad-zone {
+            pointer-events: none !important;
         }
         
         #chestModal .modal-title {
@@ -374,6 +396,36 @@
             align-items: center;
             gap: 10px;
             margin: 10px;
+        }
+        
+        #chestModal .modal-card.legendary {
+            border: 3px solid #ffa500;
+            background: linear-gradient(135deg, rgba(50, 30, 0, 0.95), rgba(80, 50, 0, 0.95));
+            box-shadow: 0 0 30px rgba(255, 165, 0, 0.6);
+            animation: legendaryShine 2s ease-in-out infinite;
+        }
+        
+        #chestModal .modal-card.legendary .card-name {
+            font-size: 16px;
+            text-shadow: 0 0 10px rgba(255, 165, 0, 0.8);
+        }
+        
+        #chestModal .modal-card.legendary .card-icon {
+            animation: legendaryIconPulse 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes legendaryShine {
+            0%, 100% { 
+                box-shadow: 0 0 20px rgba(255, 165, 0, 0.5), 0 0 40px rgba(255, 215, 0, 0.3);
+            }
+            50% { 
+                box-shadow: 0 0 35px rgba(255, 165, 0, 0.8), 0 0 60px rgba(255, 215, 0, 0.5);
+            }
+        }
+        
+        @keyframes legendaryIconPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.15); }
         }
         
         #chestModal .modal-card .card-icon {
@@ -777,7 +829,7 @@
             margin: 12px;
             touch-action: manipulation;
             height: 56px;
-            width: 245px;
+            width: 290px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1672,7 +1724,7 @@
     </div>
 
     <!-- Chest Modal - Rebuilt from scratch using divs only -->
-    <div id="chestModal">
+    <div id="chestModal" ontouchstart="event.stopPropagation();" ontouchmove="event.stopPropagation();" ontouchend="event.stopPropagation();">
         <div class="modal-title" id="modalTitle">📦 TREASURE FOUND! 📦</div>
         <div class="modal-cost" id="modalCost"></div>
         <div class="modal-card" id="modalCard">
@@ -1680,9 +1732,9 @@
             <div class="card-name" id="modalName"></div>
             <div class="card-desc" id="modalDesc"></div>
         </div>
-        <div class="modal-buttons">
-            <div class="modal-btn btn-take" id="modalTake" onclick="window.chestTake();">TAKE</div>
-            <div class="modal-btn btn-leave" id="modalLeave" onclick="window.chestLeave();">LEAVE</div>
+        <div class="modal-buttons" style="touch-action: auto;">
+            <div id="modalTake" style="padding: 14px 32px; font-size: 16px; font-weight: bold; background: #00aa00; color: white; border: 2px solid #00ff00; border-radius: 8px; cursor: pointer; touch-action: auto;" onclick="window.chestTake();" ontouchstart="event.stopPropagation();" ontouchend="event.preventDefault(); event.stopPropagation(); window.chestTake();">TAKE</div>
+            <div id="modalLeave" style="padding: 14px 32px; font-size: 16px; font-weight: bold; background: #aa0000; color: white; border: 2px solid #ff4444; border-radius: 8px; cursor: pointer; touch-action: auto;" onclick="window.leaveChest();" ontouchstart="event.stopPropagation();" ontouchend="event.preventDefault(); event.stopPropagation(); window.leaveChest();">LEAVE</div>
         </div>
     </div>
 
@@ -2320,11 +2372,11 @@
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
                 
-                // Terrain collision - push player out of lakes/mountains/trees
+                // Terrain collision - push player out of lakes/mountains/trees/rocks/bushes
                 const terrain = isInTerrain(this.x, this.y, this.radius);
                 if (terrain) {
-                    if (terrain.type === 'tree') {
-                        // Circular collision for trees
+                    if (terrain.type === 'tree' || terrain.type === 'rock' || terrain.type === 'bush') {
+                        // Circular collision for trees, rocks, bushes
                         const dx2 = this.x - terrain.x;
                         const dy2 = this.y - terrain.y;
                         const dist = Math.hypot(dx2, dy2);
@@ -2835,31 +2887,75 @@
                         }
                     }
                     
-                    // Flame thrower visual
+                    // Flame thrower visual - realistic animated flames
                     if (def.type === 'flame' && state.flameActive && Date.now() - state.flameActive < 200) {
                         const flameRange = camera.scale(state.flameRange);
-                        ctx.shadowBlur = 20;
-                        ctx.shadowColor = COLORS.orange;
-                        const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, flameRange);
-                        grad.addColorStop(0, 'rgba(255, 150, 0, 0.7)');
-                        grad.addColorStop(0.5, 'rgba(255, 80, 0, 0.4)');
-                        grad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+                        const time = Date.now() * 0.01;
+                        const angle = state.flameAngle;
+                        const coneHalf = state.flameCone / 2;
                         
-                        ctx.fillStyle = grad;
+                        ctx.save();
+                        
+                        // Outer fire cone (red/orange)
+                        ctx.shadowBlur = 25;
+                        ctx.shadowColor = '#ff4400';
+                        const outerGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, flameRange);
+                        outerGrad.addColorStop(0, 'rgba(255, 100, 0, 0.8)');
+                        outerGrad.addColorStop(0.4, 'rgba(255, 60, 0, 0.5)');
+                        outerGrad.addColorStop(0.7, 'rgba(200, 30, 0, 0.3)');
+                        outerGrad.addColorStop(1, 'rgba(100, 0, 0, 0)');
+                        
+                        ctx.fillStyle = outerGrad;
                         ctx.beginPath();
                         ctx.moveTo(sx, sy);
-                        ctx.arc(sx, sy, flameRange, state.flameAngle - state.flameCone/2, state.flameAngle + state.flameCone/2);
+                        ctx.arc(sx, sy, flameRange, angle - coneHalf, angle + coneHalf);
                         ctx.closePath();
                         ctx.fill();
                         
-                        // Inner bright cone
-                        ctx.fillStyle = 'rgba(255, 220, 100, 0.5)';
+                        // Mid flame layer (orange/yellow) with wave effect
+                        const midRange = flameRange * 0.75;
+                        const midGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, midRange);
+                        midGrad.addColorStop(0, 'rgba(255, 180, 0, 0.9)');
+                        midGrad.addColorStop(0.5, 'rgba(255, 120, 0, 0.5)');
+                        midGrad.addColorStop(1, 'rgba(255, 60, 0, 0)');
+                        
+                        ctx.fillStyle = midGrad;
                         ctx.beginPath();
                         ctx.moveTo(sx, sy);
-                        ctx.arc(sx, sy, flameRange * 0.6, state.flameAngle - state.flameCone/3, state.flameAngle + state.flameCone/3);
+                        // Wavy edge using small angle variations
+                        const segments = 8;
+                        for (let i = 0; i <= segments; i++) {
+                            const segAngle = angle - coneHalf * 0.8 + (coneHalf * 1.6 * i / segments);
+                            const waveOffset = Math.sin(time + i * 2) * 0.08;
+                            const r = midRange * (0.9 + waveOffset);
+                            ctx.lineTo(sx + Math.cos(segAngle) * r, sy + Math.sin(segAngle) * r);
+                        }
                         ctx.closePath();
                         ctx.fill();
-                        ctx.shadowBlur = 0;
+                        
+                        // Inner bright core (white/yellow)
+                        const innerRange = flameRange * 0.4;
+                        const innerGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, innerRange);
+                        innerGrad.addColorStop(0, 'rgba(255, 255, 200, 0.95)');
+                        innerGrad.addColorStop(0.4, 'rgba(255, 230, 100, 0.7)');
+                        innerGrad.addColorStop(1, 'rgba(255, 180, 0, 0)');
+                        
+                        ctx.fillStyle = innerGrad;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy);
+                        ctx.arc(sx, sy, innerRange, angle - coneHalf * 0.5, angle + coneHalf * 0.5);
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        // Nozzle glow at player
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                        ctx.shadowBlur = 15;
+                        ctx.shadowColor = '#ffff00';
+                        ctx.beginPath();
+                        ctx.arc(sx + Math.cos(angle) * camera.scale(8), sy + Math.sin(angle) * camera.scale(8), camera.scale(4), 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        ctx.restore();
                     }
                     
                     // Thunder strike visual
@@ -3156,7 +3252,7 @@
                 const terrain = isInTerrain(gemX, gemY, 10);
                 if (terrain) {
                     // Push gem outside of terrain
-                    if (terrain.type === 'tree') {
+                    if (terrain.type === 'tree' || terrain.type === 'rock' || terrain.type === 'bush') {
                         const dx = gemX - terrain.x;
                         const dy = gemY - terrain.y;
                         const dist = Math.hypot(dx, dy);
@@ -3177,11 +3273,6 @@
                     }
                 }
                 xpGems.push(new XPGem(gemX, gemY, this.xpValue));
-                
-                // Drop gold (1-3 based on xp value)
-                const goldDrop = Math.max(1, Math.floor(this.xpValue / 2));
-                playerGold += goldDrop;
-                updateGoldDisplay();
                 
                 // Death particles
                 spawnParticles(this.x, this.y, this.color, 12);
@@ -3438,18 +3529,33 @@
                 ctx.arc(sx, sy + bob, r, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Hat (gold triangle on top)
+                // Traditional Leprechaun Hat - tall green with buckle
+                const hatWidth = camera.scale(18);
+                const hatHeight = camera.scale(16);
+                const brimWidth = camera.scale(26);
+                const brimHeight = camera.scale(4);
+                const buckleSize = camera.scale(6);
+                
+                // Hat brim (wide, dark green)
+                ctx.fillStyle = '#1a5c1a';
+                ctx.shadowColor = COLORS.green;
+                ctx.fillRect(sx - brimWidth/2, sy + bob - r - brimHeight, brimWidth, brimHeight);
+                
+                // Hat body (tall rectangle, green)
+                ctx.fillStyle = '#228B22';
+                ctx.fillRect(sx - hatWidth/2, sy + bob - r - hatHeight - brimHeight + 2, hatWidth, hatHeight);
+                
+                // Hat band (black stripe)
+                ctx.fillStyle = '#000';
+                ctx.fillRect(sx - hatWidth/2, sy + bob - r - brimHeight - camera.scale(5), hatWidth, camera.scale(5));
+                
+                // Buckle (gold square with hole)
                 ctx.fillStyle = COLORS.gold;
                 ctx.shadowColor = COLORS.gold;
-                ctx.beginPath();
-                ctx.moveTo(sx, sy + bob - r - camera.scale(10));
-                ctx.lineTo(sx - camera.scale(10), sy + bob - r + camera.scale(2));
-                ctx.lineTo(sx + camera.scale(10), sy + bob - r + camera.scale(2));
-                ctx.closePath();
-                ctx.fill();
-                
-                // Hat brim
-                ctx.fillRect(sx - camera.scale(12), sy + bob - r + camera.scale(1), camera.scale(24), camera.scale(4));
+                ctx.fillRect(sx - buckleSize/2, sy + bob - r - brimHeight - camera.scale(6), buckleSize, buckleSize);
+                // Buckle hole
+                ctx.fillStyle = '#000';
+                ctx.fillRect(sx - buckleSize/4, sy + bob - r - brimHeight - camera.scale(5), buckleSize/2, buckleSize/2);
                 
                 // Angry eyes (white with red pupils when ready to knockback)
                 ctx.fillStyle = '#fff';
@@ -3473,13 +3579,22 @@
                 ctx.arc(sx, sy + bob + camera.scale(5), camera.scale(4), 0.2 * Math.PI, 0.8 * Math.PI);
                 ctx.stroke();
                 
-                // HP bar
+                // Orange beard
+                ctx.fillStyle = '#ff8c00';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.moveTo(sx - camera.scale(8), sy + bob + camera.scale(6));
+                ctx.quadraticCurveTo(sx, sy + bob + camera.scale(16), sx + camera.scale(8), sy + bob + camera.scale(6));
+                ctx.quadraticCurveTo(sx, sy + bob + camera.scale(10), sx - camera.scale(8), sy + bob + camera.scale(6));
+                ctx.fill();
+                
+                // HP bar (positioned above taller hat)
                 if (this.hp < this.maxHp) {
                     ctx.shadowBlur = 0;
                     ctx.fillStyle = '#333';
-                    ctx.fillRect(sx - camera.scale(20), sy - r - camera.scale(18) + bob, camera.scale(40), camera.scale(5));
+                    ctx.fillRect(sx - camera.scale(20), sy - r - camera.scale(28) + bob, camera.scale(40), camera.scale(5));
                     ctx.fillStyle = COLORS.green;
-                    ctx.fillRect(sx - camera.scale(20), sy - r - camera.scale(18) + bob, camera.scale(40) * (this.hp / this.maxHp), camera.scale(5));
+                    ctx.fillRect(sx - camera.scale(20), sy - r - camera.scale(28) + bob, camera.scale(40) * (this.hp / this.maxHp), camera.scale(5));
                 }
                 
                 ctx.restore();
@@ -3692,14 +3807,24 @@
             
             // Use new chest modal
             DOM.modalTitle.textContent = `🍀 POT OF GOLD (${potRewardIndex + 1}/3) 🍀`;
+            DOM.modalTitle.style.color = '#00ff00';
+            DOM.modalTitle.style.textShadow = '0 0 20px #00ff00';
             DOM.modalCost.textContent = 'FREE REWARD!';
             DOM.modalCost.style.color = '#00ff00';
             
             DOM.modalCard.style.borderColor = reward.color || COLORS.gold;
             
+            // Add legendary class and styling for legendary rewards
+            if (reward.type === 'legendary') {
+                DOM.modalCard.classList.add('legendary');
+                DOM.modalName.style.color = '#ffa500'; // Orange for legendary
+            } else {
+                DOM.modalCard.classList.remove('legendary');
+                DOM.modalName.style.color = reward.color || COLORS.gold;
+            }
+            
             DOM.modalIcon.textContent = reward.icon;
             DOM.modalName.textContent = reward.name;
-            DOM.modalName.style.color = reward.color || COLORS.gold;
             DOM.modalDesc.textContent = reward.desc;
             
             DOM.modalTake.classList.remove('disabled');
@@ -3722,6 +3847,7 @@
                 lastLegendaryTime = gameTime;
                 guaranteedLegendaryNext = false;
                 DOM.chestModal.classList.remove('visible');
+                DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
                 showLegendaryUpgrade();
                 // After legendary selection, continue pot rewards
                 // This is handled by the legendary selection callback
@@ -3732,6 +3858,7 @@
                 
                 potRewardIndex++;
                 DOM.chestModal.classList.remove('visible');
+                DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
                 
                 // Small delay before next reward
                 setTimeout(() => {
@@ -4347,6 +4474,8 @@
                 this.radius = 18;
                 this.opened = false;
                 this.dead = false;
+                this.needsPlayerToLeave = false; // Player must walk away before reopening
+                this.reactivateDistance = 60; // Must walk this far away to reactivate
                 this.bobOffset = Math.random() * Math.PI * 2;
                 this.glowPulse = Math.random() * Math.PI * 2;
                 
@@ -4359,10 +4488,22 @@
             }
             
             update(dt) {
-                if (this.opened || this.dead) return;
+                if (this.dead) return;
+                
+                const dist = Math.hypot(player.x - this.x, player.y - this.y);
+                
+                // If player needs to leave first, check if they've walked away
+                if (this.needsPlayerToLeave) {
+                    if (dist > this.reactivateDistance) {
+                        this.needsPlayerToLeave = false;
+                        this.opened = false; // Now allow reopening
+                    }
+                    return;
+                }
+                
+                if (this.opened) return;
                 
                 // Check if player is touching
-                const dist = Math.hypot(player.x - this.x, player.y - this.y);
                 if (dist < this.radius + player.radius) {
                     this.showOffer();
                 }
@@ -4378,7 +4519,15 @@
                 spawnParticles(this.x, this.y, color, 15);
                 
                 // Set up new modal
-                DOM.modalTitle.textContent = this.isFree ? '📦 FREE TREASURE! 📦' : '📦 TREASURE FOUND! 📦';
+                if (this.contents.type === 'legendary') {
+                    DOM.modalTitle.textContent = '⭐ LEGENDARY FOUND! ⭐';
+                    DOM.modalTitle.style.color = '#ffa500';
+                    DOM.modalTitle.style.textShadow = '0 0 20px #ffa500';
+                } else {
+                    DOM.modalTitle.textContent = this.isFree ? '📦 FREE TREASURE! 📦' : '📦 TREASURE FOUND! 📦';
+                    DOM.modalTitle.style.color = '#ffd700';
+                    DOM.modalTitle.style.textShadow = '0 0 20px #ffd700';
+                }
                 
                 if (this.isFree) {
                     DOM.modalCost.textContent = 'FREE!';
@@ -4390,9 +4539,17 @@
                 
                 DOM.modalCard.style.borderColor = this.contents.color || color;
                 
+                // Add legendary class and styling for legendary items
+                if (this.contents.type === 'legendary') {
+                    DOM.modalCard.classList.add('legendary');
+                    DOM.modalName.style.color = '#ffa500'; // Orange for legendary
+                } else {
+                    DOM.modalCard.classList.remove('legendary');
+                    DOM.modalName.style.color = this.contents.color || color;
+                }
+                
                 DOM.modalIcon.textContent = this.contents.icon;
                 DOM.modalName.textContent = this.contents.name;
-                DOM.modalName.style.color = this.contents.color || color;
                 DOM.modalDesc.textContent = this.contents.desc;
                 
                 // Update take button
@@ -4451,7 +4608,9 @@
             }
             
             draw() {
-                if (this.opened || !camera.isVisible(this.x, this.y)) return;
+                // Draw if: not opened, OR waiting for player to leave (show dimmed)
+                if (!camera.isVisible(this.x, this.y)) return;
+                if (this.opened && !this.needsPlayerToLeave) return;
                 
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
@@ -4464,37 +4623,110 @@
                 
                 ctx.save();
                 
+                // Dim if waiting for player to leave
+                if (this.needsPlayerToLeave) {
+                    ctx.globalAlpha = 0.4;
+                }
+                
                 // Glow effect
                 ctx.shadowBlur = 20 * glow;
                 ctx.shadowColor = glowColor;
                 
-                // Chest base (brown rectangle)
-                const w = camera.scale(24);
-                const h = camera.scale(16);
-                ctx.fillStyle = this.isFree ? '#8B4513' : '#4a4a4a';
-                ctx.fillRect(sx - w/2, sy - h/2 + bob, w, h);
+                const w = camera.scale(22);
+                const h = camera.scale(12);
+                const lidHeight = camera.scale(8);
+                const depth = camera.scale(6); // 3D depth
+                const baseColor = this.isFree ? '#8B4513' : '#4a4a4a';
+                const lidColor = this.isFree ? '#A0522D' : '#606060';
+                const darkShade = this.isFree ? '#5a2d0a' : '#2a2a2a';
+                const lightShade = this.isFree ? '#c4713b' : '#808080';
                 
-                // Chest lid
-                ctx.fillStyle = this.isFree ? '#A0522D' : '#606060';
-                ctx.fillRect(sx - w/2, sy - h/2 + bob - camera.scale(4), w, camera.scale(6));
+                // Front face (base rectangle)
+                ctx.fillStyle = baseColor;
+                ctx.fillRect(sx - w/2, sy - h/2 + bob + lidHeight, w, h);
                 
-                // Trim
+                // Rounded lid front (arc)
+                ctx.fillStyle = lidColor;
+                ctx.beginPath();
+                ctx.moveTo(sx - w/2, sy - h/2 + bob + lidHeight);
+                ctx.lineTo(sx - w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.quadraticCurveTo(sx, sy - h/2 + bob - lidHeight/2, sx + w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.lineTo(sx + w/2, sy - h/2 + bob + lidHeight);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Lid top surface (curved 3D)
+                ctx.fillStyle = lightShade;
+                ctx.beginPath();
+                ctx.moveTo(sx - w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.quadraticCurveTo(sx, sy - h/2 + bob - lidHeight/2, sx + w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.lineTo(sx + w/2 + depth, sy - h/2 + bob + lidHeight/2 - depth);
+                ctx.quadraticCurveTo(sx + depth, sy - h/2 + bob - lidHeight/2 - depth, sx - w/2 + depth, sy - h/2 + bob + lidHeight/2 - depth);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Right face (side of chest)
+                ctx.fillStyle = darkShade;
+                ctx.beginPath();
+                ctx.moveTo(sx + w/2, sy - h/2 + bob + lidHeight);
+                ctx.lineTo(sx + w/2 + depth, sy - h/2 + bob + lidHeight - depth);
+                ctx.lineTo(sx + w/2 + depth, sy + h/2 + bob + lidHeight - depth);
+                ctx.lineTo(sx + w/2, sy + h/2 + bob + lidHeight);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Right face lid part
+                ctx.beginPath();
+                ctx.moveTo(sx + w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.lineTo(sx + w/2 + depth, sy - h/2 + bob + lidHeight/2 - depth);
+                ctx.lineTo(sx + w/2 + depth, sy - h/2 + bob + lidHeight - depth);
+                ctx.lineTo(sx + w/2, sy - h/2 + bob + lidHeight);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Outlines
                 ctx.strokeStyle = trimColor;
                 ctx.lineWidth = 2;
-                ctx.strokeRect(sx - w/2, sy - h/2 + bob - camera.scale(4), w, h + camera.scale(4));
                 
-                // Lock/clasp
+                // Front base outline
+                ctx.strokeRect(sx - w/2, sy - h/2 + bob + lidHeight, w, h);
+                
+                // Lid arc outline
+                ctx.beginPath();
+                ctx.moveTo(sx - w/2, sy - h/2 + bob + lidHeight);
+                ctx.lineTo(sx - w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.quadraticCurveTo(sx, sy - h/2 + bob - lidHeight/2, sx + w/2, sy - h/2 + bob + lidHeight/2);
+                ctx.lineTo(sx + w/2, sy - h/2 + bob + lidHeight);
+                ctx.stroke();
+                
+                // Metal band across lid
+                ctx.strokeStyle = trimColor;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(sx - w/2, sy - h/2 + bob + lidHeight);
+                ctx.lineTo(sx + w/2, sy - h/2 + bob + lidHeight);
+                ctx.stroke();
+                
+                // Lock/clasp on front
                 ctx.fillStyle = trimColor;
                 ctx.beginPath();
-                ctx.arc(sx, sy + bob, camera.scale(4), 0, Math.PI * 2);
+                ctx.arc(sx, sy + bob + lidHeight/2, camera.scale(4), 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Clasp keyhole
+                ctx.fillStyle = darkShade;
+                ctx.beginPath();
+                ctx.arc(sx, sy + bob + lidHeight/2, camera.scale(1.5), 0, Math.PI * 2);
                 ctx.fill();
                 
                 // Cost indicator above silver chests
                 if (!this.isFree) {
                     ctx.fillStyle = '#ffd700';
-                    ctx.font = `${camera.scale(10)}px sans-serif`;
+                    ctx.font = `bold ${camera.scale(14)}px sans-serif`;
                     ctx.textAlign = 'center';
-                    ctx.fillText(`🪙${this.cost}`, sx, sy - h/2 + bob - camera.scale(12));
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#ffd700';
+                    ctx.fillText(`🪙${this.cost}`, sx, sy - h/2 + bob - lidHeight/2 - camera.scale(8));
                 }
                 
                 // Sparkle particles
@@ -4534,6 +4766,7 @@
                 lastLegendaryTime = gameTime;
                 guaranteedLegendaryNext = false;
                 DOM.chestModal.classList.remove('visible');
+                DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
                 showLegendaryUpgrade();
             } else {
                 const powerup = SHRINE_POWERUPS[chest.contents.id];
@@ -4568,9 +4801,21 @@
         
         function closeChestModal() {
             DOM.chestModal.classList.remove('visible');
+            DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
             DOM.modalLeave.style.display = ''; // Restore leave button
             gamePaused = false;
         }
+        
+        // Global leave function for inline onclick
+        window.leaveChest = function() {
+            if (pendingChest && pendingChest.isPotReward === true) return;
+            if (pendingChest) {
+                // Require player to walk away before chest can reopen
+                pendingChest.needsPlayerToLeave = true;
+            }
+            pendingChest = null;
+            closeChestModal();
+        };
 
         // Show chest reward notification
         function showChestReward(powerup) {
@@ -4753,36 +4998,129 @@
                     const radius = scale(obstacle.radius);
                     
                     ctx.save();
-                    ctx.globalAlpha = 0.45;
                     ctx.shadowBlur = 12;
                     ctx.shadowColor = color;
-                    ctx.strokeStyle = color;
-                    ctx.lineWidth = 2;
                     
-                    // Trunk
+                    // Trunk (solid line)
+                    ctx.strokeStyle = color;
+                    ctx.globalAlpha = 0.5;
+                    ctx.lineWidth = scale(3);
                     ctx.beginPath();
                     ctx.moveTo(sx, sy);
-                    ctx.lineTo(sx + sway * 0.3, sy - height * 0.6);
+                    ctx.lineTo(sx + sway * 0.3, sy - height * 0.5);
                     ctx.stroke();
                     
-                    // Main branches (triangular canopy made of lines)
+                    // Canopy layers (solid filled triangles)
+                    ctx.fillStyle = color;
                     const levels = 3;
                     for (let i = 0; i < levels; i++) {
-                        const levelY = sy - height * 0.3 - i * height * 0.25;
-                        const spread = scale(25 - i * 5);
+                        const levelY = sy - height * 0.3 - i * height * 0.22;
+                        const spread = scale(28 - i * 6);
                         const levelSway = sway * (1 + i * 0.3);
                         
+                        // Filled triangle
+                        ctx.globalAlpha = 0.3 - i * 0.05;
                         ctx.beginPath();
-                        ctx.moveTo(sx + levelSway - spread, levelY + scale(15));
-                        ctx.lineTo(sx + levelSway, levelY - scale(10));
-                        ctx.lineTo(sx + levelSway + spread, levelY + scale(15));
-                        ctx.stroke();
+                        ctx.moveTo(sx + levelSway - spread, levelY + scale(12));
+                        ctx.lineTo(sx + levelSway, levelY - scale(12));
+                        ctx.lineTo(sx + levelSway + spread, levelY + scale(12));
+                        ctx.closePath();
+                        ctx.fill();
                         
-                        // Horizontal line at base
-                        ctx.beginPath();
-                        ctx.moveTo(sx + levelSway - spread, levelY + scale(15));
-                        ctx.lineTo(sx + levelSway + spread, levelY + scale(15));
+                        // Triangle outline
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 2;
                         ctx.stroke();
+                    }
+                    
+                    ctx.restore();
+                }
+            },
+            rock: {
+                draw: function(ctx, sx, sy, scale, time, obstacle) {
+                    const colors = ['#666666', '#888888', '#555555'];
+                    const color = colors[obstacle.variant % colors.length];
+                    const r = scale(obstacle.radius);
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 0.7;
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#444';
+                    
+                    // Rock body (irregular polygon based on size)
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    const points = 5 + (obstacle.variant % 3);
+                    for (let i = 0; i < points; i++) {
+                        const angle = (i / points) * Math.PI * 2 - Math.PI / 2;
+                        const variance = 0.7 + ((obstacle.variant * i) % 30) / 100;
+                        const px = sx + Math.cos(angle) * r * variance;
+                        const py = sy + Math.sin(angle) * r * variance * 0.7; // Flatten vertically
+                        if (i === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Highlight edge
+                    ctx.strokeStyle = '#999';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    
+                    // Top highlight
+                    ctx.fillStyle = '#888';
+                    ctx.globalAlpha = 0.5;
+                    ctx.beginPath();
+                    ctx.ellipse(sx - r * 0.2, sy - r * 0.2, r * 0.3, r * 0.2, -0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.restore();
+                }
+            },
+            bush: {
+                draw: function(ctx, sx, sy, scale, time, obstacle) {
+                    const colors = ['#228B22', '#2E8B2E', '#1E7B1E'];
+                    const color = colors[obstacle.variant % colors.length];
+                    const r = scale(obstacle.radius);
+                    const sway = Math.sin(time * 0.002 + obstacle.variant) * scale(1);
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 0.6;
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#00ff44';
+                    
+                    // Bush made of overlapping circles
+                    ctx.fillStyle = color;
+                    const numCircles = 4 + (obstacle.variant % 2);
+                    for (let i = 0; i < numCircles; i++) {
+                        const angle = (i / numCircles) * Math.PI * 2;
+                        const dist = r * 0.4;
+                        const cx = sx + Math.cos(angle) * dist + sway;
+                        const cy = sy + Math.sin(angle) * dist * 0.6;
+                        const cr = r * (0.5 + (i % 2) * 0.15);
+                        
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    // Center circle
+                    ctx.fillStyle = '#1a6b1a';
+                    ctx.beginPath();
+                    ctx.arc(sx + sway, sy, r * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Highlight dots (leaves) - deterministic positions based on variant
+                    ctx.fillStyle = '#44ff44';
+                    ctx.globalAlpha = 0.4;
+                    for (let i = 0; i < 3; i++) {
+                        const seed = obstacle.variant * 7 + i * 13;
+                        const bx = sx + ((seed % 100) / 100 - 0.5) * r + sway;
+                        const by = sy + (((seed * 3) % 100) / 100 - 0.5) * r * 0.6;
+                        ctx.beginPath();
+                        ctx.arc(bx, by, scale(2), 0, Math.PI * 2);
+                        ctx.fill();
                     }
                     
                     ctx.restore();
@@ -4790,11 +5128,11 @@
             }
         };
         
-        // Check if a point is inside any terrain obstacle (including trees)
+        // Check if a point is inside any terrain obstacle (including trees, rocks, bushes)
         function isInTerrain(x, y, padding = 0) {
             for (const obs of terrainObstacles) {
-                if (obs.type === 'tree') {
-                    // Trees use circular collision
+                if (obs.type === 'tree' || obs.type === 'rock' || obs.type === 'bush') {
+                    // Trees, rocks, bushes use circular collision
                     const dist = Math.hypot(x - obs.x, y - obs.y);
                     if (dist < obs.radius + padding) {
                         return obs;
@@ -4843,7 +5181,7 @@
             // Helper to check if position overlaps existing terrain
             function overlapsExisting(x, y, radiusX, radiusY, padding = 50) {
                 for (const obs of terrainObstacles) {
-                    if (obs.type === 'tree') {
+                    if (obs.type === 'tree' || obs.type === 'rock' || obs.type === 'bush') {
                         const dist = Math.hypot(x - obs.x, y - obs.y);
                         if (dist < Math.max(radiusX, radiusY) + obs.radius + padding) return true;
                     } else {
@@ -5012,6 +5350,106 @@
                     });
                 }
             }
+            
+            // ===== STEP 3: Spawn Rocks (avoiding other objects) =====
+            const rockCount = 40 + Math.floor(Math.random() * 20); // 40-60 rocks
+            const minRockSpacing = 80; // Minimum spacing between rocks
+            
+            for (let i = 0; i < rockCount; i++) {
+                let x, y, attempts = 0;
+                const rockRadius = 12 + Math.random() * 18; // Varying sizes 12-30
+                
+                do {
+                    x = edgeBuffer + Math.random() * (WORLD.width - edgeBuffer * 2);
+                    y = edgeBuffer + Math.random() * (WORLD.height - edgeBuffer * 2);
+                    attempts++;
+                    
+                    // Check not in center spawn area
+                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 500) continue;
+                    
+                    // Check not overlapping any terrain
+                    let overlaps = false;
+                    for (const obs of terrainObstacles) {
+                        if (obs.type === 'lake') {
+                            const dx = (x - obs.x) / (obs.radiusX + rockRadius + 50);
+                            const dy = (y - obs.y) / (obs.radiusY + rockRadius + 50);
+                            if (dx * dx + dy * dy < 1) {
+                                overlaps = true;
+                                break;
+                            }
+                        } else {
+                            // Check spacing to trees, other rocks
+                            const dist = Math.hypot(x - obs.x, y - obs.y);
+                            const minDist = obs.type === 'rock' ? minRockSpacing : (obs.radius + rockRadius + 40);
+                            if (dist < minDist) {
+                                overlaps = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!overlaps) break;
+                } while (attempts < 40);
+                
+                if (attempts < 40) {
+                    terrainObstacles.push({
+                        type: 'rock',
+                        x: x,
+                        y: y,
+                        radius: rockRadius,
+                        variant: i
+                    });
+                }
+            }
+            
+            // ===== STEP 4: Spawn Bushes (avoiding other objects) =====
+            const bushCount = 50 + Math.floor(Math.random() * 30); // 50-80 bushes
+            const minBushSpacing = 60; // Minimum spacing between bushes
+            
+            for (let i = 0; i < bushCount; i++) {
+                let x, y, attempts = 0;
+                const bushRadius = 10 + Math.random() * 12; // Varying sizes 10-22
+                
+                do {
+                    x = edgeBuffer + Math.random() * (WORLD.width - edgeBuffer * 2);
+                    y = edgeBuffer + Math.random() * (WORLD.height - edgeBuffer * 2);
+                    attempts++;
+                    
+                    // Check not in center spawn area
+                    if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 400) continue;
+                    
+                    // Check not overlapping any terrain
+                    let overlaps = false;
+                    for (const obs of terrainObstacles) {
+                        if (obs.type === 'lake') {
+                            const dx = (x - obs.x) / (obs.radiusX + bushRadius + 40);
+                            const dy = (y - obs.y) / (obs.radiusY + bushRadius + 40);
+                            if (dx * dx + dy * dy < 1) {
+                                overlaps = true;
+                                break;
+                            }
+                        } else {
+                            // Check spacing to all other objects
+                            const dist = Math.hypot(x - obs.x, y - obs.y);
+                            const minDist = obs.type === 'bush' ? minBushSpacing : (obs.radius + bushRadius + 30);
+                            if (dist < minDist) {
+                                overlaps = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!overlaps) break;
+                } while (attempts < 40);
+                
+                if (attempts < 40) {
+                    terrainObstacles.push({
+                        type: 'bush',
+                        x: x,
+                        y: y,
+                        radius: bushRadius,
+                        variant: i
+                    });
+                }
+            }
         }
         
         function spawnDecorations() {
@@ -5041,40 +5479,40 @@
         }
         
         function drawTrees() {
-            // Trees are now drawn in drawTreesAndPlayer for proper Y-sorting
+            // Trees are now drawn in drawObstaclesAndPlayer for proper Y-sorting
         }
         
-        // Draw trees and player sorted by Y position for proper depth
+        // Draw trees, rocks, bushes and player sorted by Y position for proper depth
         function drawTreesAndPlayer() {
             const time = Date.now();
             
-            // Collect visible trees
-            const visibleTrees = [];
+            // Collect visible solid obstacles (trees, rocks, bushes)
+            const visibleObstacles = [];
             for (const obs of terrainObstacles) {
-                if (obs.type !== 'tree') continue;
+                if (obs.type !== 'tree' && obs.type !== 'rock' && obs.type !== 'bush') continue;
                 if (!camera.isVisible(obs.x, obs.y, 100)) continue;
-                visibleTrees.push(obs);
+                visibleObstacles.push(obs);
             }
             
-            // Draw trees behind player (tree Y < player Y)
-            for (const obs of visibleTrees) {
+            // Draw obstacles behind player (obstacle Y < player Y)
+            for (const obs of visibleObstacles) {
                 if (obs.y < player.y) {
-                    drawSingleTree(obs, time);
+                    drawSingleObstacle(obs, time);
                 }
             }
             
             // Draw player
             player.draw();
             
-            // Draw trees in front of player (tree Y >= player Y)
-            for (const obs of visibleTrees) {
+            // Draw obstacles in front of player (obstacle Y >= player Y)
+            for (const obs of visibleObstacles) {
                 if (obs.y >= player.y) {
-                    drawSingleTree(obs, time);
+                    drawSingleObstacle(obs, time);
                 }
             }
         }
         
-        function drawSingleTree(obs, time) {
+        function drawSingleObstacle(obs, time) {
             const sx = camera.screenX(obs.x);
             const sy = camera.screenY(obs.y);
             const scaleFn = (val) => camera.scale(val);
@@ -5083,6 +5521,11 @@
             if (terrainType && terrainType.draw) {
                 terrainType.draw(ctx, sx, sy, scaleFn, time, obs);
             }
+        }
+        
+        // Keep old function name for compatibility
+        function drawSingleTree(obs, time) {
+            drawSingleObstacle(obs, time);
         }
         
         function drawDecorations() {
@@ -5498,6 +5941,12 @@
                 // Collect
                 if (dist < player.radius + this.radius) {
                     player.gainXP(this.value);
+                    
+                    // Gold from collecting orbs (based on XP value)
+                    const goldDrop = Math.max(1, Math.floor(this.value / 2));
+                    playerGold += goldDrop;
+                    updateGoldDisplay();
+                    
                     this.dead = true;
                 }
             }
@@ -5958,9 +6407,9 @@
             // Floor raised to 800ms (was 400), slower scaling
             let currentInterval = Math.max(800, spawnInterval - gameTime * 1.5);
             
-            // SWARM EVENT: 2x spawn rate for 30 seconds before boss
+            // SWARM EVENT: 1.5x spawn rate for 30 seconds before boss
             if (swarmActive) {
-                currentInterval = currentInterval / 2;
+                currentInterval = currentInterval / 1.5;
             }
             
             // FINAL HORDE: 30 minutes (1800s) - spawn rate doubles every minute gradually
@@ -6557,6 +7006,8 @@
         // Simple touch handling without complex ID tracking
         trackpadZone.addEventListener('touchstart', e => {
             if (gamePaused) return;
+            // Don't capture if touching inside a modal
+            if (e.target.closest('#chestModal, #shrineOverlay, #legendaryOverlay, #menuOverlay')) return;
             e.preventDefault();
             
             // Tell parent page to lock scrolling
@@ -6997,7 +7448,7 @@
             
             // Draw treasure chests
             for (const chest of chests) {
-                if (!chest.dead && !chest.opened) chest.draw();
+                if (!chest.dead) chest.draw();
             }
             
             // Draw rainbows (behind everything else)
