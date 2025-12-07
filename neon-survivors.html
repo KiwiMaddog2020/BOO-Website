@@ -376,13 +376,16 @@
         
         /* Reroll Button */
         .reroll-button {
-            padding: 12px 24px;
-            margin-top: 15px;
-            background: rgba(100, 100, 120, 0.8);
-            border: 2px solid #888;
-            border-radius: 8px;
-            color: #ddd;
-            font-size: 14px;
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background: rgba(80, 80, 100, 0.8);
+            border: 2px solid #777;
+            border-radius: 6px;
+            color: #bbb;
+            font-size: 12px;
             font-weight: bold;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -391,14 +394,14 @@
         }
         
         .reroll-button:hover {
-            background: rgba(120, 120, 150, 0.9);
-            border-color: #aaa;
+            background: rgba(100, 100, 130, 0.9);
+            border-color: #999;
             color: #fff;
-            transform: scale(1.05);
+            transform: translateX(-50%) scale(1.05);
         }
         
         .reroll-button:active {
-            transform: scale(0.95);
+            transform: translateX(-50%) scale(0.95);
         }
 
         /* Shrine Power-up Overlay */
@@ -1824,7 +1827,7 @@
             font-size: 16px;
             padding: 12px 20px;
             border-color: #0ff;
-            color: #f0f;
+            color: #fff;
             box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
         }
         
@@ -2744,6 +2747,10 @@
         let cowboyHat = null;
         let playerHasCowboyHat = false;
         
+        // Shield pickups (4 total, one per quadrant)
+        let shieldPickups = [];
+        let playerLastCombatTime = 0; // Track when player last took/dealt damage
+        
         // Death animation
         let deathAnimationActive = false;
         let deathAnimationStart = 0;
@@ -2936,89 +2943,89 @@
                 name: 'Tome of Precision', 
                 icon: '📕', 
                 color: '#ff4466', 
-                desc: '+3% crit chance',
+                desc: '+4% crit chance',
                 stat: 'critChance',
-                value: 0.03
+                value: 0.04
             },
             xpTome: { 
                 name: 'Tome of Wisdom', 
                 icon: '📗', 
                 color: '#66ff66', 
-                desc: '+8% XP gain',
+                desc: '+10% XP gain',
                 stat: 'xpBonus',
-                value: 0.08
+                value: 0.10
             },
             speedTome: { 
                 name: 'Tome of Swiftness', 
                 icon: '📘', 
                 color: '#6699ff', 
-                desc: '+6% movement speed',
+                desc: '+7% movement speed',
                 stat: 'speedBonus',
-                value: 0.06
+                value: 0.07
             },
             powerTome: { 
                 name: 'Tome of Power', 
                 icon: '📙', 
                 color: '#ff9933', 
-                desc: '+8% damage',
+                desc: '+9% damage',
                 stat: 'damageBonus',
-                value: 0.08
+                value: 0.09
             },
             luckTome: { 
                 name: 'Tome of Fortune', 
                 icon: '📓', 
                 color: '#ffcc00', 
-                desc: '+5% luck (drops, crits)',
+                desc: '+6% luck (drops, legendaries)',
                 stat: 'luck',
-                value: 0.05
+                value: 0.06
             },
             attackSpeedTome: { 
                 name: 'Tome of Haste', 
                 icon: '📔', 
                 color: '#cc66ff', 
-                desc: '+6% attack speed',
+                desc: '+8% attack speed',
                 stat: 'attackSpeedBonus',
-                value: 0.06
+                value: 0.08
             },
             vitalityTome: { 
                 name: 'Tome of Vitality', 
                 icon: '📒', 
                 color: '#ff6699', 
-                desc: '+12 max HP',
+                desc: '+15 max HP',
                 stat: 'maxHpBonus',
-                value: 12
+                value: 15
             },
             regenTome: { 
                 name: 'Tome of Recovery', 
                 icon: '📚', 
                 color: '#66ffcc', 
-                desc: '+0.5 HP/sec regen',
+                desc: '+0.6 HP/sec regen',
                 stat: 'regenBonus',
-                value: 0.5
+                value: 0.6
             },
             armorTome: { 
                 name: 'Tome of Iron', 
                 icon: '🔖', 
                 color: '#8899aa', 
-                desc: '+4% armor',
+                desc: '+5% armor',
                 stat: 'armorBonus',
-                value: 0.04
+                value: 0.05
             },
             lifestealTome: { 
                 name: 'Tome of Vampirism', 
                 icon: '📖', 
                 color: '#cc3366', 
-                desc: '+2% lifesteal',
+                desc: '+3% lifesteal',
                 stat: 'lifestealBonus',
-                value: 0.02
+                value: 0.03
             },
             critDamageTome: { 
                 name: 'Tome of Lethality', 
                 icon: '📝', 
                 color: '#aa44ff', 
-                desc: '+10% crit damage',
+                desc: '+11% crit damage',
                 stat: 'critMultiplierBonus',
-                value: 0.10
+                value: 0.11
             },
             magnetTome: { 
                 name: 'Tome of Attraction', 
@@ -3033,14 +3040,14 @@
 
         // ===== SHRINE POWER-UPS =====
         const SHRINE_POWERUPS = {
-            damage: { name: 'Power', icon: '⚔️', color: COLORS.orange, desc: '+12% Damage', stat: 'damageBonus', value: 0.12 },
-            speed: { name: 'Swiftness', icon: '💨', color: COLORS.teal, desc: '+10% Speed', stat: 'speedBonus', value: 0.10 },
-            attackSpeed: { name: 'Haste', icon: '⚡', color: COLORS.yellow, desc: '+12% Attack Speed', stat: 'attackSpeedBonus', value: 0.12 },
-            regen: { name: 'Vitality', icon: '💚', color: COLORS.teal, desc: '+1.0 HP/sec', stat: 'regenBonus', value: 1.0 },
-            lifesteal: { name: 'Vampirism', icon: '🩸', color: COLORS.pink, desc: '+5% Lifesteal', stat: 'lifesteal', value: 0.05 },
-            critChance: { name: 'Precision', icon: '🎯', color: COLORS.cyan, desc: '+6% Crit Chance', stat: 'critChance', value: 0.06 },
-            critMultiplier: { name: 'Lethality', icon: '💀', color: COLORS.purple, desc: '+15% Crit Damage', stat: 'critMultiplier', value: 0.15 },
-            armor: { name: 'Fortitude', icon: '🛡️', color: COLORS.blue, desc: '+8% Armor', stat: 'armor', value: 0.08 }
+            damage: { name: 'Power', icon: '⚔️', color: COLORS.orange, desc: '+10% Damage', stat: 'damageBonus', value: 0.10 },
+            speed: { name: 'Swiftness', icon: '💨', color: COLORS.teal, desc: '+8% Speed', stat: 'speedBonus', value: 0.08 },
+            attackSpeed: { name: 'Haste', icon: '⚡', color: COLORS.yellow, desc: '+10% Attack Speed', stat: 'attackSpeedBonus', value: 0.10 },
+            regen: { name: 'Vitality', icon: '💚', color: COLORS.teal, desc: '+0.75 HP/sec', stat: 'regenBonus', value: 0.75 },
+            lifesteal: { name: 'Vampirism', icon: '🩸', color: COLORS.pink, desc: '+4% Lifesteal', stat: 'lifesteal', value: 0.04 },
+            critChance: { name: 'Precision', icon: '🎯', color: COLORS.cyan, desc: '+5% Crit Chance', stat: 'critChance', value: 0.05 },
+            critMultiplier: { name: 'Lethality', icon: '💀', color: COLORS.purple, desc: '+12% Crit Damage', stat: 'critMultiplier', value: 0.12 },
+            armor: { name: 'Fortitude', icon: '🛡️', color: COLORS.blue, desc: '+6% Armor', stat: 'armor', value: 0.06 }
         };
 
         // ===== PLAYER CLASS =====
@@ -3077,6 +3084,12 @@
                 this.attackSpeedMultiplier = 1;
                 this.luck = 0;               // Luck bonus from tomes
                 this.xpBonusMult = 1;        // XP multiplier from tomes
+                
+                // Shield system (from pickups)
+                this.shieldHp = 0;           // Current shield HP
+                this.maxShieldHp = 0;        // Max shield HP (25 per pickup collected)
+                this.shieldRegenRate = 5;    // Shield regen per second (when out of combat)
+                this.shieldRegenDelay = 3000; // 3 seconds out of combat to start regen
                 
                 // Tome bonuses (stacking)
                 this.tomeBonuses = {
@@ -3276,11 +3289,28 @@
                 
                 // Apply armor
                 const reducedDamage = amount * (1 - this.armor);
-                this.hp -= reducedDamage;
-                this.invincible = this.invincibilityDuration;
                 
-                // Screen flash
-                spawnParticles(this.x, this.y, COLORS.pink, 15);
+                // Track combat time for shield regen
+                playerLastCombatTime = Date.now();
+                
+                // Shield absorbs damage first
+                if (this.shieldHp > 0) {
+                    if (this.shieldHp >= reducedDamage) {
+                        this.shieldHp -= reducedDamage;
+                        spawnParticles(this.x, this.y, '#4488ff', 12); // Blue particles for shield hit
+                    } else {
+                        const overflow = reducedDamage - this.shieldHp;
+                        this.shieldHp = 0;
+                        this.hp -= overflow;
+                        spawnParticles(this.x, this.y, '#4488ff', 8);
+                        spawnParticles(this.x, this.y, COLORS.pink, 8);
+                    }
+                } else {
+                    this.hp -= reducedDamage;
+                    spawnParticles(this.x, this.y, COLORS.pink, 15);
+                }
+                
+                this.invincible = this.invincibilityDuration;
                 
                 if (this.hp <= 0) {
                     startDeathAnimation(this.x, this.y);
@@ -3374,6 +3404,15 @@
                         regenMultiplier = 2.5; // 150% bonus = 250% total
                     }
                     this.heal(this.regenRate * regenMultiplier * dt / 1000);
+                }
+                
+                // Shield regen (much faster when out of combat)
+                if (this.maxShieldHp > 0 && this.shieldHp < this.maxShieldHp) {
+                    const timeSinceCombat = Date.now() - playerLastCombatTime;
+                    if (timeSinceCombat > this.shieldRegenDelay) {
+                        // Out of combat - fast regen
+                        this.shieldHp = Math.min(this.maxShieldHp, this.shieldHp + this.shieldRegenRate * dt / 1000);
+                    }
                 }
                 
                 // Fire weapons
@@ -4401,29 +4440,54 @@
                     }
                 }
                 
-                // Mini health bar above player (only when damaged)
-                if (this.hp < this.maxHp) {
+                // Combined health + shield bar above player
+                // Show when damaged OR when player has shield
+                if (this.hp < this.maxHp || this.maxShieldHp > 0) {
                     ctx.shadowBlur = 0;
-                    const hpBarWidth = camera.scale(39);
-                    const hpBarHeight = camera.scale(3);
-                    const hpBarY = sy - r - camera.scale(12);
+                    const barWidth = camera.scale(39);
+                    const barHeight = camera.scale(3);
+                    const barY = sy - r - camera.scale(12);
+                    const barX = sx - barWidth/2;
                     
+                    // Calculate proportions of total health pool
+                    const totalPool = this.maxHp + this.maxShieldHp;
+                    const hpPortionWidth = barWidth * (this.maxHp / totalPool);
+                    const shieldPortionWidth = barWidth * (this.maxShieldHp / totalPool);
+                    
+                    // HP section (left side)
                     // Background (unfilled/damaged portion)
                     ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
-                    ctx.fillRect(sx - hpBarWidth/2, hpBarY, hpBarWidth, hpBarHeight);
+                    ctx.fillRect(barX, barY, hpPortionWidth, barHeight);
                     
-                    // Fill (remaining health) - clamp between 0 and 1
+                    // Fill (remaining health)
                     const hpPercent = Math.max(0, Math.min(1, this.hp / this.maxHp));
                     ctx.fillStyle = '#39ff9f';
                     ctx.shadowBlur = 4;
                     ctx.shadowColor = '#39ff9f';
-                    ctx.fillRect(sx - hpBarWidth/2, hpBarY, hpBarWidth * hpPercent, hpBarHeight);
+                    ctx.fillRect(barX, barY, hpPortionWidth * hpPercent, barHeight);
                     
-                    // Border
+                    // Shield section (right side) - only if player has shield capacity
+                    if (this.maxShieldHp > 0) {
+                        const shieldX = barX + hpPortionWidth;
+                        
+                        // Background (empty shield)
+                        ctx.shadowBlur = 0;
+                        ctx.fillStyle = 'rgba(68, 136, 255, 0.3)';
+                        ctx.fillRect(shieldX, barY, shieldPortionWidth, barHeight);
+                        
+                        // Fill (current shield)
+                        const shieldPercent = Math.max(0, Math.min(1, this.shieldHp / this.maxShieldHp));
+                        ctx.fillStyle = '#4488ff';
+                        ctx.shadowBlur = 4;
+                        ctx.shadowColor = '#4488ff';
+                        ctx.fillRect(shieldX, barY, shieldPortionWidth * shieldPercent, barHeight);
+                    }
+                    
+                    // Border around entire bar
                     ctx.shadowBlur = 0;
-                    ctx.strokeStyle = '#00ff66';
+                    ctx.strokeStyle = this.maxShieldHp > 0 ? '#66aaff' : '#00ff66';
                     ctx.lineWidth = 1;
-                    ctx.strokeRect(sx - hpBarWidth/2, hpBarY, hpBarWidth, hpBarHeight);
+                    ctx.strokeRect(barX, barY, barWidth, barHeight);
                 }
                 
                 ctx.restore();
@@ -6629,7 +6693,159 @@
                 text-align: center;
                 pointer-events: none;
             `;
-            notification.innerHTML = '🤠 COWBOY HAT FOUND!<br><span style="font-size: 14px; color: #ffd700;">+10% Movement Speed</span>';
+            notification.innerHTML = '🤠 COWBOY HAT FOUND!<br><span style="font-size: 14px; color: #ffd700;">+30% Movement Speed</span>';
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.transition = 'opacity 0.5s';
+                notification.style.opacity = '0';
+                setTimeout(() => notification.remove(), 500);
+            }, 2000);
+        }
+        
+        // ===== SHIELD PICKUPS =====
+        function spawnShieldPickups() {
+            shieldPickups = [];
+            
+            // Define quadrant boundaries
+            const halfW = WORLD.width / 2;
+            const halfH = WORLD.height / 2;
+            const margin = 400; // Keep away from edges
+            const centerMargin = 600; // Keep away from spawn point
+            
+            const quadrants = [
+                { minX: margin, maxX: halfW - centerMargin/2, minY: margin, maxY: halfH - centerMargin/2 }, // Top-left
+                { minX: halfW + centerMargin/2, maxX: WORLD.width - margin, minY: margin, maxY: halfH - centerMargin/2 }, // Top-right
+                { minX: margin, maxX: halfW - centerMargin/2, minY: halfH + centerMargin/2, maxY: WORLD.height - margin }, // Bottom-left
+                { minX: halfW + centerMargin/2, maxX: WORLD.width - margin, minY: halfH + centerMargin/2, maxY: WORLD.height - margin } // Bottom-right
+            ];
+            
+            for (const quad of quadrants) {
+                let attempts = 0;
+                while (attempts < 50) {
+                    const x = quad.minX + Math.random() * (quad.maxX - quad.minX);
+                    const y = quad.minY + Math.random() * (quad.maxY - quad.minY);
+                    
+                    // Check not in or near terrain
+                    if (isInTerrain(x, y, 50)) {
+                        attempts++;
+                        continue;
+                    }
+                    
+                    shieldPickups.push({
+                        x: x,
+                        y: y,
+                        radius: 18,
+                        bobOffset: Math.random() * Math.PI * 2,
+                        collected: false
+                    });
+                    break;
+                }
+            }
+        }
+        
+        function drawShieldPickups() {
+            const now = Date.now();
+            
+            for (const shield of shieldPickups) {
+                if (shield.collected) continue;
+                if (!camera.isVisible(shield.x, shield.y, 50)) continue;
+                
+                const sx = camera.screenX(shield.x);
+                const bob = Math.sin(now * 0.003 + shield.bobOffset) * camera.scale(4);
+                const sy = camera.screenY(shield.y) + bob;
+                const r = camera.scale(shield.radius);
+                
+                ctx.save();
+                
+                // Glow effect
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#4488ff';
+                
+                // Shield shape (rounded shield/badge)
+                ctx.fillStyle = '#4488ff';
+                ctx.beginPath();
+                ctx.moveTo(sx, sy - r);
+                ctx.quadraticCurveTo(sx + r, sy - r * 0.5, sx + r * 0.8, sy + r * 0.3);
+                ctx.quadraticCurveTo(sx + r * 0.4, sy + r, sx, sy + r * 1.1);
+                ctx.quadraticCurveTo(sx - r * 0.4, sy + r, sx - r * 0.8, sy + r * 0.3);
+                ctx.quadraticCurveTo(sx - r, sy - r * 0.5, sx, sy - r);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Inner highlight
+                ctx.fillStyle = '#66aaff';
+                ctx.beginPath();
+                ctx.moveTo(sx, sy - r * 0.6);
+                ctx.quadraticCurveTo(sx + r * 0.6, sy - r * 0.3, sx + r * 0.5, sy + r * 0.1);
+                ctx.quadraticCurveTo(sx + r * 0.2, sy + r * 0.5, sx, sy + r * 0.6);
+                ctx.quadraticCurveTo(sx - r * 0.2, sy + r * 0.5, sx - r * 0.5, sy + r * 0.1);
+                ctx.quadraticCurveTo(sx - r * 0.6, sy - r * 0.3, sx, sy - r * 0.6);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Center emblem (plus/cross for health)
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = camera.scale(3);
+                ctx.beginPath();
+                ctx.moveTo(sx, sy - r * 0.3);
+                ctx.lineTo(sx, sy + r * 0.3);
+                ctx.moveTo(sx - r * 0.3, sy);
+                ctx.lineTo(sx + r * 0.3, sy);
+                ctx.stroke();
+                
+                // Pulsing ring
+                const pulse = 0.5 + Math.sin(now * 0.005 + shield.bobOffset) * 0.5;
+                ctx.strokeStyle = `rgba(68, 136, 255, ${0.3 + pulse * 0.4})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r * 1.4 + pulse * camera.scale(5), 0, Math.PI * 2);
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+        }
+        
+        function updateShieldPickups() {
+            for (const shield of shieldPickups) {
+                if (shield.collected) continue;
+                
+                const dist = Math.hypot(player.x - shield.x, player.y - shield.y);
+                if (dist < player.radius + shield.radius) {
+                    // Collect shield!
+                    shield.collected = true;
+                    player.maxShieldHp += 25;
+                    player.shieldHp += 25; // Immediately grant the shield HP
+                    
+                    // Visual feedback
+                    spawnParticles(shield.x, shield.y, '#4488ff', 20);
+                    spawnParticles(shield.x, shield.y, '#ffffff', 10);
+                    
+                    // Show notification
+                    showShieldPickupNotification();
+                }
+            }
+        }
+        
+        function showShieldPickupNotification() {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20%;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(40, 80, 160, 0.9);
+                border: 2px solid #4488ff;
+                padding: 15px 30px;
+                border-radius: 10px;
+                color: #fff;
+                font-size: 18px;
+                font-weight: bold;
+                z-index: 1000;
+                text-align: center;
+                pointer-events: none;
+            `;
+            notification.innerHTML = '🛡️ SHIELD FOUND!<br><span style="font-size: 14px; color: #4488ff;">+25 Shield HP</span>';
             document.body.appendChild(notification);
             
             setTimeout(() => {
@@ -9228,22 +9444,6 @@
                 }
             }
             
-            // Add passive upgrades (max level 5)
-            for (const [id, def] of Object.entries(PASSIVES)) {
-                const level = player.passives[id] || 0;
-                if (level < 5) {
-                    const offeredCount = offerHistory[`passive_${id}`] || 0;
-                    const weight = Math.max(0.25, 1.0 - offeredCount * 0.15);
-                    available.push({
-                        ...def,
-                        type: 'passive',
-                        id,
-                        currentLevel: level,
-                        weight
-                    });
-                }
-            }
-            
             // Add tome upgrades (max 4 unique tomes, each can level to 20)
             const uniqueTomeCount = player.getUniqueTomeCount();
             for (const [id, def] of Object.entries(TOMES)) {
@@ -9369,6 +9569,10 @@
             DOM.upgradeSlotMachine.innerHTML = '';
             DOM.upgradeOptions.innerHTML = '';
             
+            // Remove any existing reroll button
+            const existingReroll = DOM.upgradeOverlay.querySelector('.reroll-button');
+            if (existingReroll) existingReroll.remove();
+            
             upgradeSlotResults.forEach((upgrade, i) => {
                 console.log('Creating card for:', upgrade.name);
                 const card = document.createElement('div');
@@ -9408,7 +9612,7 @@
             if (rerollsRemaining > 0) {
                 const rerollBtn = document.createElement('div');
                 rerollBtn.className = 'reroll-button';
-                rerollBtn.innerHTML = `🔄 Reroll (${rerollsRemaining} left)`;
+                rerollBtn.innerHTML = `🎲 Reroll (${rerollsRemaining} left)`;
                 
                 rerollBtn.onclick = function(e) {
                     rerollsRemaining--;
@@ -9424,7 +9628,7 @@
                     showUpgradeSelection();
                 };
                 
-                DOM.upgradeOptions.appendChild(rerollBtn);
+                DOM.upgradeOverlay.appendChild(rerollBtn);
             }
         }
 
@@ -9863,6 +10067,7 @@
                 }
                 updateChestSpawning(dt);
                 updateCowboyHat();
+                updateShieldPickups();
                 updateFairy();
                 updateTombstones();
                 
@@ -9986,6 +10191,9 @@
             
             // Draw cowboy hat pickup
             drawCowboyHat();
+            
+            // Draw shield pickups
+            drawShieldPickups();
             
             // Draw healing fairy
             drawFairy();
@@ -10211,6 +10419,22 @@
                 minimapCtx.stroke();
             }
             
+            // Shield pickups - only in explored areas, before collected
+            for (const shield of shieldPickups) {
+                if (shield.collected) continue;
+                if (!isExplored(shield.x, shield.y)) continue;
+                
+                const shx = shield.x * scale;
+                const shy = shield.y * scale;
+                minimapCtx.fillStyle = '#4488ff';
+                minimapCtx.strokeStyle = '#66aaff';
+                minimapCtx.lineWidth = 1;
+                minimapCtx.beginPath();
+                minimapCtx.arc(shx, shy, 4, 0, Math.PI * 2);
+                minimapCtx.fill();
+                minimapCtx.stroke();
+            }
+            
             // Player (always visible)
             minimapCtx.fillStyle = COLORS.cyan;
             minimapCtx.shadowBlur = 5;
@@ -10306,6 +10530,10 @@
             spawnCowboyHat();
             spawnFairy();
             spawnTombstones();
+            spawnShieldPickups();
+            
+            // Reset combat timer for shield regen
+            playerLastCombatTime = 0;
             
             DOM.menuOverlay.classList.add('hidden');
             const killEl = document.getElementById('killCount');
