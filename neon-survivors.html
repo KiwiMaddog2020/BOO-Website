@@ -1842,8 +1842,8 @@
         
         // Target visible world area - consistent across all devices
         // Desktop baseline: 800x600 canvas at 0.665 zoom shows ~1203x903 world units
-        const TARGET_VISIBLE_WIDTH = 1203;
-        const TARGET_VISIBLE_HEIGHT = 903;
+        const TARGET_VISIBLE_WIDTH = 900;  // Reduced for more zoom on desktop
+        const TARGET_VISIBLE_HEIGHT = 675; // Maintains 4:3 aspect ratio
         const BASE_ZOOM = 0.665; // Reference zoom level
         
         const camera = {
@@ -1862,8 +1862,10 @@
                 // This means on smaller screens, you see less of the world but player is same size
                 this.zoom = Math.max(zoomForWidth, zoomForHeight);
                 
-                // Ensure minimum zoom so things don't get too small
-                this.zoom = Math.max(this.zoom, 0.35);
+                // Ensure minimum zoom so things don't get too small on small screens
+                // And cap maximum zoom so desktop doesn't get too zoomed in
+                this.zoom = Math.max(this.zoom, 0.5);
+                this.zoom = Math.min(this.zoom, 2.5);
             },
             
             update() {
@@ -2005,13 +2007,17 @@
         let swarmActive = false;
         let swarmEndTime = 0;
         let swarmTriggeredForBoss = 0; // Which boss # triggered the current swarm
+        
+        // Cowboy hat pickup
+        let cowboyHat = null;
+        let playerHasCowboyHat = false;
 
         // Entity limits for performance
         const LIMITS = {
-            particles: 200,
-            damageNumbers: 50,
-            projectiles: 150,
-            enemies: 150
+            particles: 150,
+            damageNumbers: 40,
+            projectiles: 100,
+            enemies: 120
         };
 
         // ===== WEAPON DEFINITIONS =====
@@ -2137,7 +2143,7 @@
             lifesteal: { name: 'Vampirism', icon: '🩸', color: COLORS.pink, desc: '+5% Lifesteal', stat: 'lifesteal', value: 0.05 },
             critChance: { name: 'Precision', icon: '🎯', color: COLORS.cyan, desc: '+6% Crit Chance', stat: 'critChance', value: 0.06 },
             critMultiplier: { name: 'Lethality', icon: '💀', color: COLORS.purple, desc: '+15% Crit Damage', stat: 'critMultiplier', value: 0.15 },
-            armor: { name: 'Fortitude', icon: '🛡️', color: COLORS.blue, desc: '+8% Damage Reduction', stat: 'armor', value: 0.08 }
+            armor: { name: 'Fortitude', icon: '🛡️', color: COLORS.blue, desc: '+8% Armor', stat: 'armor', value: 0.08 }
         };
 
         // ===== PLAYER CLASS =====
@@ -2168,7 +2174,7 @@
                 // New stats for shrine system
                 this.critChance = 0.05;      // 5% base crit chance
                 this.critMultiplier = 2.0;   // 2x base crit damage
-                this.armor = 0;              // % damage reduction
+                this.armor = 0;              // % armor (damage reduction)
                 this.lifesteal = 0;          // % of damage healed
                 this.attackSpeedMultiplier = 1;
                 
@@ -2213,7 +2219,8 @@
                 // Base passives from level-up (updated values)
                 const baseSpeedMult = 1 + (this.passives.speed || 0) * 0.12;  // 12% per level
                 const shrineSpeedMult = 1 + this.shrineBonuses.speedBonus;
-                this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult;
+                const hatSpeedMult = playerHasCowboyHat ? 1.1 : 1; // 10% from cowboy hat
+                this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult * hatSpeedMult;
                 
                 this.maxHp = 120 + (this.passives.maxHp || 0) * 25;  // +25 HP per level
                 this.hp = Math.min(this.hp, this.maxHp);
@@ -2317,7 +2324,7 @@
             takeDamage(amount) {
                 if (this.invincible > 0) return;
                 
-                // Apply armor damage reduction
+                // Apply armor
                 const reducedDamage = amount * (1 - this.armor);
                 this.hp -= reducedDamage;
                 this.invincible = this.invincibilityDuration;
@@ -2831,6 +2838,33 @@
                 ctx.arc(sx, sy, r * 0.4, 0, Math.PI * 2);
                 ctx.fill();
                 
+                // Draw cowboy hat if player has it
+                if (playerHasCowboyHat) {
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#8B4513';
+                    
+                    // Hat brim
+                    ctx.fillStyle = '#8B4513';
+                    ctx.beginPath();
+                    ctx.ellipse(sx, sy - r * 0.6, camera.scale(14), camera.scale(5), 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Hat crown
+                    ctx.fillStyle = '#A0522D';
+                    ctx.beginPath();
+                    ctx.moveTo(sx - camera.scale(8), sy - r * 0.7);
+                    ctx.quadraticCurveTo(sx - camera.scale(9), sy - r - camera.scale(8), sx, sy - r - camera.scale(10));
+                    ctx.quadraticCurveTo(sx + camera.scale(9), sy - r - camera.scale(8), sx + camera.scale(8), sy - r * 0.7);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Hat band
+                    ctx.fillStyle = '#5a2d0a';
+                    ctx.fillRect(sx - camera.scale(8), sy - r * 0.9, camera.scale(16), camera.scale(3));
+                    
+                    ctx.shadowBlur = 0;
+                }
+                
                 // Draw orbit weapons
                 for (const [weaponId, state] of Object.entries(this.weapons)) {
                     const def = WEAPONS[weaponId];
@@ -2913,7 +2947,7 @@
                         ctx.fill();
                         
                         // Mid flame layer (orange/yellow) with wave effect
-                        const midRange = flameRange * 0.75;
+                        const midRange = flameRange * 0.9;
                         const midGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, midRange);
                         midGrad.addColorStop(0, 'rgba(255, 180, 0, 0.9)');
                         midGrad.addColorStop(0.5, 'rgba(255, 120, 0, 0.5)');
@@ -3401,7 +3435,7 @@
                 this.guardY = guardY;
                 this.radius = 16;
                 this.speed = 2.0;
-                this.maxHp = 300; // Beefy guardian
+                this.maxHp = 75; // Reduced guardian
                 this.hp = this.maxHp;
                 this.color = COLORS.green;
                 this.dead = false;
@@ -4861,7 +4895,7 @@
         // Spawn chests around the map with minimum spacing
         function spawnInitialChests() {
             const chestCount = 40 + Math.floor(Math.random() * 20); // 40-60 chests (scaled for 4x area)
-            const minChestSpacing = 400; // Minimum distance between chests
+            const minChestSpacing = 800; // Minimum distance between chests
             
             for (let i = 0; i < chestCount; i++) {
                 let attempts = 0;
@@ -4902,7 +4936,7 @@
                 chestRespawnTimer = 0;
                 
                 // Spawn new chest away from player, avoiding terrain and other chests
-                const minChestSpacing = 400;
+                const minChestSpacing = 800;
                 let attempts = 0;
                 
                 while (attempts < 20) {
@@ -4935,6 +4969,121 @@
             if (gameTime >= 600 && legendaryCount === 0 && !guaranteedLegendaryNext) {
                 guaranteedLegendaryNext = true;
             }
+        }
+        
+        // ===== COWBOY HAT PICKUP =====
+        function spawnCowboyHat() {
+            cowboyHat = null;
+            playerHasCowboyHat = false;
+            
+            const minDistFromObstacles = 60;
+            let attempts = 0;
+            
+            while (attempts < 50) {
+                const x = 400 + Math.random() * (WORLD.width - 800);
+                const y = 400 + Math.random() * (WORLD.height - 800);
+                
+                // Check not too close to center spawn
+                if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 600) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not in or near terrain
+                if (isInTerrain(x, y, minDistFromObstacles)) {
+                    attempts++;
+                    continue;
+                }
+                
+                cowboyHat = { x: x, y: y, radius: 15, bobOffset: Math.random() * Math.PI * 2 };
+                break;
+            }
+        }
+        
+        function drawCowboyHat() {
+            if (!cowboyHat || playerHasCowboyHat) return;
+            if (!camera.isVisible(cowboyHat.x, cowboyHat.y, 30)) return;
+            
+            const sx = camera.screenX(cowboyHat.x);
+            const sy = camera.screenY(cowboyHat.y);
+            const bob = Math.sin(Date.now() * 0.003 + cowboyHat.bobOffset) * camera.scale(3);
+            
+            ctx.save();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#8B4513';
+            
+            // Hat brim (wide ellipse)
+            ctx.fillStyle = '#8B4513';
+            ctx.beginPath();
+            ctx.ellipse(sx, sy + bob + camera.scale(2), camera.scale(18), camera.scale(6), 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Hat crown (curved top)
+            ctx.fillStyle = '#A0522D';
+            ctx.beginPath();
+            ctx.moveTo(sx - camera.scale(10), sy + bob);
+            ctx.quadraticCurveTo(sx - camera.scale(12), sy + bob - camera.scale(12), sx, sy + bob - camera.scale(14));
+            ctx.quadraticCurveTo(sx + camera.scale(12), sy + bob - camera.scale(12), sx + camera.scale(10), sy + bob);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Hat band
+            ctx.fillStyle = '#5a2d0a';
+            ctx.fillRect(sx - camera.scale(10), sy + bob - camera.scale(4), camera.scale(20), camera.scale(4));
+            
+            // Shine effect
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.beginPath();
+            ctx.ellipse(sx - camera.scale(4), sy + bob - camera.scale(10), camera.scale(4), camera.scale(2), -0.3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        function updateCowboyHat() {
+            if (!cowboyHat || playerHasCowboyHat) return;
+            
+            const dist = Math.hypot(player.x - cowboyHat.x, player.y - cowboyHat.y);
+            if (dist < player.radius + cowboyHat.radius) {
+                // Pick up the hat!
+                playerHasCowboyHat = true;
+                player.applyPassives(); // Recalculate speed with hat bonus
+                
+                // Visual feedback
+                spawnParticles(cowboyHat.x, cowboyHat.y, '#8B4513', 15);
+                spawnParticles(cowboyHat.x, cowboyHat.y, '#ffd700', 10);
+                
+                // Show notification
+                showHatPickupNotification();
+            }
+        }
+        
+        function showHatPickupNotification() {
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20%;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(139, 69, 19, 0.9);
+                border: 2px solid #ffd700;
+                padding: 15px 30px;
+                border-radius: 10px;
+                color: #fff;
+                font-size: 18px;
+                font-weight: bold;
+                z-index: 1000;
+                text-align: center;
+                pointer-events: none;
+            `;
+            notification.innerHTML = '🤠 COWBOY HAT FOUND!<br><span style="font-size: 14px; color: #ffd700;">+10% Movement Speed</span>';
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.transition = 'opacity 0.5s';
+                notification.style.opacity = '0';
+                setTimeout(() => notification.remove(), 500);
+            }, 2000);
         }
 
         // ===== TERRAIN OBSTACLES (Lakes & Mountains) =====
@@ -5080,46 +5229,77 @@
             },
             bush: {
                 draw: function(ctx, sx, sy, scale, time, obstacle) {
-                    const colors = ['#228B22', '#2E8B2E', '#1E7B1E'];
-                    const color = colors[obstacle.variant % colors.length];
                     const r = scale(obstacle.radius);
-                    const sway = Math.sin(time * 0.002 + obstacle.variant) * scale(1);
+                    const sway = Math.sin(time * 0.0015 + obstacle.variant) * scale(1.5);
                     
                     ctx.save();
-                    ctx.globalAlpha = 0.6;
-                    ctx.shadowBlur = 10;
-                    ctx.shadowColor = '#00ff44';
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#22aa44';
                     
-                    // Bush made of overlapping circles
-                    ctx.fillStyle = color;
-                    const numCircles = 4 + (obstacle.variant % 2);
-                    for (let i = 0; i < numCircles; i++) {
-                        const angle = (i / numCircles) * Math.PI * 2;
-                        const dist = r * 0.4;
-                        const cx = sx + Math.cos(angle) * dist + sway;
-                        const cy = sy + Math.sin(angle) * dist * 0.6;
-                        const cr = r * (0.5 + (i % 2) * 0.15);
-                        
+                    // Base dark shadow/ground
+                    ctx.fillStyle = 'rgba(0, 40, 0, 0.4)';
+                    ctx.beginPath();
+                    ctx.ellipse(sx, sy + r * 0.3, r * 0.9, r * 0.3, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Main bush body - lumpy shape using multiple arcs
+                    const darkGreen = '#1a5a1a';
+                    const midGreen = '#228B22';
+                    const lightGreen = '#2d9a2d';
+                    
+                    // Back layer (darker)
+                    ctx.fillStyle = darkGreen;
+                    ctx.globalAlpha = 0.7;
+                    ctx.beginPath();
+                    const backBumps = 5 + (obstacle.variant % 3);
+                    for (let i = 0; i < backBumps; i++) {
+                        const angle = (i / backBumps) * Math.PI * 2 - Math.PI / 2;
+                        const bumpR = r * (0.7 + ((obstacle.variant * i) % 30) / 100);
+                        const bx = sx + Math.cos(angle) * r * 0.3 + sway * 0.5;
+                        const by = sy + Math.sin(angle) * r * 0.25;
+                        ctx.moveTo(bx + bumpR, by);
+                        ctx.arc(bx, by, bumpR, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                    
+                    // Middle layer
+                    ctx.fillStyle = midGreen;
+                    ctx.globalAlpha = 0.8;
+                    ctx.beginPath();
+                    const midBumps = 4 + (obstacle.variant % 2);
+                    for (let i = 0; i < midBumps; i++) {
+                        const angle = (i / midBumps) * Math.PI * 2;
+                        const bumpR = r * (0.55 + ((obstacle.variant * i * 3) % 25) / 100);
+                        const bx = sx + Math.cos(angle) * r * 0.25 + sway;
+                        const by = sy + Math.sin(angle) * r * 0.2 - r * 0.1;
+                        ctx.moveTo(bx + bumpR, by);
+                        ctx.arc(bx, by, bumpR, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                    
+                    // Front highlights (lighter bumps on top)
+                    ctx.fillStyle = lightGreen;
+                    ctx.globalAlpha = 0.6;
+                    const topBumps = 3;
+                    for (let i = 0; i < topBumps; i++) {
+                        const seed = obstacle.variant * 11 + i * 17;
+                        const bx = sx + ((seed % 60) / 60 - 0.5) * r * 0.8 + sway;
+                        const by = sy - r * 0.2 + ((seed * 2) % 40) / 40 * r * 0.3;
+                        const bumpR = r * (0.25 + (seed % 15) / 100);
                         ctx.beginPath();
-                        ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+                        ctx.arc(bx, by, bumpR, 0, Math.PI * 2);
                         ctx.fill();
                     }
                     
-                    // Center circle
-                    ctx.fillStyle = '#1a6b1a';
-                    ctx.beginPath();
-                    ctx.arc(sx + sway, sy, r * 0.5, 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // Highlight dots (leaves) - deterministic positions based on variant
-                    ctx.fillStyle = '#44ff44';
-                    ctx.globalAlpha = 0.4;
-                    for (let i = 0; i < 3; i++) {
-                        const seed = obstacle.variant * 7 + i * 13;
-                        const bx = sx + ((seed % 100) / 100 - 0.5) * r + sway;
-                        const by = sy + (((seed * 3) % 100) / 100 - 0.5) * r * 0.6;
+                    // Small leaf highlights
+                    ctx.fillStyle = '#55dd55';
+                    ctx.globalAlpha = 0.5;
+                    for (let i = 0; i < 5; i++) {
+                        const seed = obstacle.variant * 7 + i * 23;
+                        const lx = sx + ((seed % 80) / 80 - 0.5) * r * 1.2 + sway;
+                        const ly = sy + (((seed * 3) % 60) / 60 - 0.5) * r * 0.7;
                         ctx.beginPath();
-                        ctx.arc(bx, by, scale(2), 0, Math.PI * 2);
+                        ctx.arc(lx, ly, scale(1.5 + (seed % 2)), 0, Math.PI * 2);
                         ctx.fill();
                     }
                     
@@ -5353,11 +5533,11 @@
             
             // ===== STEP 3: Spawn Rocks (avoiding other objects) =====
             const rockCount = 40 + Math.floor(Math.random() * 20); // 40-60 rocks
-            const minRockSpacing = 80; // Minimum spacing between rocks
+            const minRockSpacing = 100; // Minimum spacing between rocks
             
             for (let i = 0; i < rockCount; i++) {
                 let x, y, attempts = 0;
-                const rockRadius = 12 + Math.random() * 18; // Varying sizes 12-30
+                const rockRadius = 20 + Math.random() * 25; // Varying sizes 20-45
                 
                 do {
                     x = edgeBuffer + Math.random() * (WORLD.width - edgeBuffer * 2);
@@ -5403,11 +5583,11 @@
             
             // ===== STEP 4: Spawn Bushes (avoiding other objects) =====
             const bushCount = 50 + Math.floor(Math.random() * 30); // 50-80 bushes
-            const minBushSpacing = 60; // Minimum spacing between bushes
+            const minBushSpacing = 80; // Minimum spacing between bushes
             
             for (let i = 0; i < bushCount; i++) {
                 let x, y, attempts = 0;
-                const bushRadius = 10 + Math.random() * 12; // Varying sizes 10-22
+                const bushRadius = 18 + Math.random() * 18; // Varying sizes 18-36
                 
                 do {
                     x = edgeBuffer + Math.random() * (WORLD.width - edgeBuffer * 2);
@@ -5765,6 +5945,57 @@
                     }
                 }
                 
+                // Light homing for non-boomerang projectiles
+                if (this.type !== 'boomerang') {
+                    const homingRangeSq = 22500; // 150^2 - use squared distance for performance
+                    let nearestDistSq = homingRangeSq;
+                    let nearestEnemy = null;
+                    
+                    // Only check nearby enemies for homing (use squared distance)
+                    for (let i = 0, len = enemies.length; i < len; i++) {
+                        const enemy = enemies[i];
+                        if (enemy.dead || this.hitEnemies.has(enemy)) continue;
+                        const dx = enemy.x - this.x;
+                        const dy = enemy.y - this.y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq < nearestDistSq) {
+                            nearestDistSq = distSq;
+                            nearestEnemy = enemy;
+                        }
+                    }
+                    
+                    // Also check bosses
+                    for (let i = 0, len = bosses.length; i < len; i++) {
+                        const boss = bosses[i];
+                        if (boss.dead || this.hitEnemies.has(boss)) continue;
+                        const dx = boss.x - this.x;
+                        const dy = boss.y - this.y;
+                        const distSq = dx * dx + dy * dy;
+                        if (distSq < nearestDistSq) {
+                            nearestDistSq = distSq;
+                            nearestEnemy = boss;
+                        }
+                    }
+                    
+                    // Apply gentle homing
+                    if (nearestEnemy) {
+                        const targetAngle = Math.atan2(nearestEnemy.y - this.y, nearestEnemy.x - this.x);
+                        const currentAngle = Math.atan2(this.vy, this.vx);
+                        let angleDiff = targetAngle - currentAngle;
+                        
+                        // Normalize angle difference
+                        if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                        else if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                        
+                        // Gentle turn (0.08 radians max per frame)
+                        const turn = angleDiff > 0.08 ? 0.08 : angleDiff < -0.08 ? -0.08 : angleDiff;
+                        const newAngle = currentAngle + turn;
+                        
+                        this.vx = Math.cos(newAngle) * this.speed;
+                        this.vy = Math.sin(newAngle) * this.speed;
+                    }
+                }
+                
                 this.x += this.vx;
                 this.y += this.vy;
                 
@@ -5781,7 +6012,7 @@
                         player.onDealDamage(damage);
                         applyStatusEffects(enemy, damage);
                         this.pierce--;
-                        spawnParticles(this.x, this.y, this.color, 5);
+                        spawnParticles(this.x, this.y, this.color, 3);
                         if (this.pierce <= 0) {
                             this.dead = true;
                             return;
@@ -5801,7 +6032,7 @@
                         leprechaun.takeDamage(damage, isCrit);
                         player.onDealDamage(damage);
                         this.pierce--;
-                        spawnParticles(this.x, this.y, COLORS.gold, 5);
+                        spawnParticles(this.x, this.y, COLORS.gold, 3);
                         if (this.pierce <= 0) {
                             this.dead = true;
                             return;
@@ -5821,7 +6052,7 @@
                         boss.takeDamage(damage, isCrit);
                         player.onDealDamage(damage);
                         this.pierce--;
-                        spawnParticles(this.x, this.y, boss.color, 5);
+                        spawnParticles(this.x, this.y, boss.color, 3);
                         if (this.pierce <= 0) {
                             this.dead = true;
                             return;
@@ -7325,6 +7556,7 @@
                     if (!boss.dead) boss.update(effectiveDt);
                 }
                 updateChestSpawning(dt);
+                updateCowboyHat();
                 
                 // Clean up dead entities (in-place for performance)
                 cleanupArray(enemies, e => e.dead);
@@ -7450,6 +7682,9 @@
             for (const chest of chests) {
                 if (!chest.dead) chest.draw();
             }
+            
+            // Draw cowboy hat pickup
+            drawCowboyHat();
             
             // Draw rainbows (behind everything else)
             for (const rainbow of rainbows) rainbow.draw();
@@ -7650,6 +7885,19 @@
                 minimapCtx.stroke();
             }
             
+            // Cowboy hat - only in explored areas, before picked up
+            if (cowboyHat && !playerHasCowboyHat && isExplored(cowboyHat.x, cowboyHat.y)) {
+                const hx = cowboyHat.x * scale;
+                const hy = cowboyHat.y * scale;
+                minimapCtx.fillStyle = '#8B4513';
+                minimapCtx.strokeStyle = '#ffd700';
+                minimapCtx.lineWidth = 1;
+                minimapCtx.beginPath();
+                minimapCtx.arc(hx, hy, 4, 0, Math.PI * 2);
+                minimapCtx.fill();
+                minimapCtx.stroke();
+            }
+            
             // Player (always visible)
             minimapCtx.fillStyle = COLORS.cyan;
             minimapCtx.shadowBlur = 5;
@@ -7726,6 +7974,7 @@
             spawnShrines();
             spawnDecorations();
             spawnInitialChests();
+            spawnCowboyHat();
             
             DOM.menuOverlay.classList.add('hidden');
             DOM.killCount.textContent = '0';
