@@ -960,27 +960,33 @@
             desynchronized: true  // Reduce latency on supported browsers
         });
         
-        // Responsive sizing (simple approach that works)
+        // Modest DPR boost for sharper visuals (capped to avoid performance hit)
+        const dpr = Math.min(window.devicePixelRatio || 1, isLowPerf ? 1.5 : 2);
+        
+        // Responsive sizing
         function resizeCanvas() {
             const maxWidth = Math.min(400, window.innerWidth - 20);
             const maxHeight = Math.min(600, window.innerHeight - 20);
             const ratio = 400 / 600;
             
+            let displayWidth, displayHeight;
             if (maxWidth / maxHeight > ratio) {
-                canvas.height = maxHeight;
-                canvas.width = maxHeight * ratio;
+                displayHeight = maxHeight;
+                displayWidth = maxHeight * ratio;
             } else {
-                canvas.width = maxWidth;
-                canvas.height = maxWidth / ratio;
+                displayWidth = maxWidth;
+                displayHeight = maxWidth / ratio;
             }
             
-            canvas.parentElement.style.width = canvas.width + 'px';
-            canvas.parentElement.style.height = canvas.height + 'px';
+            // Set canvas buffer with DPR scaling
+            canvas.width = displayWidth * dpr;
+            canvas.height = displayHeight * dpr;
             
-            // Disable smoothing on mobile for faster rendering
-            if (isLowPerf) {
-                ctx.imageSmoothingEnabled = false;
-            }
+            // Set CSS display size
+            canvas.style.width = displayWidth + 'px';
+            canvas.style.height = displayHeight + 'px';
+            canvas.parentElement.style.width = displayWidth + 'px';
+            canvas.parentElement.style.height = displayHeight + 'px';
         }
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
@@ -990,7 +996,7 @@
         let score = 0;
         let highScore = parseInt(localStorage.getItem('clydesBigJumpHigh') || '0');
         
-        // Scale factor for responsive game (canvas pixels to game coords)
+        // Scale factor for responsive game (canvas pixels to game coords, includes DPR)
         const getScale = () => canvas.width / 400;
 
         // Bird
@@ -1529,11 +1535,8 @@
         function update(dt = 0.016) {
             animTime += dt;
             
-            // Frame-rate independent multiplier (normalized to 60fps)
-            const dtMult = dt * 60;
-            
             // Animate Clyde's floppy ears
-            bird.wingAngle *= Math.pow(0.9, dtMult);
+            bird.wingAngle *= 0.9;
             
             // Countdown timer
             if (gameState === 'countdown') {
@@ -1553,7 +1556,7 @@
             }
             
             // Score pop decay
-            if (scorePop > 0) scorePop *= Math.pow(0.9, dtMult);
+            if (scorePop > 0) scorePop *= 0.9;
             
             if (gameState !== 'playing') return;
 
@@ -1583,14 +1586,14 @@
                 thoughtBubbleY = bird.y - 20;
             }
 
-            // Bird physics (frame-rate independent)
-            bird.velocity += bird.gravity * dtMult;
+            // Bird physics (simple fixed timestep)
+            bird.velocity += bird.gravity;
             if (bird.velocity > 3) bird.velocity = 3;
-            bird.y += bird.velocity * dtMult;
+            bird.y += bird.velocity;
             
-            // Smoother rotation (frame-rate independent)
+            // Smoother rotation
             const targetRotation = Math.min(Math.max(bird.velocity * 5, -20), 45);
-            bird.rotation += (targetRotation - bird.rotation) * 0.08 * dtMult;
+            bird.rotation += (targetRotation - bird.rotation) * 0.08;
 
             // Boundary check
             if (bird.y < 0) {
@@ -1602,17 +1605,17 @@
                 return;
             }
 
-            // Spawn pipes (frame-rate independent)
-            pipeSpawnTimer += dtMult;
+            // Spawn pipes
+            pipeSpawnTimer++;
             if (pipeSpawnTimer >= pipeSpawnInterval) {
                 spawnPipe();
                 pipeSpawnTimer = 0;
             }
 
-            // Update pipes (frame-rate independent)
+            // Update pipes
             for (let i = pipes.length - 1; i >= 0; i--) {
                 const pipe = pipes[i];
-                pipe.x -= pipeSpeed * dtMult;
+                pipe.x -= pipeSpeed;
 
                 // Score
                 if (!pipe.scored && pipe.x + pipeWidth < bird.x) {
@@ -1648,11 +1651,11 @@
                 let i = particles.length;
                 while (i--) {
                     const p = particles[i];
-                    p.x += p.vx * dtMult;
-                    p.y += p.vy * dtMult;
-                    p.vy += 0.03 * dtMult;
-                    p.vx *= Math.pow(0.96, dtMult);
-                    p.life -= 0.035 * dtMult;
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.03;
+                    p.vx *= 0.96;
+                    p.life -= 0.035;
                     if (p.life <= 0) {
                         particles[i] = particles[particles.length - 1];
                         particles.pop();
@@ -2181,21 +2184,12 @@
             ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
 
-        // Game loop with unified frame rate (45fps for all devices)
-        const TARGET_FPS = 45;
-        const FRAME_TIME = 1000 / TARGET_FPS;
-        let lastRenderTime = 0;
-        
+        // Game loop - native refresh rate with delta time physics
         function gameLoop(currentTime) {
             requestAnimationFrame(gameLoop);
             
             // Skip during loading
             if (gameState === 'loading') return;
-            
-            // Frame rate limiting
-            const elapsed = currentTime - lastRenderTime;
-            if (elapsed < FRAME_TIME) return;
-            lastRenderTime = currentTime - (elapsed % FRAME_TIME);
             
             // Calculate delta time (capped to prevent huge jumps)
             const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.1);
