@@ -1761,6 +1761,28 @@
                 overscroll-behavior: contain !important;
                 -webkit-overscroll-behavior: contain !important;
                 scroll-behavior: auto !important;
+                /* Ensure proper scroll-snap on game section */
+                scroll-snap-align: start !important;
+                -webkit-scroll-snap-align: start !important;
+                scroll-snap-stop: always !important;
+                -webkit-scroll-snap-stop: always !important;
+                contain: layout style !important;
+            }
+            
+            /* Ensure photos section (before game) also snaps properly */
+            #photos {
+                scroll-snap-align: start !important;
+                -webkit-scroll-snap-align: start !important;
+                scroll-snap-stop: always !important;
+                -webkit-scroll-snap-stop: always !important;
+            }
+            
+            /* Ensure merch section (after game) also snaps properly */
+            #merch {
+                scroll-snap-align: start !important;
+                -webkit-scroll-snap-align: start !important;
+                scroll-snap-stop: always !important;
+                -webkit-scroll-snap-stop: always !important;
             }
             
             #game iframe {
@@ -1864,11 +1886,11 @@
                 max-width: 400px !important;
                 aspect-ratio: unset !important;
                 height: auto !important;
-                max-height: unset !important;
+                max-height: 70vh !important; /* Prevent overflow beyond section */
                 min-height: unset !important;
                 padding: 0 !important;
                 border-radius: 10px !important;
-                overflow: visible !important;
+                overflow: hidden !important; /* Changed from visible to prevent content bleed */
                 margin-top: 8px !important;
                 /* Prevent page scrolling when touching game */
                 touch-action: none !important;
@@ -6814,6 +6836,52 @@
         
         // Scroll/wheel uses native scroll-snap behavior
         // No interception needed - CSS scroll-snap-type: y mandatory handles it
+        
+        // Mobile scroll-snap helper - ensures proper snap alignment after scroll ends
+        // Particularly helpful for sections with iframes (game section)
+        (function() {
+            const isMobile = window.matchMedia('(max-width: 768px)').matches;
+            if (!isMobile || !scrollContainer) return;
+            
+            let scrollEndTimeout;
+            let lastScrollTop = 0;
+            
+            function snapToNearestSection() {
+                const sectionHeight = window.innerHeight;
+                const scrollTop = scrollContainer.scrollTop;
+                const nearestIndex = Math.round(scrollTop / sectionHeight);
+                const targetPosition = nearestIndex * sectionHeight;
+                const diff = Math.abs(scrollTop - targetPosition);
+                
+                // Only snap if we're more than 2px off from a section boundary
+                // and scroll has actually stopped (same position as last check)
+                if (diff > 2 && Math.abs(scrollTop - lastScrollTop) < 5) {
+                    scrollContainer.scrollTo({
+                        top: targetPosition,
+                        behavior: 'auto'
+                    });
+                }
+                lastScrollTop = scrollTop;
+            }
+            
+            // Use scrollend event if supported, otherwise fallback to timeout
+            if ('onscrollend' in window) {
+                scrollContainer.addEventListener('scrollend', snapToNearestSection, { passive: true });
+            } else {
+                // Fallback: check after scroll stops
+                scrollContainer.addEventListener('scroll', function() {
+                    lastScrollTop = scrollContainer.scrollTop;
+                    clearTimeout(scrollEndTimeout);
+                    scrollEndTimeout = setTimeout(snapToNearestSection, 100);
+                }, { passive: true });
+            }
+            
+            // Also check on touchend for more reliable mobile snap
+            scrollContainer.addEventListener('touchend', function() {
+                clearTimeout(scrollEndTimeout);
+                scrollEndTimeout = setTimeout(snapToNearestSection, 200);
+            }, { passive: true });
+        })();
 
         // Update URL hash without adding to browser history (cleaner UX)
         var lastUrlSection = '';
