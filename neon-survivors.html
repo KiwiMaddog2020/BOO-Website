@@ -4600,12 +4600,12 @@
                 this.baseSpeed = 0; // Set after switch
                 
                 // Scaling factor based on game time
-                // HP: +15% every 25 seconds (increased from +10% per 30s)
-                const hpScale = 1 + Math.floor(gameTime / 25) * 0.15;
-                // Damage: +10% every 35 seconds (increased from +8% per 45s)
-                const dmgScale = 1 + Math.floor(gameTime / 35) * 0.10;
-                // Speed: +3% every 60 seconds (new)
-                const speedScale = 1 + Math.floor(gameTime / 60) * 0.03;
+                // HP: +20% every 20 seconds (increased from +15% per 25s)
+                const hpScale = 1 + Math.floor(gameTime / 20) * 0.20;
+                // Damage: +12% every 30 seconds (increased from +10% per 35s)
+                const dmgScale = 1 + Math.floor(gameTime / 30) * 0.12;
+                // Speed: +4% every 45 seconds (increased from +3% per 60s)
+                const speedScale = 1 + Math.floor(gameTime / 45) * 0.04;
                 
                 switch (type) {
                     case 'basic':
@@ -4974,8 +4974,12 @@
                 this.guardX = guardX; // Pot of gold location to guard
                 this.guardY = guardY;
                 this.radius = 16;
-                this.speed = 2.0;
-                this.maxHp = 225; // Guardian HP
+                
+                // Time-based scaling for leprechaun
+                const timeScale = 1 + Math.floor(gameTime / 60) * 0.25; // +25% per minute
+                
+                this.speed = 2.0 * (1 + Math.floor(gameTime / 90) * 0.05); // +5% speed per 90s
+                this.maxHp = Math.floor(225 * timeScale);
                 this.hp = this.maxHp;
                 this.color = COLORS.green;
                 this.dead = false;
@@ -5610,9 +5614,15 @@
                 this.x = x;
                 this.y = y;
                 this.radius = 35;
-                this.speed = 1.2;
-                this.maxHp = 800 + bossCount * 200;
+                
+                // Time-based scaling for mini boss
+                const timeScale = 1 + Math.floor(gameTime / 60) * 0.20; // +20% per minute
+                const speedScale = 1 + Math.floor(gameTime / 120) * 0.08; // +8% speed per 2 min
+                
+                this.speed = 1.2 * speedScale;
+                this.maxHp = Math.floor((800 + bossCount * 200) * timeScale);
                 this.hp = this.maxHp;
+                this.damage = Math.floor(25 * timeScale); // Scales damage too
                 this.color = '#ff6600';
                 this.dead = false;
                 this.orbHitCooldown = 0;
@@ -5802,9 +5812,16 @@
                 this.x = x;
                 this.y = y;
                 this.radius = 55;
-                this.speed = 0.8;
-                this.maxHp = 2500 + bossCount * 500;
+                
+                // Time-based scaling for major boss
+                const timeScale = 1 + Math.floor(gameTime / 60) * 0.25; // +25% per minute
+                const speedScale = 1 + Math.floor(gameTime / 150) * 0.10; // +10% speed per 2.5 min
+                
+                this.baseSpeedValue = 0.8 * speedScale;
+                this.speed = this.baseSpeedValue;
+                this.maxHp = Math.floor((2500 + bossCount * 500) * timeScale);
                 this.hp = this.maxHp;
+                this.damage = Math.floor(40 * timeScale); // Charge attack damage scales
                 this.color = '#ff00ff';
                 this.dead = false;
                 this.orbHitCooldown = 0;
@@ -5815,6 +5832,7 @@
                 this.isBoss = true;
                 this.bossType = 'major';
                 this.phase = 1; // Phases at 66% and 33% HP
+                this.speedScale = speedScale; // Store for phase changes
             }
             
             update(dt) {
@@ -5823,16 +5841,16 @@
                 // Frame-rate independent
                 const dtScale = dt / 16;
                 
-                // Phase transitions
+                // Phase transitions (speed scales with time)
                 const hpPercent = this.hp / this.maxHp;
                 if (hpPercent <= 0.33 && this.phase < 3) {
                     this.phase = 3;
-                    this.speed = 1.4;
+                    this.speed = 1.4 * this.speedScale;
                     spawnParticles(this.x, this.y, '#ff0000', 30);
                     showBossPhaseWarning('ENRAGED!');
                 } else if (hpPercent <= 0.66 && this.phase < 2) {
                     this.phase = 2;
-                    this.speed = 1.1;
+                    this.speed = 1.1 * this.speedScale;
                     spawnParticles(this.x, this.y, '#ffaa00', 20);
                     showBossPhaseWarning('PHASE 2');
                 }
@@ -5853,7 +5871,7 @@
                         // Damage player if close
                         const playerDist = Math.hypot(player.x - this.x, player.y - this.y);
                         if (playerDist < 100) {
-                            player.takeDamage(40);
+                            player.takeDamage(this.damage);
                             // Knockback
                             const kbDx = player.x - this.x;
                             const kbDy = player.y - this.y;
@@ -5990,6 +6008,14 @@
                     }, i * 100);
                 }
                 spawnParticles(this.x, this.y, COLORS.gold, 40);
+                
+                // Suck up all XP gems on the map
+                for (const gem of xpGems) {
+                    if (!gem.dead) {
+                        gem.magnetized = true;
+                        gem.magnetStrength = 25; // Strong pull
+                    }
+                }
                 
                 // Drop lots of gold and XP
                 playerGold += 250;
@@ -8221,7 +8247,7 @@
                 
                 // Store trail (shorter for daggers)
                 this.trail.push({ x: this.x, y: this.y });
-                const maxTrail = this.type === 'dagger' ? 5 : this.type === 'boomerang' ? 10 : 
+                const maxTrail = this.type === 'dagger' ? 5 : this.type === 'boomerang' ? 0 : 
                                  this.type === 'sawblade' ? 6 : this.type === 'homing' ? 12 : 8;
                 if (this.trail.length > maxTrail) this.trail.shift();
                 
@@ -8473,8 +8499,8 @@
                 ctx.shadowBlur = 10;
                 ctx.shadowColor = this.color;
                 
-                // Trail (skip for bolt type)
-                if (this.type !== 'bolt') {
+                // Trail (skip for bolt and boomerang types)
+                if (this.type !== 'bolt' && this.type !== 'boomerang') {
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = this.type === 'laser' ? 3 : this.type === 'boomerang' ? 2.5 : 2;
                     ctx.globalAlpha = 0.5;
@@ -8587,6 +8613,8 @@
                 this.radius = 3 + value * 0.5;
                 this.color = COLORS.cyan;  // Cyan color matching player
                 this.pulse = 0;
+                this.magnetized = false;
+                this.magnetStrength = 12;
             }
 
             update() {
@@ -8597,8 +8625,13 @@
                 const dy = player.y - this.y;
                 const dist = Math.hypot(dx, dy);
                 
+                // Individual magnetization (from boss kill)
+                if (this.magnetized && dist > 1) {
+                    this.x += (dx / dist) * this.magnetStrength;
+                    this.y += (dy / dist) * this.magnetStrength;
+                }
                 // During magnet pulse, pull ALL gems rapidly
-                if (magnetPulseActive && dist > 1) {
+                else if (magnetPulseActive && dist > 1) {
                     const speed = 12; // Fast pull speed
                     this.x += (dx / dist) * speed;
                     this.y += (dy / dist) * speed;
@@ -9289,8 +9322,19 @@
         
         // ===== STACKING WARNING SYSTEM =====
         let activeWarnings = [];
+        let warningQueue = []; // Queue warnings while upgrade menu is open
         
         function showStackedWarning(options) {
+            // If upgrade menu is open, queue the warning for later
+            if (DOM.upgradeOverlay && DOM.upgradeOverlay.classList.contains('active')) {
+                warningQueue.push(options);
+                return;
+            }
+            
+            displayWarning(options);
+        }
+        
+        function displayWarning(options) {
             const warning = document.createElement('div');
             warning.className = 'stacked-warning';
             warning.innerHTML = options.html;
@@ -9339,6 +9383,16 @@
             activeWarnings.forEach((warning, index) => {
                 warning.style.top = `calc(${startY}% + ${index * spacing}px)`;
             });
+        }
+        
+        function processWarningQueue() {
+            // Show queued warnings with slight delays between them
+            warningQueue.forEach((options, index) => {
+                setTimeout(() => {
+                    displayWarning(options);
+                }, index * 500);
+            });
+            warningQueue = [];
         }
         
         // Add warning animation styles once
@@ -9794,6 +9848,10 @@
             gamePaused = false;
             updateWeaponsDisplay();
             updateTomesDisplay();
+            
+            // Process any queued warnings after a short delay
+            setTimeout(processWarningQueue, 300);
+            
             console.log('Upgrade complete, weapons:', player.weapons, 'tomes:', player.tomes);
         }
 
@@ -10661,6 +10719,7 @@
             // Clear any active warnings
             activeWarnings.forEach(w => w.remove());
             activeWarnings = [];
+            warningQueue = [];
             
             // Reset chest/legendary tracking
             legendaryCount = 0;
