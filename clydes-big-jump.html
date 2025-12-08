@@ -938,8 +938,10 @@
         const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
         const isOldDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4;
+        const isVeryOldDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2;
         const hasSlowConnection = navigator.connection && (navigator.connection.saveData || navigator.connection.effectiveType === '2g' || navigator.connection.effectiveType === 'slow-2g');
         const isLowPerf = isMobile || isSafari || isIOS || isOldDevice || hasSlowConnection;
+        const isVeryLowPerf = isVeryOldDevice || hasSlowConnection;
         
         const PERF = {
             particleMultiplier: 1.0,
@@ -958,22 +960,43 @@
             desynchronized: true  // Reduce latency on supported browsers
         });
         
+        // Disable image smoothing on mobile for faster rendering
+        if (isLowPerf) {
+            ctx.imageSmoothingEnabled = false;
+        }
+        
+        // Cap pixel ratio on mobile to reduce render resolution
+        const maxDPR = isLowPerf ? 1 : (window.devicePixelRatio || 1);
+        
         // Responsive sizing
         function resizeCanvas() {
             const maxWidth = Math.min(400, window.innerWidth - 20);
             const maxHeight = Math.min(600, window.innerHeight - 20);
             const ratio = 400 / 600;
             
+            let displayWidth, displayHeight;
             if (maxWidth / maxHeight > ratio) {
-                canvas.height = maxHeight;
-                canvas.width = maxHeight * ratio;
+                displayHeight = maxHeight;
+                displayWidth = maxHeight * ratio;
             } else {
-                canvas.width = maxWidth;
-                canvas.height = maxWidth / ratio;
+                displayWidth = maxWidth;
+                displayHeight = maxWidth / ratio;
             }
             
-            canvas.parentElement.style.width = canvas.width + 'px';
-            canvas.parentElement.style.height = canvas.height + 'px';
+            // Set canvas buffer size (capped DPR on mobile)
+            canvas.width = displayWidth * maxDPR;
+            canvas.height = displayHeight * maxDPR;
+            
+            // Set CSS display size
+            canvas.style.width = displayWidth + 'px';
+            canvas.style.height = displayHeight + 'px';
+            canvas.parentElement.style.width = displayWidth + 'px';
+            canvas.parentElement.style.height = displayHeight + 'px';
+            
+            // Re-apply settings after resize
+            if (isLowPerf) {
+                ctx.imageSmoothingEnabled = false;
+            }
         }
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
@@ -983,7 +1006,7 @@
         let score = 0;
         let highScore = parseInt(localStorage.getItem('clydesBigJumpHigh') || '0');
         
-        // Scale factor for responsive game
+        // Scale factor for responsive game (canvas pixels to game coords)
         const getScale = () => canvas.width / 400;
 
         // Bird
@@ -1019,6 +1042,7 @@
         // ===== CACHED BACKGROUND GRID =====
         let bgGridCanvas = null;
         function createBgGridCache() {
+            // Always 400x600 game coords, scale handles the rest
             bgGridCanvas = document.createElement('canvas');
             bgGridCanvas.width = 400;
             bgGridCanvas.height = 600;
@@ -1028,101 +1052,106 @@
             bgCtx.fillStyle = '#0a0a0a';
             bgCtx.fillRect(0, 0, 400, 600);
             
-            // Draw grid once
-            bgCtx.strokeStyle = 'rgba(0, 255, 255, 0.04)';
-            bgCtx.lineWidth = 1;
-            const gridSpacing = 30;  // Same on all devices at 30fps
-            for (let x = 0; x < 400; x += gridSpacing) {
-                bgCtx.beginPath(); bgCtx.moveTo(x, 0); bgCtx.lineTo(x, 600); bgCtx.stroke();
-            }
-            for (let y = 0; y < 600; y += gridSpacing) {
-                bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(400, y); bgCtx.stroke();
+            // Skip grid on very low perf, sparse grid on low perf
+            if (!isVeryLowPerf) {
+                bgCtx.strokeStyle = 'rgba(0, 255, 255, 0.04)';
+                bgCtx.lineWidth = 1;
+                const gridSpacing = isLowPerf ? 40 : 30;  // Wider spacing on mobile
+                for (let x = 0; x < 400; x += gridSpacing) {
+                    bgCtx.beginPath(); bgCtx.moveTo(x, 0); bgCtx.lineTo(x, 600); bgCtx.stroke();
+                }
+                for (let y = 0; y < 600; y += gridSpacing) {
+                    bgCtx.beginPath(); bgCtx.moveTo(0, y); bgCtx.lineTo(400, y); bgCtx.stroke();
+                }
             }
             
             bgCtx.globalAlpha = 1;
             
-            // Distant clouds (soft, puffy)
-            bgCtx.globalAlpha = 0.06;
-            bgCtx.fillStyle = '#0ff';
-            
-            // Cloud 1
-            bgCtx.beginPath();
-            bgCtx.arc(70, 80, 25, 0, Math.PI * 2);
-            bgCtx.arc(95, 75, 30, 0, Math.PI * 2);
-            bgCtx.arc(125, 80, 22, 0, Math.PI * 2);
-            bgCtx.fill();
-            
-            // Cloud 2
-            bgCtx.beginPath();
-            bgCtx.arc(300, 120, 20, 0, Math.PI * 2);
-            bgCtx.arc(322, 115, 25, 0, Math.PI * 2);
-            bgCtx.arc(348, 118, 18, 0, Math.PI * 2);
-            bgCtx.fill();
-            
-            // Cloud 3
-            bgCtx.beginPath();
-            bgCtx.arc(200, 50, 18, 0, Math.PI * 2);
-            bgCtx.arc(220, 45, 22, 0, Math.PI * 2);
-            bgCtx.arc(242, 50, 16, 0, Math.PI * 2);
-            bgCtx.fill();
-            
-            bgCtx.globalAlpha = 1;
+            // Skip clouds on very low perf
+            if (!isVeryLowPerf) {
+                bgCtx.globalAlpha = 0.06;
+                bgCtx.fillStyle = '#0ff';
+                
+                // Cloud 1
+                bgCtx.beginPath();
+                bgCtx.arc(70, 80, 25, 0, PI2);
+                bgCtx.arc(95, 75, 30, 0, PI2);
+                bgCtx.arc(125, 80, 22, 0, PI2);
+                bgCtx.fill();
+                
+                // Cloud 2
+                bgCtx.beginPath();
+                bgCtx.arc(300, 120, 20, 0, PI2);
+                bgCtx.arc(322, 115, 25, 0, PI2);
+                bgCtx.arc(348, 118, 18, 0, PI2);
+                bgCtx.fill();
+                
+                // Cloud 3
+                bgCtx.beginPath();
+                bgCtx.arc(200, 50, 18, 0, PI2);
+                bgCtx.arc(220, 45, 22, 0, PI2);
+                bgCtx.arc(242, 50, 16, 0, PI2);
+                bgCtx.fill();
+                
+                bgCtx.globalAlpha = 1;
+            }
             
             // Bake static colorful stars into background (grid-based with jitter)
-            const starColors = ['#0ff', '#ff00ff', '#ff6600', '#00ffcc', '#ff3366', '#9b30ff', '#00ff88'];
-            
-            // Seeded random for consistent star placement
-            let seed = 12345;
-            function seededRandom() {
-                seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-                return seed / 0x7fffffff;
-            }
-            
-            // Cloud exclusion zones (x, y, width, height)
-            const cloudZones = [
-                { x: 40, y: 45, w: 115, h: 70 },   // Cloud 1
-                { x: 275, y: 85, w: 95, h: 60 },   // Cloud 2
-                { x: 175, y: 20, w: 90, h: 55 }    // Cloud 3
-            ];
-            
-            function inCloudZone(x, y) {
-                for (const zone of cloudZones) {
-                    if (x >= zone.x && x <= zone.x + zone.w && 
-                        y >= zone.y && y <= zone.y + zone.h) {
-                        return true;
+            // Skip stars on very low perf
+            if (!isVeryLowPerf) {
+                const starColors = ['#0ff', '#ff00ff', '#ff6600', '#00ffcc', '#ff3366', '#9b30ff', '#00ff88'];
+                
+                // Seeded random for consistent star placement
+                let seed = 12345;
+                function seededRandom() {
+                    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+                    return seed / 0x7fffffff;
+                }
+                
+                // Cloud exclusion zones (x, y, width, height)
+                const cloudZones = [
+                    { x: 40, y: 45, w: 115, h: 70 },   // Cloud 1
+                    { x: 275, y: 85, w: 95, h: 60 },   // Cloud 2
+                    { x: 175, y: 20, w: 90, h: 55 }    // Cloud 3
+                ];
+                
+                function inCloudZone(x, y) {
+                    for (const zone of cloudZones) {
+                        if (x >= zone.x && x <= zone.x + zone.w && 
+                            y >= zone.y && y <= zone.y + zone.h) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                
+                // Create a grid and place stars (fewer on mobile)
+                const cols = isLowPerf ? 4 : 5;
+                const rows = isLowPerf ? 4 : 5;
+                const cellW = 400 / cols;
+                const cellH = 600 / rows;
+                const jitter = 0.85;
+                
+                bgCtx.globalAlpha = 0.6;
+                for (let row = 0; row < rows; row++) {
+                    for (let col = 0; col < cols; col++) {
+                        if (seededRandom() < 0.18) continue;
+                        
+                        const baseX = col * cellW + cellW / 2;
+                        const baseY = row * cellH + cellH / 2;
+                        const x = baseX + (seededRandom() - 0.5) * cellW * jitter;
+                        const y = baseY + (seededRandom() - 0.5) * cellH * jitter;
+                        
+                        if (inCloudZone(x, y)) continue;
+                        
+                        bgCtx.fillStyle = starColors[Math.floor(seededRandom() * starColors.length)];
+                        bgCtx.beginPath();
+                        bgCtx.arc(x, y, seededRandom() * 1.5 + 0.5, 0, PI2);
+                        bgCtx.fill();
                     }
                 }
-                return false;
+                bgCtx.globalAlpha = 1;
             }
-            
-            // Create a 5x5 grid and place stars with random offset within each cell
-            const cols = 5;
-            const rows = 5;
-            const cellW = 400 / cols;
-            const cellH = 600 / rows;
-            const jitter = 0.85; // How much randomness within each cell (0-1)
-            
-            bgCtx.globalAlpha = 0.6;
-            for (let row = 0; row < rows; row++) {
-                for (let col = 0; col < cols; col++) {
-                    // Skip some cells randomly for imperfection
-                    if (seededRandom() < 0.18) continue;
-                    
-                    const baseX = col * cellW + cellW / 2;
-                    const baseY = row * cellH + cellH / 2;
-                    const x = baseX + (seededRandom() - 0.5) * cellW * jitter;
-                    const y = baseY + (seededRandom() - 0.5) * cellH * jitter;
-                    
-                    // Skip if in cloud zone
-                    if (inCloudZone(x, y)) continue;
-                    
-                    bgCtx.fillStyle = starColors[Math.floor(seededRandom() * starColors.length)];
-                    bgCtx.beginPath();
-                    bgCtx.arc(x, y, seededRandom() * 1.5 + 0.5, 0, Math.PI * 2);
-                    bgCtx.fill();
-                }
-            }
-            bgCtx.globalAlpha = 1;
         }
         createBgGridCache();
         
@@ -1516,8 +1545,11 @@
         function update(dt = 0.016) {
             animTime += dt;
             
+            // Frame-rate independent multiplier (normalized to 60fps)
+            const dtMult = dt * 60;
+            
             // Animate Clyde's floppy ears
-            bird.wingAngle *= 0.9;
+            bird.wingAngle *= Math.pow(0.9, dtMult);
             
             // Countdown timer
             if (gameState === 'countdown') {
@@ -1537,7 +1569,7 @@
             }
             
             // Score pop decay
-            if (scorePop > 0) scorePop *= 0.9;
+            if (scorePop > 0) scorePop *= Math.pow(0.9, dtMult);
             
             if (gameState !== 'playing') return;
 
@@ -1567,14 +1599,14 @@
                 thoughtBubbleY = bird.y - 20;
             }
 
-            // Bird physics
-            bird.velocity += bird.gravity;
+            // Bird physics (frame-rate independent)
+            bird.velocity += bird.gravity * dtMult;
             if (bird.velocity > 3) bird.velocity = 3;
-            bird.y += bird.velocity;
+            bird.y += bird.velocity * dtMult;
             
-            // Smoother rotation
+            // Smoother rotation (frame-rate independent)
             const targetRotation = Math.min(Math.max(bird.velocity * 5, -20), 45);
-            bird.rotation += (targetRotation - bird.rotation) * 0.08;
+            bird.rotation += (targetRotation - bird.rotation) * 0.08 * dtMult;
 
             // Boundary check
             if (bird.y < 0) {
@@ -1586,17 +1618,17 @@
                 return;
             }
 
-            // Spawn pipes
-            pipeSpawnTimer++;
+            // Spawn pipes (frame-rate independent)
+            pipeSpawnTimer += dtMult;
             if (pipeSpawnTimer >= pipeSpawnInterval) {
                 spawnPipe();
                 pipeSpawnTimer = 0;
             }
 
-            // Update pipes
+            // Update pipes (frame-rate independent)
             for (let i = pipes.length - 1; i >= 0; i--) {
                 const pipe = pipes[i];
-                pipe.x -= pipeSpeed;
+                pipe.x -= pipeSpeed * dtMult;
 
                 // Score
                 if (!pipe.scored && pipe.x + pipeWidth < bird.x) {
@@ -1632,11 +1664,11 @@
                 let i = particles.length;
                 while (i--) {
                     const p = particles[i];
-                    p.x += p.vx;
-                    p.y += p.vy;
-                    p.vy += 0.03;
-                    p.vx *= 0.96;
-                    p.life -= 0.035;
+                    p.x += p.vx * dtMult;
+                    p.y += p.vy * dtMult;
+                    p.vy += 0.03 * dtMult;
+                    p.vx *= Math.pow(0.96, dtMult);
+                    p.life -= 0.035 * dtMult;
                     if (p.life <= 0) {
                         particles[i] = particles[particles.length - 1];
                         particles.pop();
@@ -1946,14 +1978,15 @@
 
             // Draw Clyde (behind mushrooms)
             ctx.save();
-            ctx.translate(bird.x + bird.width / 2, bird.y + bird.height / 2);
-            ctx.rotate(bird.rotation * DEG_TO_RAD);
-            
             if (isLowPerf) {
-                // Mobile: use cached static Clyde (no animations)
+                // Mobile: integer coords for faster rendering
+                ctx.translate((bird.x + bird.width / 2) | 0, (bird.y + bird.height / 2) | 0);
+                ctx.rotate(bird.rotation * DEG_TO_RAD);
                 ctx.drawImage(clydeCache, -CLYDE_CENTER + 5, -CLYDE_CENTER);
             } else {
                 // Desktop: full animations
+                ctx.translate(bird.x + bird.width / 2, bird.y + bird.height / 2);
+                ctx.rotate(bird.rotation * DEG_TO_RAD);
                 ctx.scale(1.4, 1.4);
 
                 // Animated tail
@@ -2077,12 +2110,13 @@
                 const centerX = pipe.x + pipeWidth / 2;
                 
                 ctx.fillStyle = colors.stem;
-                // Top stalk
-                const topCapY = pipe.gapY - capHeight;
-                ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, topCapY + 12);
+                // Top stalk (use integers for faster rendering)
+                const topCapY = (pipe.gapY - capHeight) | 0;
+                const stalkX = (centerX - stemWidth/2) | 0;
+                ctx.fillRect(stalkX, 0, stemWidth, topCapY + 12);
                 // Bottom stalk
-                const bottomCapY = pipe.gapY + pipeGap;
-                ctx.fillRect(centerX - stemWidth/2, bottomCapY + capHeight - 12, stemWidth, 600 - bottomCapY - capHeight + 12);
+                const bottomCapY = (pipe.gapY + pipeGap) | 0;
+                ctx.fillRect(stalkX, bottomCapY + capHeight - 12, stemWidth, 600 - bottomCapY - capHeight + 12);
             }
             
             // Pass 2: Draw all caps (drawImage calls)
@@ -2091,24 +2125,22 @@
                 const pScale = pipe.capScale || 1.0;
                 const capWidth = Math.round(102 * pScale);
                 const capHeight = Math.round(51 * pScale);
-                const centerX = pipe.x + pipeWidth / 2;
+                const centerX = (pipe.x + pipeWidth / 2) | 0;
                 
-                // Top cap
+                // Top cap (integer coords)
                 if (pipe.cachedCapTop) {
-                    const topCapY = pipe.gapY - capHeight;
-                    ctx.drawImage(pipe.cachedCapTop, centerX - capWidth/2 - 12, topCapY - 12);
+                    const topCapY = (pipe.gapY - capHeight) | 0;
+                    ctx.drawImage(pipe.cachedCapTop, (centerX - capWidth/2 - 12) | 0, topCapY - 12);
                 }
                 // Bottom cap
                 if (pipe.cachedCapBottom) {
-                    const bottomCapY = pipe.gapY + pipeGap;
-                    ctx.drawImage(pipe.cachedCapBottom, centerX - capWidth/2 - 12, bottomCapY - 12);
+                    const bottomCapY = (pipe.gapY + pipeGap) | 0;
+                    ctx.drawImage(pipe.cachedCapBottom, (centerX - capWidth/2 - 12) | 0, bottomCapY - 12);
                 }
             }
 
-            // Thought bubble (simple text like KEEP TAPPING style)
-            // Thought bubble
-            // Thought bubble
-            if (currentThought && gameState === 'playing') {
+            // Thought bubble (skip on very low perf)
+            if (currentThought && gameState === 'playing' && !isVeryLowPerf) {
                 // Fade in/out within 3.5 second total
                 let bubbleAlpha = 1;
                 if (thoughtDisplayTime < 0.4) {
@@ -2121,11 +2153,11 @@
                 const floatX = thoughtBubbleX + thoughtDisplayTime * 8;
                 const floatY = thoughtBubbleY - thoughtDisplayTime * 15;
                 
-                // Clamp to stay on screen
+                // Clamp to stay on screen (use integers on mobile)
                 ctx.font = '24px "Bebas Neue", sans-serif';
                 const textWidth = ctx.measureText(currentThought).width;
-                const clampedX = Math.min(Math.max(floatX, textWidth / 2 + 8), 400 - textWidth / 2 - 8);
-                const clampedY = Math.max(floatY, 20);
+                const clampedX = Math.min(Math.max(floatX, textWidth / 2 + 8), 400 - textWidth / 2 - 8) | 0;
+                const clampedY = Math.max(floatY, 20) | 0;
                 
                 // Draw text (same style as KEEP JUMPING)
                 ctx.globalAlpha = bubbleAlpha;
@@ -2165,12 +2197,21 @@
             ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
 
-        // Game loop - simple and clean
+        // Game loop with device-specific frame rate
+        const TARGET_FPS = isLowPerf ? 30 : 60;
+        const FRAME_TIME = 1000 / TARGET_FPS;
+        let lastRenderTime = 0;
+        
         function gameLoop(currentTime) {
             requestAnimationFrame(gameLoop);
             
             // Skip during loading
             if (gameState === 'loading') return;
+            
+            // Frame rate limiting
+            const elapsed = currentTime - lastRenderTime;
+            if (elapsed < FRAME_TIME) return;
+            lastRenderTime = currentTime - (elapsed % FRAME_TIME);
             
             // Calculate delta time (capped to prevent huge jumps)
             const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.1);
