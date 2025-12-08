@@ -1441,11 +1441,9 @@
                 cachedCapBottom: null
             };
             
-            // Cache the mushroom caps to off-screen canvases (desktop only)
-            if (!isLowPerf) {
-                pipeObj.cachedCapTop = createCachedCap(pipeObj, true);
-                pipeObj.cachedCapBottom = createCachedCap(pipeObj, false);
-            }
+            // Cache the mushroom caps to off-screen canvases (all devices now)
+            pipeObj.cachedCapTop = createCachedCap(pipeObj, true);
+            pipeObj.cachedCapBottom = createCachedCap(pipeObj, false);
             
             pipes.push(pipeObj);
         }
@@ -1453,9 +1451,9 @@
         // Create cached mushroom cap canvas
         function createCachedCap(pipe, isTop) {
             const scale = pipe.capScale || 1.0;
-            const capWidth = Math.round(102 * scale);  // Base 7% larger, then scaled for wider stalks
+            const capWidth = Math.round(102 * scale);
             const capHeight = Math.round(51 * scale);
-            const padding = 12; // Extra padding for outline
+            const padding = 12;
             const canvasWidth = capWidth + padding * 2;
             const canvasHeight = capHeight + padding * 2;
             
@@ -1465,10 +1463,6 @@
             const capCtx = capCanvas.getContext('2d');
             
             const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
-            const pattern = pipe.pattern || 'classic-4';
-            const highlightCount = pipe.highlightCount || 1;
-            
-            // Draw cap centered in the canvas
             const centerX = canvasWidth / 2;
             const capY = padding;
             
@@ -1476,38 +1470,44 @@
             capCtx.strokeStyle = colors.outline;
             capCtx.lineWidth = 3;
             capCtx.beginPath();
-            capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, Math.PI * 2);
+            capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, PI2);
             capCtx.stroke();
             
             // Cap fill
             capCtx.fillStyle = colors.cap;
             if (isTop) {
                 capCtx.beginPath();
-                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, Math.PI);
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, PI);
                 capCtx.fill();
                 capCtx.beginPath();
-                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, Math.PI, Math.PI * 2);
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, PI, PI2);
                 capCtx.fill();
             } else {
                 capCtx.beginPath();
-                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, Math.PI, Math.PI * 2);
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, PI, PI2);
                 capCtx.fill();
                 capCtx.beginPath();
-                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, Math.PI);
+                capCtx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, PI);
                 capCtx.fill();
             }
             
-            // Cap dark underside
+            // Dark underside
             capCtx.fillStyle = colors.capDark;
             capCtx.beginPath();
-            capCtx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, Math.PI);
+            if (isTop) {
+                capCtx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, PI);
+            } else {
+                capCtx.ellipse(centerX, capY + capHeight/2 - 4, capWidth/2 - 4, 10, 0, PI, PI2);
+            }
             capCtx.fill();
             
-            // Spots
-            drawSpots(capCtx, pattern, centerX, capY, capWidth, capHeight, colors.spot, isTop);
-            
-            // Highlights
-            drawCapHighlights(capCtx, centerX, capY, capWidth, capHeight, highlightCount, colors.capLight, isTop);
+            // Desktop only: spots and highlights
+            if (!isLowPerf) {
+                const pattern = pipe.pattern || 'classic-4';
+                const highlightCount = pipe.highlightCount || 1;
+                drawSpots(capCtx, pattern, centerX, capY, capWidth, capHeight, colors.spot, isTop);
+                drawCapHighlights(capCtx, centerX, capY, capWidth, capHeight, highlightCount, colors.capLight, isTop);
+            }
             
             return capCanvas;
         }
@@ -1905,33 +1905,8 @@
                 // Draw stalk
                 ctx.fillStyle = colors.stem;
                 ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, capY + 12);
-                
-                // Draw cap
-                if (isLowPerf) {
-                    // Mobile: simplified but styled cap
-                    // Outline
-                    ctx.strokeStyle = colors.outline;
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, PI2);
-                    ctx.stroke();
-                    
-                    // Cap fill - bottom half (visible dome)
-                    ctx.fillStyle = colors.cap;
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, PI);
-                    ctx.fill();
-                    // Top half (compressed)
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, PI, PI2);
-                    ctx.fill();
-                    
-                    // Dark underside
-                    ctx.fillStyle = colors.capDark;
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2 + 4, capWidth/2 - 4, 10, 0, 0, PI);
-                    ctx.fill();
-                } else if (pipe.cachedCapTop) {
+                // Draw cached cap
+                if (pipe.cachedCapTop) {
                     ctx.drawImage(pipe.cachedCapTop, centerX - capWidth/2 - 12, capY - 12);
                 }
             } else {
@@ -1939,43 +1914,19 @@
                 // Draw stalk
                 ctx.fillStyle = colors.stem;
                 ctx.fillRect(centerX - stemWidth/2, capY + capHeight - 12, stemWidth, 600 - capY - capHeight + 12);
-                
-                // Draw cap
-                if (isLowPerf) {
-                    // Mobile: simplified but styled cap
-                    // Outline
-                    ctx.strokeStyle = colors.outline;
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2 + 2, capHeight/2 + 2, 0, 0, PI2);
-                    ctx.stroke();
-                    
-                    // Cap fill - top half (visible dome)
-                    ctx.fillStyle = colors.cap;
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, PI, PI2);
-                    ctx.fill();
-                    // Bottom half (compressed)
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/3, 0, 0, PI);
-                    ctx.fill();
-                    
-                    // Dark underside
-                    ctx.fillStyle = colors.capDark;
-                    ctx.beginPath();
-                    ctx.ellipse(centerX, capY + capHeight/2 - 4, capWidth/2 - 4, 10, 0, PI, PI2);
-                    ctx.fill();
-                } else if (pipe.cachedCapBottom) {
+                // Draw cached cap
+                if (pipe.cachedCapBottom) {
                     ctx.drawImage(pipe.cachedCapBottom, centerX - capWidth/2 - 12, capY - 12);
                 }
             }
         }
 
-        // Draw game
+        // Draw game - optimized with setTransform and batching
         function draw() {
-            const scale = getScale();
-            ctx.save();
-            ctx.scale(scale, scale);
+            const s = getScale();
+            
+            // Use setTransform instead of save/scale/restore (faster)
+            ctx.setTransform(s, 0, 0, s, 0, 0);
 
             // Use cached background with grid and static stars
             ctx.drawImage(bgGridCanvas, 0, 0);
@@ -2115,11 +2066,43 @@
 
             ctx.restore();
 
-            // Mushrooms (drawn on top of Clyde) - for loop is faster than forEach
+            // Mushrooms (batched: all stalks first, then all caps)
+            // Pass 1: Draw all stalks (fillRects batched by similar operations)
             for (let i = 0; i < pipes.length; i++) {
                 const pipe = pipes[i];
-                drawPixelMushroom(ctx, pipe.x, pipe.gapY, pipe, true);
-                drawPixelMushroom(ctx, pipe.x, pipe.gapY + pipeGap, pipe, false);
+                const pScale = pipe.capScale || 1.0;
+                const capHeight = Math.round(51 * pScale);
+                const stemWidth = Math.round(28 * pScale);
+                const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
+                const centerX = pipe.x + pipeWidth / 2;
+                
+                ctx.fillStyle = colors.stem;
+                // Top stalk
+                const topCapY = pipe.gapY - capHeight;
+                ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, topCapY + 12);
+                // Bottom stalk
+                const bottomCapY = pipe.gapY + pipeGap;
+                ctx.fillRect(centerX - stemWidth/2, bottomCapY + capHeight - 12, stemWidth, 600 - bottomCapY - capHeight + 12);
+            }
+            
+            // Pass 2: Draw all caps (drawImage calls)
+            for (let i = 0; i < pipes.length; i++) {
+                const pipe = pipes[i];
+                const pScale = pipe.capScale || 1.0;
+                const capWidth = Math.round(102 * pScale);
+                const capHeight = Math.round(51 * pScale);
+                const centerX = pipe.x + pipeWidth / 2;
+                
+                // Top cap
+                if (pipe.cachedCapTop) {
+                    const topCapY = pipe.gapY - capHeight;
+                    ctx.drawImage(pipe.cachedCapTop, centerX - capWidth/2 - 12, topCapY - 12);
+                }
+                // Bottom cap
+                if (pipe.cachedCapBottom) {
+                    const bottomCapY = pipe.gapY + pipeGap;
+                    ctx.drawImage(pipe.cachedCapBottom, centerX - capWidth/2 - 12, bottomCapY - 12);
+                }
             }
 
             // Thought bubble (simple text like KEEP TAPPING style)
@@ -2178,7 +2161,8 @@
                 ctx.globalAlpha = 1;
             }
 
-            ctx.restore();
+            // Reset transform for next frame
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
 
         // Game loop - simple and clean
@@ -2206,12 +2190,10 @@
         
         // Lightweight background for menu screens
         function drawMenuBackground() {
-            const scale = getScale();
-            ctx.save();
-            ctx.scale(scale, scale);
-            // Use cached background with static stars
+            const s = getScale();
+            ctx.setTransform(s, 0, 0, s, 0, 0);
             ctx.drawImage(bgGridCanvas, 0, 0);
-            ctx.restore();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
 
         // Event listeners
