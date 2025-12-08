@@ -2663,6 +2663,7 @@
         let gameRunning = false;
         let gamePaused = false;
         let gameTime = 0;
+        let frameCount = 0; // For optimization - skip updates on some frames
         let kills = 0;
         let player = null;
         let enemies = [];
@@ -2792,7 +2793,8 @@
             particles: 150,
             damageNumbers: 40,
             projectiles: 100,
-            enemies: 120
+            enemies: 120,
+            xpGems: 300 // Limit XP gems to prevent late-game lag
         };
 
         // ===== WEAPON DEFINITIONS =====
@@ -3525,6 +3527,7 @@
                 state.lastFire = now;
                 const projectileCount = def.baseProjectiles + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.07);
+                const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 const spread = 0.2;
@@ -3532,7 +3535,7 @@
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
                     projectiles.push(new Projectile(
-                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt'
+                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt', pierce
                     ));
                 }
             }
@@ -3703,12 +3706,13 @@
                 state.lastFire = now;
                 const daggerCount = def.baseDaggers + Math.floor(level / 2);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
+                const pierce = 1 + Math.floor(level / 5); // +1 pierce per 5 levels
                 
                 // Fire daggers in all directions
                 for (let i = 0; i < daggerCount; i++) {
                     const angle = (Math.PI * 2 / daggerCount) * i;
                     projectiles.push(new Projectile(
-                        this.x, this.y, angle, 7, baseDamage, def.color, 'dagger', 1
+                        this.x, this.y, angle, 7, baseDamage, def.color, 'dagger', pierce
                     ));
                 }
             }
@@ -3927,13 +3931,14 @@
                 state.lastFire = now;
                 const shardCount = def.baseProjectiles + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.06);
+                const pierce = 1 + Math.floor(level / 4); // +1 pierce per 4 levels
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 const spread = 0.25;
                 
                 for (let i = 0; i < shardCount; i++) {
                     const a = angle + (i - (shardCount - 1) / 2) * spread;
-                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', 1);
+                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce);
                     proj.slowAmount = def.slowAmount;
                     proj.slowDuration = def.slowDuration;
                     projectiles.push(proj);
@@ -5680,7 +5685,7 @@
                 const speedScale = 1 + Math.floor(gameTime / 120) * 0.08; // +8% speed per 2 min
                 
                 this.speed = 1.3 * speedScale;
-                this.maxHp = Math.floor((800 + bossCount * 200) * timeScale);
+                this.maxHp = Math.floor((400 + bossCount * 100) * timeScale); // Halved base HP
                 this.hp = this.maxHp;
                 this.damage = Math.floor(25 * timeScale); // Scales damage too
                 this.color = '#ff6600';
@@ -5784,6 +5789,14 @@
                 spawnParticles(this.x, this.y, '#ffffff', 25);
                 spawnParticles(this.x, this.y, COLORS.gold, 20);
                 
+                // Suck up all XP gems on the map
+                for (const gem of xpGems) {
+                    if (!gem.dead) {
+                        gem.magnetized = true;
+                        gem.magnetStrength = 7; // Smoother pull to prevent lag
+                    }
+                }
+                
                 // Drop lots of gold and XP
                 playerGold += 100;
                 updateGoldDisplay();
@@ -5879,10 +5892,10 @@
                 
                 this.baseSpeedValue = 0.9 * speedScale;
                 this.speed = this.baseSpeedValue;
-                this.maxHp = Math.floor((2500 + bossCount * 500) * timeScale);
+                this.maxHp = Math.floor((1250 + bossCount * 250) * timeScale); // Halved base HP
                 this.hp = this.maxHp;
                 this.damage = Math.floor(40 * timeScale); // Charge attack damage scales
-                this.color = '#ff00ff';
+                this.color = '#ff6600'; // Changed to flame orange to match mini boss theme
                 this.dead = false;
                 this.orbHitCooldown = 0;
                 this.attackCooldown = 0;
@@ -5907,12 +5920,14 @@
                     this.phase = 3;
                     this.speed = 1.5 * this.speedScale;
                     spawnParticles(this.x, this.y, '#ff0000', 30);
-                    showBossPhaseWarning('ENRAGED!');
+                    spawnParticles(this.x, this.y, '#ff4400', 25);
+                    showBossPhaseWarning('🔥 ENRAGED! 🔥');
                 } else if (hpPercent <= 0.66 && this.phase < 2) {
                     this.phase = 2;
                     this.speed = 1.2 * this.speedScale;
-                    spawnParticles(this.x, this.y, '#ffaa00', 20);
-                    showBossPhaseWarning('PHASE 2');
+                    spawnParticles(this.x, this.y, '#ff6600', 20);
+                    spawnParticles(this.x, this.y, '#ffaa00', 15);
+                    showBossPhaseWarning('🔥 PHASE 2 🔥');
                 }
                 
                 // Charge attack
@@ -6073,7 +6088,7 @@
                 for (const gem of xpGems) {
                     if (!gem.dead) {
                         gem.magnetized = true;
-                        gem.magnetStrength = 25; // Strong pull
+                        gem.magnetStrength = 8; // Smoother pull to prevent lag
                     }
                 }
                 
@@ -6089,7 +6104,7 @@
                     xpGems.push(new XPGem(gemX, gemY, 20));
                 }
                 
-                showBossDefeatMessage('BOSS');
+                showBossDefeatMessage('INFERNO BOSS');
                 
                 // Grant 2 level up rewards
                 let rewardsGiven = 0;
@@ -6109,59 +6124,128 @@
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
+                const time = Date.now();
                 
                 ctx.save();
                 
                 // Intense pulsing glow (faster in higher phases)
                 const pulseSpeed = 0.003 + this.phase * 0.002;
-                const pulse = 0.7 + Math.sin(Date.now() * pulseSpeed) * 0.3;
-                ctx.shadowBlur = 40 * pulse;
-                ctx.shadowColor = this.phase === 3 ? '#ff0000' : this.color;
+                const pulse = 0.7 + Math.sin(time * pulseSpeed) * 0.3;
                 
-                // Main body
-                const bodyColor = this.phase === 3 ? '#ff0044' : (this.phase === 2 ? '#ff44aa' : this.color);
-                ctx.fillStyle = bodyColor;
+                // Animated flame aura around boss
+                ctx.shadowBlur = 50 * pulse;
+                ctx.shadowColor = this.phase === 3 ? '#ff0000' : '#ff4400';
+                
+                // Outer flame tendrils
+                for (let i = 0; i < 8; i++) {
+                    const flameAngle = (i / 8) * Math.PI * 2 + time * 0.002;
+                    const flameLen = r * (0.3 + Math.sin(time * 0.008 + i) * 0.15);
+                    const fx = sx + Math.cos(flameAngle) * (r + flameLen);
+                    const fy = sy + Math.sin(flameAngle) * (r + flameLen);
+                    
+                    ctx.fillStyle = this.phase === 3 ? '#ff2200' : '#ff6600';
+                    ctx.globalAlpha = 0.6 + Math.sin(time * 0.01 + i * 2) * 0.3;
+                    ctx.beginPath();
+                    ctx.moveTo(sx + Math.cos(flameAngle) * r * 0.9, sy + Math.sin(flameAngle) * r * 0.9);
+                    ctx.quadraticCurveTo(
+                        sx + Math.cos(flameAngle + 0.2) * (r + flameLen * 0.5),
+                        sy + Math.sin(flameAngle + 0.2) * (r + flameLen * 0.5),
+                        fx, fy
+                    );
+                    ctx.quadraticCurveTo(
+                        sx + Math.cos(flameAngle - 0.2) * (r + flameLen * 0.5),
+                        sy + Math.sin(flameAngle - 0.2) * (r + flameLen * 0.5),
+                        sx + Math.cos(flameAngle) * r * 0.9,
+                        sy + Math.sin(flameAngle) * r * 0.9
+                    );
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+                
+                // Main body - dark core with fiery edge
+                const bodyGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+                if (this.phase === 3) {
+                    bodyGrad.addColorStop(0, '#220000');
+                    bodyGrad.addColorStop(0.6, '#660000');
+                    bodyGrad.addColorStop(1, '#ff2200');
+                } else if (this.phase === 2) {
+                    bodyGrad.addColorStop(0, '#221100');
+                    bodyGrad.addColorStop(0.6, '#663300');
+                    bodyGrad.addColorStop(1, '#ff6600');
+                } else {
+                    bodyGrad.addColorStop(0, '#331100');
+                    bodyGrad.addColorStop(0.6, '#664400');
+                    bodyGrad.addColorStop(1, '#ff6600');
+                }
+                ctx.fillStyle = bodyGrad;
                 ctx.beginPath();
                 ctx.arc(sx, sy, r, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Inner rings
-                ctx.strokeStyle = '#ffaaff';
+                // Inner lava cracks
+                ctx.strokeStyle = this.phase === 3 ? '#ff4400' : '#ffaa00';
                 ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.arc(sx, sy, r * 0.75, 0, Math.PI * 2);
-                ctx.stroke();
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = ctx.strokeStyle;
+                for (let i = 0; i < 5; i++) {
+                    const crackAngle = (i / 5) * Math.PI * 2 + time * 0.001;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(
+                        sx + Math.cos(crackAngle) * r * 0.7,
+                        sy + Math.sin(crackAngle) * r * 0.7
+                    );
+                    ctx.stroke();
+                }
                 
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 2;
+                // Molten core
+                const coreGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 0.35);
+                coreGrad.addColorStop(0, '#ffffff');
+                coreGrad.addColorStop(0.4, '#ffff00');
+                coreGrad.addColorStop(1, '#ff6600');
+                ctx.fillStyle = coreGrad;
+                ctx.shadowBlur = 25;
+                ctx.shadowColor = '#ffaa00';
                 ctx.beginPath();
-                ctx.arc(sx, sy, r * 0.5, 0, Math.PI * 2);
-                ctx.stroke();
-                
-                // Core
-                ctx.fillStyle = '#ffffff';
-                ctx.shadowBlur = 20;
-                ctx.shadowColor = '#ffffff';
-                ctx.beginPath();
-                ctx.arc(sx, sy, r * 0.25, 0, Math.PI * 2);
+                ctx.arc(sx, sy, r * 0.3, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Eyes (menacing)
+                // Menacing eyes - larger and angrier
+                const eyeY = sy - r * 0.1;
+                const eyeSpacing = r * 0.4;
+                const eyeSize = r * 0.18;
+                
+                // Eye sockets (dark)
                 ctx.fillStyle = '#000';
                 ctx.shadowBlur = 0;
                 ctx.beginPath();
-                ctx.arc(sx - r * 0.35, sy - r * 0.15, r * 0.12, 0, Math.PI * 2);
-                ctx.arc(sx + r * 0.35, sy - r * 0.15, r * 0.12, 0, Math.PI * 2);
+                ctx.arc(sx - eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
+                ctx.arc(sx + eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Glowing pupils
-                ctx.fillStyle = this.phase === 3 ? '#ff0000' : '#ff00ff';
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = ctx.fillStyle;
+                // Glowing pupils - pulsing red/orange
+                const pupilColor = this.phase === 3 ? '#ff0000' : '#ff4400';
+                ctx.fillStyle = pupilColor;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = pupilColor;
+                const pupilPulse = 0.08 + Math.sin(time * 0.01) * 0.02;
                 ctx.beginPath();
-                ctx.arc(sx - r * 0.35, sy - r * 0.15, r * 0.06, 0, Math.PI * 2);
-                ctx.arc(sx + r * 0.35, sy - r * 0.15, r * 0.06, 0, Math.PI * 2);
+                ctx.arc(sx - eyeSpacing, eyeY, r * pupilPulse, 0, Math.PI * 2);
+                ctx.arc(sx + eyeSpacing, eyeY, r * pupilPulse, 0, Math.PI * 2);
                 ctx.fill();
+                
+                // Angry eyebrows (flame wisps above eyes)
+                ctx.strokeStyle = this.phase === 3 ? '#ff2200' : '#ff6600';
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.moveTo(sx - eyeSpacing - eyeSize, eyeY - eyeSize * 1.3);
+                ctx.lineTo(sx - eyeSpacing + eyeSize * 0.5, eyeY - eyeSize * 0.8);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(sx + eyeSpacing + eyeSize, eyeY - eyeSize * 1.3);
+                ctx.lineTo(sx + eyeSpacing - eyeSize * 0.5, eyeY - eyeSize * 0.8);
+                ctx.stroke();
                 
                 // HP bar
                 ctx.shadowBlur = 0;
@@ -6177,13 +6261,13 @@
                 ctx.lineWidth = 2;
                 ctx.strokeRect(sx - barWidth/2, sy - r - 25, barWidth, 10);
                 
-                // "BOSS" label
+                // "INFERNO BOSS" label
                 ctx.fillStyle = '#fff';
                 ctx.font = `bold ${camera.scale(14)}px sans-serif`;
                 ctx.textAlign = 'center';
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = this.color;
-                ctx.fillText('★ BOSS ★', sx, sy - r - 32);
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#ff4400';
+                ctx.fillText('🔥 INFERNO BOSS 🔥', sx, sy - r - 32);
                 
                 ctx.restore();
             }
@@ -7279,6 +7363,233 @@
             }
             
             ctx.restore();
+        }
+
+        // ===== MAGNET PICKUPS =====
+        let magnetPickups = [];
+        const MAGNET_COUNT = 3; // Always 3 magnets on map
+        
+        function spawnMagnetPickups() {
+            magnetPickups = [];
+            for (let i = 0; i < MAGNET_COUNT; i++) {
+                spawnSingleMagnet();
+            }
+        }
+        
+        function spawnSingleMagnet() {
+            const minDistFromObstacles = 60;
+            const minDistFromOtherMagnets = 800;
+            let attempts = 0;
+            
+            while (attempts < 50) {
+                const x = 500 + Math.random() * (WORLD.width - 1000);
+                const y = 500 + Math.random() * (WORLD.height - 1000);
+                
+                // Check not too close to center spawn
+                if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 600) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not too close to player
+                if (player && Math.hypot(x - player.x, y - player.y) < 400) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not in terrain
+                if (isInTerrain(x, y, minDistFromObstacles)) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not too close to other magnets
+                let tooClose = false;
+                for (const mag of magnetPickups) {
+                    if (Math.hypot(x - mag.x, y - mag.y) < minDistFromOtherMagnets) {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                if (tooClose) {
+                    attempts++;
+                    continue;
+                }
+                
+                magnetPickups.push({
+                    x: x,
+                    y: y,
+                    radius: 18,
+                    bobOffset: Math.random() * Math.PI * 2,
+                    pulseOffset: Math.random() * Math.PI * 2
+                });
+                break;
+            }
+        }
+        
+        function drawMagnetPickups() {
+            for (const mag of magnetPickups) {
+                if (!camera.isVisible(mag.x, mag.y, 50)) continue;
+                
+                const sx = camera.screenX(mag.x);
+                const sy = camera.screenY(mag.y);
+                const time = Date.now();
+                const bob = Math.sin(time * 0.003 + mag.bobOffset) * camera.scale(4);
+                const pulse = 0.8 + Math.sin(time * 0.005 + mag.pulseOffset) * 0.2;
+                const s = camera.scale.bind(camera);
+                
+                ctx.save();
+                
+                // Magnetic field rings
+                ctx.globalAlpha = 0.3;
+                ctx.strokeStyle = '#ff4444';
+                ctx.lineWidth = 2;
+                const ringPulse = (time * 0.002) % 1;
+                for (let i = 0; i < 3; i++) {
+                    const ringProgress = (ringPulse + i * 0.33) % 1;
+                    ctx.globalAlpha = 0.4 * (1 - ringProgress);
+                    ctx.beginPath();
+                    ctx.arc(sx, sy + bob, s(20 + ringProgress * 25), 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+                
+                // Magnet body glow
+                ctx.shadowBlur = 20 * pulse;
+                ctx.shadowColor = '#ff4444';
+                
+                // Horseshoe magnet shape
+                const magY = sy + bob;
+                
+                // Red side (left)
+                ctx.fillStyle = '#ff2222';
+                ctx.beginPath();
+                ctx.moveTo(sx - s(12), magY + s(8));
+                ctx.lineTo(sx - s(12), magY - s(6));
+                ctx.quadraticCurveTo(sx - s(12), magY - s(14), sx - s(4), magY - s(14));
+                ctx.lineTo(sx - s(4), magY + s(8));
+                ctx.closePath();
+                ctx.fill();
+                
+                // Blue side (right)
+                ctx.fillStyle = '#4444ff';
+                ctx.shadowColor = '#4444ff';
+                ctx.beginPath();
+                ctx.moveTo(sx + s(12), magY + s(8));
+                ctx.lineTo(sx + s(12), magY - s(6));
+                ctx.quadraticCurveTo(sx + s(12), magY - s(14), sx + s(4), magY - s(14));
+                ctx.lineTo(sx + s(4), magY + s(8));
+                ctx.closePath();
+                ctx.fill();
+                
+                // Connecting arc at top
+                ctx.fillStyle = '#888888';
+                ctx.shadowColor = '#ffffff';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(sx, magY - s(6), s(4), 0, Math.PI, true);
+                ctx.fill();
+                
+                // Metal tips
+                ctx.fillStyle = '#cccccc';
+                ctx.shadowBlur = 5;
+                ctx.fillRect(sx - s(13), magY + s(6), s(10), s(5));
+                ctx.fillRect(sx + s(3), magY + s(6), s(10), s(5));
+                
+                // "XP" label floating above
+                ctx.fillStyle = '#00ffff';
+                ctx.shadowColor = '#00ffff';
+                ctx.shadowBlur = 10;
+                ctx.font = `bold ${s(10)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.fillText('XP', sx, magY - s(20));
+                
+                ctx.restore();
+            }
+        }
+        
+        function updateMagnetPickups() {
+            for (let i = magnetPickups.length - 1; i >= 0; i--) {
+                const mag = magnetPickups[i];
+                const dist = Math.hypot(player.x - mag.x, player.y - mag.y);
+                
+                if (dist < player.radius + mag.radius) {
+                    // Activate magnet - pull all XP with staggered timing
+                    activateMagnetPickup(mag);
+                    magnetPickups.splice(i, 1);
+                    
+                    // Spawn replacement magnet
+                    setTimeout(() => {
+                        if (gameRunning && !gamePaused) {
+                            spawnSingleMagnet();
+                        }
+                    }, 500);
+                }
+            }
+        }
+        
+        function activateMagnetPickup(mag) {
+            // Visual feedback
+            spawnParticles(mag.x, mag.y, '#ff4444', 20);
+            spawnParticles(mag.x, mag.y, '#4444ff', 20);
+            spawnParticles(mag.x, mag.y, '#00ffff', 15);
+            
+            // Stagger the magnetization to prevent lag
+            const totalGems = xpGems.length;
+            const batchSize = 20; // Magnetize in batches
+            let batchIndex = 0;
+            
+            function magnetizeBatch() {
+                const start = batchIndex * batchSize;
+                const end = Math.min(start + batchSize, totalGems);
+                
+                for (let i = start; i < end; i++) {
+                    if (xpGems[i] && !xpGems[i].dead) {
+                        xpGems[i].magnetized = true;
+                        xpGems[i].magnetStrength = 6; // Slower pull to prevent lag
+                    }
+                }
+                
+                batchIndex++;
+                if (batchIndex * batchSize < totalGems) {
+                    setTimeout(magnetizeBatch, 50); // Stagger batches
+                }
+            }
+            
+            magnetizeBatch();
+            
+            // Show notification
+            showMagnetNotification();
+        }
+        
+        function showMagnetNotification() {
+            const notification = document.createElement('div');
+            notification.innerHTML = `<div style="font-size: 22px;">🧲 XP MAGNET! 🧲</div>`;
+            notification.style.cssText = `
+                position: fixed;
+                top: 35%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                color: #00ffff;
+                text-shadow: 0 0 20px #00ffff, 0 0 40px #ff4444;
+                text-align: center;
+                z-index: 9999;
+                pointer-events: none;
+                animation: magnetNotify 1.2s ease-out forwards;
+            `;
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes magnetNotify {
+                    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+                    20% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+                    80% { opacity: 1; }
+                    100% { opacity: 0; transform: translate(-50%, -70%) scale(1); }
+                }
+            `;
+            document.head.appendChild(style);
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 1200);
         }
 
         // ===== TOMBSTONES (Avenge Fallen Friends) =====
@@ -8679,7 +8990,7 @@
                 this.color = COLORS.cyan;  // Cyan color matching player
                 this.pulse = 0;
                 this.magnetized = false;
-                this.magnetStrength = 12;
+                this.magnetStrength = 6; // Reduced from 12 for smoother vacuum
             }
 
             update(dt = 16) {
@@ -8691,14 +9002,16 @@
                 const dy = player.y - this.y;
                 const dist = Math.hypot(dx, dy);
                 
-                // Individual magnetization (from boss kill)
+                // Individual magnetization (from boss kill or magnet pickup)
                 if (this.magnetized && dist > 1) {
-                    this.x += (dx / dist) * this.magnetStrength * dtScale;
-                    this.y += (dy / dist) * this.magnetStrength * dtScale;
+                    // Slower pull that scales with distance to prevent overwhelming the player
+                    const pullSpeed = Math.min(this.magnetStrength, 4 + dist * 0.02);
+                    this.x += (dx / dist) * pullSpeed * dtScale;
+                    this.y += (dy / dist) * pullSpeed * dtScale;
                 }
                 // During magnet pulse, pull ALL gems rapidly
                 else if (magnetPulseActive && dist > 1) {
-                    const speed = 12; // Fast pull speed
+                    const speed = 10; // Slightly reduced from 12
                     this.x += (dx / dist) * speed * dtScale;
                     this.y += (dy / dist) * speed * dtScale;
                 }
@@ -9552,7 +9865,7 @@
             y = Math.max(150, Math.min(WORLD.height - 150, y));
             
             bosses.push(new MajorBoss(x, y));
-            showBossWarning('★ BOSS ★', '#ff00ff');
+            showBossWarning('🔥 INFERNO BOSS 🔥', '#ff4400');
             
             // Spawn extra bosses from tombstone curse
             for (let i = 0; i < extraBossMultiplier; i++) {
@@ -10268,6 +10581,7 @@
         function gameLoop(timestamp) {
             const dt = Math.min(timestamp - lastTime, 50); // Cap dt to prevent spiral of death
             lastTime = timestamp;
+            frameCount++; // Increment for optimization frame skipping
             
             if (gameRunning && !gamePaused && player) {
                 // Apply time slow effect (Temporal Shield)
@@ -10339,11 +10653,37 @@
                 updateLeprechaunSpawning(dt);
                 updateBossSpawning(dt);
                 
+                // Update enemies with distance-based culling for performance
+                const cullDistance = 800; // Full update within this distance
+                const skipDistance = 1500; // Skip updates beyond this
                 for (const enemy of enemies) {
-                    if (!enemy.dead) enemy.update(effectiveDt);
+                    if (enemy.dead) continue;
+                    const dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+                    if (dist < cullDistance) {
+                        enemy.update(effectiveDt);
+                    } else if (dist < skipDistance) {
+                        // Reduced update rate for distant enemies (every other frame)
+                        if (frameCount % 2 === 0) enemy.update(effectiveDt * 2);
+                    }
+                    // Very distant enemies don't update (will catch up when closer)
                 }
                 for (const proj of projectiles) proj.update(dt);
-                for (const gem of xpGems) gem.update(dt);
+                
+                // Batch XP gem updates - only update visible/nearby gems every frame
+                const gemUpdateRadius = 600;
+                for (const gem of xpGems) {
+                    if (gem.magnetized) {
+                        gem.update(dt); // Always update magnetized gems
+                    } else {
+                        const dist = Math.hypot(gem.x - player.x, gem.y - player.y);
+                        if (dist < gemUpdateRadius) {
+                            gem.update(dt);
+                        } else if (frameCount % 3 === 0) {
+                            gem.update(dt); // Distant gems update less frequently
+                        }
+                    }
+                }
+                
                 for (const shrine of shrines) shrine.update(dt);
                 for (const lep of leprechauns) {
                     if (!lep.dead) lep.update(effectiveDt);
@@ -10362,6 +10702,7 @@
                 updateCowboyHat();
                 updateShieldPickups();
                 updateFairy();
+                updateMagnetPickups();
                 updateTombstones();
                 
                 // Clean up dead entities (in-place for performance)
@@ -10373,6 +10714,25 @@
                 cleanupArray(ghosts, g => g.dead);
                 cleanupArray(chests, c => c.dead);
                 cleanupArray(bosses, b => b.dead);
+                
+                // Enforce XP gem limit - merge excess gems into larger ones
+                if (xpGems.length > LIMITS.xpGems) {
+                    // Sort by distance to player (keep closer ones)
+                    xpGems.sort((a, b) => {
+                        const distA = Math.hypot(a.x - player.x, a.y - player.y);
+                        const distB = Math.hypot(b.x - player.x, b.y - player.y);
+                        return distA - distB;
+                    });
+                    // Sum value of removed gems and add to closest gem
+                    let bonusValue = 0;
+                    for (let i = LIMITS.xpGems; i < xpGems.length; i++) {
+                        bonusValue += xpGems[i].value;
+                    }
+                    xpGems.length = LIMITS.xpGems;
+                    if (xpGems.length > 0 && bonusValue > 0) {
+                        xpGems[0].value += bonusValue;
+                    }
+                }
                 
                 // Update particles with limit
                 for (let i = particles.length - 1; i >= 0; i--) {
@@ -10490,6 +10850,9 @@
             
             // Draw healing fairy
             drawFairy();
+            
+            // Draw magnet pickups
+            drawMagnetPickups();
             
             // Draw tombstones
             drawTombstones();
@@ -10761,10 +11124,14 @@
             finalSwarmWarningShown = false; // Reset for new game
             magnetPulseActive = false;
             timeSlowMultiplier = 1;
+            frameCount = 0;
             
             // Reset fairy
             fairy = null;
             fairySpellActive = false;
+            
+            // Reset magnet pickups
+            magnetPickups = [];
             
             // Reset death animation
             deathAnimationActive = false;
@@ -10823,6 +11190,7 @@
             spawnInitialChests();
             spawnCowboyHat();
             spawnFairy();
+            spawnMagnetPickups();
             spawnTombstones();
             spawnShieldPickups();
             
