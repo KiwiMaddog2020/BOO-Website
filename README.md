@@ -1,91 +1,57 @@
 # Bunch of Others
 
-Official website for BOO — a psychedelic rock band out of Kelowna, BC.
+Website for BOO — psychedelic rock from Kelowna, BC.
 
-## About
+## The Story
 
-BOO started in 2024 after Jeff lost his brother Kyle, who fronted Fields of Green. Jeff found Kyle's unreleased recordings and taught himself guitar to bring the music back to life. Joe (who played with Kyle and mentored Jeff), Johnny (Fields of Green's drummer), and Sean on bass round out the lineup.
+BOO came together in 2024 after Jeff lost his brother Kyle, who fronted Fields of Green. Jeff found Kyle's unreleased recordings and picked up a guitar to bring those songs back to life. Joe (who played with Kyle and mentored Jeff), Johnny (Fields of Green's drummer), and Sean on bass complete the lineup.
 
-The music comes from good times, loss, love, and wanting to make something others can connect with.
+The music draws from good times, loss, love, and the need to create something others can connect with.
 
 ## The Site
 
-Psychedelic single-page site with animated gradients, breathing effects, and layered visuals. Pure HTML, CSS, and JavaScript — no frameworks.
+Single-page psychedelic experience with animated gradients, breathing effects, and layered visuals. Built with vanilla HTML, CSS, and JavaScript — no frameworks, no dependencies.
 
-**Sections:** Home, Bio, Videos, Photos, Game, Merch, Events
+**Sections:** Home, Bio, Videos, Photos, Arcade, Merch, Events
 
-**Features:**
 - Scroll-snap navigation
-- Pill-style music player
+- Floating music player
 - Animated color-cycling effects
-- Mobile touch support
-- Works on Chrome, Safari, Firefox, and mobile browsers
+- Mobile-optimized with touch support
+- Tested on Chrome, Safari, Firefox, Edge
 
-## 🎮 Neon Brickbreaker
+## 🕹️ The Arcade
 
-The site includes a custom brickbreaker game with roguelike elements.
+Five custom HTML5 games with global leaderboards:
 
-### Controls
+| Game | What It Is |
+|------|------------|
+| **Neon Brickbreaker** | Roguelike brick breaker with power-ups and boss fights every 5 levels |
+| **Neon Survivors** | Vampire Survivors-style horde game — stay alive as long as you can |
+| **Clyde's Big Jump** | Endless runner/jumper starring the band mascot |
+| **Neon Space Shooter** | Classic vertical shooter with upgrades |
+| **Neon Snake** | Snake, but psychedelic |
 
-- **Desktop:** Arrow keys or mouse
-- **Mobile:** Slide on the trackpad below the game, or touch the paddle
-
-Break all bricks to clear a level. Don't let the ball drop.
-
-### Mechanics
-
-| | |
-|--|--|
-| **Lives** | Start with 3. Lose one when the ball falls. |
-| **Levels** | Ball gets faster as you progress. |
-| **Bosses** | Every 5 levels — moving bricks that take multiple hits. |
-| **Leaderboard** | Submit your score when you're done. |
-
-### Power-Ups
-
-Catch these with your paddle:
-
-| Power-Up | Color | What it does |
-|----------|-------|--------------|
-| Big Paddle | 🟢 Green | Wider paddle (10s) |
-| Multi Ball | 🟠 Orange | 3 balls (5 bounces) |
-| Crusher | 🔴 Red | Ball plows through bricks (8s) |
-| Extra Life | 🩷 Pink | +1 life (max 5) |
-| Small Paddle | ⚫ Gray | Smaller paddle (8s) — avoid this one |
-
-### Upgrades
-
-Every 2 levels you pick a permanent buff:
-
-- **Paddle Speed+** — Move faster
-- **Ball Control** — Better angle control
-- **Power-Up Magnet** — Power-ups drift toward you
-- **Combo Master** — Bonus points for streaks
-- **Extra Life** — +1 life right now
-
-### Tips
-
-- Hit brick edges to start chain reactions
-- Crusher clears problem areas fast
-- Multi Ball scores big but gets chaotic
-- Boss levels — stay patient, stay alive
-
-Game runs client-side (HTML5 canvas + JS).
+All games run client-side (canvas + JS) with Firebase leaderboards.
 
 ## Files
 
 ```
-index.html               # Main site
-neon-brickbreaker.html   # Game (standalone or embedded)
+index.html               # Main website
+neon-brickbreaker.html   # Brick breaker game
+neon-survivors.html      # Survivors game  
+clydes-big-jump.html     # Endless jumper
+neon-space-shooter.html  # Space shooter
+neon-snake.html          # Snake
 ```
 
-## Local Development
+## Running Locally
 
-Open `index.html` directly, or run a local server if iframes give you trouble:
+Just open `index.html` in a browser. If iframes give you trouble:
 
 ```bash
 python -m http.server 8000
-# then go to http://localhost:8000
+# http://localhost:8000
 ```
 
 ## Links
@@ -95,6 +61,6 @@ python -m http.server 8000
 - [Spotify](https://open.spotify.com/artist/1n8AIkpbrWiXAS8pewVjnP)
 - [Apple Music](https://music.apple.com/us/artist/bunch-of-others/1754588177)
 
-## License
+---
 
 © Bunch of Others. All rights reserved.
