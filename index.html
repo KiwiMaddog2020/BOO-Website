@@ -1337,6 +1337,11 @@
             nav a:not(.nav-animated-logo-container):hover,
             nav a:not(.nav-animated-logo-container):active,
             nav a:not(.nav-animated-logo-container).nav-tap-active {
+                /* Only glow effect - no scale or font-weight changes on mobile */
+                -webkit-transform: translateZ(0) scale(1) !important;
+                transform: translateZ(0) scale(1) !important;
+                font-weight: 600 !important;
+                font-size: inherit !important;
                 text-shadow: 
                     0 0 8px rgba(0, 255, 255, 0.7),
                     0 0 16px rgba(0, 255, 255, 0.5),
@@ -5148,6 +5153,10 @@
             
             /* Simple tap highlight class for nav - matches main mobile styles */
             nav a:not(.nav-animated-logo-container).nav-tap-active {
+                /* Only glow effect - no scale or font-weight changes */
+                -webkit-transform: translateZ(0) scale(1) !important;
+                transform: translateZ(0) scale(1) !important;
+                font-weight: 600 !important;
                 text-shadow: 
                     0 0 10px rgba(0, 255, 255, 0.8),
                     0 0 20px rgba(0, 255, 255, 0.6),
@@ -6712,18 +6721,26 @@
         try {
             observer = new IntersectionObserver(function(entries) {
                 entries.forEach(function(entry) {
-                    if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
-                        updateActiveDot(entry.target.id);
-                        entry.target.classList.add('visible');
-                        // Update active menu item (mobile only, excludes home)
-                        updateActiveMenuItem(entry.target.id);
-                        // Update URL hash to reflect current section
-                        updateUrlHash(entry.target.id);
+                    if (entry.isIntersecting) {
+                        // Section entering view - resume animations
+                        entry.target.classList.remove('offscreen');
+                        
+                        if (entry.intersectionRatio > 0.3) {
+                            updateActiveDot(entry.target.id);
+                            entry.target.classList.add('visible');
+                            // Update active menu item (mobile only, excludes home)
+                            updateActiveMenuItem(entry.target.id);
+                            // Update URL hash to reflect current section
+                            updateUrlHash(entry.target.id);
+                        }
+                    } else {
+                        // Section leaving view - pause animations for performance
+                        entry.target.classList.add('offscreen');
                     }
                 });
             }, { 
                 root: scrollContainer,
-                threshold: [0.3, 0.5] 
+                threshold: [0, 0.3, 0.5] // Added 0 threshold to detect exit
             });
         } catch (e) {
             // IntersectionObserver not supported or error
@@ -6754,7 +6771,13 @@
         if (observer) {
             sections.forEach(function(sectionId) {
                 var section = document.getElementById(sectionId);
-                if (section) observer.observe(section);
+                if (section) {
+                    observer.observe(section);
+                    // Initialize non-visible sections as offscreen (pauses their animations)
+                    if (sectionId !== 'home') {
+                        section.classList.add('offscreen');
+                    }
+                }
             });
         }
 
@@ -6774,6 +6797,7 @@
                         updateActiveDot(initialHash);
                         updateActiveMenuItem(initialHash);
                         targetSection.classList.add('visible');
+                        targetSection.classList.remove('offscreen'); // Resume animations
                         lastUrlSection = initialHash;
                     }
                 }, 1250); // After loader fades
