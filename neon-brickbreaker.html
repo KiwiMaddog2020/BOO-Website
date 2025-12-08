@@ -165,12 +165,12 @@
             align-items: center;
             justify-content: center;
             position: relative;
-            width: 22px;
-            height: 22px;
+            width: 32px;
+            height: 32px;
         }
         
         .perm-icon {
-            font-size: 14px;
+            font-size: 20px;
             filter: drop-shadow(0 0 3px currentColor);
         }
         
@@ -178,7 +178,7 @@
             position: absolute;
             bottom: -2px;
             right: -4px;
-            font-size: 9px;
+            font-size: 11px;
             font-weight: bold;
             color: #fff;
             text-shadow: 0 0 3px #000, 0 0 3px #000;
@@ -1303,9 +1303,9 @@
             {
                 id: 'crusher',
                 name: 'Crusher+',
-                desc: '+5s Crusher Powerup Duration',
+                desc: '+4s Crusher Powerup Duration',
                 icon: '💥',
-                apply: () => { permanentUpgrades.crusherDurationBonus += 5; }
+                apply: () => { permanentUpgrades.crusherDurationBonus += 4; }
             },
             {
                 id: 'bigpaddle',
@@ -1385,7 +1385,7 @@
             // Check each upgrade type for stacks
             const paddleStacks = Math.floor(permanentUpgrades.paddleSizeBonus / 15);
             const speedStacks = Math.floor(permanentUpgrades.speedReduction / 8);
-            const crusherStacks = Math.floor(permanentUpgrades.crusherDurationBonus / 5);
+            const crusherStacks = Math.floor(permanentUpgrades.crusherDurationBonus / 4);
             const bigPaddleStacks = Math.floor(permanentUpgrades.bigPaddleDurationBonus / 8);
             const powerupStacks = Math.floor(permanentUpgrades.powerupSpawnBonus / 50);
             const multiballStacks = Math.floor(permanentUpgrades.multiBallBounceBonus / 1);
@@ -1450,6 +1450,21 @@
         // Laser state
         let bossLasers = []; // Active laser projectiles
         let lastGlobalLaserTime = 0; // Timestamp of last laser fired (any boss)
+        
+        // Immunity star state (boss phase pickup)
+        let immunityStar = null; // { x, y, dx, dy, size } or null if not active
+        let lastStarSpawnTime = 0; // Track when star was last spawned
+        const starConfig = {
+            spawnInterval: 10000, // 10 seconds between spawn attempts
+            size: 18,
+            speed: 2.5,
+            color: '#ffff00' // Yellow star
+        };
+        let paddleImmunity = {
+            active: false,
+            timeLeft: 0,
+            duration: 10 // 10 seconds of immunity
+        };
 
         // Power-up state
         let activePowerUps = {
@@ -1582,13 +1597,14 @@
             // Base random number of powerups
             let numPowerUps = Math.floor(Math.random() * (baseMaxPowerUps - minPowerUps + 1)) + minPowerUps;
             
-            // Lucky Drops upgrade: each stack gives a 50% chance for +1 extra powerup
-            // These rolls are independent, so 2 stacks = 2 separate 50% rolls
+            // Lucky Drops upgrade: each 2 stacks = 1 guaranteed extra, odd stack = 50% chance
+            // Example: 1 stack = 50%, 2 stacks = 1 guaranteed, 3 stacks = 1 + 50%, etc.
             const luckyStacks = Math.floor(permanentUpgrades.powerupSpawnBonus / 50);
-            for (let i = 0; i < luckyStacks; i++) {
-                if (Math.random() < 0.5) {
-                    numPowerUps++;
-                }
+            const guaranteedExtras = Math.floor(luckyStacks / 2);
+            const hasOddStack = luckyStacks % 2 === 1;
+            numPowerUps += guaranteedExtras;
+            if (hasOddStack && Math.random() < 0.5) {
+                numPowerUps++;
             }
             
             // Pick random unique power-up types
@@ -1726,6 +1742,10 @@
             
             // Stagger initial laser cooldowns so bosses don't all fire at once
             const now = performance.now();
+            
+            // Initialize star spawn timer so first star appears 10s after boss phase starts
+            lastStarSpawnTime = now;
+            immunityStar = null;
             
             for (let i = 0; i < numBosses; i++) {
                 // Randomize initial cooldown between 2-6 seconds to keep player guessing
@@ -2089,6 +2109,12 @@
                     laser.y <= paddle.y + paddle.height &&
                     laser.x + laser.width >= paddle.x &&
                     laser.x <= paddle.x + paddle.width) {
+                    
+                    // Check for immunity - just destroy laser, no damage
+                    if (paddleImmunity.active) {
+                        return false; // Remove laser, no damage
+                    }
+                    
                     // Hit paddle - lose a life
                     lives--;
                     livesEl.textContent = lives;
@@ -2209,6 +2235,121 @@
                 }
             });
             
+            ctx.shadowBlur = 0;
+        }
+        
+        // ========== IMMUNITY STAR SYSTEM ==========
+        function updateImmunityStar() {
+            if (!bossPhase) return;
+            
+            const now = performance.now();
+            
+            // Update immunity timer
+            if (paddleImmunity.active) {
+                paddleImmunity.timeLeft -= (frameTime - lastPowerUpTime) / 1000;
+                if (paddleImmunity.timeLeft <= 0) {
+                    paddleImmunity.active = false;
+                    paddleImmunity.timeLeft = 0;
+                }
+            }
+            
+            // Spawn star if none active and enough time has passed
+            if (!immunityStar && now - lastStarSpawnTime >= starConfig.spawnInterval) {
+                // Spawn at random position in upper half of play area
+                immunityStar = {
+                    x: 100 + Math.random() * (canvas.width - 200),
+                    y: 100 + Math.random() * 150,
+                    dx: (Math.random() > 0.5 ? 1 : -1) * starConfig.speed,
+                    dy: starConfig.speed * 0.8,
+                    size: starConfig.size
+                };
+                lastStarSpawnTime = now;
+            }
+            
+            // Update star movement if active
+            if (immunityStar) {
+                immunityStar.x += immunityStar.dx * deltaMultiplier;
+                immunityStar.y += immunityStar.dy * deltaMultiplier;
+                
+                // Bounce off walls
+                if (immunityStar.x - immunityStar.size < 0) {
+                    immunityStar.x = immunityStar.size;
+                    immunityStar.dx = Math.abs(immunityStar.dx);
+                }
+                if (immunityStar.x + immunityStar.size > canvas.width) {
+                    immunityStar.x = canvas.width - immunityStar.size;
+                    immunityStar.dx = -Math.abs(immunityStar.dx);
+                }
+                if (immunityStar.y - immunityStar.size < 0) {
+                    immunityStar.y = immunityStar.size;
+                    immunityStar.dy = Math.abs(immunityStar.dy);
+                }
+                if (immunityStar.y + immunityStar.size > canvas.height - 80) {
+                    immunityStar.y = canvas.height - 80 - immunityStar.size;
+                    immunityStar.dy = -Math.abs(immunityStar.dy);
+                }
+                
+                // Check collision with any ball
+                for (const ball of balls) {
+                    const dx = ball.x - immunityStar.x;
+                    const dy = ball.y - immunityStar.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < ball.radius + immunityStar.size) {
+                        // Collected! Grant immunity
+                        paddleImmunity.active = true;
+                        paddleImmunity.timeLeft = paddleImmunity.duration;
+                        immunityStar = null;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        function drawImmunityStar() {
+            if (!immunityStar) return;
+            
+            const time = performance.now() / 1000;
+            const pulseScale = 1 + Math.sin(time * 8) * 0.15;
+            const rotation = time * 2;
+            
+            ctx.save();
+            ctx.translate(immunityStar.x, immunityStar.y);
+            ctx.rotate(rotation);
+            ctx.scale(pulseScale, pulseScale);
+            
+            // Draw 5-pointed star
+            ctx.beginPath();
+            const spikes = 5;
+            const outerRadius = immunityStar.size;
+            const innerRadius = immunityStar.size * 0.5;
+            
+            for (let i = 0; i < spikes * 2; i++) {
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                const angle = (i * Math.PI / spikes) - Math.PI / 2;
+                const x = Math.cos(angle) * radius;
+                const y = Math.sin(angle) * radius;
+                
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            ctx.closePath();
+            
+            // Glowing yellow fill
+            ctx.fillStyle = starConfig.color;
+            ctx.shadowColor = starConfig.color;
+            ctx.shadowBlur = 20;
+            ctx.fill();
+            
+            // White inner glow
+            ctx.shadowColor = '#ffffff';
+            ctx.shadowBlur = 10;
+            ctx.fill();
+            
+            ctx.restore();
             ctx.shadowBlur = 0;
         }
         
@@ -2344,6 +2485,25 @@
                 ctx.lineWidth = 2;
                 ctx.shadowColor = `rgba(${bR}, ${bG}, ${bB}, ${borderAlpha * 0.8})`;
                 ctx.shadowBlur = 8;
+                ctx.stroke();
+            }
+            
+            // Draw immunity effect (pulsing golden glow)
+            if (paddleImmunity.active) {
+                const time = performance.now() / 1000;
+                const pulse = 0.5 + Math.sin(time * 10) * 0.5; // Fast pulse
+                const glowIntensity = 15 + pulse * 15;
+                
+                ctx.strokeStyle = `rgba(255, 255, 0, ${0.7 + pulse * 0.3})`;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#ffff00';
+                ctx.shadowBlur = glowIntensity;
+                ctx.stroke();
+                
+                // Draw inner white highlight
+                ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + pulse * 0.4})`;
+                ctx.lineWidth = 1;
+                ctx.shadowBlur = 5;
                 ctx.stroke();
             }
             ctx.shadowBlur = 0;
@@ -2707,6 +2867,7 @@
             if (bossPhase) {
                 moveBosses();
                 updateBossLasers();
+                updateImmunityStar();
                 checkBossCollisions();
                 
                 // If boss death triggered freeze, restore all ball positions
@@ -3278,6 +3439,17 @@
                 });
             }
             
+            // Paddle immunity timer - golden/yellow
+            if (paddleImmunity.active) {
+                const timeLeft = paddleImmunity.timeLeft;
+                const isWarning = timeLeft <= 3;
+                const opacity = (isWarning && !flashOn) ? '0.5' : '1';
+                activePowerups.push({
+                    sortValue: timeLeft,
+                    html: `<span style="color: #ffff00; text-shadow: 0 0 8px #ffff00; opacity: ${opacity};">★ Immunity: ${Math.ceil(timeLeft)}s ★</span>`
+                });
+            }
+            
             // Sort by time remaining (lowest first = closest to expiring on top)
             activePowerups.sort((a, b) => a.sortValue - b.sortValue);
             
@@ -3306,6 +3478,12 @@
             bossDeathParticles = [];
             waitingForBossDeathAnimation = false;
             stageClearPending = false;
+            
+            // Reset immunity star for new level
+            immunityStar = null;
+            lastStarSpawnTime = 0;
+            paddleImmunity.active = false;
+            paddleImmunity.timeLeft = 0;
             
             // Progressive difficulty - slower ramp early, faster later
             if (level <= 3) {
@@ -3355,7 +3533,7 @@
             if (permanentUpgrades.dualBallStart > 0) {
                 const extraBalls = permanentUpgrades.dualBallStart;
                 for (let i = 0; i < extraBalls; i++) {
-                    // Stagger each extra ball by 300ms
+                    // Stagger each extra ball by 800ms
                     setTimeout(() => {
                         if (!gameRunning) return; // Don't spawn if game ended
                         const extraDirection = (i % 2 === 0) ? -direction : direction; // Alternate directions
@@ -3368,7 +3546,7 @@
                             speed
                         );
                         balls.push(extraBall);
-                    }, 300 * (i + 1));
+                    }, 800 * (i + 1));
                 }
             }
         }
@@ -3443,6 +3621,7 @@
             if (bossPhase) {
                 drawBosses();
                 drawBossLasers();
+                drawImmunityStar();
             }
             
             // Draw boss death particles (always, even after boss phase ends)
@@ -3592,6 +3771,12 @@
             bossDeathParticles = [];
             waitingForBossDeathAnimation = false;
             stageClearPending = false;
+            
+            // Reset immunity star
+            immunityStar = null;
+            lastStarSpawnTime = 0;
+            paddleImmunity.active = false;
+            paddleImmunity.timeLeft = 0;
             
             // Reset all pause states
             lifeLostPause = false;
