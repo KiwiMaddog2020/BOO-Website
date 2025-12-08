@@ -1377,21 +1377,23 @@
             if (gameState === 'playing') {
                 bird.velocity = bird.jumpStrength;
                 bird.wingAngle = -25; // Trigger ear flap
-                // Dust puff effect (reduced for mobile)
-                const dustColors = ['#e8e8e8', '#d0d0d0', '#f0f0f0'];
-                const dustCount = Math.floor(3 * PERF.particleMultiplier);
-                for (let i = 0; i < dustCount; i++) {
-                    if (particles.length >= PERF.maxParticles) break;
-                    const angle = Math.PI + (i - 1) * 0.4;
-                    particles.push({
-                        x: bird.x - 5,
-                        y: bird.y + bird.height / 2 + (i - 1) * 6,
-                        vx: Math.cos(angle) * (1 + i * 0.3),
-                        vy: Math.sin(angle) * 0.8 + (i - 1) * 0.5,
-                        life: 0.8,
-                        color: dustColors[i % dustColors.length],
-                        size: 8 - i
-                    });
+                // Dust puff effect - skip on mobile
+                if (!isLowPerf) {
+                    const dustColors = ['#e8e8e8', '#d0d0d0', '#f0f0f0'];
+                    const dustCount = Math.floor(3 * PERF.particleMultiplier);
+                    for (let i = 0; i < dustCount; i++) {
+                        if (particles.length >= PERF.maxParticles) break;
+                        const angle = Math.PI + (i - 1) * 0.4;
+                        particles.push({
+                            x: bird.x - 5,
+                            y: bird.y + bird.height / 2 + (i - 1) * 6,
+                            vx: Math.cos(angle) * (1 + i * 0.3),
+                            vy: Math.sin(angle) * 0.8 + (i - 1) * 0.5,
+                            life: 0.8,
+                            color: dustColors[i % dustColors.length],
+                            size: 8 - i
+                        });
+                    }
                 }
             }
         }
@@ -1439,9 +1441,11 @@
                 cachedCapBottom: null
             };
             
-            // Cache the mushroom caps to off-screen canvases
-            pipeObj.cachedCapTop = createCachedCap(pipeObj, true);
-            pipeObj.cachedCapBottom = createCachedCap(pipeObj, false);
+            // Cache the mushroom caps to off-screen canvases (desktop only)
+            if (!isLowPerf) {
+                pipeObj.cachedCapTop = createCachedCap(pipeObj, true);
+                pipeObj.cachedCapBottom = createCachedCap(pipeObj, false);
+            }
             
             pipes.push(pipeObj);
         }
@@ -1563,8 +1567,6 @@
                 thoughtBubbleY = bird.y - 20;
             }
 
-            const scale = getScale();
-
             // Bird physics
             bird.velocity += bird.gravity;
             if (bird.velocity > 3) bird.velocity = 3;
@@ -1600,14 +1602,17 @@
                 if (!pipe.scored && pipe.x + pipeWidth < bird.x) {
                     pipe.scored = true;
                     score++;
-                    hud.textContent = score.toString();
-                    hud.classList.add('pop');
-                    setTimeout(() => hud.classList.remove('pop'), 100);
+                    hud.textContent = score;
                 }
 
-                // Remove off-screen pipes
+                // Remove off-screen pipes (swap-and-pop, clean up canvases)
                 if (pipe.x + pipeWidth < 0) {
-                    pipes.splice(i, 1);
+                    // Clean up canvas references to help garbage collection
+                    pipe.cachedCapTop = null;
+                    pipe.cachedCapBottom = null;
+                    // Swap with last element and pop (faster than splice)
+                    pipes[i] = pipes[pipes.length - 1];
+                    pipes.pop();
                     continue;
                 }
 
@@ -1621,25 +1626,27 @@
                 }
             }
 
-            // Update particles
-            // Update particles (swap-and-pop for efficient removal)
-            let i = particles.length;
-            while (i--) {
-                const p = particles[i];
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vy += 0.03;
-                p.vx *= 0.96;
-                p.life -= 0.035;
-                if (p.life <= 0) {
-                    particles[i] = particles[particles.length - 1];
-                    particles.pop();
+            // Update particles - skip on mobile
+            if (!isLowPerf) {
+                // Update particles (swap-and-pop for efficient removal)
+                let i = particles.length;
+                while (i--) {
+                    const p = particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.03;
+                    p.vx *= 0.96;
+                    p.life -= 0.035;
+                    if (p.life <= 0) {
+                        particles[i] = particles[particles.length - 1];
+                        particles.pop();
+                    }
                 }
-            }
-            
-            // Enforce particle limit
-            if (particles.length > PERF.maxParticles) {
-                particles.length = PERF.maxParticles;
+                
+                // Enforce particle limit
+                if (particles.length > PERF.maxParticles) {
+                    particles.length = PERF.maxParticles;
+                }
             }
         }
 
@@ -1884,30 +1891,43 @@
         }
         function drawPixelMushroom(ctx, x, gapY, pipe, isTop) {
             const scale = pipe.capScale || 1.0;
-            const capWidth = Math.round(102 * scale);  // Base 7% larger, then scaled for wider stalks
+            const capWidth = Math.round(102 * scale);
             const capHeight = Math.round(51 * scale);
             const stemWidth = Math.round(28 * scale);
             const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
-            const stalkType = pipe.stalkType || 'straight';
-            const stalkPattern = pipe.stalkPattern || 'plain';
             const centerX = x + pipeWidth / 2;
-            const padding = 12; // Must match createCachedCap padding
             
             if (isTop) {
                 const capY = gapY - capHeight;
-                // Draw stalk (procedural - varies by height)
-                drawStalk(ctx, centerX, 0, capY + 12, stemWidth, colors, stalkType, stalkPattern, true);
-                // Draw cached cap
-                if (pipe.cachedCapTop) {
-                    ctx.drawImage(pipe.cachedCapTop, centerX - capWidth/2 - padding, capY - padding);
+                // Draw stalk
+                ctx.fillStyle = colors.stem;
+                ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, capY + 12);
+                
+                // Draw cap
+                if (isLowPerf) {
+                    // Mobile: simple ellipse, no caching
+                    ctx.fillStyle = colors.cap;
+                    ctx.beginPath();
+                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, PI2);
+                    ctx.fill();
+                } else if (pipe.cachedCapTop) {
+                    ctx.drawImage(pipe.cachedCapTop, centerX - capWidth/2 - 12, capY - 12);
                 }
             } else {
                 const capY = gapY;
-                // Draw stalk (procedural - varies by height)
-                drawStalk(ctx, centerX, capY + capHeight - 12, 600, stemWidth, colors, stalkType, stalkPattern, false);
-                // Draw cached cap
-                if (pipe.cachedCapBottom) {
-                    ctx.drawImage(pipe.cachedCapBottom, centerX - capWidth/2 - padding, capY - padding);
+                // Draw stalk
+                ctx.fillStyle = colors.stem;
+                ctx.fillRect(centerX - stemWidth/2, capY + capHeight - 12, stemWidth, 600 - capY - capHeight + 12);
+                
+                // Draw cap
+                if (isLowPerf) {
+                    // Mobile: simple ellipse, no caching
+                    ctx.fillStyle = colors.cap;
+                    ctx.beginPath();
+                    ctx.ellipse(centerX, capY + capHeight/2, capWidth/2, capHeight/2, 0, 0, PI2);
+                    ctx.fill();
+                } else if (pipe.cachedCapBottom) {
+                    ctx.drawImage(pipe.cachedCapBottom, centerX - capWidth/2 - 12, capY - 12);
                 }
             }
         }
@@ -1921,8 +1941,8 @@
             // Use cached background with grid and static stars
             ctx.drawImage(bgGridCanvas, 0, 0);
 
-            // Particles
-            if (particles.length > 0) {
+            // Particles - skip on mobile for performance
+            if (!isLowPerf && particles.length > 0) {
                 for (let i = 0; i < particles.length; i++) {
                     const p = particles[i];
                     ctx.globalAlpha = p.life;
@@ -2065,6 +2085,7 @@
 
             // Thought bubble (simple text like KEEP TAPPING style)
             // Thought bubble
+            // Thought bubble
             if (currentThought && gameState === 'playing') {
                 // Fade in/out within 3.5 second total
                 let bubbleAlpha = 1;
@@ -2121,11 +2142,7 @@
             ctx.restore();
         }
 
-        // Game loop with 60fps cap for consistency across devices
-        const TARGET_FPS = 60;
-        const FRAME_TIME = 1000 / TARGET_FPS;
-        let lastRenderTime = 0;
-        
+        // Game loop - simple and clean
         function gameLoop(currentTime) {
             requestAnimationFrame(gameLoop);
             
@@ -2135,24 +2152,16 @@
             // Calculate delta time (capped to prevent huge jumps)
             const deltaTime = Math.min((currentTime - lastFrameTime) / 1000, 0.1);
             lastFrameTime = currentTime;
+            frameCount++;
             
-            // Always update game state with delta time for smooth physics
+            // Update game state
+            update(deltaTime);
+            
+            // Draw
             if (gameState === 'playing' || gameState === 'countdown') {
-                update(deltaTime);
+                draw();
             } else {
-                update(deltaTime);
-            }
-            
-            // Only render at target FPS
-            if (currentTime - lastRenderTime >= FRAME_TIME) {
-                lastRenderTime = currentTime;
-                frameCount++;
-                
-                if (gameState === 'playing' || gameState === 'countdown') {
-                    draw();
-                } else {
-                    drawMenuBackground();
-                }
+                drawMenuBackground();
             }
         }
         
