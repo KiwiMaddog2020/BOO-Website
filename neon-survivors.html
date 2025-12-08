@@ -3722,13 +3722,71 @@
                 const range = def.baseRange + level * 12;
                 const coneAngle = def.baseAngle + level * 0.04;
                 
-                // Get facing direction (towards nearest enemy or last move direction)
-                const target = findNearestEnemy(this.x, this.y);
-                let facing = state.facing || 0;
-                if (target) {
-                    facing = Math.atan2(target.y - this.y, target.x - this.x);
-                    state.facing = facing;
+                // Find the direction with the most enemies (AOE targeting)
+                let targetAngle = state.targetAngle || 0;
+                const allTargets = [...enemies.filter(e => !e.dead), ...bosses.filter(b => !b.dead)];
+                
+                if (allTargets.length > 0) {
+                    // Sample 8 directions and count enemies in each cone
+                    let bestAngle = targetAngle;
+                    let bestScore = 0;
+                    
+                    for (let i = 0; i < 8; i++) {
+                        const testAngle = (Math.PI * 2 / 8) * i;
+                        let score = 0;
+                        
+                        for (const target of allTargets) {
+                            const dist = Math.hypot(target.x - this.x, target.y - this.y);
+                            if (dist > range * 1.2) continue; // Slightly extended check range
+                            
+                            const angleToTarget = Math.atan2(target.y - this.y, target.x - this.x);
+                            let angleDiff = Math.abs(angleToTarget - testAngle);
+                            if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+                            
+                            if (angleDiff < coneAngle / 2) {
+                                // Weight by inverse distance (closer = higher score)
+                                score += 1 + (range - dist) / range;
+                            }
+                        }
+                        
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestAngle = testAngle;
+                        }
+                    }
+                    
+                    // If no enemies in sampled directions, fall back to nearest enemy
+                    if (bestScore === 0) {
+                        const nearest = findNearestEnemy(this.x, this.y);
+                        if (nearest) {
+                            bestAngle = Math.atan2(nearest.y - this.y, nearest.x - this.x);
+                        }
+                    }
+                    
+                    state.targetAngle = bestAngle;
                 }
+                
+                // Smooth interpolation towards target angle (prevents jumping)
+                if (state.currentAngle === undefined) state.currentAngle = targetAngle;
+                
+                // Calculate shortest rotation direction
+                let angleDiff = state.targetAngle - state.currentAngle;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                
+                // Smooth rotation speed (radians per tick) - slower = smoother sweep
+                const rotationSpeed = 0.15;
+                if (Math.abs(angleDiff) > rotationSpeed) {
+                    state.currentAngle += Math.sign(angleDiff) * rotationSpeed;
+                } else {
+                    state.currentAngle = state.targetAngle;
+                }
+                
+                // Normalize current angle
+                while (state.currentAngle > Math.PI) state.currentAngle -= Math.PI * 2;
+                while (state.currentAngle < -Math.PI) state.currentAngle += Math.PI * 2;
+                
+                const facing = state.currentAngle;
                 
                 // Store for rendering
                 state.flameAngle = facing;
@@ -3743,10 +3801,10 @@
                     if (dist > range) continue;
                     
                     const angleToEnemy = Math.atan2(enemy.y - this.y, enemy.x - this.x);
-                    let angleDiff = Math.abs(angleToEnemy - facing);
-                    if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+                    let angleDiffCheck = Math.abs(angleToEnemy - facing);
+                    if (angleDiffCheck > Math.PI) angleDiffCheck = Math.PI * 2 - angleDiffCheck;
                     
-                    if (angleDiff < coneAngle / 2) {
+                    if (angleDiffCheck < coneAngle / 2) {
                         const { damage, isCrit } = this.calcDamage(baseDamage);
                         enemy.takeDamage(damage, isCrit);
                         this.onDealDamage(damage);
@@ -3760,10 +3818,10 @@
                     if (dist > range) continue;
                     
                     const angleToBoss = Math.atan2(boss.y - this.y, boss.x - this.x);
-                    let angleDiff = Math.abs(angleToBoss - facing);
-                    if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+                    let angleDiffCheck = Math.abs(angleToBoss - facing);
+                    if (angleDiffCheck > Math.PI) angleDiffCheck = Math.PI * 2 - angleDiffCheck;
                     
-                    if (angleDiff < coneAngle / 2) {
+                    if (angleDiffCheck < coneAngle / 2) {
                         const { damage, isCrit } = this.calcDamage(baseDamage);
                         boss.takeDamage(damage, isCrit);
                         this.onDealDamage(damage);
@@ -4604,10 +4662,10 @@
                 // Scaling factor based on game time
                 // HP: +20% every 20 seconds (increased from +15% per 25s)
                 const hpScale = 1 + Math.floor(gameTime / 20) * 0.20;
-                // Damage: +12% every 30 seconds (increased from +10% per 35s)
-                const dmgScale = 1 + Math.floor(gameTime / 30) * 0.12;
-                // Speed: +4% every 45 seconds (increased from +3% per 60s)
-                const speedScale = 1 + Math.floor(gameTime / 45) * 0.04;
+                // Damage: +15% every 25 seconds (faster scaling to match player power)
+                const dmgScale = 1 + Math.floor(gameTime / 25) * 0.15;
+                // Speed: +5% every 40 seconds (slightly faster)
+                const speedScale = 1 + Math.floor(gameTime / 40) * 0.05;
                 
                 switch (type) {
                     case 'basic':
