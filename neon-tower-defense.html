@@ -1,0 +1,2742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Neon Tower Defense</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            overflow: hidden;
+            touch-action: none;
+            width: 100%;
+            height: 100%;
+            background: #0a0a0a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            overscroll-behavior: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 6px;
+            width: fit-content;
+            height: fit-content;
+            max-width: 100%;
+            transform: translateZ(0);
+            touch-action: none;
+            position: relative;
+            border: 3px solid #0ff;
+            box-shadow: 0 0 15px #0ff, inset 0 0 10px rgba(0, 255, 255, 0.1);
+            border-radius: 8px;
+            background: #0a0a0a;
+        }
+
+        #gameCanvas {
+            border-radius: 3px;
+            max-width: 100%;
+            display: block;
+            touch-action: none;
+        }
+
+        /* HUD */
+        .hud {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            color: #fff;
+            font-size: 14px;
+            text-shadow: 0 0 10px #0ff;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        .hud-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .hud-item span {
+            color: #0ff;
+        }
+
+        /* Tower Selection Bar */
+        .tower-bar {
+            display: flex;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid rgba(0, 255, 255, 0.4);
+            border-radius: 8px;
+            pointer-events: auto;
+        }
+
+        .tower-btn {
+            width: 50px;
+            height: 60px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 255, 255, 0.1);
+            border: 2px solid rgba(0, 255, 255, 0.4);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #fff;
+        }
+
+        .tower-btn:hover {
+            background: rgba(0, 255, 255, 0.2);
+            border-color: #0ff;
+            transform: scale(1.05);
+        }
+
+        .tower-btn.selected {
+            background: rgba(0, 255, 255, 0.3);
+            border-color: #0ff;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+        }
+
+        .tower-btn.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .tower-icon {
+            font-size: 20px;
+        }
+
+        .tower-cost {
+            font-size: 10px;
+            color: #ffd700;
+        }
+
+        /* Wave Start Button */
+        .wave-btn {
+            padding: 8px 20px;
+            background: linear-gradient(180deg, #00ff88, #00cc66);
+            border: 2px solid #00ff88;
+            border-radius: 6px;
+            color: #000;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-shadow: none;
+        }
+
+        .wave-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.6);
+        }
+
+        .wave-btn:disabled {
+            background: #444;
+            border-color: #666;
+            color: #888;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Control Bar */
+        .control-bar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        /* Upgrade Overlay */
+        .upgrade-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.92);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .upgrade-overlay.active {
+            display: flex;
+            pointer-events: auto;
+        }
+        
+        /* Flash effect on overlay open */
+        .upgrade-overlay::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 255, 255, 0.4);
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .upgrade-overlay.active::before {
+            animation: overlayFlash 0.5s ease-out forwards;
+        }
+        
+        @keyframes overlayFlash {
+            0% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
+        .upgrade-title {
+            font-size: 28px;
+            font-weight: bold;
+            color: #0ff;
+            text-shadow: 0 0 20px #0ff, 0 0 40px #0ff;
+            margin-bottom: 8px;
+            letter-spacing: 3px;
+            animation: titlePulse 1.5s ease-in-out infinite;
+            opacity: 0;
+            transform: scale(0.5) translateY(-20px);
+        }
+        
+        .upgrade-overlay.active .upgrade-title {
+            animation: titleEnter 0.6s ease-out forwards, titlePulse 1.5s ease-in-out 0.6s infinite;
+        }
+        
+        @keyframes titleEnter {
+            0% { opacity: 0; transform: scale(0.5) translateY(-20px); }
+            60% { opacity: 1; transform: scale(1.1) translateY(0); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        
+        @keyframes titlePulse {
+            0%, 100% { text-shadow: 0 0 20px #0ff, 0 0 40px #0ff; }
+            50% { text-shadow: 0 0 30px #0ff, 0 0 60px #0ff, 0 0 80px #f0f; }
+        }
+
+        .upgrade-subtitle {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 25px;
+            opacity: 0;
+        }
+        
+        .upgrade-overlay.active .upgrade-subtitle {
+            animation: subtitleEnter 0.4s ease-out 0.3s forwards;
+        }
+        
+        @keyframes subtitleEnter {
+            0% { opacity: 0; transform: translateY(-10px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        .upgrade-slots {
+            display: flex;
+            gap: 15px;
+        }
+
+        .upgrade-slot {
+            width: 130px;
+            height: 170px;
+            background: linear-gradient(145deg, #1a1a2e, #0f0f1a);
+            border: 3px solid #333;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 0, 0, 0.3);
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            opacity: 0;
+            transform: translateY(30px) scale(0.9);
+        }
+        
+        .upgrade-overlay.active .upgrade-slot {
+            animation: slotEnter 0.5s ease-out forwards;
+        }
+        
+        .upgrade-overlay.active .upgrade-slot:nth-child(1) { animation-delay: 0.4s; }
+        .upgrade-overlay.active .upgrade-slot:nth-child(2) { animation-delay: 0.55s; }
+        .upgrade-overlay.active .upgrade-slot:nth-child(3) { animation-delay: 0.7s; }
+        
+        @keyframes slotEnter {
+            0% { opacity: 0; transform: translateY(30px) scale(0.9); }
+            60% { opacity: 1; transform: translateY(-5px) scale(1.02); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .upgrade-slot::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 50%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+            animation: slotShine 3s ease-in-out infinite;
+            animation-play-state: paused;
+        }
+        
+        .upgrade-overlay.active .upgrade-slot::before {
+            animation-play-state: running;
+        }
+
+        @keyframes slotShine {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(400%); }
+        }
+        
+        .upgrade-slot.rolling {
+            pointer-events: none;
+            border-color: #0ff;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+        }
+
+        .upgrade-slot.rolling .upgrade-content {
+            animation: slotRoll 0.1s linear infinite;
+        }
+
+        @keyframes slotRoll {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(-30px); }
+        }
+        
+        .upgrade-slot.rolling .upgrade-icon {
+            animation: iconCycle 0.15s ease-in-out infinite;
+        }
+        
+        @keyframes iconCycle {
+            0%, 100% { opacity: 0.5; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.1); }
+        }
+
+        .upgrade-slot.revealed {
+            border-color: #0ff;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.4), inset 0 0 20px rgba(0, 255, 255, 0.1);
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        .upgrade-slot.revealed:hover {
+            transform: translateY(-8px) scale(1.05);
+            border-color: #f0f;
+            box-shadow: 0 0 40px rgba(255, 0, 255, 0.6), 0 10px 40px rgba(0, 0, 0, 0.4);
+        }
+        
+        .upgrade-slot.revealed:active {
+            transform: scale(0.95);
+            border-color: #0f0;
+            box-shadow: 0 0 40px rgba(0, 255, 0, 0.6);
+        }
+
+        .upgrade-slot.selected {
+            border-color: #00ff88;
+            box-shadow: 0 0 50px rgba(0, 255, 136, 0.8);
+            transform: scale(1.08);
+        }
+
+        .upgrade-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 8px;
+            padding: 15px;
+            z-index: 1;
+        }
+
+        .upgrade-icon {
+            font-size: 36px;
+            filter: drop-shadow(0 0 8px currentColor);
+            margin-bottom: 4px;
+        }
+
+        .upgrade-name {
+            font-size: 13px;
+            font-weight: bold;
+            color: #fff;
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        .upgrade-desc {
+            font-size: 10px;
+            color: #0ff;
+            text-align: center;
+            line-height: 1.3;
+            opacity: 0.9;
+        }
+
+        /* Permanent Upgrades Display */
+        .perm-upgrades {
+            display: flex;
+            gap: 6px;
+            padding: 6px 10px;
+            background: rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 6px;
+            min-height: 36px;
+            align-items: center;
+        }
+
+        .perm-icon {
+            font-size: 18px;
+            position: relative;
+        }
+
+        .perm-stack {
+            position: absolute;
+            bottom: -4px;
+            right: -6px;
+            font-size: 10px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 3px #000, 0 0 3px #000;
+        }
+
+        /* Menu Overlay */
+        .menu-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .menu-overlay.hidden {
+            display: none;
+        }
+
+        .menu-title {
+            font-size: 42px;
+            color: #0ff;
+            text-shadow: 0 0 30px #0ff, 0 0 60px #0ff;
+            margin-bottom: 10px;
+            letter-spacing: 4px;
+        }
+
+        .menu-subtitle {
+            font-size: 16px;
+            color: #f0f;
+            text-shadow: 0 0 15px #f0f;
+            margin-bottom: 40px;
+        }
+
+        .menu-btn {
+            padding: 15px 50px;
+            font-size: 20px;
+            font-weight: bold;
+            background: linear-gradient(180deg, #0ff, #0aa);
+            border: 3px solid #0ff;
+            border-radius: 10px;
+            color: #000;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 20px;
+        }
+
+        .menu-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.7);
+        }
+
+        .menu-instructions {
+            max-width: 400px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .menu-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+        }
+        
+        .tutorial-btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: bold;
+            background: transparent;
+            border: 2px solid #f0f;
+            border-radius: 8px;
+            color: #f0f;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .tutorial-btn:hover {
+            background: rgba(255, 0, 255, 0.2);
+            box-shadow: 0 0 20px rgba(255, 0, 255, 0.5);
+            transform: scale(1.05);
+        }
+        
+        /* Tutorial Overlay */
+        .tutorial-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 3000;
+        }
+        
+        .tutorial-overlay.active {
+            display: flex;
+        }
+        
+        .tutorial-container {
+            background: linear-gradient(145deg, #1a1a2e, #0f0f1a);
+            border: 3px solid #0ff;
+            border-radius: 15px;
+            padding: 25px 30px;
+            max-width: 450px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.3);
+        }
+        
+        .tutorial-title {
+            font-size: 24px;
+            color: #0ff;
+            text-shadow: 0 0 20px #0ff;
+            margin-bottom: 20px;
+        }
+        
+        .tutorial-step {
+            display: none;
+            animation: tutorialFadeIn 0.3s ease-out;
+        }
+        
+        .tutorial-step.active {
+            display: block;
+        }
+        
+        @keyframes tutorialFadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .tutorial-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        
+        .tutorial-heading {
+            font-size: 18px;
+            color: #fff;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .tutorial-text {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        
+        .tutorial-highlight {
+            color: #0ff;
+            font-weight: bold;
+        }
+        
+        .tutorial-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(0, 255, 255, 0.2);
+        }
+        
+        .tutorial-nav-btn {
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: bold;
+            border: 2px solid;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .tutorial-prev {
+            background: transparent;
+            border-color: #666;
+            color: #888;
+        }
+        
+        .tutorial-prev:hover {
+            border-color: #999;
+            color: #fff;
+        }
+        
+        .tutorial-prev:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        
+        .tutorial-next {
+            background: linear-gradient(180deg, #0ff, #0aa);
+            border-color: #0ff;
+            color: #000;
+        }
+        
+        .tutorial-next:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+        }
+        
+        .tutorial-dots {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .tutorial-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: all 0.2s;
+        }
+        
+        .tutorial-dot.active {
+            background: #0ff;
+            box-shadow: 0 0 10px #0ff;
+        }
+        
+        .tutorial-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 32px;
+            height: 32px;
+            background: transparent;
+            border: 2px solid #ff3366;
+            border-radius: 50%;
+            color: #ff3366;
+            font-size: 18px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .tutorial-close:hover {
+            background: #ff3366;
+            color: #000;
+        }
+
+        /* Game Over Overlay */
+        .gameover-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.92);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .gameover-overlay.active {
+            display: flex;
+        }
+
+        .gameover-title {
+            font-size: 48px;
+            color: #ff3366;
+            text-shadow: 0 0 30px #ff3366;
+            margin-bottom: 20px;
+        }
+
+        .gameover-stats {
+            font-size: 18px;
+            color: #fff;
+            margin-bottom: 30px;
+            text-align: center;
+            line-height: 1.8;
+        }
+
+        .gameover-stats span {
+            color: #0ff;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .tower-btn {
+                width: 42px;
+                height: 52px;
+            }
+            .tower-icon {
+                font-size: 16px;
+            }
+            .tower-cost {
+                font-size: 9px;
+            }
+            .upgrade-slot {
+                width: 100px;
+                height: 140px;
+            }
+            .upgrade-icon {
+                font-size: 28px;
+            }
+            .upgrade-name {
+                font-size: 11px;
+            }
+            .upgrade-desc {
+                font-size: 9px;
+            }
+        }
+        
+        /* Score Modal */
+        .score-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2500;
+        }
+        
+        .score-modal.active {
+            display: flex;
+        }
+        
+        .score-modal-content {
+            background: linear-gradient(145deg, #1a1a2e, #0f0f1a);
+            border: 3px solid #0ff;
+            border-radius: 15px;
+            padding: 30px;
+            text-align: center;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.3);
+            max-width: 350px;
+            width: 90%;
+        }
+        
+        .score-modal-title {
+            font-size: 24px;
+            color: #0ff;
+            text-shadow: 0 0 20px #0ff;
+            margin-bottom: 15px;
+        }
+        
+        .score-stats {
+            font-size: 16px;
+            color: #fff;
+            margin-bottom: 20px;
+            line-height: 1.8;
+        }
+        
+        .score-stats span {
+            color: #0ff;
+            font-weight: bold;
+        }
+        
+        .score-input-label {
+            display: block;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 10px;
+        }
+        
+        .score-input {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.5);
+            border: 2px solid #0ff;
+            border-radius: 8px;
+            color: #fff;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            outline: none;
+        }
+        
+        .score-input:focus {
+            border-color: #f0f;
+            box-shadow: 0 0 15px rgba(255, 0, 255, 0.4);
+        }
+        
+        .score-input.error {
+            border-color: #ff3366;
+            animation: inputShake 0.3s ease;
+        }
+        
+        @keyframes inputShake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        
+        .score-error {
+            font-size: 12px;
+            color: #ff3366;
+            margin-bottom: 10px;
+            min-height: 18px;
+        }
+        
+        .score-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        
+        .score-btn {
+            padding: 12px 25px;
+            font-size: 14px;
+            font-weight: bold;
+            border: 2px solid;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .score-btn-submit {
+            background: linear-gradient(180deg, #0ff, #0aa);
+            border-color: #0ff;
+            color: #000;
+        }
+        
+        .score-btn-submit:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+        }
+        
+        .score-btn-skip {
+            background: transparent;
+            border-color: #666;
+            color: #888;
+        }
+        
+        .score-btn-skip:hover {
+            border-color: #999;
+            color: #fff;
+        }
+        
+        /* Leaderboard Overlay */
+        .leaderboard-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        
+        .leaderboard-overlay.active {
+            display: flex;
+        }
+        
+        .leaderboard-container {
+            background: linear-gradient(145deg, #1a1a2e, #0f0f1a);
+            border: 3px solid #0ff;
+            border-radius: 15px;
+            padding: 20px;
+            width: 90%;
+            max-width: 450px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 0 40px rgba(0, 255, 255, 0.3);
+        }
+        
+        .leaderboard-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+        }
+        
+        .leaderboard-title {
+            font-size: 28px;
+            color: #ffd700;
+            text-shadow: 0 0 20px #ffd700;
+        }
+        
+        .leaderboard-close {
+            width: 36px;
+            height: 36px;
+            background: transparent;
+            border: 2px solid #ff3366;
+            border-radius: 50%;
+            color: #ff3366;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .leaderboard-close:hover {
+            background: #ff3366;
+            color: #000;
+            box-shadow: 0 0 15px rgba(255, 51, 102, 0.5);
+        }
+        
+        .leaderboard-list {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+        
+        .leaderboard-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .leaderboard-list::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 3px;
+        }
+        
+        .leaderboard-list::-webkit-scrollbar-thumb {
+            background: #0ff;
+            border-radius: 3px;
+        }
+        
+        .leaderboard-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            margin-bottom: 4px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        
+        .leaderboard-row:hover {
+            background: rgba(0, 255, 255, 0.1);
+        }
+        
+        .leaderboard-row.top-3 {
+            background: rgba(255, 215, 0, 0.1);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+        }
+        
+        .leaderboard-rank {
+            font-size: 14px;
+            font-weight: bold;
+            color: #888;
+            min-width: 40px;
+        }
+        
+        .leaderboard-row.top-3 .leaderboard-rank {
+            font-size: 16px;
+        }
+        
+        .leaderboard-rank-1 { color: #ffd700 !important; }
+        .leaderboard-rank-2 { color: #c0c0c0 !important; }
+        .leaderboard-rank-3 { color: #cd7f32 !important; }
+        
+        .leaderboard-name {
+            flex: 1;
+            font-size: 14px;
+            color: #fff;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .leaderboard-score {
+            font-size: 15px;
+            font-weight: bold;
+            color: #0ff;
+            min-width: 70px;
+            text-align: right;
+        }
+        
+        .leaderboard-wave {
+            font-size: 12px;
+            color: #888;
+            min-width: 50px;
+            text-align: right;
+        }
+        
+        .leaderboard-loading,
+        .leaderboard-empty,
+        .leaderboard-error {
+            text-align: center;
+            padding: 40px 20px;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+        
+        .leaderboard-error {
+            color: #ff3366;
+        }
+        
+        /* Leaderboard button */
+        #leaderboardBtn {
+            padding: 8px 15px;
+            background: transparent;
+            border: 2px solid #ffd700;
+            border-radius: 6px;
+            color: #ffd700;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        #leaderboardBtn:hover {
+            background: rgba(255, 215, 0, 0.2);
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <!-- Menu Overlay -->
+    <div class="menu-overlay" id="menuOverlay">
+        <div class="menu-title">NEON DEFENSE</div>
+        <div class="menu-subtitle">Tower Defense Roguelite</div>
+        <button class="menu-btn" id="startBtn">START GAME</button>
+        <div class="menu-buttons">
+            <button class="tutorial-btn" id="tutorialBtn">📖 HOW TO PLAY</button>
+        </div>
+    </div>
+    
+    <!-- Tutorial Overlay -->
+    <div class="tutorial-overlay" id="tutorialOverlay">
+        <div class="tutorial-container">
+            <button class="tutorial-close" id="tutorialClose">✕</button>
+            <div class="tutorial-title">HOW TO PLAY</div>
+            
+            <div class="tutorial-step active" data-step="0">
+                <div class="tutorial-icon">🏰</div>
+                <div class="tutorial-heading">Defend the Path</div>
+                <div class="tutorial-text">
+                    Enemies travel along the <span class="tutorial-highlight">cyan path</span> from the green entry point to the red exit. 
+                    Your goal is to stop them before they escape!
+                </div>
+            </div>
+            
+            <div class="tutorial-step" data-step="1">
+                <div class="tutorial-icon">🔫</div>
+                <div class="tutorial-heading">Place Towers</div>
+                <div class="tutorial-text">
+                    Select a tower from the <span class="tutorial-highlight">bottom bar</span>, then click anywhere on the map (not on the path) to place it. 
+                    Each tower costs gold shown below its icon.
+                </div>
+            </div>
+            
+            <div class="tutorial-step" data-step="2">
+                <div class="tutorial-icon">⚔️</div>
+                <div class="tutorial-heading">Tower Types</div>
+                <div class="tutorial-text">
+                    <span class="tutorial-highlight">🔫 Blaster</span> - Balanced fighter<br>
+                    <span class="tutorial-highlight">🎯 Sniper</span> - Long range, high damage<br>
+                    <span class="tutorial-highlight">❄️ Freezer</span> - Slows enemies<br>
+                    <span class="tutorial-highlight">💥 Bomber</span> - Splash damage<br>
+                    <span class="tutorial-highlight">⚡ Beam</span> - Continuous beam
+                </div>
+            </div>
+            
+            <div class="tutorial-step" data-step="3">
+                <div class="tutorial-icon">💰</div>
+                <div class="tutorial-heading">Earn Gold</div>
+                <div class="tutorial-text">
+                    Defeat enemies to earn <span class="tutorial-highlight">gold</span>. 
+                    Tougher enemies give more gold. Use gold to build more towers and strengthen your defense!
+                </div>
+            </div>
+            
+            <div class="tutorial-step" data-step="4">
+                <div class="tutorial-icon">🎰</div>
+                <div class="tutorial-heading">Roguelite Upgrades</div>
+                <div class="tutorial-text">
+                    After each wave, choose from <span class="tutorial-highlight">3 random upgrades</span> that permanently boost your towers. 
+                    Stack the same upgrade multiple times for powerful combos!
+                </div>
+            </div>
+            
+            <div class="tutorial-step" data-step="5">
+                <div class="tutorial-icon">❤️</div>
+                <div class="tutorial-heading">Survive!</div>
+                <div class="tutorial-text">
+                    You start with <span class="tutorial-highlight">20 lives</span>. Each enemy that escapes costs you a life. 
+                    Survive as many waves as possible and climb the leaderboard!
+                </div>
+            </div>
+            
+            <div class="tutorial-nav">
+                <button class="tutorial-nav-btn tutorial-prev" id="tutorialPrev">← Back</button>
+                <div class="tutorial-dots" id="tutorialDots"></div>
+                <button class="tutorial-nav-btn tutorial-next" id="tutorialNext">Next →</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Overlay -->
+    <div class="gameover-overlay" id="gameoverOverlay">
+        <div class="gameover-title">GAME OVER</div>
+        <div class="gameover-stats" id="gameoverStats"></div>
+        <button class="menu-btn" id="restartBtn">PLAY AGAIN</button>
+    </div>
+
+    <!-- Upgrade Overlay -->
+    <div class="upgrade-overlay" id="upgradeOverlay">
+        <div class="upgrade-title">CHOOSE UPGRADE</div>
+        <div class="upgrade-subtitle">Select a permanent bonus</div>
+        <div class="upgrade-slots" id="upgradeSlots">
+            <div class="upgrade-slot" id="slot0">
+                <div class="upgrade-content">
+                    <div class="upgrade-icon">?</div>
+                    <div class="upgrade-name">???</div>
+                    <div class="upgrade-desc">???</div>
+                </div>
+            </div>
+            <div class="upgrade-slot" id="slot1">
+                <div class="upgrade-content">
+                    <div class="upgrade-icon">?</div>
+                    <div class="upgrade-name">???</div>
+                    <div class="upgrade-desc">???</div>
+                </div>
+            </div>
+            <div class="upgrade-slot" id="slot2">
+                <div class="upgrade-content">
+                    <div class="upgrade-icon">?</div>
+                    <div class="upgrade-name">???</div>
+                    <div class="upgrade-desc">???</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Score Submission Modal -->
+    <div class="score-modal" id="scoreModal">
+        <div class="score-modal-content">
+            <div class="score-modal-title" id="scoreModalTitle">HIGH SCORE</div>
+            <div class="score-stats">
+                Waves: <span id="finalWaveDisplay">0</span><br>
+                Kills: <span id="finalKillsDisplay">0</span>
+            </div>
+            <label class="score-input-label">Enter your name for the leaderboard:</label>
+            <input type="text" class="score-input" id="usernameInput" maxlength="12" placeholder="YOUR NAME">
+            <div class="score-error" id="scoreErrorMsg"></div>
+            <div class="score-buttons">
+                <button class="score-btn score-btn-skip" id="skipScoreBtn">Skip</button>
+                <button class="score-btn score-btn-submit" id="submitScoreBtn">Submit</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Leaderboard Overlay -->
+    <div class="leaderboard-overlay" id="leaderboardOverlay">
+        <div class="leaderboard-container">
+            <div class="leaderboard-header">
+                <div class="leaderboard-title">🏆 TOP 100</div>
+                <button class="leaderboard-close" id="leaderboardClose">✕</button>
+            </div>
+            <div class="leaderboard-list" id="leaderboardList">
+                <div class="leaderboard-loading">Loading scores...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="game-container">
+        <div class="hud">
+            <div class="hud-item">❤️ <span id="livesDisplay">20</span></div>
+            <div class="hud-item">💰 <span id="goldDisplay">100</span></div>
+            <div class="hud-item">🌊 Wave <span id="waveDisplay">1</span></div>
+            <div class="hud-item">💀 <span id="killsDisplay">0</span></div>
+        </div>
+        <canvas id="gameCanvas" width="600" height="500"></canvas>
+        <div class="control-bar">
+            <div class="tower-bar" id="towerBar">
+                <div class="tower-btn" data-tower="basic" title="Basic Tower">
+                    <div class="tower-icon">🔫</div>
+                    <div class="tower-cost">$50</div>
+                </div>
+                <div class="tower-btn" data-tower="sniper" title="Sniper Tower">
+                    <div class="tower-icon">🎯</div>
+                    <div class="tower-cost">$100</div>
+                </div>
+                <div class="tower-btn" data-tower="freeze" title="Freeze Tower">
+                    <div class="tower-icon">❄️</div>
+                    <div class="tower-cost">$75</div>
+                </div>
+                <div class="tower-btn" data-tower="splash" title="Splash Tower">
+                    <div class="tower-icon">💥</div>
+                    <div class="tower-cost">$125</div>
+                </div>
+                <div class="tower-btn" data-tower="laser" title="Laser Tower">
+                    <div class="tower-icon">⚡</div>
+                    <div class="tower-cost">$150</div>
+                </div>
+            </div>
+            <button class="wave-btn" id="waveBtn">START WAVE</button>
+            <button id="leaderboardBtn">🏆 TOP 100</button>
+            <div class="perm-upgrades" id="permUpgrades"></div>
+        </div>
+    </div>
+
+    <script>
+        // ========== FIREBASE CONFIGURATION ==========
+        const firebaseConfig = {
+            apiKey: "AIzaSyBcXGLbLlhJ-R5l0vBsSVw-d-7N3FcN7xw",
+            authDomain: "bunch-of-others.firebaseapp.com",
+            projectId: "bunch-of-others",
+            storageBucket: "bunch-of-others.firebasestorage.app",
+            messagingSenderId: "520765430820",
+            appId: "1:520765430820:web:a417b457bf7bb6f4390cb1"
+        };
+        
+        // Firebase state
+        let db = null;
+        let firebaseReady = false;
+        
+        // Initialize Firebase
+        function initFirebase() {
+            if (firebaseConfig.apiKey === "YOUR_API_KEY") {
+                console.log("Firebase not configured - leaderboard running in offline mode");
+                return false;
+            }
+            try {
+                if (typeof firebase !== 'undefined') {
+                    firebase.initializeApp(firebaseConfig);
+                    db = firebase.firestore();
+                    firebaseReady = true;
+                    console.log("Firebase initialized successfully");
+                    return true;
+                }
+            } catch (e) {
+                console.warn("Firebase initialization failed:", e);
+            }
+            return false;
+        }
+        
+        // Load Firebase SDK dynamically
+        function loadFirebaseSDK() {
+            if (firebaseConfig.apiKey === "YOUR_API_KEY") return;
+            
+            const script1 = document.createElement('script');
+            script1.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js';
+            script1.onload = () => {
+                const script2 = document.createElement('script');
+                script2.src = 'https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js';
+                script2.onload = initFirebase;
+                document.head.appendChild(script2);
+            };
+            document.head.appendChild(script1);
+        }
+        loadFirebaseSDK();
+        
+        // ========== PROFANITY FILTER ==========
+        const blockedPatterns = [
+            /\bf+u+c+k+/i, /\bs+h+i+t+/i, /\ba+s+s+h+o+l+e/i, /\bb+i+t+c+h/i, /\bc+u+n+t/i,
+            /\bd+i+c+k/i, /\bp+u+s+s+y/i, /\bc+o+c+k/i, /\bw+h+o+r+e/i, /\bs+l+u+t/i,
+            /\bf+a+g+/i, /\bn+i+g+g+/i, /\bn+i+g+a/i, /\br+e+t+a+r+d/i,
+            /n.?i.?g.?g/i, /f.?u.?c.?k/i, /s.?h.?i.?t/i
+        ];
+        
+        const blockedExact = new Set([
+            'ass', 'cum', 'fag', 'gay', 'jew', 'nig', 'poo', 'sex', 'tit',
+            'kkk', 'nazi', 'rape', 'pedo', 'porn', 'anal', 'homo'
+        ]);
+        
+        function containsProfanity(text) {
+            if (!text) return false;
+            const normalized = text.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const withSpaces = text.toLowerCase();
+            if (blockedExact.has(normalized)) return true;
+            for (const pattern of blockedPatterns) {
+                if (pattern.test(normalized) || pattern.test(withSpaces)) return true;
+            }
+            return false;
+        }
+        
+        function sanitizeUsername(name) {
+            return name.trim().substring(0, 12).toUpperCase().replace(/[^A-Z0-9_\-]/g, '');
+        }
+        
+        // ========== GAME CONFIGURATION ==========
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Constants
+        const MAX_PARTICLES = 200;
+        const TARGET_FPS = 60;
+        const FRAME_TIME = 1000 / TARGET_FPS;
+        
+        // Tower Definitions
+        const TOWERS = {
+            basic: {
+                name: 'Blaster',
+                cost: 50,
+                range: 100,
+                damage: 10,
+                fireRate: 500,
+                color: '#0ff',
+                projectileSpeed: 8,
+                projectileColor: '#0ff',
+                icon: '🔫'
+            },
+            sniper: {
+                name: 'Sniper',
+                cost: 100,
+                range: 180,
+                damage: 40,
+                fireRate: 1200,
+                color: '#ff6600',
+                projectileSpeed: 15,
+                projectileColor: '#ff6600',
+                icon: '🎯'
+            },
+            freeze: {
+                name: 'Freezer',
+                cost: 75,
+                range: 80,
+                damage: 5,
+                fireRate: 800,
+                color: '#00ccff',
+                projectileSpeed: 6,
+                projectileColor: '#00ccff',
+                slowAmount: 0.5,
+                slowDuration: 2000,
+                icon: '❄️'
+            },
+            splash: {
+                name: 'Bomber',
+                cost: 125,
+                range: 90,
+                damage: 15,
+                fireRate: 1000,
+                color: '#f0f',
+                projectileSpeed: 5,
+                projectileColor: '#f0f',
+                splashRadius: 50,
+                icon: '💥'
+            },
+            laser: {
+                name: 'Beam',
+                cost: 150,
+                range: 120,
+                damage: 8,
+                fireRate: 100,
+                color: '#ffff00',
+                isBeam: true,
+                icon: '⚡'
+            }
+        };
+
+        // Upgrade Definitions
+        const UPGRADES = [
+            { id: 'damage', icon: '⚔️', name: 'Power Up', desc: '+15% tower damage', apply: () => { permUpgrades.damageBonus += 0.15; } },
+            { id: 'range', icon: '📡', name: 'Extended Range', desc: '+10% tower range', apply: () => { permUpgrades.rangeBonus += 0.1; } },
+            { id: 'firerate', icon: '🔥', name: 'Rapid Fire', desc: '+10% fire rate', apply: () => { permUpgrades.fireRateBonus += 0.1; } },
+            { id: 'gold', icon: '💎', name: 'Gold Rush', desc: '+20% gold earned', apply: () => { permUpgrades.goldBonus += 0.2; } },
+            { id: 'discount', icon: '🏷️', name: 'Discount', desc: '-10% tower costs', apply: () => { permUpgrades.costReduction += 0.1; } },
+            { id: 'splash', icon: '💫', name: 'Wider Splash', desc: '+25% splash radius', apply: () => { permUpgrades.splashBonus += 0.25; } },
+            { id: 'slow', icon: '🧊', name: 'Deep Freeze', desc: '+20% slow power', apply: () => { permUpgrades.slowBonus += 0.2; } },
+            { id: 'crit', icon: '💢', name: 'Critical Hit', desc: '+5% crit chance', apply: () => { permUpgrades.critChance += 0.05; } },
+            { id: 'life', icon: '❤️', name: 'Extra Life', desc: '+5 lives', apply: () => { lives += 5; updateHUD(); } },
+            { id: 'interest', icon: '📈', name: 'Interest', desc: '+5% gold per wave', apply: () => { permUpgrades.interest += 0.05; } }
+        ];
+
+        // Path waypoints
+        const PATH = [
+            { x: 0, y: 100 },
+            { x: 150, y: 100 },
+            { x: 150, y: 250 },
+            { x: 450, y: 250 },
+            { x: 450, y: 100 },
+            { x: 550, y: 100 },
+            { x: 550, y: 400 },
+            { x: 300, y: 400 },
+            { x: 300, y: 320 },
+            { x: 100, y: 320 },
+            { x: 100, y: 450 },
+            { x: 600, y: 450 }
+        ];
+
+        // Game State
+        let gameRunning = false;
+        let gameLoopId = null;
+        let gamePaused = false;
+        let gold = 125;
+        let lives = 20;
+        let wave = 0;
+        let kills = 0;
+        let selectedTower = null;
+        let towers = [];
+        let enemies = [];
+        let projectiles = [];
+        let particles = [];
+        let waveInProgress = false;
+        let enemiesToSpawn = 0;
+        let spawnTimer = 0;
+        let lastTime = 0;
+
+        // Mouse state
+        let mouseX = -1000;
+        let mouseY = -1000;
+
+        // Permanent Upgrades
+        let permUpgrades = {
+            damageBonus: 0,
+            rangeBonus: 0,
+            fireRateBonus: 0,
+            goldBonus: 0,
+            costReduction: 0,
+            splashBonus: 0,
+            slowBonus: 0,
+            critChance: 0,
+            interest: 0
+        };
+        let permUpgradeStacks = {};
+        let upgradeOfferHistory = {};
+        
+        // Upgrade selection state
+        let currentUpgradeChoices = [];
+        let upgradeSelectionActive = false;
+
+        // DOM Elements
+        const menuOverlay = document.getElementById('menuOverlay');
+        const gameoverOverlay = document.getElementById('gameoverOverlay');
+        const upgradeOverlay = document.getElementById('upgradeOverlay');
+        const upgradeSlots = [
+            document.getElementById('slot0'),
+            document.getElementById('slot1'),
+            document.getElementById('slot2')
+        ];
+        const livesDisplay = document.getElementById('livesDisplay');
+        const goldDisplay = document.getElementById('goldDisplay');
+        const waveDisplay = document.getElementById('waveDisplay');
+        const killsDisplay = document.getElementById('killsDisplay');
+        const waveBtn = document.getElementById('waveBtn');
+        const towerBar = document.getElementById('towerBar');
+        const permUpgradesDisplay = document.getElementById('permUpgrades');
+
+        // ========== INITIALIZATION ==========
+        function init() {
+            setupEventListeners();
+            render(); // Initial render
+        }
+
+        function setupEventListeners() {
+            document.getElementById('startBtn').addEventListener('click', startGame);
+            document.getElementById('restartBtn').addEventListener('click', startGame);
+            waveBtn.addEventListener('click', startWave);
+
+            // Tower selection
+            towerBar.querySelectorAll('.tower-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const type = btn.dataset.tower;
+                    if (selectedTower === type) {
+                        selectedTower = null;
+                        btn.classList.remove('selected');
+                    } else {
+                        towerBar.querySelectorAll('.tower-btn').forEach(b => b.classList.remove('selected'));
+                        selectedTower = type;
+                        btn.classList.add('selected');
+                    }
+                });
+            });
+
+            // Canvas click for tower placement
+            canvas.addEventListener('click', handleCanvasClick);
+            canvas.addEventListener('touchend', handleCanvasTouch);
+
+            // Mouse tracking for placement preview
+            canvas.addEventListener('mousemove', (e) => {
+                const pos = getCanvasCoords(e.clientX, e.clientY);
+                mouseX = pos.x;
+                mouseY = pos.y;
+            });
+            
+            canvas.addEventListener('mouseleave', () => {
+                mouseX = -1000;
+                mouseY = -1000;
+            });
+
+            // Upgrade selection
+            upgradeSlots.forEach((slot, index) => {
+                slot.addEventListener('click', () => selectUpgrade(index));
+                slot.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    selectUpgrade(index);
+                });
+            });
+        }
+
+        // Get canvas coordinates accounting for scaling
+        function getCanvasCoords(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+
+        function startGame() {
+            // Prevent multiple game loops
+            if (gameLoopId) {
+                cancelAnimationFrame(gameLoopId);
+                gameLoopId = null;
+            }
+            
+            menuOverlay.classList.add('hidden');
+            gameoverOverlay.classList.remove('active');
+            
+            // Reset game state
+            gold = 125;
+            lives = 20;
+            wave = 0;
+            kills = 0;
+            towers = [];
+            enemies = [];
+            projectiles = [];
+            particles = [];
+            waveInProgress = false;
+            selectedTower = null;
+            gamePaused = false;
+            
+            // Deselect all tower buttons
+            towerBar.querySelectorAll('.tower-btn').forEach(b => b.classList.remove('selected'));
+            
+            // Reset upgrades
+            permUpgrades = {
+                damageBonus: 0,
+                rangeBonus: 0,
+                fireRateBonus: 0,
+                goldBonus: 0,
+                costReduction: 0,
+                splashBonus: 0,
+                slowBonus: 0,
+                critChance: 0,
+                interest: 0
+            };
+            permUpgradeStacks = {};
+            upgradeOfferHistory = {};
+            currentUpgradeChoices = [];
+            upgradeSelectionActive = false;
+            
+            updateHUD();
+            updateTowerButtons();
+            updatePermUpgradesDisplay();
+            
+            gameRunning = true;
+            lastTime = performance.now();
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        // ========== GAME LOOP ==========
+        function gameLoop(currentTime) {
+            if (!gameRunning) {
+                gameLoopId = null;
+                return;
+            }
+            
+            const deltaTime = Math.min(currentTime - lastTime, 100); // Cap delta to prevent spiral
+            lastTime = currentTime;
+            
+            // Normalize to 60fps
+            const dt = deltaTime / FRAME_TIME;
+            
+            if (!gamePaused) {
+                update(dt, deltaTime);
+            }
+            render();
+            
+            gameLoopId = requestAnimationFrame(gameLoop);
+        }
+
+        function update(dt, rawDt) {
+            // Spawn enemies
+            if (waveInProgress && enemiesToSpawn > 0) {
+                spawnTimer -= rawDt;
+                if (spawnTimer <= 0) {
+                    spawnEnemy();
+                    enemiesToSpawn--;
+                    spawnTimer = 400 + Math.random() * 300;
+                }
+            }
+
+            // Check wave complete
+            if (waveInProgress && enemiesToSpawn === 0 && enemies.length === 0) {
+                waveComplete();
+            }
+
+            // Update enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                updateEnemy(enemies[i], dt);
+                if (!enemies[i].alive || enemies[i].escaped) {
+                    enemies.splice(i, 1);
+                }
+            }
+
+            // Update towers
+            for (const tower of towers) {
+                updateTower(tower, dt);
+            }
+
+            // Update projectiles
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                updateProjectile(projectiles[i], dt);
+                if (!projectiles[i].alive) {
+                    projectiles.splice(i, 1);
+                }
+            }
+
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.life -= rawDt;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.alpha = Math.max(0, p.life / p.maxLife);
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // ========== ENEMY SYSTEM ==========
+        function spawnEnemy() {
+            const baseHealth = 20 + wave * 12;
+            const baseSpeed = 1.2 + wave * 0.05;
+            
+            // Random enemy types based on wave (fixed logic)
+            let type = 'normal';
+            const roll = Math.random();
+            
+            if (wave >= 8 && roll < 0.1) {
+                type = 'boss';
+            } else if (wave >= 5 && roll < 0.25) {
+                type = 'tank';
+            } else if (wave >= 3 && roll < 0.3) {
+                type = 'fast';
+            }
+            
+            const enemyTypes = {
+                normal: { healthMult: 1, speedMult: 1, size: 12, color: '#ff3366', gold: 5 },
+                fast: { healthMult: 0.6, speedMult: 1.8, size: 10, color: '#ffcc00', gold: 7 },
+                tank: { healthMult: 3, speedMult: 0.6, size: 18, color: '#9933ff', gold: 15 },
+                boss: { healthMult: 8, speedMult: 0.4, size: 25, color: '#ff0000', gold: 50 }
+            };
+            
+            const config = enemyTypes[type];
+            const health = Math.floor(baseHealth * config.healthMult);
+            
+            enemies.push({
+                x: PATH[0].x,
+                y: PATH[0].y,
+                pathIndex: 0,
+                pathProgress: 0,
+                health: health,
+                maxHealth: health,
+                speed: baseSpeed * config.speedMult,
+                size: config.size,
+                color: config.color,
+                gold: config.gold,
+                type: type,
+                alive: true,
+                escaped: false,
+                slowUntil: 0,
+                slowAmount: 1
+            });
+        }
+
+        function updateEnemy(enemy, dt) {
+            if (!enemy.alive || enemy.escaped) return;
+            
+            // Apply slow effect
+            let speedMult = 1;
+            if (performance.now() < enemy.slowUntil) {
+                speedMult = enemy.slowAmount;
+            }
+            
+            // Move along path
+            const currentPoint = PATH[enemy.pathIndex];
+            const nextPoint = PATH[enemy.pathIndex + 1];
+            
+            if (!nextPoint) {
+                enemy.escaped = true;
+                lives--;
+                updateHUD();
+                createParticles(enemy.x, enemy.y, '#ff0000', 10);
+                
+                if (lives <= 0) {
+                    gameOver();
+                }
+                return;
+            }
+            
+            const dx = nextPoint.x - currentPoint.x;
+            const dy = nextPoint.y - currentPoint.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            enemy.pathProgress += (enemy.speed * speedMult * dt) / dist;
+            
+            if (enemy.pathProgress >= 1) {
+                enemy.pathIndex++;
+                enemy.pathProgress = 0;
+            }
+            
+            // Interpolate position
+            if (enemy.pathIndex < PATH.length - 1) {
+                const cp = PATH[enemy.pathIndex];
+                const np = PATH[enemy.pathIndex + 1];
+                enemy.x = cp.x + (np.x - cp.x) * enemy.pathProgress;
+                enemy.y = cp.y + (np.y - cp.y) * enemy.pathProgress;
+            }
+        }
+
+        function damageEnemy(enemy, damage, isCrit = false) {
+            if (!enemy.alive) return;
+            
+            enemy.health -= damage;
+            createDamageNumber(enemy.x, enemy.y - enemy.size, damage, isCrit);
+            
+            if (enemy.health <= 0) {
+                enemy.alive = false;
+                const goldEarned = Math.floor(enemy.gold * (1 + permUpgrades.goldBonus));
+                gold += goldEarned;
+                kills++;
+                updateHUD();
+                updateTowerButtons();
+                createParticles(enemy.x, enemy.y, enemy.color, 15);
+            }
+        }
+
+        // ========== TOWER SYSTEM ==========
+        function handleCanvasClick(e) {
+            if (!selectedTower || waveInProgress) return;
+            
+            const pos = getCanvasCoords(e.clientX, e.clientY);
+            placeTower(pos.x, pos.y);
+        }
+
+        function handleCanvasTouch(e) {
+            if (!selectedTower || waveInProgress) return;
+            e.preventDefault();
+            
+            const touch = e.changedTouches[0];
+            const pos = getCanvasCoords(touch.clientX, touch.clientY);
+            placeTower(pos.x, pos.y);
+        }
+
+        function placeTower(x, y) {
+            if (!isValidPlacement(x, y)) return;
+            
+            const def = TOWERS[selectedTower];
+            const cost = Math.floor(def.cost * (1 - permUpgrades.costReduction));
+            
+            if (gold >= cost) {
+                gold -= cost;
+                towers.push({
+                    x: x,
+                    y: y,
+                    type: selectedTower,
+                    lastFire: 0,
+                    target: null
+                });
+                updateHUD();
+                updateTowerButtons();
+                createParticles(x, y, def.color, 8);
+            }
+        }
+
+        function isValidPlacement(x, y) {
+            const minPathDist = 35;
+            const minTowerDist = 40;
+            
+            // Check distance from path
+            for (let i = 0; i < PATH.length - 1; i++) {
+                const p1 = PATH[i];
+                const p2 = PATH[i + 1];
+                const dist = pointToLineDistance(x, y, p1.x, p1.y, p2.x, p2.y);
+                if (dist < minPathDist) return false;
+            }
+            
+            // Check distance from other towers
+            for (const tower of towers) {
+                const dx = tower.x - x;
+                const dy = tower.y - y;
+                if (Math.sqrt(dx * dx + dy * dy) < minTowerDist) return false;
+            }
+            
+            // Check bounds
+            if (x < 30 || x > canvas.width - 30 || y < 50 || y > canvas.height - 30) return false;
+            
+            return true;
+        }
+
+        function pointToLineDistance(px, py, x1, y1, x2, y2) {
+            const A = px - x1;
+            const B = py - y1;
+            const C = x2 - x1;
+            const D = y2 - y1;
+            
+            const dot = A * C + B * D;
+            const lenSq = C * C + D * D;
+            let param = lenSq !== 0 ? dot / lenSq : -1;
+            
+            let xx, yy;
+            if (param < 0) {
+                xx = x1; yy = y1;
+            } else if (param > 1) {
+                xx = x2; yy = y2;
+            } else {
+                xx = x1 + param * C;
+                yy = y1 + param * D;
+            }
+            
+            return Math.sqrt((px - xx) ** 2 + (py - yy) ** 2);
+        }
+
+        function updateTower(tower, dt) {
+            const def = TOWERS[tower.type];
+            const range = def.range * (1 + permUpgrades.rangeBonus);
+            // Fire rate bonus reduces interval (makes it faster)
+            const fireInterval = def.fireRate / (1 + permUpgrades.fireRateBonus);
+            
+            // Find target (furthest along path within range)
+            let bestTarget = null;
+            let bestProgress = -1;
+            
+            for (const enemy of enemies) {
+                if (!enemy.alive) continue;
+                const dx = enemy.x - tower.x;
+                const dy = enemy.y - tower.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist <= range) {
+                    const progress = enemy.pathIndex + enemy.pathProgress;
+                    if (progress > bestProgress) {
+                        bestProgress = progress;
+                        bestTarget = enemy;
+                    }
+                }
+            }
+            
+            tower.target = bestTarget;
+            
+            // Fire at target
+            const now = performance.now();
+            if (bestTarget && now - tower.lastFire >= fireInterval) {
+                tower.lastFire = now;
+                
+                if (def.isBeam) {
+                    const damage = def.damage * (1 + permUpgrades.damageBonus);
+                    const isCrit = Math.random() < permUpgrades.critChance;
+                    damageEnemy(bestTarget, isCrit ? damage * 2 : damage, isCrit);
+                } else {
+                    fireProjectile(tower, bestTarget);
+                }
+            }
+        }
+
+        function fireProjectile(tower, target) {
+            const def = TOWERS[tower.type];
+            const dx = target.x - tower.x;
+            const dy = target.y - tower.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist === 0) return;
+            
+            projectiles.push({
+                x: tower.x,
+                y: tower.y,
+                vx: (dx / dist) * def.projectileSpeed,
+                vy: (dy / dist) * def.projectileSpeed,
+                damage: def.damage * (1 + permUpgrades.damageBonus),
+                color: def.projectileColor,
+                type: tower.type,
+                alive: true
+            });
+        }
+
+        function updateProjectile(proj, dt) {
+            proj.x += proj.vx * dt;
+            proj.y += proj.vy * dt;
+            
+            // Check bounds
+            if (proj.x < -20 || proj.x > canvas.width + 20 || proj.y < -20 || proj.y > canvas.height + 20) {
+                proj.alive = false;
+                return;
+            }
+            
+            // Check collision with enemies
+            for (const enemy of enemies) {
+                if (!enemy.alive) continue;
+                const dx = enemy.x - proj.x;
+                const dy = enemy.y - proj.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist < enemy.size + 5) {
+                    proj.alive = false;
+                    
+                    const isCrit = Math.random() < permUpgrades.critChance;
+                    const damage = isCrit ? proj.damage * 2 : proj.damage;
+                    const towerDef = TOWERS[proj.type];
+                    
+                    if (towerDef.splashRadius) {
+                        const splashRadius = towerDef.splashRadius * (1 + permUpgrades.splashBonus);
+                        for (const e of enemies) {
+                            if (!e.alive) continue;
+                            const sdx = e.x - proj.x;
+                            const sdy = e.y - proj.y;
+                            if (Math.sqrt(sdx * sdx + sdy * sdy) <= splashRadius) {
+                                damageEnemy(e, damage, isCrit);
+                            }
+                        }
+                        createParticles(proj.x, proj.y, proj.color, 20);
+                    } else {
+                        damageEnemy(enemy, damage, isCrit);
+                        
+                        // Apply slow if freeze tower (stronger slow with upgrade)
+                        if (towerDef.slowAmount) {
+                            const slowStrength = towerDef.slowAmount - (permUpgrades.slowBonus * 0.15);
+                            enemy.slowAmount = Math.max(0.2, Math.min(enemy.slowAmount, slowStrength));
+                            enemy.slowUntil = performance.now() + towerDef.slowDuration;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        // ========== WAVE SYSTEM ==========
+        function startWave() {
+            if (waveInProgress) return;
+            
+            wave++;
+            waveDisplay.textContent = wave;
+            waveInProgress = true;
+            waveBtn.disabled = true;
+            waveBtn.textContent = 'WAVE ' + wave;
+            
+            enemiesToSpawn = 5 + wave * 2;
+            spawnTimer = 0;
+            
+            selectedTower = null;
+            towerBar.querySelectorAll('.tower-btn').forEach(b => b.classList.remove('selected'));
+        }
+
+        function waveComplete() {
+            waveInProgress = false;
+            waveBtn.disabled = false;
+            waveBtn.textContent = 'START WAVE';
+            
+            // Interest bonus
+            if (permUpgrades.interest > 0) {
+                const interestGold = Math.floor(gold * permUpgrades.interest);
+                gold += interestGold;
+                updateHUD();
+            }
+            
+            updateTowerButtons();
+            showUpgradeSelector();
+        }
+
+        // ========== UPGRADE SYSTEM ==========
+        // Store slot roll intervals for cleanup
+        let slotRollIntervals = [];
+        
+        function showUpgradeSelector() {
+            gamePaused = true;
+            upgradeSelectionActive = false;
+            upgradeOverlay.classList.add('active');
+            
+            // Clear any existing intervals
+            slotRollIntervals.forEach(id => clearInterval(id));
+            slotRollIntervals = [];
+            
+            const available = [...UPGRADES];
+            currentUpgradeChoices = weightedRandomSelect(available, 3);
+            
+            // Track offers
+            for (const upgrade of currentUpgradeChoices) {
+                upgradeOfferHistory[upgrade.id] = 0;
+            }
+            UPGRADES.forEach(u => {
+                if (!currentUpgradeChoices.some(c => c.id === u.id)) {
+                    upgradeOfferHistory[u.id] = Math.min((upgradeOfferHistory[u.id] || 0) + 1, 5);
+                }
+            });
+            
+            // Reset slots to rolling with cycling animation
+            upgradeSlots.forEach((slot, i) => {
+                slot.className = 'upgrade-slot rolling';
+                slot.style.opacity = '';
+                slot.style.pointerEvents = '';
+                
+                // Start cycling through random upgrades
+                const cycleUpgrades = () => {
+                    const randomUpgrade = UPGRADES[Math.floor(Math.random() * UPGRADES.length)];
+                    slot.querySelector('.upgrade-icon').textContent = randomUpgrade.icon;
+                    slot.querySelector('.upgrade-name').textContent = randomUpgrade.name;
+                    slot.querySelector('.upgrade-desc').textContent = randomUpgrade.desc;
+                };
+                
+                // Initial random display
+                cycleUpgrades();
+                
+                // Cycle every 80ms for slot machine effect
+                const intervalId = setInterval(cycleUpgrades, 80);
+                slotRollIntervals.push(intervalId);
+                
+                // Stop and reveal final choice with staggered timing
+                const stopTime = 800 + i * 400;
+                setTimeout(() => {
+                    clearInterval(intervalId);
+                    slot.classList.remove('rolling');
+                    slot.classList.add('revealed');
+                    
+                    const upgrade = currentUpgradeChoices[i];
+                    slot.querySelector('.upgrade-icon').textContent = upgrade.icon;
+                    slot.querySelector('.upgrade-name').textContent = upgrade.name;
+                    slot.querySelector('.upgrade-desc').textContent = upgrade.desc;
+                    
+                    // Enable selection after last reveal
+                    if (i === currentUpgradeChoices.length - 1) {
+                        setTimeout(() => {
+                            upgradeSelectionActive = true;
+                        }, 200);
+                    }
+                }, stopTime);
+            });
+        }
+
+        function weightedRandomSelect(items, count) {
+            const selected = [];
+            const pool = [...items];
+            
+            for (let i = 0; i < count && pool.length > 0; i++) {
+                const weights = pool.map(u => {
+                    const roundsSince = upgradeOfferHistory[u.id] || 1;
+                    return roundsSince * roundsSince;
+                });
+                
+                const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+                let random = Math.random() * totalWeight;
+                let selectedIdx = 0;
+                
+                for (let j = 0; j < weights.length; j++) {
+                    random -= weights[j];
+                    if (random <= 0) {
+                        selectedIdx = j;
+                        break;
+                    }
+                }
+                
+                selected.push(pool.splice(selectedIdx, 1)[0]);
+            }
+            
+            return selected;
+        }
+
+        function selectUpgrade(index) {
+            // Prevent double selection
+            if (!upgradeSelectionActive) return;
+            upgradeSelectionActive = false;
+            
+            const choice = currentUpgradeChoices[index];
+            if (!choice) return;
+            
+            // Visual feedback
+            upgradeSlots.forEach((slot, i) => {
+                if (i === index) {
+                    slot.classList.add('selected');
+                } else {
+                    slot.style.opacity = '0.3';
+                    slot.style.pointerEvents = 'none';
+                }
+            });
+            
+            // Apply upgrade
+            choice.apply();
+            
+            // Track stacks
+            permUpgradeStacks[choice.id] = (permUpgradeStacks[choice.id] || 0) + 1;
+            updatePermUpgradesDisplay();
+            
+            // Close overlay
+            setTimeout(() => {
+                upgradeOverlay.classList.remove('active');
+                upgradeSlots.forEach(slot => {
+                    slot.style.opacity = '';
+                    slot.style.pointerEvents = '';
+                    slot.classList.remove('selected', 'revealed', 'rolling');
+                });
+                gamePaused = false;
+            }, 600);
+        }
+
+        function updatePermUpgradesDisplay() {
+            permUpgradesDisplay.innerHTML = '';
+            
+            for (const [id, stacks] of Object.entries(permUpgradeStacks)) {
+                if (stacks <= 0) continue;
+                const upgrade = UPGRADES.find(u => u.id === id);
+                if (!upgrade) continue;
+                
+                const el = document.createElement('div');
+                el.className = 'perm-icon';
+                el.innerHTML = upgrade.icon;
+                if (stacks > 1) {
+                    el.innerHTML += `<span class="perm-stack">x${stacks}</span>`;
+                }
+                el.title = `${upgrade.name} x${stacks}`;
+                permUpgradesDisplay.appendChild(el);
+            }
+        }
+
+        // ========== GAME OVER ==========
+        function gameOver() {
+            gameRunning = false;
+            gameoverOverlay.classList.add('active');
+            document.getElementById('gameoverStats').innerHTML = `
+                Waves Survived: <span>${wave}</span><br>
+                Enemies Killed: <span>${kills}</span><br>
+                Towers Built: <span>${towers.length}</span>
+            `;
+            
+            // Show score submission modal
+            showScoreModal(wave, kills);
+        }
+        
+        // ========== SCORE SUBMISSION ==========
+        const scoreModal = document.getElementById('scoreModal');
+        const scoreModalTitle = document.getElementById('scoreModalTitle');
+        const usernameInput = document.getElementById('usernameInput');
+        const submitScoreBtn = document.getElementById('submitScoreBtn');
+        const skipScoreBtn = document.getElementById('skipScoreBtn');
+        const scoreErrorMsg = document.getElementById('scoreErrorMsg');
+        const finalWaveDisplay = document.getElementById('finalWaveDisplay');
+        const finalKillsDisplay = document.getElementById('finalKillsDisplay');
+        
+        let pendingWave = 0;
+        let pendingKills = 0;
+        
+        async function showScoreModal(finalWave, finalKills) {
+            pendingWave = finalWave;
+            pendingKills = finalKills;
+            finalWaveDisplay.textContent = finalWave;
+            finalKillsDisplay.textContent = finalKills;
+            usernameInput.value = '';
+            scoreErrorMsg.textContent = '';
+            usernameInput.classList.remove('error');
+            submitScoreBtn.disabled = false;
+            
+            // Check rank
+            let rank = await getScoreRank(finalWave);
+            
+            if (rank === 1) {
+                scoreModalTitle.textContent = "👑 YOU'RE #1 👑";
+            } else if (rank <= 10) {
+                scoreModalTitle.textContent = 'TOP 10!!';
+            } else {
+                scoreModalTitle.textContent = 'GAME OVER';
+            }
+            
+            scoreModal.classList.add('active');
+            setTimeout(() => usernameInput.focus(), 100);
+        }
+        
+        async function getScoreRank(playerWave) {
+            try {
+                let scores = [];
+                
+                if (firebaseReady && db) {
+                    const snapshot = await db.collection('towerdefense_scores')
+                        .orderBy('wave', 'desc')
+                        .limit(100)
+                        .get();
+                    snapshot.forEach(doc => {
+                        scores.push(doc.data().wave);
+                    });
+                } else {
+                    const localScores = getLocalScores();
+                    scores = localScores.map(s => s.wave);
+                }
+                
+                let rank = 1;
+                for (const existingWave of scores) {
+                    if (playerWave <= existingWave) {
+                        rank++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                return rank;
+            } catch (error) {
+                console.error('Error checking rank:', error);
+                return 999;
+            }
+        }
+        
+        function hideScoreModal() {
+            scoreModal.classList.remove('active');
+            usernameInput.blur();
+        }
+        
+        async function submitScore() {
+            const rawName = usernameInput.value;
+            const username = sanitizeUsername(rawName);
+            
+            if (username.length < 2) {
+                scoreErrorMsg.textContent = 'Name must be at least 2 characters';
+                usernameInput.classList.add('error');
+                setTimeout(() => usernameInput.classList.remove('error'), 400);
+                return;
+            }
+            
+            if (containsProfanity(rawName) || containsProfanity(username)) {
+                scoreErrorMsg.textContent = 'Please choose an appropriate name';
+                usernameInput.classList.add('error');
+                setTimeout(() => usernameInput.classList.remove('error'), 400);
+                return;
+            }
+            
+            submitScoreBtn.disabled = true;
+            submitScoreBtn.textContent = 'Saving...';
+            
+            try {
+                if (firebaseReady && db) {
+                    await db.collection('towerdefense_scores').add({
+                        name: username,
+                        wave: pendingWave,
+                        kills: pendingKills,
+                        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                } else {
+                    saveLocalScore(username, pendingWave, pendingKills);
+                }
+                
+                hideScoreModal();
+                
+            } catch (e) {
+                console.warn('Score submission failed:', e);
+                saveLocalScore(username, pendingWave, pendingKills);
+                hideScoreModal();
+            }
+            
+            submitScoreBtn.textContent = 'Submit';
+            submitScoreBtn.disabled = false;
+        }
+        
+        function saveLocalScore(name, waveNum, killCount) {
+            try {
+                const scores = JSON.parse(localStorage.getItem('towerdefense_scores') || '[]');
+                scores.push({ name, wave: waveNum, kills: killCount, timestamp: Date.now() });
+                scores.sort((a, b) => b.wave - a.wave || b.kills - a.kills);
+                localStorage.setItem('towerdefense_scores', JSON.stringify(scores.slice(0, 100)));
+            } catch (e) {
+                console.warn('Local storage save failed:', e);
+            }
+        }
+        
+        function getLocalScores() {
+            try {
+                return JSON.parse(localStorage.getItem('towerdefense_scores') || '[]');
+            } catch (e) {
+                return [];
+            }
+        }
+        
+        // Score modal event listeners
+        submitScoreBtn.addEventListener('click', submitScore);
+        submitScoreBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            submitScore();
+        });
+        
+        skipScoreBtn.addEventListener('click', hideScoreModal);
+        skipScoreBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            hideScoreModal();
+        });
+        
+        usernameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitScore();
+            }
+            if (e.key === 'Escape') {
+                hideScoreModal();
+            }
+        });
+        
+        usernameInput.addEventListener('input', () => {
+            scoreErrorMsg.textContent = '';
+            usernameInput.classList.remove('error');
+        });
+        
+        // ========== LEADERBOARD ==========
+        const leaderboardOverlay = document.getElementById('leaderboardOverlay');
+        const leaderboardList = document.getElementById('leaderboardList');
+        const leaderboardClose = document.getElementById('leaderboardClose');
+        const leaderboardBtn = document.getElementById('leaderboardBtn');
+        
+        async function showLeaderboard() {
+            leaderboardOverlay.classList.add('active');
+            leaderboardList.innerHTML = '<div class="leaderboard-loading">Loading scores...</div>';
+            
+            try {
+                let scores = [];
+                
+                if (firebaseReady && db) {
+                    const snapshot = await db.collection('towerdefense_scores')
+                        .orderBy('wave', 'desc')
+                        .limit(100)
+                        .get();
+                    
+                    snapshot.forEach(doc => {
+                        scores.push(doc.data());
+                    });
+                } else {
+                    scores = getLocalScores();
+                }
+                
+                renderLeaderboard(scores);
+                
+            } catch (e) {
+                console.warn('Leaderboard fetch failed:', e);
+                renderLeaderboard(getLocalScores());
+            }
+        }
+        
+        function renderLeaderboard(scores) {
+            if (scores.length === 0) {
+                leaderboardList.innerHTML = '<div class="leaderboard-empty">No scores yet. Be the first!</div>';
+                return;
+            }
+            
+            let html = '';
+            scores.forEach((entry, index) => {
+                const rank = index + 1;
+                const isTop3 = rank <= 3;
+                const rankClass = isTop3 ? `top-3 leaderboard-rank-${rank}` : '';
+                
+                html += `
+                    <div class="leaderboard-row ${rankClass}">
+                        <div class="leaderboard-rank">#${rank}</div>
+                        <div class="leaderboard-name">${escapeHtml(entry.name)}</div>
+                        <div class="leaderboard-score">Wave ${entry.wave}</div>
+                        <div class="leaderboard-wave">${entry.kills} kills</div>
+                    </div>
+                `;
+            });
+            
+            leaderboardList.innerHTML = html;
+        }
+        
+        function hideLeaderboard() {
+            leaderboardOverlay.classList.remove('active');
+        }
+        
+        const escapeDiv = document.createElement('div');
+        function escapeHtml(text) {
+            escapeDiv.textContent = text;
+            return escapeDiv.innerHTML;
+        }
+        
+        // Leaderboard event listeners
+        leaderboardBtn.addEventListener('click', showLeaderboard);
+        leaderboardClose.addEventListener('click', hideLeaderboard);
+        leaderboardOverlay.addEventListener('click', (e) => {
+            if (e.target === leaderboardOverlay) {
+                hideLeaderboard();
+            }
+        });
+        
+        // ========== TUTORIAL ==========
+        const tutorialOverlay = document.getElementById('tutorialOverlay');
+        const tutorialBtn = document.getElementById('tutorialBtn');
+        const tutorialClose = document.getElementById('tutorialClose');
+        const tutorialPrev = document.getElementById('tutorialPrev');
+        const tutorialNext = document.getElementById('tutorialNext');
+        const tutorialDots = document.getElementById('tutorialDots');
+        const tutorialSteps = document.querySelectorAll('.tutorial-step');
+        const totalSteps = tutorialSteps.length;
+        let currentStep = 0;
+        
+        // Create dots
+        for (let i = 0; i < totalSteps; i++) {
+            const dot = document.createElement('div');
+            dot.className = 'tutorial-dot' + (i === 0 ? ' active' : '');
+            dot.addEventListener('click', () => goToStep(i));
+            tutorialDots.appendChild(dot);
+        }
+        
+        function showTutorial() {
+            tutorialOverlay.classList.add('active');
+            goToStep(0);
+        }
+        
+        function hideTutorial() {
+            tutorialOverlay.classList.remove('active');
+        }
+        
+        function goToStep(step) {
+            currentStep = step;
+            
+            // Update steps
+            tutorialSteps.forEach((s, i) => {
+                s.classList.toggle('active', i === step);
+            });
+            
+            // Update dots
+            const dots = tutorialDots.querySelectorAll('.tutorial-dot');
+            dots.forEach((d, i) => {
+                d.classList.toggle('active', i === step);
+            });
+            
+            // Update buttons
+            tutorialPrev.disabled = step === 0;
+            tutorialNext.textContent = step === totalSteps - 1 ? 'Got it!' : 'Next →';
+        }
+        
+        function nextStep() {
+            if (currentStep < totalSteps - 1) {
+                goToStep(currentStep + 1);
+            } else {
+                hideTutorial();
+            }
+        }
+        
+        function prevStep() {
+            if (currentStep > 0) {
+                goToStep(currentStep - 1);
+            }
+        }
+        
+        tutorialBtn.addEventListener('click', showTutorial);
+        tutorialClose.addEventListener('click', hideTutorial);
+        tutorialPrev.addEventListener('click', prevStep);
+        tutorialNext.addEventListener('click', nextStep);
+        tutorialOverlay.addEventListener('click', (e) => {
+            if (e.target === tutorialOverlay) {
+                hideTutorial();
+            }
+        });
+        
+        // Keyboard navigation for tutorial
+        document.addEventListener('keydown', (e) => {
+            if (!tutorialOverlay.classList.contains('active')) return;
+            if (e.key === 'ArrowRight' || e.key === 'Enter') nextStep();
+            if (e.key === 'ArrowLeft') prevStep();
+            if (e.key === 'Escape') hideTutorial();
+        });
+
+        // ========== RENDERING ==========
+        function render() {
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawPath();
+            drawTowers();
+            drawEnemies();
+            drawProjectiles();
+            drawParticles();
+            
+            if (selectedTower && !waveInProgress) {
+                drawPlacementPreview();
+            }
+        }
+
+        function drawPath() {
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            // Path glow
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.15)';
+            ctx.lineWidth = 45;
+            ctx.beginPath();
+            ctx.moveTo(PATH[0].x, PATH[0].y);
+            for (let i = 1; i < PATH.length; i++) {
+                ctx.lineTo(PATH[i].x, PATH[i].y);
+            }
+            ctx.stroke();
+            
+            // Main path
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+            ctx.lineWidth = 30;
+            ctx.beginPath();
+            ctx.moveTo(PATH[0].x, PATH[0].y);
+            for (let i = 1; i < PATH.length; i++) {
+                ctx.lineTo(PATH[i].x, PATH[i].y);
+            }
+            ctx.stroke();
+            
+            // Path border
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(PATH[0].x, PATH[0].y);
+            for (let i = 1; i < PATH.length; i++) {
+                ctx.lineTo(PATH[i].x, PATH[i].y);
+            }
+            ctx.stroke();
+            
+            // Entry marker
+            ctx.fillStyle = '#00ff88';
+            ctx.shadowColor = '#00ff88';
+            ctx.shadowBlur = 15;
+            ctx.beginPath();
+            ctx.arc(PATH[0].x, PATH[0].y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Exit marker
+            ctx.fillStyle = '#ff3366';
+            ctx.shadowColor = '#ff3366';
+            ctx.beginPath();
+            ctx.arc(PATH[PATH.length - 1].x, PATH[PATH.length - 1].y, 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function drawTowers() {
+            for (const tower of towers) {
+                const def = TOWERS[tower.type];
+                
+                // Tower base
+                ctx.fillStyle = '#1a1a1a';
+                ctx.strokeStyle = def.color;
+                ctx.lineWidth = 2;
+                ctx.shadowColor = def.color;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(tower.x, tower.y, 18, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                
+                // Tower center
+                ctx.fillStyle = def.color;
+                ctx.beginPath();
+                ctx.arc(tower.x, tower.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Laser beam
+                if (def.isBeam && tower.target && tower.target.alive) {
+                    ctx.strokeStyle = def.color;
+                    ctx.lineWidth = 3;
+                    ctx.shadowBlur = 15;
+                    ctx.beginPath();
+                    ctx.moveTo(tower.x, tower.y);
+                    ctx.lineTo(tower.target.x, tower.target.y);
+                    ctx.stroke();
+                }
+                
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawEnemies() {
+            for (const enemy of enemies) {
+                if (!enemy.alive) continue;
+                
+                const isSlowed = performance.now() < enemy.slowUntil;
+                
+                ctx.fillStyle = isSlowed ? '#00ccff' : enemy.color;
+                ctx.shadowColor = enemy.color;
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Health bar
+                if (enemy.health < enemy.maxHealth) {
+                    const barWidth = enemy.size * 2;
+                    const barHeight = 4;
+                    const healthPct = enemy.health / enemy.maxHealth;
+                    
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.size - 10, barWidth, barHeight);
+                    
+                    ctx.fillStyle = healthPct > 0.5 ? '#00ff88' : healthPct > 0.25 ? '#ffcc00' : '#ff3366';
+                    ctx.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.size - 10, barWidth * healthPct, barHeight);
+                }
+                
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        function drawProjectiles() {
+            ctx.shadowBlur = 8;
+            for (const proj of projectiles) {
+                ctx.fillStyle = proj.color;
+                ctx.shadowColor = proj.color;
+                ctx.beginPath();
+                ctx.arc(proj.x, proj.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+        }
+
+        function drawParticles() {
+            for (const p of particles) {
+                ctx.globalAlpha = p.alpha;
+                if (p.isText) {
+                    ctx.font = `bold ${p.size}px Arial`;
+                    ctx.fillStyle = p.color;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(p.text, p.x, p.y);
+                } else {
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        function drawPlacementPreview() {
+            if (mouseX < 0 || mouseY < 0) return;
+            
+            const def = TOWERS[selectedTower];
+            const range = def.range * (1 + permUpgrades.rangeBonus);
+            const valid = isValidPlacement(mouseX, mouseY);
+            
+            // Range circle
+            ctx.fillStyle = valid ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 51, 102, 0.1)';
+            ctx.strokeStyle = valid ? 'rgba(0, 255, 136, 0.5)' : 'rgba(255, 51, 102, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, range, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Tower preview
+            ctx.globalAlpha = 0.6;
+            ctx.fillStyle = valid ? def.color : '#ff3366';
+            ctx.beginPath();
+            ctx.arc(mouseX, mouseY, 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+
+        // ========== PARTICLES ==========
+        function createParticles(x, y, color, count) {
+            // Limit total particles
+            const toAdd = Math.min(count, MAX_PARTICLES - particles.length);
+            
+            for (let i = 0; i < toAdd; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 3;
+                const life = 400 + Math.random() * 400;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 2 + Math.random() * 4,
+                    color: color,
+                    life: life,
+                    maxLife: life,
+                    alpha: 1
+                });
+            }
+        }
+
+        function createDamageNumber(x, y, damage, isCrit) {
+            if (particles.length >= MAX_PARTICLES) return;
+            
+            const life = 600;
+            particles.push({
+                x: x,
+                y: y,
+                vx: (Math.random() - 0.5) * 1.5,
+                vy: -1.5,
+                size: isCrit ? 14 : 10,
+                color: isCrit ? '#ffcc00' : '#fff',
+                life: life,
+                maxLife: life,
+                alpha: 1,
+                text: Math.floor(damage).toString(),
+                isText: true
+            });
+        }
+
+        // ========== UTILITIES ==========
+        function updateHUD() {
+            livesDisplay.textContent = lives;
+            goldDisplay.textContent = gold;
+            waveDisplay.textContent = wave || 1;
+            killsDisplay.textContent = kills;
+        }
+
+        function updateTowerButtons() {
+            towerBar.querySelectorAll('.tower-btn').forEach(btn => {
+                const type = btn.dataset.tower;
+                const def = TOWERS[type];
+                const cost = Math.floor(def.cost * (1 - permUpgrades.costReduction));
+                btn.querySelector('.tower-cost').textContent = '$' + cost;
+                
+                if (gold < cost) {
+                    btn.classList.add('disabled');
+                } else {
+                    btn.classList.remove('disabled');
+                }
+            });
+        }
+
+        // Initialize
+        init();
+    </script>
+</body>
+</html>
