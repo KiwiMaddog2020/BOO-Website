@@ -974,8 +974,79 @@
             box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
         }
 
+        /* Tower Placement Preview Overlay (Mobile) */
+        .placement-preview-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1200;
+        }
+        
+        .placement-preview-overlay.active {
+            display: flex;
+        }
+        
+        .placement-preview-container {
+            background: linear-gradient(145deg, #1a1a2e, #0f0f1a);
+            border: 3px solid #0ff;
+            border-radius: 15px;
+            padding: 20px 30px;
+            text-align: center;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.4);
+        }
+        
+        .placement-preview-text {
+            font-size: 16px;
+            color: #fff;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+        }
+        
+        .placement-preview-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+        
+        .placement-btn {
+            padding: 10px 20px;
+            font-size: 13px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .placement-btn.yes {
+            background: linear-gradient(180deg, #0ff, #0aa);
+            border: 2px solid #0ff;
+            color: #000;
+        }
+        
+        .placement-btn.yes:hover {
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.6);
+        }
+        
+        .placement-btn.no {
+            background: transparent;
+            border: 2px solid #888;
+            color: #888;
+        }
+        
+        .placement-btn.no:hover {
+            border-color: #fff;
+            color: #fff;
+        }
+
         /* Responsive */
-        @media (max-width: 600px) {
+        @media (max-width: 600px), (hover: none) {
             .tower-btn {
                 width: 38px;
                 height: 44px;
@@ -986,6 +1057,21 @@
             .tower-cost {
                 font-size: 8px;
             }
+            
+            /* Make all control buttons same size on mobile */
+            .control-buttons {
+                gap: 4px;
+                padding: 5px 6px;
+            }
+            
+            .wave-btn,
+            #shopBtn,
+            #leaderboardBtn {
+                padding: 8px 8px;
+                min-width: 100px;
+                font-size: 10px;
+            }
+            
             .upgrade-slot {
                 width: 100px;
                 height: 140px;
@@ -998,6 +1084,20 @@
             }
             .upgrade-desc {
                 font-size: 9px;
+            }
+            
+            .control-bar {
+                gap: 4px;
+            }
+            
+            .tower-bar {
+                gap: 3px;
+                padding: 5px 6px;
+            }
+            
+            .game-container {
+                gap: 2px;
+                padding: 4px;
             }
         }
         
@@ -1410,6 +1510,17 @@
             <div class="confirm-buttons">
                 <button class="confirm-btn yes" id="confirmYes">CONFIRM</button>
                 <button class="confirm-btn no" id="confirmNo">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tower Placement Preview Overlay (Mobile) -->
+    <div class="placement-preview-overlay" id="placementPreviewOverlay">
+        <div class="placement-preview-container">
+            <div class="placement-preview-text">Place tower here?</div>
+            <div class="placement-preview-buttons">
+                <button class="placement-btn yes" id="placementConfirm">CONFIRM</button>
+                <button class="placement-btn no" id="placementCancel">CANCEL</button>
             </div>
         </div>
     </div>
@@ -1970,6 +2081,11 @@
         // Mouse state
         let mouseX = -1000;
         let mouseY = -1000;
+        
+        // Mobile placement preview state
+        let isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        let pendingPlacement = null; // {x, y, type} for mobile two-tap system
+        let showingPlacementPreview = false;
 
         // Permanent Upgrades
         let permUpgrades = {
@@ -2031,10 +2147,24 @@
                     document.getElementById('confirmOverlay').classList.remove('active');
                 }
             });
+            
+            // Placement preview overlay buttons (mobile two-tap system)
+            document.getElementById('placementConfirm').addEventListener('click', confirmPlacement);
+            document.getElementById('placementCancel').addEventListener('click', cancelPlacementPreview);
+            document.getElementById('placementPreviewOverlay').addEventListener('click', (e) => {
+                if (e.target.id === 'placementPreviewOverlay') {
+                    cancelPlacementPreview();
+                }
+            });
 
             // Tower selection
             towerBar.querySelectorAll('.tower-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
+                    // Cancel any pending placement preview
+                    if (showingPlacementPreview) {
+                        cancelPlacementPreview();
+                    }
+                    
                     const type = btn.dataset.tower;
                     if (selectedTower === type) {
                         selectedTower = null;
@@ -2093,6 +2223,7 @@
             
             menuOverlay.classList.add('hidden');
             gameoverOverlay.classList.remove('active');
+            document.getElementById('placementPreviewOverlay').classList.remove('active');
             
             // Reset game state
             gold = 115;
@@ -2107,6 +2238,10 @@
             waveInProgress = false;
             selectedTower = null;
             gamePaused = false;
+            
+            // Reset mobile placement preview state
+            pendingPlacement = null;
+            showingPlacementPreview = false;
             
             // Deselect all tower buttons
             towerBar.querySelectorAll('.tower-btn').forEach(b => b.classList.remove('selected'));
@@ -2337,7 +2472,14 @@
             if (!selectedTower || waveInProgress) return;
             
             const pos = getCanvasCoords(e.clientX, e.clientY);
-            placeTower(pos.x, pos.y);
+            
+            // On desktop, place directly
+            if (!isMobile) {
+                placeTower(pos.x, pos.y);
+            } else {
+                // On mobile, show preview first
+                showPlacementPreview(pos.x, pos.y);
+            }
         }
 
         function handleCanvasTouch(e) {
@@ -2346,7 +2488,47 @@
             
             const touch = e.changedTouches[0];
             const pos = getCanvasCoords(touch.clientX, touch.clientY);
-            placeTower(pos.x, pos.y);
+            
+            // On mobile, show placement preview instead of placing directly
+            showPlacementPreview(pos.x, pos.y);
+        }
+        
+        function showPlacementPreview(x, y) {
+            if (!isValidPlacement(x, y)) return;
+            
+            // Store pending placement
+            pendingPlacement = { x: x, y: y, type: selectedTower };
+            showingPlacementPreview = true;
+            
+            // Update mouse position to show preview on canvas
+            mouseX = x;
+            mouseY = y;
+            
+            // Show confirmation overlay
+            document.getElementById('placementPreviewOverlay').classList.add('active');
+        }
+        
+        function confirmPlacement() {
+            if (pendingPlacement) {
+                // Temporarily store the tower type since we'll clear pendingPlacement
+                const type = pendingPlacement.type;
+                const x = pendingPlacement.x;
+                const y = pendingPlacement.y;
+                
+                // Set selectedTower in case it was deselected
+                selectedTower = type;
+                
+                placeTower(x, y);
+            }
+            cancelPlacementPreview();
+        }
+        
+        function cancelPlacementPreview() {
+            pendingPlacement = null;
+            showingPlacementPreview = false;
+            mouseX = -1000;
+            mouseY = -1000;
+            document.getElementById('placementPreviewOverlay').classList.remove('active');
         }
 
         function placeTower(x, y) {
@@ -2645,6 +2827,11 @@
         
         function startWave() {
             if (waveInProgress) return;
+            
+            // Cancel any pending placement preview
+            if (showingPlacementPreview) {
+                cancelPlacementPreview();
+            }
             
             wave++;
             waveDisplay.textContent = wave;
@@ -3304,7 +3491,8 @@
             drawSplashRings();
             drawParticles();
             
-            if (selectedTower && !waveInProgress) {
+            // Show placement preview on desktop hover OR mobile two-tap preview
+            if ((selectedTower && !waveInProgress) || showingPlacementPreview) {
                 drawPlacementPreview();
             }
         }
@@ -3392,7 +3580,7 @@
                 const pulseScale = pulseActive ? 1 + (1 - timeSinceFired / 150) * 0.3 : 1;
                 const pulseGlow = pulseActive ? 20 + (1 - timeSinceFired / 150) * 15 : 10;
                 
-                // Tower base
+                // Tower base (common to all)
                 ctx.fillStyle = '#1a1a1a';
                 ctx.strokeStyle = def.color;
                 ctx.lineWidth = 2;
@@ -3403,13 +3591,227 @@
                 ctx.fill();
                 ctx.stroke();
                 
-                // Tower center with pulse
+                // Draw tower-specific design
                 ctx.fillStyle = def.color;
-                ctx.beginPath();
-                ctx.arc(tower.x, tower.y, 6 * pulseScale, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.strokeStyle = def.color;
+                ctx.lineWidth = 2;
                 
-                // Inner bright core
+                switch(tower.type) {
+                    case 'basic': // 🔫 Blaster - Gun barrel shape
+                        // Center dot
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 4 * pulseScale, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Barrel
+                        ctx.lineWidth = 4;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x, tower.y);
+                        ctx.lineTo(tower.x + 10 * pulseScale, tower.y);
+                        ctx.stroke();
+                        break;
+                        
+                    case 'sniper': // 🎯 Sniper - Crosshair with long barrel
+                        // Long barrel
+                        ctx.lineWidth = 3;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x - 4, tower.y);
+                        ctx.lineTo(tower.x + 12 * pulseScale, tower.y);
+                        ctx.stroke();
+                        // Crosshair
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x, tower.y - 6);
+                        ctx.lineTo(tower.x, tower.y + 6);
+                        ctx.moveTo(tower.x - 6, tower.y);
+                        ctx.lineTo(tower.x + 6, tower.y);
+                        ctx.stroke();
+                        // Center dot
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'freeze': // ❄️ Freezer - Snowflake
+                        ctx.lineWidth = 2;
+                        ctx.lineCap = 'round';
+                        for (let i = 0; i < 6; i++) {
+                            const angle = (i * Math.PI / 3);
+                            const len = 8 * pulseScale;
+                            ctx.beginPath();
+                            ctx.moveTo(tower.x, tower.y);
+                            ctx.lineTo(tower.x + Math.cos(angle) * len, tower.y + Math.sin(angle) * len);
+                            ctx.stroke();
+                            // Small branches
+                            const bx = tower.x + Math.cos(angle) * len * 0.6;
+                            const by = tower.y + Math.sin(angle) * len * 0.6;
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.moveTo(bx, by);
+                            ctx.lineTo(bx + Math.cos(angle + 0.5) * 3, by + Math.sin(angle + 0.5) * 3);
+                            ctx.moveTo(bx, by);
+                            ctx.lineTo(bx + Math.cos(angle - 0.5) * 3, by + Math.sin(angle - 0.5) * 3);
+                            ctx.stroke();
+                            ctx.lineWidth = 2;
+                        }
+                        break;
+                        
+                    case 'splash': // 💥 Bomber - Explosion/starburst
+                        // Outer spikes
+                        ctx.lineWidth = 2;
+                        for (let i = 0; i < 8; i++) {
+                            const angle = (i * Math.PI / 4) + now / 2000;
+                            const len = (i % 2 === 0 ? 9 : 6) * pulseScale;
+                            ctx.beginPath();
+                            ctx.moveTo(tower.x, tower.y);
+                            ctx.lineTo(tower.x + Math.cos(angle) * len, tower.y + Math.sin(angle) * len);
+                            ctx.stroke();
+                        }
+                        // Center
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 3 * pulseScale, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'laser': // 📡 Beam - Satellite dish
+                        // Dish arc
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.arc(tower.x - 3, tower.y, 8 * pulseScale, -Math.PI * 0.4, Math.PI * 0.4);
+                        ctx.stroke();
+                        // Antenna/emitter
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x - 3, tower.y);
+                        ctx.lineTo(tower.x + 8 * pulseScale, tower.y);
+                        ctx.stroke();
+                        // Feed point
+                        ctx.beginPath();
+                        ctx.arc(tower.x + 8 * pulseScale, tower.y, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'minigun': // ⚡ Minigun - Multiple spinning barrels
+                        const spinAngle = now / 100;
+                        ctx.lineWidth = 2;
+                        ctx.lineCap = 'round';
+                        for (let i = 0; i < 4; i++) {
+                            const angle = spinAngle + (i * Math.PI / 2);
+                            ctx.beginPath();
+                            ctx.moveTo(tower.x + Math.cos(angle) * 3, tower.y + Math.sin(angle) * 3);
+                            ctx.lineTo(tower.x + Math.cos(angle) * 10 * pulseScale, tower.y + Math.sin(angle) * 10 * pulseScale);
+                            ctx.stroke();
+                        }
+                        // Center hub
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'cannon': // 💣 Cannon - Big chunky barrel
+                        // Wide barrel
+                        ctx.lineWidth = 7;
+                        ctx.lineCap = 'round';
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x - 2, tower.y);
+                        ctx.lineTo(tower.x + 10 * pulseScale, tower.y);
+                        ctx.stroke();
+                        // Barrel opening
+                        ctx.fillStyle = '#1a1a1a';
+                        ctx.beginPath();
+                        ctx.arc(tower.x + 10 * pulseScale, tower.y, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = def.color;
+                        // Base
+                        ctx.beginPath();
+                        ctx.arc(tower.x - 2, tower.y, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'poison': // ☠️ Poison - Skull shape with bubbles
+                        // Skull outline
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y - 1, 6 * pulseScale, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Eye sockets (dark)
+                        ctx.fillStyle = '#1a1a1a';
+                        ctx.beginPath();
+                        ctx.arc(tower.x - 2.5, tower.y - 2, 2, 0, Math.PI * 2);
+                        ctx.arc(tower.x + 2.5, tower.y - 2, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Jaw
+                        ctx.fillStyle = def.color;
+                        ctx.fillRect(tower.x - 4, tower.y + 3, 8, 3);
+                        // Bubbles
+                        ctx.globalAlpha = 0.6;
+                        const bubbleOffset = Math.sin(now / 300) * 2;
+                        ctx.beginPath();
+                        ctx.arc(tower.x + 8, tower.y - 4 + bubbleOffset, 2, 0, Math.PI * 2);
+                        ctx.arc(tower.x + 6, tower.y - 8 + bubbleOffset, 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.globalAlpha = 1;
+                        break;
+                        
+                    case 'chain': // ⛓️ Chain - Chain links
+                        ctx.lineWidth = 2;
+                        ctx.fillStyle = 'transparent';
+                        // Three chain links
+                        const linkAngle = now / 500;
+                        for (let i = 0; i < 3; i++) {
+                            const angle = linkAngle + (i * Math.PI * 2 / 3);
+                            const lx = tower.x + Math.cos(angle) * 5;
+                            const ly = tower.y + Math.sin(angle) * 5;
+                            ctx.beginPath();
+                            ctx.ellipse(lx, ly, 4 * pulseScale, 2.5 * pulseScale, angle, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
+                        // Center connector
+                        ctx.fillStyle = def.color;
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'buff': // ✨ Buff Tower - Star with sparkles
+                        // Star shape
+                        ctx.beginPath();
+                        for (let i = 0; i < 5; i++) {
+                            const outerAngle = (i * Math.PI * 2 / 5) - Math.PI / 2;
+                            const innerAngle = outerAngle + Math.PI / 5;
+                            const outerR = 9 * pulseScale;
+                            const innerR = 4 * pulseScale;
+                            if (i === 0) {
+                                ctx.moveTo(tower.x + Math.cos(outerAngle) * outerR, tower.y + Math.sin(outerAngle) * outerR);
+                            } else {
+                                ctx.lineTo(tower.x + Math.cos(outerAngle) * outerR, tower.y + Math.sin(outerAngle) * outerR);
+                            }
+                            ctx.lineTo(tower.x + Math.cos(innerAngle) * innerR, tower.y + Math.sin(innerAngle) * innerR);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                        // Animated sparkles
+                        ctx.globalAlpha = 0.5 + Math.sin(now / 200) * 0.3;
+                        const sparkleR = 12 + Math.sin(now / 300) * 2;
+                        for (let i = 0; i < 4; i++) {
+                            const sAngle = now / 800 + (i * Math.PI / 2);
+                            const sx = tower.x + Math.cos(sAngle) * sparkleR;
+                            const sy = tower.y + Math.sin(sAngle) * sparkleR;
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        ctx.globalAlpha = 1;
+                        break;
+                        
+                    default:
+                        // Fallback - simple circle
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 6 * pulseScale, 0, Math.PI * 2);
+                        ctx.fill();
+                }
+                
+                // Inner bright core on fire
                 if (pulseActive) {
                     ctx.fillStyle = '#fff';
                     ctx.globalAlpha = 1 - timeSinceFired / 150;
@@ -3595,27 +3997,194 @@
         }
 
         function drawPlacementPreview() {
-            if (mouseX < 0 || mouseY < 0) return;
+            // Use pending placement for mobile preview, otherwise use mouse position
+            let previewX, previewY, towerType;
             
-            const def = TOWERS[selectedTower];
+            if (showingPlacementPreview && pendingPlacement) {
+                previewX = pendingPlacement.x;
+                previewY = pendingPlacement.y;
+                towerType = pendingPlacement.type;
+            } else {
+                if (mouseX < 0 || mouseY < 0) return;
+                previewX = mouseX;
+                previewY = mouseY;
+                towerType = selectedTower;
+            }
+            
+            if (!towerType) return;
+            
+            const def = TOWERS[towerType];
             const range = def.range * (1 + permUpgrades.rangeBonus);
-            const valid = isValidPlacement(mouseX, mouseY);
+            const valid = isValidPlacement(previewX, previewY);
+            const now = performance.now();
+            
+            // Pulsing effect for mobile preview
+            const pulse = showingPlacementPreview ? 0.5 + Math.sin(now / 200) * 0.3 : 1;
             
             // Range circle
-            ctx.fillStyle = valid ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 51, 102, 0.1)';
-            ctx.strokeStyle = valid ? 'rgba(0, 255, 136, 0.5)' : 'rgba(255, 51, 102, 0.5)';
-            ctx.lineWidth = 1;
+            ctx.fillStyle = valid ? `rgba(0, 255, 136, ${0.15 * pulse})` : 'rgba(255, 51, 102, 0.1)';
+            ctx.strokeStyle = valid ? `rgba(0, 255, 136, ${0.6 * pulse})` : 'rgba(255, 51, 102, 0.5)';
+            ctx.lineWidth = showingPlacementPreview ? 2 : 1;
             ctx.beginPath();
-            ctx.arc(mouseX, mouseY, range, 0, Math.PI * 2);
+            ctx.arc(previewX, previewY, range, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
             
-            // Tower preview
-            ctx.globalAlpha = 0.6;
-            ctx.fillStyle = valid ? def.color : '#ff3366';
+            // Tower base preview
+            ctx.globalAlpha = showingPlacementPreview ? 0.5 * pulse : 0.6;
+            const color = valid ? def.color : '#ff3366';
+            ctx.fillStyle = '#1a1a1a';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(mouseX, mouseY, 14, 0, Math.PI * 2);
+            ctx.arc(previewX, previewY, 14, 0, Math.PI * 2);
             ctx.fill();
+            ctx.stroke();
+            
+            // Draw tower-specific preview icon
+            ctx.fillStyle = color;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            
+            switch(towerType) {
+                case 'basic': // Gun barrel
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(previewX, previewY);
+                    ctx.lineTo(previewX + 10, previewY);
+                    ctx.stroke();
+                    break;
+                    
+                case 'sniper': // Crosshair
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(previewX, previewY - 6);
+                    ctx.lineTo(previewX, previewY + 6);
+                    ctx.moveTo(previewX - 6, previewY);
+                    ctx.lineTo(previewX + 6, previewY);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                    
+                case 'freeze': // Snowflake
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    for (let i = 0; i < 6; i++) {
+                        const angle = (i * Math.PI / 3);
+                        ctx.beginPath();
+                        ctx.moveTo(previewX, previewY);
+                        ctx.lineTo(previewX + Math.cos(angle) * 8, previewY + Math.sin(angle) * 8);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                case 'splash': // Starburst
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (i * Math.PI / 4);
+                        const len = i % 2 === 0 ? 9 : 6;
+                        ctx.beginPath();
+                        ctx.moveTo(previewX, previewY);
+                        ctx.lineTo(previewX + Math.cos(angle) * len, previewY + Math.sin(angle) * len);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                case 'laser': // Dish
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(previewX - 3, previewY, 8, -Math.PI * 0.4, Math.PI * 0.4);
+                    ctx.stroke();
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(previewX - 3, previewY);
+                    ctx.lineTo(previewX + 8, previewY);
+                    ctx.stroke();
+                    break;
+                    
+                case 'minigun': // Multi-barrel
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    for (let i = 0; i < 4; i++) {
+                        const angle = (i * Math.PI / 2);
+                        ctx.beginPath();
+                        ctx.moveTo(previewX + Math.cos(angle) * 3, previewY + Math.sin(angle) * 3);
+                        ctx.lineTo(previewX + Math.cos(angle) * 10, previewY + Math.sin(angle) * 10);
+                        ctx.stroke();
+                    }
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                    
+                case 'cannon': // Big barrel
+                    ctx.lineWidth = 7;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(previewX - 2, previewY);
+                    ctx.lineTo(previewX + 10, previewY);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(previewX - 2, previewY, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                    
+                case 'poison': // Skull
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY - 1, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.arc(previewX - 2.5, previewY - 2, 2, 0, Math.PI * 2);
+                    ctx.arc(previewX + 2.5, previewY - 2, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = color;
+                    ctx.fillRect(previewX - 4, previewY + 3, 8, 3);
+                    break;
+                    
+                case 'chain': // Chain links
+                    ctx.fillStyle = 'transparent';
+                    for (let i = 0; i < 3; i++) {
+                        const angle = (i * Math.PI * 2 / 3);
+                        const lx = previewX + Math.cos(angle) * 5;
+                        const ly = previewY + Math.sin(angle) * 5;
+                        ctx.beginPath();
+                        ctx.ellipse(lx, ly, 4, 2.5, angle, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                    
+                case 'buff': // Star
+                    ctx.beginPath();
+                    for (let i = 0; i < 5; i++) {
+                        const outerAngle = (i * Math.PI * 2 / 5) - Math.PI / 2;
+                        const innerAngle = outerAngle + Math.PI / 5;
+                        if (i === 0) {
+                            ctx.moveTo(previewX + Math.cos(outerAngle) * 9, previewY + Math.sin(outerAngle) * 9);
+                        } else {
+                            ctx.lineTo(previewX + Math.cos(outerAngle) * 9, previewY + Math.sin(outerAngle) * 9);
+                        }
+                        ctx.lineTo(previewX + Math.cos(innerAngle) * 4, previewY + Math.sin(innerAngle) * 4);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                    
+                default:
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY, 6, 0, Math.PI * 2);
+                    ctx.fill();
+            }
+            
             ctx.globalAlpha = 1;
         }
 
