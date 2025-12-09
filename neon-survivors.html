@@ -1250,6 +1250,101 @@
             background: #555;
         }
 
+        /* Skull Statue Modal */
+        #skullStatueModal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.8);
+            background: rgba(20, 10, 30, 0.98);
+            border: 3px solid #880088;
+            border-radius: 15px;
+            padding: 25px 35px;
+            z-index: 1000;
+            text-align: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 40px rgba(136, 0, 136, 0.6), inset 0 0 30px rgba(136, 0, 136, 0.2);
+        }
+        
+        #skullStatueModal.visible {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, -50%) scale(1);
+        }
+        
+        .statue-title {
+            font-size: 28px;
+            color: #cc44cc;
+            text-shadow: 0 0 20px #880088;
+            margin-bottom: 10px;
+            letter-spacing: 3px;
+        }
+        
+        .statue-level {
+            font-size: 16px;
+            color: #ff6666;
+            margin-bottom: 15px;
+        }
+        
+        .statue-desc {
+            font-size: 14px;
+            color: #aaa;
+            margin-bottom: 15px;
+        }
+        
+        .statue-effects {
+            margin-bottom: 20px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+        }
+        
+        .statue-bad {
+            font-size: 13px;
+            color: #ff6666;
+            margin-bottom: 8px;
+        }
+        
+        .statue-good {
+            font-size: 13px;
+            color: #66ff66;
+        }
+        
+        .statue-btn {
+            display: inline-block;
+            padding: 12px 25px;
+            margin: 0 8px;
+            font-size: 14px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .statue-accept {
+            background: #660066;
+            color: #fff;
+            border: 2px solid #aa00aa;
+        }
+        
+        .statue-accept:hover {
+            background: #880088;
+            transform: scale(1.05);
+        }
+        
+        .statue-decline {
+            background: #444;
+            color: #fff;
+            border: 2px solid #666;
+        }
+        
+        .statue-decline:hover {
+            background: #555;
+            transform: scale(1.05);
+        }
+
         .shrine-title {
             font-size: 32px;
             color: #e040ff;
@@ -1571,40 +1666,19 @@
 
         /* Shrine charge indicator */
         .shrine-charge-bar {
-            position: absolute;
-            bottom: 60px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 200px;
-            height: 20px;
-            background: rgba(0, 0, 0, 0.7);
-            border: 2px solid #e040ff;
-            border-radius: 10px;
-            overflow: hidden;
-            display: none;
-            z-index: 150;
+            display: none !important;
         }
 
         .shrine-charge-bar.active {
-            display: block;
+            display: none !important;
         }
 
         .shrine-charge-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #c020ff, #e040ff);
-            box-shadow: 0 0 10px #e040ff;
-            transition: width 0.1s linear;
+            display: none;
         }
 
         .shrine-charge-text {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #fff;
-            font-size: 11px;
-            text-shadow: 0 0 5px #000;
-            letter-spacing: 1px;
+            display: none;
         }
 
         /* Start/Game Over Screen */
@@ -3223,6 +3297,21 @@
         </div>
     </div>
 
+    <!-- Skull Statue Modal -->
+    <div id="skullStatueModal" ontouchstart="event.stopPropagation();" ontouchmove="event.stopPropagation();" ontouchend="event.stopPropagation();">
+        <div class="statue-title">💀 CURSED STATUE 💀</div>
+        <div class="statue-level" id="statueLevel">Difficulty: +0%</div>
+        <div class="statue-desc">Embrace the curse for greater rewards?</div>
+        <div class="statue-effects">
+            <div class="statue-bad">⚠️ Enemies: +10% DMG/HP, +5% Speed</div>
+            <div class="statue-good">✨ Rewards: +10% XP & Gold per kill</div>
+        </div>
+        <div class="modal-buttons" style="touch-action: auto;">
+            <div class="statue-btn statue-accept" onclick="window.acceptStatueOffer();" ontouchstart="event.stopPropagation();" ontouchend="event.preventDefault(); event.stopPropagation(); window.acceptStatueOffer();">💀 ACCEPT CURSE</div>
+            <div class="statue-btn statue-decline" onclick="window.declineStatueOffer();" ontouchstart="event.stopPropagation();" ontouchend="event.preventDefault(); event.stopPropagation(); window.declineStatueOffer();">LEAVE</div>
+        </div>
+    </div>
+
     <!-- Start/Game Over Menu -->
     <div class="menu-overlay" id="menuOverlay">
         <div class="game-title">NEON SURVIVORS</div>
@@ -3564,6 +3653,15 @@
         let playerGold = 0;
         let nextChestCost = 5; // First paid chest costs 5, doubles each time
         let pendingChest = null; // Currently open chest offer
+        
+        // Skull statue difficulty system
+        let skullStatues = [];
+        let pendingStatue = null;
+        let difficultyLevel = 0; // Each activation adds +1
+        let enemyDamageBonus = 1; // Multiplier for enemy damage
+        let enemyHealthBonus = 1; // Multiplier for enemy HP
+        let enemySpeedBonus = 1; // Multiplier for enemy speed
+        let killRewardBonus = 1; // Multiplier for XP/gold from kills
         
         // Time slow effect multiplier (1 = normal, 0.4 = 60% slower)
         let timeSlowMultiplier = 1;
@@ -5567,14 +5665,16 @@
                         break;
                 }
                 
-                // Apply damage scaling
-                this.damage = Math.floor(this.baseDamage * dmgScale);
-                this.hp = this.maxHp;
+                // Apply damage scaling with difficulty bonus
+                this.damage = Math.floor(this.baseDamage * dmgScale * enemyDamageBonus);
+                this.hp = Math.floor(this.maxHp * enemyHealthBonus);
+                this.maxHp = this.hp;
+                this.speed = this.speed * enemySpeedBonus;
                 this.baseSpeed = this.speed; // Store for freeze effect
                 
                 // XP scales slightly with time to keep leveling relevant
                 const xpScale = 1 + Math.floor(gameTime / 120) * 0.5; // +50% XP every 2 min
-                this.xpValue = Math.ceil(this.xpValue * xpScale);
+                this.xpValue = Math.ceil(this.xpValue * xpScale * killRewardBonus);
             }
             
             // Status effect methods
@@ -5903,8 +6003,8 @@
                 // Time-based scaling for leprechaun
                 const timeScale = 1 + Math.floor(gameTime / 60) * 0.25; // +25% per minute
                 
-                this.speed = 2.2 * (1 + Math.floor(gameTime / 90) * 0.05); // 10% faster base (was 2.0)
-                this.maxHp = Math.floor(338 * timeScale);
+                this.speed = 2.2 * (1 + Math.floor(gameTime / 90) * 0.05) * enemySpeedBonus;
+                this.maxHp = Math.floor(338 * timeScale * enemyHealthBonus);
                 this.hp = this.maxHp;
                 this.color = COLORS.green;
                 this.dead = false;
@@ -6560,10 +6660,10 @@
                 const timeScale = 1 + Math.floor(gameTime / 60) * 0.20; // +20% per minute
                 const speedScale = 1 + Math.floor(gameTime / 120) * 0.08; // +8% speed per 2 min
                 
-                this.speed = 1.3 * speedScale;
-                this.maxHp = Math.floor((400 + bossCount * 100) * timeScale); // Halved base HP
+                this.speed = 1.3 * speedScale * enemySpeedBonus;
+                this.maxHp = Math.floor((400 + bossCount * 100) * timeScale * enemyHealthBonus);
                 this.hp = this.maxHp;
-                this.damage = Math.floor(25 * timeScale); // Scales damage too
+                this.damage = Math.floor(25 * timeScale * enemyDamageBonus);
                 this.color = '#ff6600';
                 this.dead = false;
                 this.orbHitCooldown = 0;
@@ -6766,12 +6866,12 @@
                 const timeScale = 1 + Math.floor(gameTime / 60) * 0.25; // +25% per minute
                 const speedScale = 1 + Math.floor(gameTime / 150) * 0.10; // +10% speed per 2.5 min
                 
-                this.baseSpeedValue = 0.9 * speedScale;
+                this.baseSpeedValue = 0.9 * speedScale * enemySpeedBonus;
                 this.speed = this.baseSpeedValue;
-                this.maxHp = Math.floor((1000 + bossCount * 200) * timeScale); // Reduced 20% from 1250
+                this.maxHp = Math.floor((1000 + bossCount * 200) * timeScale * enemyHealthBonus);
                 this.hp = this.maxHp;
-                this.damage = Math.floor(40 * timeScale); // Charge attack damage scales
-                this.color = '#ff6600'; // Changed to flame orange to match mini boss theme
+                this.damage = Math.floor(40 * timeScale * enemyDamageBonus);
+                this.color = '#ff6600';
                 this.dead = false;
                 this.orbHitCooldown = 0;
                 this.attackCooldown = 0;
@@ -7483,6 +7583,242 @@
                 }
                 
                 ctx.restore();
+            }
+        }
+        
+        // ===== SKULL STATUE CLASS =====
+        class SkullStatue {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 25;
+                this.activated = false;
+                this.dead = false;
+                this.needsPlayerToLeave = false;
+                this.reactivateDistance = 80;
+                this.glowPulse = Math.random() * Math.PI * 2;
+            }
+            
+            update(dt) {
+                if (this.dead) return;
+                
+                const dist = Math.hypot(player.x - this.x, player.y - this.y);
+                
+                // If player needs to leave first
+                if (this.needsPlayerToLeave) {
+                    if (dist > this.reactivateDistance) {
+                        this.needsPlayerToLeave = false;
+                        this.activated = false;
+                    }
+                    return;
+                }
+                
+                if (this.activated) return;
+                
+                // Check if player is touching
+                if (dist < this.radius + player.radius) {
+                    this.showOffer();
+                }
+            }
+            
+            showOffer() {
+                if (this.activated) return;
+                this.activated = true;
+                gamePaused = true;
+                pendingStatue = this;
+                
+                spawnParticles(this.x, this.y, '#880088', 15);
+                
+                // Update modal level display
+                const levelEl = document.getElementById('statueLevel');
+                if (levelEl) {
+                    levelEl.textContent = `Current Difficulty: +${difficultyLevel * 10}%`;
+                }
+                
+                document.getElementById('skullStatueModal').classList.add('visible');
+            }
+            
+            draw() {
+                if (!camera.isVisible(this.x, this.y, 60)) return;
+                
+                const sx = camera.screenX(this.x);
+                const sy = camera.screenY(this.y);
+                const s = camera.scale.bind(camera);
+                const time = Date.now();
+                const glow = 0.5 + Math.sin(time * 0.003 + this.glowPulse) * 0.3;
+                
+                ctx.save();
+                
+                // Dim if waiting for player to leave
+                if (this.needsPlayerToLeave) {
+                    ctx.globalAlpha = 0.4;
+                }
+                
+                // Eerie purple glow
+                ctx.shadowBlur = 25 * glow;
+                ctx.shadowColor = '#880088';
+                
+                // Stone pedestal base
+                ctx.fillStyle = '#3a3a3a';
+                ctx.beginPath();
+                ctx.moveTo(sx - s(20), sy + s(15));
+                ctx.lineTo(sx - s(15), sy + s(5));
+                ctx.lineTo(sx + s(15), sy + s(5));
+                ctx.lineTo(sx + s(20), sy + s(15));
+                ctx.closePath();
+                ctx.fill();
+                
+                // Pedestal top
+                ctx.fillStyle = '#4a4a4a';
+                ctx.fillRect(sx - s(15), sy - s(5), s(30), s(10));
+                
+                // Skull
+                ctx.fillStyle = '#d0d0d0';
+                // Cranium
+                ctx.beginPath();
+                ctx.arc(sx, sy - s(18), s(14), 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Jaw
+                ctx.beginPath();
+                ctx.moveTo(sx - s(10), sy - s(8));
+                ctx.quadraticCurveTo(sx, sy + s(2), sx + s(10), sy - s(8));
+                ctx.fill();
+                
+                // Eye sockets (glowing)
+                ctx.fillStyle = `rgba(136, 0, 136, ${glow})`;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#ff00ff';
+                ctx.beginPath();
+                ctx.ellipse(sx - s(5), sy - s(20), s(4), s(5), 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(sx + s(5), sy - s(20), s(4), s(5), 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Nose hole
+                ctx.fillStyle = '#222';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.moveTo(sx, sy - s(14));
+                ctx.lineTo(sx - s(2), sy - s(10));
+                ctx.lineTo(sx + s(2), sy - s(10));
+                ctx.closePath();
+                ctx.fill();
+                
+                // Teeth
+                ctx.fillStyle = '#c0c0c0';
+                for (let i = -3; i <= 3; i++) {
+                    ctx.fillRect(sx + i * s(2.5) - s(1), sy - s(8), s(2), s(4));
+                }
+                
+                // Cracks on skull for creepy effect
+                ctx.strokeStyle = '#888';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(sx - s(8), sy - s(25));
+                ctx.lineTo(sx - s(3), sy - s(18));
+                ctx.lineTo(sx - s(6), sy - s(12));
+                ctx.stroke();
+                
+                // Difficulty indicator above
+                if (difficultyLevel > 0) {
+                    ctx.fillStyle = '#ff6666';
+                    ctx.font = `bold ${s(12)}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.shadowBlur = 8;
+                    ctx.shadowColor = '#ff0000';
+                    ctx.fillText(`+${difficultyLevel * 10}%`, sx, sy - s(38));
+                }
+                
+                ctx.restore();
+            }
+        }
+        
+        // Skull statue functions
+        function acceptStatueOffer() {
+            if (!pendingStatue) return;
+            
+            // Increase difficulty
+            difficultyLevel++;
+            enemyDamageBonus = 1 + (difficultyLevel * 0.10);
+            enemyHealthBonus = 1 + (difficultyLevel * 0.10);
+            enemySpeedBonus = 1 + (difficultyLevel * 0.05);
+            killRewardBonus = 1 + (difficultyLevel * 0.10);
+            
+            // Visual feedback
+            spawnParticles(pendingStatue.x, pendingStatue.y, '#ff00ff', 25);
+            
+            // Show warning
+            showStackedWarning({
+                html: `<div style="font-size: 24px;">💀 CURSE ACCEPTED 💀</div><div style="font-size: 14px; color: #ff6666;">Difficulty +${difficultyLevel * 10}% | Rewards +${difficultyLevel * 10}%</div>`,
+                color: '#880088',
+                textShadow: '0 0 20px #880088',
+                duration: 2500
+            });
+            
+            // Remove this statue and spawn a new one
+            pendingStatue.dead = true;
+            spawnNewSkullStatue();
+            
+            pendingStatue = null;
+            document.getElementById('skullStatueModal').classList.remove('visible');
+            gamePaused = false;
+        }
+        window.acceptStatueOffer = acceptStatueOffer;
+        
+        function declineStatueOffer() {
+            if (!pendingStatue) return;
+            
+            pendingStatue.needsPlayerToLeave = true;
+            pendingStatue = null;
+            document.getElementById('skullStatueModal').classList.remove('visible');
+            gamePaused = false;
+        }
+        window.declineStatueOffer = declineStatueOffer;
+        
+        function spawnNewSkullStatue() {
+            // Find a quadrant without a statue
+            const quadrants = [
+                { minX: 0, maxX: WORLD.width/2, minY: 0, maxY: WORLD.height/2 },
+                { minX: WORLD.width/2, maxX: WORLD.width, minY: 0, maxY: WORLD.height/2 },
+                { minX: 0, maxX: WORLD.width/2, minY: WORLD.height/2, maxY: WORLD.height },
+                { minX: WORLD.width/2, maxX: WORLD.width, minY: WORLD.height/2, maxY: WORLD.height }
+            ];
+            
+            // Shuffle quadrants
+            for (let i = quadrants.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [quadrants[i], quadrants[j]] = [quadrants[j], quadrants[i]];
+            }
+            
+            // Find empty quadrant
+            for (const q of quadrants) {
+                let hasStatue = false;
+                for (const statue of skullStatues) {
+                    if (!statue.dead && statue.x >= q.minX && statue.x < q.maxX && 
+                        statue.y >= q.minY && statue.y < q.maxY) {
+                        hasStatue = true;
+                        break;
+                    }
+                }
+                
+                if (!hasStatue) {
+                    // Spawn in this quadrant
+                    const margin = 100;
+                    const x = q.minX + margin + Math.random() * (q.maxX - q.minX - margin * 2);
+                    const y = q.minY + margin + Math.random() * (q.maxY - q.minY - margin * 2);
+                    skullStatues.push(new SkullStatue(x, y));
+                    return;
+                }
+            }
+        }
+        
+        function spawnInitialSkullStatues() {
+            skullStatues = [];
+            // Spawn 3 statues in random quadrants
+            for (let i = 0; i < 3; i++) {
+                spawnNewSkullStatue();
             }
         }
         
@@ -11649,6 +11985,9 @@
                 for (const chest of chests) {
                     if (!chest.dead) chest.update(dt);
                 }
+                for (const statue of skullStatues) {
+                    if (!statue.dead) statue.update(dt);
+                }
                 for (const boss of bosses) {
                     if (!boss.dead) boss.update(effectiveDt);
                 }
@@ -11667,6 +12006,7 @@
                 cleanupArray(rainbows, r => r.dead);
                 cleanupArray(ghosts, g => g.dead);
                 cleanupArray(chests, c => c.dead);
+                cleanupArray(skullStatues, s => s.dead);
                 cleanupArray(bosses, b => b.dead);
                 
                 // Enforce XP gem limit - merge excess gems into larger ones
@@ -11794,6 +12134,11 @@
             // Draw treasure chests
             for (const chest of chests) {
                 if (!chest.dead) chest.draw();
+            }
+            
+            // Draw skull statues
+            for (const statue of skullStatues) {
+                if (!statue.dead) statue.draw();
             }
             
             // Draw cowboy hat pickup
@@ -11986,6 +12331,21 @@
                 minimapCtx.fillRect(cx - 2, cy - 2, 4, 4);
             }
             
+            // Skull statues - only in explored areas
+            for (const statue of skullStatues) {
+                if (statue.dead) continue;
+                if (!isExplored(statue.x, statue.y)) continue;
+                minimapCtx.fillStyle = '#880088';
+                minimapCtx.strokeStyle = '#cc44cc';
+                minimapCtx.lineWidth = 1;
+                const stx = statue.x * scale;
+                const sty = statue.y * scale;
+                minimapCtx.beginPath();
+                minimapCtx.arc(stx, sty, 4, 0, Math.PI * 2);
+                minimapCtx.fill();
+                minimapCtx.stroke();
+            }
+            
             // Leprechauns - only in explored areas
             for (const lep of leprechauns) {
                 if (lep.dead) continue;
@@ -12136,6 +12496,15 @@
                 ghostStrike: { active: false }
             };
             
+            // Reset skull statue difficulty system
+            skullStatues = [];
+            pendingStatue = null;
+            difficultyLevel = 0;
+            enemyDamageBonus = 1;
+            enemyHealthBonus = 1;
+            enemySpeedBonus = 1;
+            killRewardBonus = 1;
+            
             player = new Player();
             initFogGrid();
             spawnTerrain();
@@ -12147,6 +12516,7 @@
             spawnMagnetPickups();
             spawnTombstones();
             spawnShieldPickups();
+            spawnInitialSkullStatues();
             
             // Reset combat timer for shield regen
             playerLastCombatTime = 0;
@@ -12157,6 +12527,7 @@
             if (DOM.finalStats) DOM.finalStats.style.display = 'none';
             if (DOM.shrineChargeBar) DOM.shrineChargeBar.classList.remove('active');
             updateWeaponsDisplay();
+            updateTomesDisplay();
             updateBuffsBar();
         }
 
