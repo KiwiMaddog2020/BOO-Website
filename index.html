@@ -7679,6 +7679,7 @@
         // Store iframe's natural size before fullscreen
         let iframeNaturalWidth = 640;
         let iframeNaturalHeight = 800;
+        let mobileFullscreenTimeout = null;
         
         if (fullscreenBtn && arcadeGameContainerFS) {
             // Update button icon and scale game based on fullscreen state
@@ -7693,49 +7694,87 @@
                 // Scale the iframe to fill more of the screen in fullscreen mode
                 if (arcadeFrameFS) {
                     if (isFullscreen) {
-                        // Delay slightly for mobile browsers to settle into fullscreen
-                        setTimeout(() => {
+                        // Detect mobile
+                        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+                        
+                        if (isMobile) {
+                            // MOBILE: Use direct sizing based on aspect ratio
+                            // Clear any pending timeout first
+                            if (mobileFullscreenTimeout) {
+                                clearTimeout(mobileFullscreenTimeout);
+                            }
+                            mobileFullscreenTimeout = setTimeout(() => {
+                                // Double-check we're still in fullscreen
+                                const stillFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+                                if (!stillFullscreen) return;
+                                
+                                requestAnimationFrame(() => {
+                                    const screenW = window.innerWidth || document.documentElement.clientWidth || screen.width;
+                                    const screenH = window.innerHeight || document.documentElement.clientHeight || screen.height;
+                                    
+                                    // Get aspect ratio from active pill
+                                    const activePill = document.querySelector('.arcade-pill.active');
+                                    const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
+                                    const aspectParts = aspectStr.split('/');
+                                    const aspectW = parseFloat(aspectParts[0]) || 630;
+                                    const aspectH = parseFloat(aspectParts[1]) || 773;
+                                    const gameAspect = aspectW / aspectH;
+                                    
+                                    // Calculate size to fill screen while maintaining aspect ratio
+                                    let targetW, targetH;
+                                    if (screenW / screenH > gameAspect) {
+                                        targetH = screenH;
+                                        targetW = targetH * gameAspect;
+                                    } else {
+                                        targetW = screenW;
+                                        targetH = targetW / gameAspect;
+                                    }
+                                    
+                                    const leftPos = Math.max(0, (screenW - targetW) / 2);
+                                    const topPos = Math.max(0, (screenH - targetH) / 2);
+                                    
+                                    arcadeFrameFS.style.position = 'absolute';
+                                    arcadeFrameFS.style.width = targetW + 'px';
+                                    arcadeFrameFS.style.height = targetH + 'px';
+                                    arcadeFrameFS.style.top = topPos + 'px';
+                                    arcadeFrameFS.style.left = leftPos + 'px';
+                                    arcadeFrameFS.style.transform = 'none';
+                                    arcadeFrameFS.style.border = 'none';
+                                    arcadeFrameFS.style.aspectRatio = 'unset';
+                                });
+                            }, 100);
+                        } else {
+                            // DESKTOP: Use transform scaling (working solution)
                             requestAnimationFrame(() => {
-                                // Get actual fullscreen dimensions
-                                const screenW = window.innerWidth || document.documentElement.clientWidth || screen.width;
-                                const screenH = window.innerHeight || document.documentElement.clientHeight || screen.height;
+                                const screenW = window.innerWidth;
+                                const screenH = window.innerHeight;
                                 
-                                // Get aspect ratio from active pill
-                                const activePill = document.querySelector('.arcade-pill.active');
-                                const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
-                                const aspectParts = aspectStr.split('/');
-                                const aspectW = parseFloat(aspectParts[0]) || 630;
-                                const aspectH = parseFloat(aspectParts[1]) || 773;
-                                const gameAspect = aspectW / aspectH;
+                                const scaleX = screenW / iframeNaturalWidth;
+                                const scaleY = screenH / iframeNaturalHeight;
+                                const scale = Math.min(scaleX, scaleY, 5.0);
                                 
-                                // Calculate size to fill screen while maintaining aspect ratio
-                                let targetW, targetH;
-                                if (screenW / screenH > gameAspect) {
-                                    // Screen is wider than game - fit to height
-                                    targetH = screenH;
-                                    targetW = targetH * gameAspect;
-                                } else {
-                                    // Screen is taller than game - fit to width
-                                    targetW = screenW;
-                                    targetH = targetW / gameAspect;
-                                }
+                                const scaledW = iframeNaturalWidth * scale;
+                                const scaledH = iframeNaturalHeight * scale;
+                                const leftPos = (screenW - scaledW) / 2;
+                                const topPos = (screenH - scaledH) / 2;
                                 
-                                // Center position
-                                const leftPos = Math.max(0, (screenW - targetW) / 2);
-                                const topPos = Math.max(0, (screenH - targetH) / 2);
-                                
-                                // Set size directly (no transform scaling needed)
                                 arcadeFrameFS.style.position = 'absolute';
-                                arcadeFrameFS.style.width = targetW + 'px';
-                                arcadeFrameFS.style.height = targetH + 'px';
+                                arcadeFrameFS.style.width = iframeNaturalWidth + 'px';
+                                arcadeFrameFS.style.height = iframeNaturalHeight + 'px';
                                 arcadeFrameFS.style.top = topPos + 'px';
                                 arcadeFrameFS.style.left = leftPos + 'px';
-                                arcadeFrameFS.style.transform = 'none';
-                                arcadeFrameFS.style.transformOrigin = '';
+                                arcadeFrameFS.style.transform = `scale(${scale})`;
+                                arcadeFrameFS.style.transformOrigin = 'top left';
                                 arcadeFrameFS.style.border = 'none';
                             });
-                        }, 100); // 100ms delay for mobile browsers
+                        }
                     } else {
+                        // Cancel any pending mobile fullscreen timeout
+                        if (mobileFullscreenTimeout) {
+                            clearTimeout(mobileFullscreenTimeout);
+                            mobileFullscreenTimeout = null;
+                        }
+                        
                         // Reset to normal styling when exiting fullscreen
                         arcadeFrameFS.style.position = '';
                         arcadeFrameFS.style.width = '';
@@ -7745,6 +7784,13 @@
                         arcadeFrameFS.style.transform = '';
                         arcadeFrameFS.style.transformOrigin = '';
                         arcadeFrameFS.style.border = '';
+                        arcadeFrameFS.style.aspectRatio = '';
+                        
+                        // Restore aspect ratio from active pill (critical for mobile)
+                        const activePill = document.querySelector('.arcade-pill.active');
+                        if (activePill && activePill.dataset.aspect) {
+                            arcadeFrameFS.style.setProperty('aspect-ratio', activePill.dataset.aspect, 'important');
+                        }
                     }
                 }
             }
@@ -7771,15 +7817,11 @@
                         document.msExitFullscreen();
                     }
                 } else {
-                    // Capture reference size from aspect ratio BEFORE going fullscreen
+                    // Capture reference size BEFORE going fullscreen
                     if (arcadeFrameFS) {
-                        // Get aspect ratio from active pill or use default
-                        const activePill = document.querySelector('.arcade-pill.active');
-                        const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
-                        const aspectParts = aspectStr.split('/');
-                        // Use reference dimensions from aspect ratio (consistent across devices)
-                        iframeNaturalWidth = parseInt(aspectParts[0]) || 630;
-                        iframeNaturalHeight = parseInt(aspectParts[1]) || 773;
+                        const rect = arcadeFrameFS.getBoundingClientRect();
+                        iframeNaturalWidth = rect.width || 640;
+                        iframeNaturalHeight = rect.height || 800;
                     }
                     
                     // Enter fullscreen on game container
