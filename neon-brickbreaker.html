@@ -158,6 +158,7 @@
             border-top: 1px solid rgba(0, 255, 255, 0.4);
             padding-top: 8px;
             margin-top: auto; /* Push to bottom, centering icons in remaining space */
+            margin-bottom: 4px; /* Nudge up from bottom */
         }
         
         .perm-upgrade {
@@ -1292,9 +1293,9 @@
             {
                 id: 'paddle',
                 name: 'Larger Paddle',
-                desc: '+15% Permanent Paddle Size Bonus',
+                desc: '+20% Permanent Paddle Size Bonus',
                 icon: '🏓',
-                apply: () => { permanentUpgrades.paddleSizeBonus += 15; }
+                apply: () => { permanentUpgrades.paddleSizeBonus += 20; }
             },
             {
                 id: 'speed',
@@ -1386,7 +1387,7 @@
             const upgrades = [];
             
             // Check each upgrade type for stacks
-            const paddleStacks = Math.floor(permanentUpgrades.paddleSizeBonus / 15);
+            const paddleStacks = Math.floor(permanentUpgrades.paddleSizeBonus / 20);
             const speedStacks = Math.floor(permanentUpgrades.speedReduction / 8);
             const crusherStacks = Math.floor(permanentUpgrades.crusherDurationBonus / 4);
             const bigPaddleStacks = Math.floor(permanentUpgrades.bigPaddleDurationBonus / 8);
@@ -1597,25 +1598,39 @@
             // Max power-ups increases by 1 every 3 levels (3 at level 1-2, 4 at level 3-5, etc.)
             const minPowerUps = 2;
             const baseMaxPowerUps = 3 + Math.floor(level / 3);
-            // Base random number of powerups
-            let numPowerUps = Math.floor(Math.random() * (baseMaxPowerUps - minPowerUps + 1)) + minPowerUps;
+            // Base random number of powerups (within normal limits)
+            let basePowerUps = Math.floor(Math.random() * (baseMaxPowerUps - minPowerUps + 1)) + minPowerUps;
             
-            // Lucky Drops upgrade: each 2 stacks = 1 guaranteed extra, odd stack = 50% chance
-            // Example: 1 stack = 50%, 2 stacks = 1 guaranteed, 3 stacks = 1 + 50%, etc.
+            // Lucky Drops upgrade: BONUS powerups that ignore the stage max
+            // Each stack = 50% chance for +1 extra powerup (stacks independently)
             const luckyStacks = Math.floor(permanentUpgrades.powerupSpawnBonus / 50);
-            const guaranteedExtras = Math.floor(luckyStacks / 2);
-            const hasOddStack = luckyStacks % 2 === 1;
-            numPowerUps += guaranteedExtras;
-            if (hasOddStack && Math.random() < 0.5) {
-                numPowerUps++;
+            let bonusPowerUps = 0;
+            for (let i = 0; i < luckyStacks; i++) {
+                if (Math.random() < 0.5) {
+                    bonusPowerUps++;
+                }
             }
             
-            // Pick random unique power-up types
-            const availablePowerUps = [...powerUpTypes];
+            const numPowerUps = basePowerUps + bonusPowerUps;
+            
+            // Pick power-up types - allow duplicates if bonus pushes us over available types
             const selectedPowerUps = [];
-            for (let i = 0; i < numPowerUps && availablePowerUps.length > 0; i++) {
-                const idx = Math.floor(Math.random() * availablePowerUps.length);
-                selectedPowerUps.push(availablePowerUps.splice(idx, 1)[0]);
+            for (let i = 0; i < numPowerUps; i++) {
+                // First pass: try to use unique types
+                if (i < powerUpTypes.length) {
+                    // Pick from remaining unique types
+                    const availableForUnique = powerUpTypes.filter(p => 
+                        !selectedPowerUps.some(s => s.type === p.type)
+                    );
+                    if (availableForUnique.length > 0) {
+                        const idx = Math.floor(Math.random() * availableForUnique.length);
+                        selectedPowerUps.push(availableForUnique[idx]);
+                        continue;
+                    }
+                }
+                // Bonus powerups or exhausted unique: pick any random type (duplicates allowed)
+                const idx = Math.floor(Math.random() * powerUpTypes.length);
+                selectedPowerUps.push(powerUpTypes[idx]);
             }
             
             // Pick random brick positions for power-ups with at least 1 brick separation
@@ -1741,7 +1756,14 @@
             bosses = [];
             bossLasers = []; // Clear any existing lasers
             const numBosses = level; // Level 1 = 1 boss, Level 2 = 2 bosses, etc.
-            const spacing = canvas.width / (numBosses + 1);
+            
+            // Determine base Y position based on level thresholds
+            let baseY = 50;
+            if (level >= 20) {
+                baseY = 110; // Third row down at level 20+
+            } else if (level >= 10) {
+                baseY = 80; // Second row down at level 10+
+            }
             
             // Stagger initial laser cooldowns so bosses don't all fire at once
             const now = performance.now();
@@ -1750,21 +1772,74 @@
             lastStarSpawnTime = now;
             immunityStar = null;
             
-            for (let i = 0; i < numBosses; i++) {
-                // Randomize initial cooldown between 2-6 seconds to keep player guessing
-                const initialCooldown = 2000 + Math.random() * 4000;
-                bosses.push({
-                    x: spacing * (i + 1) - bossConfig.width / 2,
-                    y: 50,
-                    width: bossConfig.width,
-                    height: bossConfig.height,
-                    hits: 0,
-                    alive: true,
-                    direction: 1, // 1 = right, -1 = left
-                    color: bossConfig.colors[i % bossConfig.colors.length],
-                    flashUntil: 0, // Timestamp when flash effect ends
-                    nextLaserTime: now + initialCooldown // When this boss can fire next
-                });
+            // At level 10+ and 20+, spawn from center outward
+            if (level >= 10) {
+                // Calculate positions starting from center and filling outward
+                const centerX = canvas.width / 2;
+                const bossSpacing = bossConfig.width + 20; // Boss width + gap
+                
+                // Generate positions: center, then alternating left/right
+                const positions = [];
+                positions.push(centerX - bossConfig.width / 2); // Center boss
+                
+                let offset = 1;
+                while (positions.length < numBosses) {
+                    // Add right position
+                    if (positions.length < numBosses) {
+                        const rightX = centerX + (offset * bossSpacing) - bossConfig.width / 2;
+                        if (rightX + bossConfig.width <= canvas.width - 10) {
+                            positions.push(rightX);
+                        }
+                    }
+                    // Add left position
+                    if (positions.length < numBosses) {
+                        const leftX = centerX - (offset * bossSpacing) - bossConfig.width / 2;
+                        if (leftX >= 10) {
+                            positions.push(leftX);
+                        }
+                    }
+                    offset++;
+                    // Safety break to prevent infinite loop
+                    if (offset > 20) break;
+                }
+                
+                // Sort positions left to right for cleaner appearance
+                positions.sort((a, b) => a - b);
+                
+                for (let i = 0; i < numBosses && i < positions.length; i++) {
+                    const initialCooldown = 2000 + Math.random() * 4000;
+                    bosses.push({
+                        x: positions[i],
+                        y: baseY,
+                        width: bossConfig.width,
+                        height: bossConfig.height,
+                        hits: 0,
+                        alive: true,
+                        direction: i % 2 === 0 ? 1 : -1, // Alternate directions
+                        color: bossConfig.colors[i % bossConfig.colors.length],
+                        flashUntil: 0,
+                        nextLaserTime: now + initialCooldown
+                    });
+                }
+            } else {
+                // Original evenly-spaced spawning for levels 1-9
+                const spacing = canvas.width / (numBosses + 1);
+                
+                for (let i = 0; i < numBosses; i++) {
+                    const initialCooldown = 2000 + Math.random() * 4000;
+                    bosses.push({
+                        x: spacing * (i + 1) - bossConfig.width / 2,
+                        y: baseY,
+                        width: bossConfig.width,
+                        height: bossConfig.height,
+                        hits: 0,
+                        alive: true,
+                        direction: 1,
+                        color: bossConfig.colors[i % bossConfig.colors.length],
+                        flashUntil: 0,
+                        nextLaserTime: now + initialCooldown
+                    });
+                }
             }
             bossPhase = true;
         }
@@ -3043,16 +3118,32 @@
             isLegendaryUpgrade = legendary;
             
             if (legendary) {
-                // Use all legendary upgrades
-                currentUpgradeChoices = [...legendaryUpgradeDefinitions];
+                // Filter legendary upgrades - remove boss damage if already taken twice
+                let availableLegendary = legendaryUpgradeDefinitions.filter(u => {
+                    if (u.id === 'bossdamage' && permanentUpgrades.bossDamageBonus >= 2) {
+                        return false; // Cap boss damage at 2
+                    }
+                    return true;
+                });
+                
+                currentUpgradeChoices = [...availableLegendary];
+                
+                // Determine how many slots to show (2 if boss damage maxed, 3 otherwise)
+                const slotsToShow = currentUpgradeChoices.length;
                 
                 // Reset slots to rolling state with legendary styling
                 slots.forEach((slot, i) => {
-                    slot.className = 'upgrade-slot rolling legendary';
-                    slot.dataset.type = '';
-                    slot.querySelector('.upgrade-icon').textContent = '?';
-                    slot.querySelector('.upgrade-name').textContent = '???';
-                    slot.querySelector('.upgrade-desc').textContent = '???';
+                    if (i < slotsToShow) {
+                        slot.className = 'upgrade-slot rolling legendary';
+                        slot.style.display = '';
+                        slot.dataset.type = '';
+                        slot.querySelector('.upgrade-icon').textContent = '?';
+                        slot.querySelector('.upgrade-name').textContent = '???';
+                        slot.querySelector('.upgrade-desc').textContent = '???';
+                    } else {
+                        // Hide extra slots
+                        slot.style.display = 'none';
+                    }
                 });
                 
                 upgradeOverlay.classList.add('active');
@@ -3107,9 +3198,10 @@
                     }
                 });
                 
-                // Reset slots to rolling state
+                // Reset slots to rolling state (ensure all 3 are visible)
                 slots.forEach((slot, i) => {
                     slot.className = 'upgrade-slot rolling';
+                    slot.style.display = ''; // Ensure visible
                     slot.dataset.type = '';
                     slot.querySelector('.upgrade-icon').textContent = '?';
                     slot.querySelector('.upgrade-name').textContent = '???';
@@ -3127,9 +3219,15 @@
             // Legendary has slightly longer/more dramatic timing
             const rollDuration = isLegendaryUpgrade ? 1800 : 1500;
             const staggerDelay = isLegendaryUpgrade ? 400 : 300;
-            const rollDefinitions = isLegendaryUpgrade ? legendaryUpgradeDefinitions : upgradeDefinitions;
+            const rollDefinitions = isLegendaryUpgrade ? currentUpgradeChoices : upgradeDefinitions;
+            
+            // Only animate slots that have choices
+            const slotsToAnimate = currentUpgradeChoices.length;
             
             slots.forEach((slot, index) => {
+                // Skip hidden slots
+                if (index >= slotsToAnimate) return;
+                
                 const stopTime = rollDuration + (index * staggerDelay);
                 let rollInterval;
                 
@@ -3297,8 +3395,8 @@
                     
                 case 'crusher':
                     activePowerUps.crusher.active = true;
-                    // Base 8s + permanent crusher duration bonus
-                    activePowerUps.crusher.timeLeft = 8 + permanentUpgrades.crusherDurationBonus;
+                    // Base 3s + permanent crusher duration bonus
+                    activePowerUps.crusher.timeLeft = 3 + permanentUpgrades.crusherDurationBonus;
                     break;
                     
                 case 'smallPaddle':
