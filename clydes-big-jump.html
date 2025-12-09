@@ -965,7 +965,29 @@
         ctx.imageSmoothingQuality = 'high';
         
         // DPR scaling for sharp visuals
-        const dpr = Math.min(window.devicePixelRatio || 1, isLowPerf ? 2 : 3);
+        let dpr = Math.min(window.devicePixelRatio || 1, isLowPerf ? 2 : 3);
+        
+        // Fullscreen pixel density scaling (desktop only)
+        let currentScale = 1;
+        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        
+        function handleFullscreenChange() {
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            
+            if (isFullscreen && isDesktop) {
+                // Scale up for higher pixel density in fullscreen
+                const baseDpr = window.devicePixelRatio || 1;
+                currentScale = Math.min(baseDpr, 2); // Cap at 2x to avoid performance issues
+            } else {
+                // Restore normal resolution
+                currentScale = 1;
+            }
+            resizeCanvas();
+        }
+        
+        // Listen for fullscreen changes
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
         
         // Responsive sizing
         function resizeCanvas() {
@@ -982,9 +1004,10 @@
                 displayHeight = maxWidth / ratio;
             }
             
-            // Set canvas buffer with DPR scaling
-            canvas.width = displayWidth * dpr;
-            canvas.height = displayHeight * dpr;
+            // Set canvas buffer with DPR scaling (boosted in fullscreen)
+            const effectiveScale = dpr * currentScale;
+            canvas.width = displayWidth * effectiveScale;
+            canvas.height = displayHeight * effectiveScale;
             
             // Set CSS display size
             canvas.style.width = displayWidth + 'px';
