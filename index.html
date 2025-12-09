@@ -634,17 +634,12 @@
             /* NO breathing animation for mobile Safari - causes wiggling */
         }
         
-        /* Desktop Safari only - add breathing animation */
+        /* Desktop Safari - GPU optimization only, no breathing animation */
         body.is-mac-safari section {
             -webkit-transform: translate3d(0, 0, 0);
             transform: translate3d(0, 0, 0);
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
-            /* Use transform-based breathing for GPU acceleration */
-            -webkit-animation: safariBackgroundBreathe 30s ease-in-out infinite;
-            animation: safariBackgroundBreathe 30s ease-in-out infinite;
-            -webkit-transform-origin: center center;
-            transform-origin: center center;
         }
         
         /* Safari subtle color wash overlay - replaces complex overlays */
@@ -4864,6 +4859,33 @@
         }
         
         /* ========== FULLSCREEN MODE STYLES ========== */
+        /* Pseudo-fullscreen for iOS (no native fullscreen support) */
+        .game-container.pseudo-fullscreen {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            height: 100vh !important;
+            max-width: none !important;
+            max-height: none !important;
+            border-radius: 0 !important;
+            border: none !important;
+            background: #000 !important;
+            z-index: 99999 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        .game-container.pseudo-fullscreen .game-fullscreen-btn {
+            position: fixed !important;
+            top: 15px !important;
+            right: 15px !important;
+            z-index: 100000 !important;
+        }
+        
         .game-container:fullscreen,
         .game-container:-webkit-full-screen,
         .game-container:-moz-full-screen,
@@ -7803,9 +7825,82 @@
             }
             
             // Toggle fullscreen on button click
+            // Detect iOS (no native fullscreen support)
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            let pseudoFullscreen = false;
+            
+            function enterPseudoFullscreen() {
+                pseudoFullscreen = true;
+                arcadeGameContainerFS.classList.add('pseudo-fullscreen');
+                document.body.style.overflow = 'hidden';
+                fullscreenBtn.textContent = '✕';
+                
+                // Apply mobile fullscreen sizing
+                const screenW = window.innerWidth;
+                const screenH = window.innerHeight;
+                
+                const activePill = document.querySelector('.arcade-pill.active');
+                const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
+                const aspectParts = aspectStr.split('/');
+                const aspectW = parseFloat(aspectParts[0]) || 630;
+                const aspectH = parseFloat(aspectParts[1]) || 773;
+                const gameAspect = aspectW / aspectH;
+                
+                let targetW, targetH;
+                if (screenW / screenH > gameAspect) {
+                    targetH = screenH;
+                    targetW = targetH * gameAspect;
+                } else {
+                    targetW = screenW;
+                    targetH = targetW / gameAspect;
+                }
+                
+                const leftPos = (screenW - targetW) / 2;
+                const topPos = (screenH - targetH) / 2;
+                
+                arcadeFrameFS.style.position = 'absolute';
+                arcadeFrameFS.style.width = targetW + 'px';
+                arcadeFrameFS.style.height = targetH + 'px';
+                arcadeFrameFS.style.top = topPos + 'px';
+                arcadeFrameFS.style.left = leftPos + 'px';
+                arcadeFrameFS.style.transform = 'none';
+                arcadeFrameFS.style.border = 'none';
+            }
+            
+            function exitPseudoFullscreen() {
+                pseudoFullscreen = false;
+                arcadeGameContainerFS.classList.remove('pseudo-fullscreen');
+                document.body.style.overflow = '';
+                fullscreenBtn.textContent = '⛶';
+                
+                // Reset iframe styles
+                arcadeFrameFS.style.position = '';
+                arcadeFrameFS.style.width = '';
+                arcadeFrameFS.style.height = '';
+                arcadeFrameFS.style.top = '';
+                arcadeFrameFS.style.left = '';
+                arcadeFrameFS.style.transform = '';
+                arcadeFrameFS.style.border = '';
+                
+                const activePill = document.querySelector('.arcade-pill.active');
+                if (activePill && activePill.dataset.aspect) {
+                    arcadeFrameFS.style.setProperty('aspect-ratio', activePill.dataset.aspect, 'important');
+                }
+            }
+            
             fullscreenBtn.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
+                
+                // For iOS, use pseudo-fullscreen
+                if (isIOS) {
+                    if (pseudoFullscreen) {
+                        exitPseudoFullscreen();
+                    } else {
+                        enterPseudoFullscreen();
+                    }
+                    return;
+                }
                 
                 const isFullscreen = document.fullscreenElement || 
                                     document.webkitFullscreenElement || 
@@ -7864,6 +7959,10 @@
                 if (isFullscreen) {
                     updateFullscreenState();
                 }
+                // Also handle iOS pseudo-fullscreen resize
+                if (isIOS && pseudoFullscreen) {
+                    enterPseudoFullscreen(); // Recalculate sizing
+                }
             });
             
             // Ensure reset when user switches apps, locks phone, or returns to page
@@ -7872,8 +7971,12 @@
                     // Page is visible again - check if fullscreen was exited
                     const isFullscreen = document.fullscreenElement || 
                                         document.webkitFullscreenElement;
-                    if (!isFullscreen) {
+                    if (!isFullscreen && !pseudoFullscreen) {
                         updateFullscreenState(); // This will trigger the reset
+                    }
+                    // Exit iOS pseudo-fullscreen when returning to app
+                    if (isIOS && pseudoFullscreen) {
+                        exitPseudoFullscreen();
                     }
                 }
             });
@@ -7883,8 +7986,11 @@
                 if (event.persisted) {
                     const isFullscreen = document.fullscreenElement || 
                                         document.webkitFullscreenElement;
-                    if (!isFullscreen) {
+                    if (!isFullscreen && !pseudoFullscreen) {
                         updateFullscreenState();
+                    }
+                    if (isIOS && pseudoFullscreen) {
+                        exitPseudoFullscreen();
                     }
                 }
             });
