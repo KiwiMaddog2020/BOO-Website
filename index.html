@@ -4849,6 +4849,9 @@
             border-radius: 0 !important;
             border: none !important;
             background: #000 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
         }
         
         .game-container:fullscreen iframe,
@@ -4857,14 +4860,34 @@
         .game-container:-ms-fullscreen iframe {
             width: 100% !important;
             height: 100% !important;
-            max-width: none !important;
-            max-height: none !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
+            aspect-ratio: unset !important;
+            object-fit: contain !important;
         }
         
         /* Hide touch blockers in fullscreen */
         .game-container:fullscreen .game-touch-blocker,
         .game-container:-webkit-full-screen .game-touch-blocker {
             display: none !important;
+        }
+        
+        /* Hide fullscreen button briefly after entering fullscreen to avoid accidental taps */
+        .game-container:fullscreen .game-fullscreen-btn,
+        .game-container:-webkit-full-screen .game-fullscreen-btn {
+            position: fixed !important;
+            top: 15px !important;
+            right: 15px !important;
+            width: 44px !important;
+            height: 44px !important;
+            font-size: 22px !important;
+            z-index: 9999 !important;
+            opacity: 0.5 !important;
+        }
+        
+        .game-container:fullscreen .game-fullscreen-btn:hover,
+        .game-container:-webkit-full-screen .game-fullscreen-btn:hover {
+            opacity: 1 !important;
         }
 
         /* ========== ARCADE GAME SELECTOR - FULL BUTTONS ========== */
@@ -7644,16 +7667,49 @@
         // Helps combat mobile browser toolbar auto-hide issues
         const fullscreenBtn = document.querySelector('.game-fullscreen-btn');
         const arcadeGameContainerFS = document.querySelector('.game-container');
+        const arcadeFrameFS = document.getElementById('arcadeFrame');
         
         if (fullscreenBtn && arcadeGameContainerFS) {
-            // Update button icon based on fullscreen state
-            function updateFullscreenIcon() {
+            // Update button icon and scale game based on fullscreen state
+            function updateFullscreenState() {
                 const isFullscreen = document.fullscreenElement || 
                                     document.webkitFullscreenElement || 
                                     document.mozFullScreenElement ||
                                     document.msFullscreenElement;
                 fullscreenBtn.textContent = isFullscreen ? '✕' : '⛶';
                 fullscreenBtn.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+                
+                // Scale the iframe to fill more of the screen in fullscreen mode
+                if (arcadeFrameFS) {
+                    if (isFullscreen) {
+                        // Calculate scale to fill screen while maintaining aspect ratio
+                        const screenW = window.innerWidth;
+                        const screenH = window.innerHeight;
+                        // Get the game's natural aspect ratio from data attribute or default
+                        const aspectStr = arcadeFrameFS.style.aspectRatio || '630/773';
+                        const aspectParts = aspectStr.split('/');
+                        const gameAspect = parseFloat(aspectParts[0]) / parseFloat(aspectParts[1]);
+                        const screenAspect = screenW / screenH;
+                        
+                        let scale;
+                        if (screenAspect > gameAspect) {
+                            // Screen is wider - scale to height
+                            scale = screenH / (screenW / gameAspect);
+                        } else {
+                            // Screen is taller - scale to width
+                            scale = screenW / (screenH * gameAspect);
+                        }
+                        
+                        // Apply scale (cap at 2x to prevent extreme scaling)
+                        scale = Math.min(scale * 0.95, 2.0); // 95% to leave small margin
+                        arcadeFrameFS.style.transform = `scale(${scale})`;
+                        arcadeFrameFS.style.transformOrigin = 'center center';
+                    } else {
+                        // Reset transform when exiting fullscreen
+                        arcadeFrameFS.style.transform = '';
+                        arcadeFrameFS.style.transformOrigin = '';
+                    }
+                }
             }
             
             // Toggle fullscreen on button click
@@ -7699,10 +7755,19 @@
             }, { passive: false });
             
             // Listen for fullscreen changes
-            document.addEventListener('fullscreenchange', updateFullscreenIcon);
-            document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
-            document.addEventListener('mozfullscreenchange', updateFullscreenIcon);
-            document.addEventListener('MSFullscreenChange', updateFullscreenIcon);
+            document.addEventListener('fullscreenchange', updateFullscreenState);
+            document.addEventListener('webkitfullscreenchange', updateFullscreenState);
+            document.addEventListener('mozfullscreenchange', updateFullscreenState);
+            document.addEventListener('MSFullscreenChange', updateFullscreenState);
+            
+            // Also update on window resize while in fullscreen
+            window.addEventListener('resize', function() {
+                const isFullscreen = document.fullscreenElement || 
+                                    document.webkitFullscreenElement;
+                if (isFullscreen) {
+                    updateFullscreenState();
+                }
+            });
         }
 
         // ========== GAME CONTAINER SCROLL PREVENTION ==========
