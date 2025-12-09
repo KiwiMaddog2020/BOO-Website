@@ -144,21 +144,19 @@
             border-radius: 0 0 2px 2px;
         }
         
-        /* Permanent upgrades display - at bottom of trackpad */
+        /* Permanent upgrades display - anchored just below divider line */
         .permanent-upgrades {
             display: flex;
             flex-direction: row;
-            align-items: center;
+            align-items: flex-start;
             justify-content: center;
             gap: 10px;
-            flex: 1; /* Take remaining space to center vertically */
             width: 100%;
             pointer-events: none;
             /* Horizontal divider line above */
             border-top: 1px solid rgba(0, 255, 255, 0.4);
-            padding-top: 8px;
-            margin-top: auto; /* Push to bottom, centering icons in remaining space */
-            margin-bottom: 4px; /* Nudge up from bottom */
+            padding-top: 2px;
+            margin-top: auto; /* Push divider line to bottom area */
         }
         
         .perm-upgrade {
@@ -1293,9 +1291,9 @@
             {
                 id: 'paddle',
                 name: 'Larger Paddle',
-                desc: '+20% Permanent Paddle Size Bonus',
+                desc: '+10% Permanent Paddle Size Bonus',
                 icon: '🏓',
-                apply: () => { permanentUpgrades.paddleSizeBonus += 20; }
+                apply: () => { permanentUpgrades.paddleSizeBonus += 10; }
             },
             {
                 id: 'speed',
@@ -1387,7 +1385,7 @@
             const upgrades = [];
             
             // Check each upgrade type for stacks
-            const paddleStacks = Math.floor(permanentUpgrades.paddleSizeBonus / 20);
+            const paddleStacks = Math.floor(permanentUpgrades.paddleSizeBonus / 10);
             const speedStacks = Math.floor(permanentUpgrades.speedReduction / 8);
             const crusherStacks = Math.floor(permanentUpgrades.crusherDurationBonus / 3);
             const bigPaddleStacks = Math.floor(permanentUpgrades.bigPaddleDurationBonus / 8);
@@ -2992,22 +2990,32 @@
             clearActivePowerUps();
         }
         
-        // Clear all active power-ups (called on life loss)
+        // Clear all active power-ups (called on life loss and stage clear)
         function clearActivePowerUps() {
+            // Stop any paddle animation
+            paddleAnimation.active = false;
+            
+            // Calculate correct paddle width for current level with permanent bonuses
+            const basePaddleWidth = Math.max(66, 107 - (level - 1) * 6);
+            const bonusMultiplier = 1 + (permanentUpgrades.paddleSizeBonus / 100);
+            const correctPaddleWidth = Math.round(basePaddleWidth * bonusMultiplier);
+            
             // Reset big paddle
             if (activePowerUps.bigPaddle.active) {
                 activePowerUps.bigPaddle.active = false;
                 activePowerUps.bigPaddle.timeLeft = 0;
-                // Restore original paddle width
-                paddle.width = activePowerUps.bigPaddle.originalWidth;
             }
             
             // Reset small paddle (debuff)
             if (activePowerUps.smallPaddle.active) {
                 activePowerUps.smallPaddle.active = false;
                 activePowerUps.smallPaddle.timeLeft = 0;
-                paddle.width = activePowerUps.smallPaddle.originalWidth;
             }
+            
+            // Force paddle to correct width and update originalWidth values
+            paddle.width = correctPaddleWidth;
+            activePowerUps.bigPaddle.originalWidth = correctPaddleWidth;
+            activePowerUps.smallPaddle.originalWidth = correctPaddleWidth;
             
             // Reset crusher
             activePowerUps.crusher.active = false;
@@ -3288,6 +3296,19 @@
             
             // Apply the upgrade
             choice.apply();
+            
+            // Immediately recalculate paddle size if paddle bonus changed
+            // This ensures the bonus applies before boss phase, not just at next level
+            if (choice.id === 'paddle') {
+                const basePaddleWidth = Math.max(66, 107 - (level - 1) * 6);
+                const bonusMultiplier = 1 + (permanentUpgrades.paddleSizeBonus / 100);
+                const newWidth = Math.round(basePaddleWidth * bonusMultiplier);
+                // Animate to new size
+                animatePaddleSize(newWidth);
+                // Update originalWidth for power-ups
+                activePowerUps.bigPaddle.originalWidth = newWidth;
+                activePowerUps.smallPaddle.originalWidth = newWidth;
+            }
             
             // Update the permanent upgrades display
             updatePermanentUpgradesDisplay();
@@ -3595,20 +3616,25 @@
                 ballTemplate.speed += 0.6;  // Faster increase after that
             }
             
-            // Shrink paddle slightly each level (min 66px)
-            // Then apply permanent paddle size bonus
+            // Stop any paddle animation in progress to prevent override
+            paddleAnimation.active = false;
+            
+            // Calculate correct paddle width: base size (shrinks per level) + permanent bonus
             const basePaddleWidth = Math.max(66, 107 - (level - 1) * 6);
             const bonusMultiplier = 1 + (permanentUpgrades.paddleSizeBonus / 100);
-            paddle.width = Math.round(basePaddleWidth * bonusMultiplier);
+            const correctPaddleWidth = Math.round(basePaddleWidth * bonusMultiplier);
+            
+            // Force paddle to correct size
+            paddle.width = correctPaddleWidth;
             
             // Add more brick rows at higher levels (max 7)
             brickConfig.rows = Math.min(7, 4 + Math.floor(level / 2));
             
-            // Reset power-ups on level change
-            activePowerUps.bigPaddle = { active: false, timeLeft: 0, originalWidth: paddle.width };
+            // Reset power-ups on level change with correct originalWidth
+            activePowerUps.bigPaddle = { active: false, timeLeft: 0, originalWidth: correctPaddleWidth };
             activePowerUps.multiBall = { active: false, bouncesLeft: 0 };
             activePowerUps.crusher = { active: false, timeLeft: 0 };
-            activePowerUps.smallPaddle = { active: false, timeLeft: 0, originalWidth: paddle.width };
+            activePowerUps.smallPaddle = { active: false, timeLeft: 0, originalWidth: correctPaddleWidth };
             
             createBricks();
             resetBall();
