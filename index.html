@@ -4728,7 +4728,9 @@
             font-size: 3rem;
         }
 
-        .game-container { width: 100%; max-width: 660px; aspect-ratio: 640/703; max-height: 90vh; border-radius: 15px; overflow: hidden; border: 2px solid rgba(0, 255, 204, 0.4); box-shadow: 0 0 30px rgba(0, 255, 204, 0.3), 0 0 60px rgba(255, 0, 255, 0.2); position: relative; z-index: 10; }
+        .game-container { width: 100%; max-width: 660px; aspect-ratio: 640/703; max-height: 90vh; border-radius: 15px; overflow: hidden; border: 2px solid rgba(0, 255, 204, 0.4); box-shadow: 0 0 30px rgba(0, 255, 204, 0.3), 0 0 60px rgba(255, 0, 255, 0.2); position: relative; z-index: 10; touch-action: none; overscroll-behavior: none; -webkit-overflow-scrolling: auto; }
+        
+        .game-container iframe { touch-action: none; overscroll-behavior: none; pointer-events: auto; }
         
         /* Hide touch blockers on desktop - only needed for mobile */
         .game-touch-blocker { display: none; }
@@ -7569,22 +7571,22 @@
         }
         
         function preventScroll(e) {
-            if (isInteractingWithGame || isGameVisible) {
+            if (isInteractingWithGame) {
                 e.preventDefault();
                 window.scrollTo(0, savedScrollY);
             }
         }
         
         function preventAllTouchMove(e) {
-            if (isInteractingWithGame || isGameVisible) {
+            if (isInteractingWithGame) {
                 e.preventDefault();
             }
         }
         
-        // Unlock scrolling - only if game is not visible
+        // Unlock scrolling - restore normal scroll behavior
         function unlockScroll() {
-            // Don't unlock if game is still visible
-            if (isGameVisible) return;
+            // Don't unlock if still interacting with game
+            if (isInteractingWithGame) return;
             
             // Remove event listeners
             window.removeEventListener('scroll', preventScroll);
@@ -7657,18 +7659,20 @@
         
         // MOUSE WHEEL - Prevent scroll when over game
         document.addEventListener('wheel', function(e) {
-            if (isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
+            if (isInteractingWithGame || isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
                 e.preventDefault();
                 e.stopPropagation();
+                e.stopImmediatePropagation();
                 return false;
             }
         }, { passive: false, capture: true });
         
-        // KEYBOARD - Prevent arrow keys from scrolling when game is focused
+        // KEYBOARD - Prevent arrow keys from scrolling when game is focused or hovered
         document.addEventListener('keydown', function(e) {
             if (isInteractingWithGame || isGameElement(document.activeElement)) {
-                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown'].includes(e.key)) {
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
                     e.preventDefault();
+                    e.stopPropagation();
                 }
             }
         }, { passive: false, capture: true });
@@ -7708,13 +7712,24 @@
                 }, 100);
             }, { passive: true });
             
-            // Also handle mouse enter/leave for desktop wheel scrolling
+            // DESKTOP: Lock scroll completely when mouse enters game container
             gameContainer.addEventListener('mouseenter', function() {
                 isInteractingWithGame = true;
+                lockScroll();
             });
+            
             gameContainer.addEventListener('mouseleave', function() {
                 isInteractingWithGame = false;
+                unlockScroll();
             });
+            
+            // Additional wheel handler directly on game container for maximum priority
+            gameContainer.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+            }, { passive: false, capture: true });
         }
         
         // ========== MOBILE NAV TAP HANDLER ==========
