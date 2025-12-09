@@ -4852,18 +4852,17 @@
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
+            overflow: hidden !important;
         }
         
+        /* In fullscreen, let iframe keep natural size - JS will scale it */
         .game-container:fullscreen iframe,
         .game-container:-webkit-full-screen iframe,
         .game-container:-moz-full-screen iframe,
         .game-container:-ms-fullscreen iframe {
-            width: 100% !important;
-            height: 100% !important;
-            max-width: 100vw !important;
-            max-height: 100vh !important;
-            aspect-ratio: unset !important;
-            object-fit: contain !important;
+            /* Don't override natural size - let transform scale handle it */
+            max-width: none !important;
+            max-height: none !important;
         }
         
         /* Hide touch blockers in fullscreen */
@@ -4872,7 +4871,7 @@
             display: none !important;
         }
         
-        /* Hide fullscreen button briefly after entering fullscreen to avoid accidental taps */
+        /* Fullscreen button styling */
         .game-container:fullscreen .game-fullscreen-btn,
         .game-container:-webkit-full-screen .game-fullscreen-btn {
             position: fixed !important;
@@ -6351,12 +6350,17 @@
             <button class="arcade-pill" data-game="clydes-big-jump.html" data-title="Clyde's Big Jump" data-aspect="630/900" title="Clyde">
                 <span class="pill-icon">🐕</span><span class="pill-text">Clyde</span>
             </button>
-            <button class="arcade-pill" data-game="neon-space-shooter.html" data-title="Neon Space Shooter" data-aspect="630/900" title="Space Shooter">
-                <span class="pill-icon">🚀</span><span class="pill-text">Space</span>
+            <button class="arcade-pill" data-game="neon-tower-defense.html" data-title="Neon Tower Defense" data-aspect="630/750" title="Tower Defense">
+                <span class="pill-icon">🏰</span><span class="pill-text">Defense</span>
             </button>
             <button class="arcade-pill" data-game="neon-snake.html" data-title="Neon Snake" data-aspect="630/880" title="Snake">
                 <span class="pill-icon">🐍</span><span class="pill-text">Snake</span>
             </button>
+            <!-- Space Shooter hidden for now
+            <button class="arcade-pill" data-game="neon-space-shooter.html" data-title="Neon Space Shooter" data-aspect="630/900" title="Space Shooter">
+                <span class="pill-icon">🚀</span><span class="pill-text">Space</span>
+            </button>
+            -->
         </div>
         
         <div class="game-container">
@@ -7669,6 +7673,10 @@
         const arcadeGameContainerFS = document.querySelector('.game-container');
         const arcadeFrameFS = document.getElementById('arcadeFrame');
         
+        // Store iframe's natural size before fullscreen
+        let iframeNaturalWidth = 640;
+        let iframeNaturalHeight = 800;
+        
         if (fullscreenBtn && arcadeGameContainerFS) {
             // Update button icon and scale game based on fullscreen state
             function updateFullscreenState() {
@@ -7682,30 +7690,26 @@
                 // Scale the iframe to fill more of the screen in fullscreen mode
                 if (arcadeFrameFS) {
                     if (isFullscreen) {
-                        // Calculate scale to fill screen while maintaining aspect ratio
-                        const screenW = window.innerWidth;
-                        const screenH = window.innerHeight;
-                        // Get the game's natural aspect ratio from data attribute or default
-                        const aspectStr = arcadeFrameFS.style.aspectRatio || '630/773';
-                        const aspectParts = aspectStr.split('/');
-                        const gameAspect = parseFloat(aspectParts[0]) / parseFloat(aspectParts[1]);
-                        const screenAspect = screenW / screenH;
-                        
-                        let scale;
-                        if (screenAspect > gameAspect) {
-                            // Screen is wider - scale to height
-                            scale = screenH / (screenW / gameAspect);
-                        } else {
-                            // Screen is taller - scale to width
-                            scale = screenW / (screenH * gameAspect);
-                        }
-                        
-                        // Apply scale (cap at 2x to prevent extreme scaling)
-                        scale = Math.min(scale * 0.95, 2.0); // 95% to leave small margin
-                        arcadeFrameFS.style.transform = `scale(${scale})`;
-                        arcadeFrameFS.style.transformOrigin = 'center center';
+                        // Use stored natural size for scaling calculation
+                        requestAnimationFrame(() => {
+                            const screenW = window.innerWidth;
+                            const screenH = window.innerHeight;
+                            
+                            // Calculate scale to fit screen with margin
+                            const scaleX = (screenW * 0.95) / iframeNaturalWidth;
+                            const scaleY = (screenH * 0.95) / iframeNaturalHeight;
+                            const scale = Math.min(scaleX, scaleY, 4.0); // Cap at 4x
+                            
+                            // Set explicit size and scale
+                            arcadeFrameFS.style.width = iframeNaturalWidth + 'px';
+                            arcadeFrameFS.style.height = iframeNaturalHeight + 'px';
+                            arcadeFrameFS.style.transform = `scale(${scale})`;
+                            arcadeFrameFS.style.transformOrigin = 'center center';
+                        });
                     } else {
-                        // Reset transform when exiting fullscreen
+                        // Reset to normal styling when exiting fullscreen
+                        arcadeFrameFS.style.width = '';
+                        arcadeFrameFS.style.height = '';
                         arcadeFrameFS.style.transform = '';
                         arcadeFrameFS.style.transformOrigin = '';
                     }
@@ -7734,6 +7738,13 @@
                         document.msExitFullscreen();
                     }
                 } else {
+                    // Capture current iframe size BEFORE going fullscreen
+                    if (arcadeFrameFS) {
+                        const rect = arcadeFrameFS.getBoundingClientRect();
+                        iframeNaturalWidth = rect.width || 640;
+                        iframeNaturalHeight = rect.height || 800;
+                    }
+                    
                     // Enter fullscreen on game container
                     if (arcadeGameContainerFS.requestFullscreen) {
                         arcadeGameContainerFS.requestFullscreen();
