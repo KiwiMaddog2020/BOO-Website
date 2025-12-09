@@ -7484,11 +7484,13 @@
         // Completely prevent page scrolling when interacting with game
         const gameSection = document.getElementById('game');
         const gameContainer = document.querySelector('.game-container');
+        // Note: scrollContainer is already declared above
         
         // Track game interaction state
         let isInteractingWithGame = false;
         let isGameVisible = false;
         let savedScrollY = 0;
+        let isScrollLocked = false;
         
         // Check if element is within game area
         function isGameElement(el) {
@@ -7542,32 +7544,55 @@
             }
         });
         
-        // Lock scrolling completely - aggressive prevention of browser UI changes
+        // Lock scrolling completely - lock the scroll-container which handles all scrolling
         function lockScroll() {
-            savedScrollY = window.scrollY;
+            // Don't lock if already locked
+            if (isScrollLocked) return;
+            isScrollLocked = true;
             
-            // Lock html element
+            if (scrollContainer) {
+                savedScrollY = scrollContainer.scrollTop;
+                scrollContainer.style.overflow = 'hidden';
+                scrollContainer.style.touchAction = 'none';
+                scrollContainer.style.overscrollBehavior = 'none';
+                scrollContainer.style.scrollSnapType = 'none';
+                scrollContainer.style.webkitScrollSnapType = 'none';
+            }
+            
+            // Also lock html/body as fallback
             document.documentElement.style.overflow = 'hidden';
             document.documentElement.style.touchAction = 'none';
-            document.documentElement.style.overscrollBehavior = 'none';
-            document.documentElement.style.height = '100%';
-            document.documentElement.style.position = 'fixed';
-            document.documentElement.style.width = '100%';
-            
-            // Lock body element  
             document.body.style.overflow = 'hidden';
-            document.body.style.position = 'fixed';
-            document.body.style.top = `-${savedScrollY}px`;
-            document.body.style.left = '0';
-            document.body.style.right = '0';
-            document.body.style.width = '100%';
-            document.body.style.height = '100%';
             document.body.style.touchAction = 'none';
-            document.body.style.overscrollBehavior = 'none';
             
             // Prevent any scroll events
+            if (scrollContainer) {
+                scrollContainer.addEventListener('scroll', preventScrollContainer, { passive: false });
+                scrollContainer.addEventListener('touchmove', preventTouchMoveContainer, { passive: false });
+                scrollContainer.addEventListener('wheel', preventWheelContainer, { passive: false });
+            }
             window.addEventListener('scroll', preventScroll, { passive: false });
             window.addEventListener('touchmove', preventAllTouchMove, { passive: false });
+        }
+        
+        function preventScrollContainer(e) {
+            if (isInteractingWithGame && scrollContainer) {
+                scrollContainer.scrollTop = savedScrollY;
+            }
+        }
+        
+        function preventTouchMoveContainer(e) {
+            if (isInteractingWithGame) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }
+        
+        function preventWheelContainer(e) {
+            if (isInteractingWithGame) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
         }
         
         function preventScroll(e) {
@@ -7585,33 +7610,35 @@
         
         // Unlock scrolling - restore normal scroll behavior
         function unlockScroll() {
-            // Don't unlock if still interacting with game
-            if (isInteractingWithGame) return;
+            // Don't unlock if still interacting with game or not locked
+            if (isInteractingWithGame || !isScrollLocked) return;
+            isScrollLocked = false;
             
             // Remove event listeners
+            if (scrollContainer) {
+                scrollContainer.removeEventListener('scroll', preventScrollContainer);
+                scrollContainer.removeEventListener('touchmove', preventTouchMoveContainer);
+                scrollContainer.removeEventListener('wheel', preventWheelContainer);
+            }
             window.removeEventListener('scroll', preventScroll);
             window.removeEventListener('touchmove', preventAllTouchMove);
             
-            // Unlock html element
+            // Clear inline styles on scroll-container - let CSS defaults take over
+            if (scrollContainer) {
+                scrollContainer.style.overflow = '';
+                scrollContainer.style.touchAction = '';
+                scrollContainer.style.overscrollBehavior = '';
+                scrollContainer.style.scrollSnapType = '';
+                scrollContainer.style.webkitScrollSnapType = '';
+                // Restore position
+                scrollContainer.scrollTop = savedScrollY;
+            }
+            
+            // Clear html/body inline styles
             document.documentElement.style.overflow = '';
             document.documentElement.style.touchAction = '';
-            document.documentElement.style.overscrollBehavior = '';
-            document.documentElement.style.height = '';
-            document.documentElement.style.position = '';
-            document.documentElement.style.width = '';
-            
-            // Unlock body element
             document.body.style.overflow = '';
-            document.body.style.position = '';
-            document.body.style.top = '';
-            document.body.style.left = '';
-            document.body.style.right = '';
-            document.body.style.width = '';
-            document.body.style.height = '';
             document.body.style.touchAction = '';
-            document.body.style.overscrollBehavior = '';
-            
-            window.scrollTo(0, savedScrollY);
         }
         
         // TOUCH EVENTS - Capture phase for maximum control
