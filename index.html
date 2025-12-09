@@ -1767,6 +1767,26 @@
                 opacity: 1 !important;
             }
             
+            /* ========== iOS SAFARI SCROLL FIX ========== */
+            /* Prevent iOS Safari rubber-banding and momentum issues */
+            @supports (-webkit-touch-callout: none) {
+                .scroll-container {
+                    -webkit-overflow-scrolling: auto !important; /* Disable iOS momentum on scroll container */
+                }
+                
+                #game {
+                    -webkit-overflow-scrolling: auto !important;
+                    position: relative !important;
+                    z-index: 1 !important;
+                }
+                
+                #game .game-container {
+                    -webkit-overflow-scrolling: auto !important;
+                    position: relative !important;
+                    z-index: 2 !important;
+                }
+            }
+            
             /* ========== GAME CONTAINER - SCROLL PREVENTION ON GAME ONLY ========== */
             /* Allow scrolling in #game section, block only over the game-container */
             #game {
@@ -6910,8 +6930,8 @@
         // Single optimized scroll listener with throttling
         if (scrollContainer) {
             scrollContainer.addEventListener('scroll', function() {
-                // Skip if scroll is locked (game interaction)
-                if (isScrollLocked) return;
+                // Skip if scroll is locked (game interaction) or in cooldown period
+                if (isScrollLocked || unlockCooldown) return;
                 
                 if (!scrollTicking) {
                     requestAnimationFrame(handleScroll);
@@ -6933,8 +6953,8 @@
             let lastScrollTop = 0;
             
             function snapToNearestSection() {
-                // Skip if scroll is locked (game interaction)
-                if (isScrollLocked) return;
+                // Skip if scroll is locked (game interaction) or in cooldown period
+                if (isScrollLocked || unlockCooldown) return;
                 
                 const sectionHeight = window.innerHeight;
                 const scrollTop = scrollContainer.scrollTop;
@@ -6959,8 +6979,8 @@
             } else {
                 // Fallback: check after scroll stops
                 scrollContainer.addEventListener('scroll', function() {
-                    // Skip if scroll is locked (game interaction)
-                    if (isScrollLocked) return;
+                    // Skip if scroll is locked (game interaction) or in cooldown period
+                    if (isScrollLocked || unlockCooldown) return;
                     
                     lastScrollTop = scrollContainer.scrollTop;
                     clearTimeout(scrollEndTimeout);
@@ -6970,11 +6990,17 @@
             
             // Also check on touchend for more reliable mobile snap
             scrollContainer.addEventListener('touchend', function() {
-                // Skip if scroll is locked (game interaction)
-                if (isScrollLocked) return;
+                // Skip if scroll is locked (game interaction) or in cooldown period
+                if (isScrollLocked || unlockCooldown) return;
+                
+                // Skip if we just finished interacting with game (cooldown period)
+                if (isInteractingWithGame) return;
                 
                 clearTimeout(scrollEndTimeout);
-                scrollEndTimeout = setTimeout(snapToNearestSection, 200);
+                // Longer delay for iOS to let all momentum settle
+                var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                scrollEndTimeout = setTimeout(snapToNearestSection, isIOS ? 300 : 200);
             }, { passive: true });
         })();
 
@@ -7529,6 +7555,7 @@
         let isGameVisible = false;
         let savedScrollY = 0;
         let isScrollLocked = false;
+        let unlockCooldown = false; // iOS Safari: prevent snaps during unlock transition
         
         // Check if element is within game area
         function isGameElement(el) {
@@ -7589,7 +7616,19 @@
             isScrollLocked = true;
             
             if (scrollContainer) {
-                savedScrollY = scrollContainer.scrollTop;
+                // Snap to nearest section boundary before locking (iOS Safari fix)
+                var sectionHeight = window.innerHeight;
+                var currentScroll = scrollContainer.scrollTop;
+                var nearestSection = Math.round(currentScroll / sectionHeight) * sectionHeight;
+                
+                // If we're close to a section boundary, snap to it
+                if (Math.abs(currentScroll - nearestSection) < sectionHeight * 0.3) {
+                    scrollContainer.scrollTop = nearestSection;
+                    savedScrollY = nearestSection;
+                } else {
+                    savedScrollY = currentScroll;
+                }
+                
                 scrollContainer.style.overflow = 'hidden';
                 scrollContainer.style.touchAction = 'none';
                 scrollContainer.style.overscrollBehavior = 'none';
@@ -7619,9 +7658,27 @@
         }
         
         // Unlock scrolling - restore normal scroll behavior
+        // iOS Safari specific: Use cooldown to prevent momentum-triggered jumps
         function unlockScroll() {
             // Don't unlock if still interacting with game or not locked
             if (isInteractingWithGame || !isScrollLocked) return;
+            
+            var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            
+            // Start cooldown period - reject snaps during this time
+            unlockCooldown = true;
+            
+            // Get the game section position for forced snap
+            var gameSection = document.getElementById('game');
+            var gameSectionTop = gameSection ? gameSection.offsetTop : savedScrollY;
+            
+            // Force scroll to game section BEFORE clearing overflow
+            if (scrollContainer) {
+                scrollContainer.scrollTop = gameSectionTop;
+                savedScrollY = gameSectionTop;
+            }
+            
             isScrollLocked = false;
             
             // Remove scroll blocker
@@ -7629,10 +7686,43 @@
                 scrollContainer.removeEventListener('scroll', blockScroll, { capture: true });
                 scrollContainer.removeEventListener('wheel', blockWheel, { capture: true });
                 
-                // Clear inline styles on scroll-container - let CSS defaults take over
-                scrollContainer.style.overflow = '';
-                scrollContainer.style.touchAction = '';
-                scrollContainer.style.overscrollBehavior = '';
+                // iOS Safari fix: Keep touch-action blocked briefly to absorb momentum
+                if (isIOS) {
+                    // Keep overflow hidden and force position for a moment
+                    scrollContainer.scrollTop = gameSectionTop;
+                    
+                    setTimeout(function() {
+                        if (scrollContainer && !isScrollLocked) {
+                            // Force position again before releasing
+                            scrollContainer.scrollTop = gameSectionTop;
+                            scrollContainer.style.overflow = '';
+                            scrollContainer.style.touchAction = '';
+                            scrollContainer.style.overscrollBehavior = '';
+                            
+                            // One more force after styles clear
+                            requestAnimationFrame(function() {
+                                if (scrollContainer && !isScrollLocked) {
+                                    scrollContainer.scrollTop = gameSectionTop;
+                                }
+                            });
+                        }
+                    }, 50);
+                    
+                    // End cooldown after momentum would have settled
+                    setTimeout(function() {
+                        unlockCooldown = false;
+                    }, 400);
+                } else {
+                    // Non-iOS: immediate release
+                    scrollContainer.style.overflow = '';
+                    scrollContainer.style.touchAction = '';
+                    scrollContainer.style.overscrollBehavior = '';
+                    scrollContainer.scrollTop = gameSectionTop;
+                    
+                    setTimeout(function() {
+                        unlockCooldown = false;
+                    }, 150);
+                }
             }
         }
         
@@ -7666,22 +7756,29 @@
         
         document.addEventListener('touchend', function(e) {
             if (isInteractingWithGame) {
+                // Prevent any default behavior that might cause scroll
+                e.preventDefault();
                 isInteractingWithGame = false;
-                // Small delay before unlocking to prevent scroll momentum
-                setTimeout(unlockScroll, 50);
+                // Longer delay for iOS Safari to let momentum fully settle
+                var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                setTimeout(unlockScroll, isIOS ? 150 : 50);
             }
-        }, { passive: true, capture: true });
+        }, { passive: false, capture: true });
         
         document.addEventListener('touchcancel', function(e) {
             if (isInteractingWithGame) {
+                e.preventDefault();
                 isInteractingWithGame = false;
-                setTimeout(unlockScroll, 50);
+                var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                setTimeout(unlockScroll, isIOS ? 150 : 50);
             }
-        }, { passive: true, capture: true });
+        }, { passive: false, capture: true });
         
         // MOUSE WHEEL - Prevent scroll when over game - window level for earliest interception
         window.addEventListener('wheel', function(e) {
-            if (isInteractingWithGame || isScrollLocked) {
+            if (isInteractingWithGame || isScrollLocked || unlockCooldown) {
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
@@ -7691,13 +7788,23 @@
         
         // MOUSE WHEEL - Prevent scroll when over game - document level backup
         document.addEventListener('wheel', function(e) {
-            if (isInteractingWithGame || isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
+            if (isInteractingWithGame || unlockCooldown || isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
                 return false;
             }
         }, { passive: false, capture: true });
+        
+        // iOS SAFARI FIX: Catch any scroll events during cooldown and force back to game section
+        window.addEventListener('scroll', function(e) {
+            if (unlockCooldown && scrollContainer) {
+                var gameSection = document.getElementById('game');
+                if (gameSection) {
+                    scrollContainer.scrollTop = gameSection.offsetTop;
+                }
+            }
+        }, { passive: true, capture: true });
         
         // KEYBOARD - Prevent arrow keys from scrolling when game is focused or hovered
         document.addEventListener('keydown', function(e) {
@@ -7737,12 +7844,16 @@
             }, { passive: false, capture: true });
             
             gameContainer.addEventListener('touchend', function(e) {
-                // Delay unlock to prevent scroll momentum triggering UI changes
+                // Prevent default to stop any residual scroll behavior
+                e.preventDefault();
+                // Longer delay for iOS Safari to let momentum fully settle
+                var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
                 setTimeout(function() {
                     isInteractingWithGame = false;
                     unlockScroll();
-                }, 100);
-            }, { passive: true });
+                }, isIOS ? 150 : 100);
+            }, { passive: false, capture: true });
             
             // DESKTOP: Lock scroll completely when mouse enters game container
             gameContainer.addEventListener('mouseenter', function() {
