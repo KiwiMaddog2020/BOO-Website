@@ -7553,32 +7553,45 @@
             
             if (scrollContainer) {
                 savedScrollY = scrollContainer.scrollTop;
+                
+                // Nuclear option: position fixed prevents ALL scrolling
+                scrollContainer.style.position = 'fixed';
+                scrollContainer.style.top = `-${savedScrollY}px`;
+                scrollContainer.style.left = '0';
+                scrollContainer.style.right = '0';
+                scrollContainer.style.bottom = '0';
                 scrollContainer.style.overflow = 'hidden';
                 scrollContainer.style.touchAction = 'none';
                 scrollContainer.style.overscrollBehavior = 'none';
                 scrollContainer.style.scrollSnapType = 'none';
                 scrollContainer.style.webkitScrollSnapType = 'none';
+                scrollContainer.style.pointerEvents = 'none'; // Block all pointer events on scroll container
             }
             
-            // Also lock html/body as fallback
+            // Also lock html/body
             document.documentElement.style.overflow = 'hidden';
             document.documentElement.style.touchAction = 'none';
+            document.documentElement.style.position = 'fixed';
+            document.documentElement.style.width = '100%';
             document.body.style.overflow = 'hidden';
             document.body.style.touchAction = 'none';
+            document.body.style.position = 'fixed';
+            document.body.style.width = '100%';
+            document.body.style.top = '0';
             
-            // Prevent any scroll events
-            if (scrollContainer) {
-                scrollContainer.addEventListener('scroll', preventScrollContainer, { passive: false });
-                scrollContainer.addEventListener('touchmove', preventTouchMoveContainer, { passive: false });
-                scrollContainer.addEventListener('wheel', preventWheelContainer, { passive: false });
+            // Re-enable pointer events ONLY on the game container
+            if (gameContainer) {
+                gameContainer.style.pointerEvents = 'auto';
             }
-            window.addEventListener('scroll', preventScroll, { passive: false });
-            window.addEventListener('touchmove', preventAllTouchMove, { passive: false });
         }
         
         function preventScrollContainer(e) {
             if (isInteractingWithGame && scrollContainer) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
                 scrollContainer.scrollTop = savedScrollY;
+                return false;
             }
         }
         
@@ -7586,6 +7599,8 @@
             if (isInteractingWithGame) {
                 e.preventDefault();
                 e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
             }
         }
         
@@ -7593,19 +7608,24 @@
             if (isInteractingWithGame) {
                 e.preventDefault();
                 e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
             }
         }
         
         function preventScroll(e) {
             if (isInteractingWithGame) {
                 e.preventDefault();
-                window.scrollTo(0, savedScrollY);
+                e.stopPropagation();
+                return false;
             }
         }
         
         function preventAllTouchMove(e) {
             if (isInteractingWithGame) {
                 e.preventDefault();
+                e.stopPropagation();
+                return false;
             }
         }
         
@@ -7615,31 +7635,39 @@
             if (isInteractingWithGame || !isScrollLocked) return;
             isScrollLocked = false;
             
-            // Remove event listeners
-            if (scrollContainer) {
-                scrollContainer.removeEventListener('scroll', preventScrollContainer);
-                scrollContainer.removeEventListener('touchmove', preventTouchMoveContainer);
-                scrollContainer.removeEventListener('wheel', preventWheelContainer);
-            }
-            window.removeEventListener('scroll', preventScroll);
-            window.removeEventListener('touchmove', preventAllTouchMove);
-            
             // Clear inline styles on scroll-container - let CSS defaults take over
             if (scrollContainer) {
+                // Clear position fixed styles
+                scrollContainer.style.position = '';
+                scrollContainer.style.top = '';
+                scrollContainer.style.left = '';
+                scrollContainer.style.right = '';
+                scrollContainer.style.bottom = '';
                 scrollContainer.style.overflow = '';
                 scrollContainer.style.touchAction = '';
                 scrollContainer.style.overscrollBehavior = '';
                 scrollContainer.style.scrollSnapType = '';
                 scrollContainer.style.webkitScrollSnapType = '';
-                // Restore position
+                scrollContainer.style.pointerEvents = '';
+                // Restore scroll position
                 scrollContainer.scrollTop = savedScrollY;
             }
             
             // Clear html/body inline styles
             document.documentElement.style.overflow = '';
             document.documentElement.style.touchAction = '';
+            document.documentElement.style.position = '';
+            document.documentElement.style.width = '';
             document.body.style.overflow = '';
             document.body.style.touchAction = '';
+            document.body.style.position = '';
+            document.body.style.width = '';
+            document.body.style.top = '';
+            
+            // Reset game container pointer events
+            if (gameContainer) {
+                gameContainer.style.pointerEvents = '';
+            }
         }
         
         // TOUCH EVENTS - Capture phase for maximum control
@@ -7685,7 +7713,26 @@
             }
         }, { passive: true, capture: true });
         
-        // MOUSE WHEEL - Prevent scroll when over game
+        // MOUSE WHEEL - Prevent scroll when over game - window level for earliest interception
+        window.addEventListener('wheel', function(e) {
+            if (isInteractingWithGame || isScrollLocked) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                return false;
+            }
+        }, { passive: false, capture: true });
+        
+        // SCROLL EVENT - Catch any scroll that leaks through and reset position
+        window.addEventListener('scroll', function(e) {
+            if (isInteractingWithGame || isScrollLocked) {
+                e.preventDefault();
+                window.scrollTo(0, 0);
+                return false;
+            }
+        }, { passive: false, capture: true });
+        
+        // MOUSE WHEEL - Prevent scroll when over game - document level backup
         document.addEventListener('wheel', function(e) {
             if (isInteractingWithGame || isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
                 e.preventDefault();
