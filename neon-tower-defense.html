@@ -1739,6 +1739,42 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
+        // Base canvas dimensions (before any scaling)
+        const BASE_WIDTH = 640;
+        const BASE_HEIGHT = 480;
+        
+        // Fullscreen pixel density scaling
+        let currentScale = 1;
+        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        
+        function handleFullscreenChange() {
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            
+            if (isFullscreen && isDesktop) {
+                // Scale up for higher pixel density in fullscreen
+                const dpr = window.devicePixelRatio || 1;
+                currentScale = Math.min(dpr, 2); // Cap at 2x to avoid performance issues
+                
+                canvas.width = BASE_WIDTH * currentScale;
+                canvas.height = BASE_HEIGHT * currentScale;
+                canvas.style.width = BASE_WIDTH + 'px';
+                canvas.style.height = BASE_HEIGHT + 'px';
+                ctx.scale(currentScale, currentScale);
+            } else {
+                // Restore normal resolution
+                currentScale = 1;
+                canvas.width = BASE_WIDTH;
+                canvas.height = BASE_HEIGHT;
+                canvas.style.width = '';
+                canvas.style.height = '';
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            }
+        }
+        
+        // Listen for fullscreen changes
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        
         // Constants
         const MAX_PARTICLES = 200;
         const TARGET_FPS = 60;
@@ -1855,7 +1891,7 @@
             buff: {
                 name: 'Buff Tower',
                 cost: 200,
-                range: 100,
+                range: 80,
                 damage: 0,
                 fireRate: 0,
                 color: '#ff88ff',
@@ -2206,8 +2242,9 @@
         // Get canvas coordinates accounting for scaling
         function getCanvasCoords(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
+            // Always return coordinates in base dimensions (game logic space)
+            const scaleX = BASE_WIDTH / rect.width;
+            const scaleY = BASE_HEIGHT / rect.height;
             return {
                 x: (clientX - rect.left) * scaleX,
                 y: (clientY - rect.top) * scaleY
@@ -2434,7 +2471,12 @@
             const dy = nextPoint.y - currentPoint.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
-            enemy.pathProgress += (enemy.speed * speedMult * dt) / dist;
+            // Store normalized velocity for lead prediction
+            const actualSpeed = enemy.speed * speedMult;
+            enemy.vx = (dx / dist) * actualSpeed;
+            enemy.vy = (dy / dist) * actualSpeed;
+            
+            enemy.pathProgress += (actualSpeed * dt) / dist;
             
             if (enemy.pathProgress >= 1) {
                 enemy.pathIndex++;
@@ -2572,7 +2614,7 @@
             }
             
             // Check bounds - minimal margins since towers are small (14px radius)
-            if (x < 15 || x > canvas.width - 15 || y < 15 || y > canvas.height - 15) return false;
+            if (x < 15 || x > BASE_WIDTH - 15 || y < 15 || y > BASE_HEIGHT - 15) return false;
             
             return true;
         }
@@ -2686,8 +2728,25 @@
         function fireProjectile(tower, target) {
             const def = TOWERS[tower.type];
             const upgrades = tower.upgrades || getTowerUpgrades(tower.type);
-            const dx = target.x - tower.x;
-            const dy = target.y - tower.y;
+            
+            // Calculate lead prediction for moving targets
+            let targetX = target.x;
+            let targetY = target.y;
+            
+            // If enemy is moving, predict where they'll be
+            if (target.vx !== undefined && target.vy !== undefined) {
+                const dx = target.x - tower.x;
+                const dy = target.y - tower.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const timeToHit = dist / def.projectileSpeed;
+                
+                // Predict position (with a small multiplier to slightly over-lead)
+                targetX = target.x + target.vx * timeToHit * 0.8;
+                targetY = target.y + target.vy * timeToHit * 0.8;
+            }
+            
+            const dx = targetX - tower.x;
+            const dy = targetY - tower.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
             if (dist === 0) return;
@@ -2728,7 +2787,7 @@
             }
             
             // Check bounds
-            if (proj.x < -20 || proj.x > canvas.width + 20 || proj.y < -20 || proj.y > canvas.height + 20) {
+            if (proj.x < -20 || proj.x > BASE_WIDTH + 20 || proj.y < -20 || proj.y > BASE_HEIGHT + 20) {
                 proj.alive = false;
                 return;
             }
@@ -2742,7 +2801,11 @@
                 const dy = enemy.y - proj.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 
-                if (dist < enemy.size + 5) {
+                // Larger hitbox for fast projectiles (speed > 10) to prevent tunneling
+                const projSpeed = Math.sqrt(proj.vx * proj.vx + proj.vy * proj.vy);
+                const hitRadius = enemy.size + (projSpeed > 10 ? 8 : 5);
+                
+                if (dist < hitRadius) {
                     const isCrit = Math.random() < permUpgrades.critChance;
                     const damage = isCrit ? proj.damage * 2 : proj.damage;
                     const towerDef = TOWERS[proj.type];
@@ -3482,7 +3545,7 @@
         // ========== RENDERING ==========
         function render() {
             ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             
             drawPath();
             drawTowers();
