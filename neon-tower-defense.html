@@ -564,6 +564,7 @@
         /* Shop button */
         #shopBtn {
             padding: 10px 15px;
+            min-width: 110px;
             background: transparent;
             border: 2px solid #00ff88;
             border-radius: 6px;
@@ -1994,6 +1995,7 @@
             enemies = [];
             projectiles = [];
             particles = [];
+            splashRings = [];
             waveInProgress = false;
             selectedTower = null;
             gamePaused = false;
@@ -2097,6 +2099,9 @@
                     particles.splice(i, 1);
                 }
             }
+            
+            // Update splash rings
+            updateSplashRings(dt);
         }
 
         // ========== ENEMY SYSTEM ==========
@@ -2400,6 +2405,9 @@
             const buffBonus = tower.buffBonus || 0;
             const damageMultiplier = upgrades.damage || 1;
             
+            // Tower firing pulse effect
+            tower.lastFired = performance.now();
+            
             projectiles.push({
                 x: tower.x,
                 y: tower.y,
@@ -2414,13 +2422,20 @@
                 hitEnemies: [],
                 splashMult: upgrades.splash || 1,
                 poisonMult: upgrades.poison || 1,
-                slowMult: upgrades.slow || 1
+                slowMult: upgrades.slow || 1,
+                trail: [{x: tower.x, y: tower.y}]
             });
         }
 
         function updateProjectile(proj, dt) {
             proj.x += proj.vx * dt;
             proj.y += proj.vy * dt;
+            
+            // Update trail (keep last 6 positions for performance)
+            if (proj.trail) {
+                proj.trail.push({x: proj.x, y: proj.y});
+                if (proj.trail.length > 6) proj.trail.shift();
+            }
             
             // Check bounds
             if (proj.x < -20 || proj.x > canvas.width + 20 || proj.y < -20 || proj.y > canvas.height + 20) {
@@ -2455,6 +2470,7 @@
                             }
                         }
                         createParticles(proj.x, proj.y, proj.color, 20);
+                        createSplashRing(proj.x, proj.y, proj.color, splashRadius);
                     } else if (proj.chainCount > 0) {
                         // Chain projectile - damage and bounce to next enemy
                         damageEnemy(enemy, damage, isCrit);
@@ -3172,6 +3188,7 @@
             drawTowers();
             drawEnemies();
             drawProjectiles();
+            drawSplashRings();
             drawParticles();
             
             if (selectedTower && !waveInProgress) {
@@ -3241,6 +3258,7 @@
         }
 
         function drawTowers() {
+            const now = performance.now();
             for (const tower of towers) {
                 const def = TOWERS[tower.type];
                 
@@ -3255,32 +3273,73 @@
                     ctx.stroke();
                 }
                 
+                // Firing pulse effect
+                const timeSinceFired = now - (tower.lastFired || 0);
+                const pulseActive = timeSinceFired < 150;
+                const pulseScale = pulseActive ? 1 + (1 - timeSinceFired / 150) * 0.3 : 1;
+                const pulseGlow = pulseActive ? 20 + (1 - timeSinceFired / 150) * 15 : 10;
+                
                 // Tower base
                 ctx.fillStyle = '#1a1a1a';
                 ctx.strokeStyle = def.color;
                 ctx.lineWidth = 2;
                 ctx.shadowColor = def.color;
-                ctx.shadowBlur = 10;
+                ctx.shadowBlur = pulseGlow;
                 ctx.beginPath();
-                ctx.arc(tower.x, tower.y, 14, 0, Math.PI * 2);
+                ctx.arc(tower.x, tower.y, 14 * pulseScale, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.stroke();
                 
-                // Tower center
+                // Tower center with pulse
                 ctx.fillStyle = def.color;
                 ctx.beginPath();
-                ctx.arc(tower.x, tower.y, 6, 0, Math.PI * 2);
+                ctx.arc(tower.x, tower.y, 6 * pulseScale, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Laser beam
+                // Inner bright core
+                if (pulseActive) {
+                    ctx.fillStyle = '#fff';
+                    ctx.globalAlpha = 1 - timeSinceFired / 150;
+                    ctx.beginPath();
+                    ctx.arc(tower.x, tower.y, 3 * pulseScale, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+                
+                // Enhanced laser beam with pulsing layers
                 if (def.isBeam && tower.target && tower.target.alive) {
+                    const beamPulse = 0.7 + Math.sin(now / 50) * 0.3;
+                    
+                    // Outer glow beam
                     ctx.strokeStyle = def.color;
-                    ctx.lineWidth = 3;
-                    ctx.shadowBlur = 15;
+                    ctx.globalAlpha = 0.3;
+                    ctx.lineWidth = 8 * beamPulse;
+                    ctx.shadowBlur = 20;
                     ctx.beginPath();
                     ctx.moveTo(tower.x, tower.y);
                     ctx.lineTo(tower.target.x, tower.target.y);
                     ctx.stroke();
+                    
+                    // Middle beam
+                    ctx.globalAlpha = 0.6;
+                    ctx.lineWidth = 4 * beamPulse;
+                    ctx.shadowBlur = 12;
+                    ctx.beginPath();
+                    ctx.moveTo(tower.x, tower.y);
+                    ctx.lineTo(tower.target.x, tower.target.y);
+                    ctx.stroke();
+                    
+                    // Core beam (bright)
+                    ctx.strokeStyle = '#fff';
+                    ctx.globalAlpha = 0.9;
+                    ctx.lineWidth = 2;
+                    ctx.shadowBlur = 5;
+                    ctx.beginPath();
+                    ctx.moveTo(tower.x, tower.y);
+                    ctx.lineTo(tower.target.x, tower.target.y);
+                    ctx.stroke();
+                    
+                    ctx.globalAlpha = 1;
                 }
                 
                 ctx.shadowBlur = 0;
@@ -3301,11 +3360,29 @@
                 if (isPoisoned) color = '#44ff44';
                 if (isSlowed && isPoisoned) color = '#00ffaa';
                 
+                // Status effect outer glow
+                if (isSlowed || isPoisoned) {
+                    const pulse = 0.5 + Math.sin(now / 100) * 0.3;
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.3 * pulse;
+                    ctx.beginPath();
+                    ctx.arc(enemy.x, enemy.y, enemy.size * 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+                
                 ctx.fillStyle = color;
                 ctx.shadowColor = enemy.color;
                 ctx.shadowBlur = 12;
                 ctx.beginPath();
                 ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner highlight
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(enemy.x - enemy.size * 0.3, enemy.y - enemy.size * 0.3, enemy.size * 0.35, 0, Math.PI * 2);
                 ctx.fill();
                 
                 // Health bar
@@ -3314,7 +3391,6 @@
                     const barHeight = 4;
                     const healthPct = enemy.health / enemy.maxHealth;
                     
-                    ctx.shadowBlur = 0;
                     ctx.fillStyle = '#333';
                     ctx.fillRect(enemy.x - barWidth / 2, enemy.y - enemy.size - 10, barWidth, barHeight);
                     
@@ -3327,12 +3403,45 @@
         }
 
         function drawProjectiles() {
-            ctx.shadowBlur = 8;
             for (const proj of projectiles) {
-                ctx.fillStyle = proj.color;
+                // Draw trail
+                if (proj.trail && proj.trail.length > 1) {
+                    ctx.lineCap = 'round';
+                    for (let i = 1; i < proj.trail.length; i++) {
+                        const alpha = i / proj.trail.length * 0.6;
+                        const width = (i / proj.trail.length) * 4;
+                        ctx.strokeStyle = proj.color;
+                        ctx.globalAlpha = alpha;
+                        ctx.lineWidth = width;
+                        ctx.beginPath();
+                        ctx.moveTo(proj.trail[i-1].x, proj.trail[i-1].y);
+                        ctx.lineTo(proj.trail[i].x, proj.trail[i].y);
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+                }
+                
+                // Outer glow
                 ctx.shadowColor = proj.color;
+                ctx.shadowBlur = 12;
+                ctx.fillStyle = proj.color;
+                ctx.globalAlpha = 0.4;
+                ctx.beginPath();
+                ctx.arc(proj.x, proj.y, 7, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Main projectile
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 8;
                 ctx.beginPath();
                 ctx.arc(proj.x, proj.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Bright center
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(proj.x, proj.y, 2, 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.shadowBlur = 0;
@@ -3345,12 +3454,28 @@
                     ctx.font = `bold ${p.size}px Arial`;
                     ctx.fillStyle = p.color;
                     ctx.textAlign = 'center';
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 8;
                     ctx.fillText(p.text, p.x, p.y);
-                } else {
-                    ctx.fillStyle = p.color;
+                    ctx.shadowBlur = 0;
+                } else if (p.type === 'spark') {
+                    // Bright spark with glow
+                    ctx.fillStyle = '#fff';
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 6;
                     ctx.beginPath();
                     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                     ctx.fill();
+                    ctx.shadowBlur = 0;
+                } else {
+                    // Regular particle with subtle glow
+                    ctx.fillStyle = p.color;
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 4;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
                 }
             }
             ctx.globalAlpha = 1;
@@ -3390,18 +3515,67 @@
                 const angle = Math.random() * Math.PI * 2;
                 const speed = 1 + Math.random() * 3;
                 const life = 400 + Math.random() * 400;
+                const type = Math.random() > 0.7 ? 'spark' : 'normal';
                 particles.push({
                     x: x,
                     y: y,
                     vx: Math.cos(angle) * speed,
                     vy: Math.sin(angle) * speed,
-                    size: 2 + Math.random() * 4,
+                    size: type === 'spark' ? 1 + Math.random() * 2 : 2 + Math.random() * 4,
                     color: color,
                     life: life,
                     maxLife: life,
-                    alpha: 1
+                    alpha: 1,
+                    type: type
                 });
             }
+        }
+        
+        // Splash ring effects array
+        let splashRings = [];
+        
+        function createSplashRing(x, y, color, maxRadius) {
+            splashRings.push({
+                x: x,
+                y: y,
+                color: color,
+                radius: 5,
+                maxRadius: maxRadius,
+                alpha: 1
+            });
+        }
+        
+        function updateSplashRings(dt) {
+            for (let i = splashRings.length - 1; i >= 0; i--) {
+                const ring = splashRings[i];
+                ring.radius += dt * 150;
+                ring.alpha = 1 - (ring.radius / ring.maxRadius);
+                if (ring.radius >= ring.maxRadius) {
+                    splashRings.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawSplashRings() {
+            for (const ring of splashRings) {
+                ctx.strokeStyle = ring.color;
+                ctx.lineWidth = 3;
+                ctx.globalAlpha = ring.alpha * 0.7;
+                ctx.shadowColor = ring.color;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
+                ctx.stroke();
+                
+                // Inner ring
+                ctx.lineWidth = 1;
+                ctx.globalAlpha = ring.alpha * 0.4;
+                ctx.beginPath();
+                ctx.arc(ring.x, ring.y, ring.radius * 0.6, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
         }
 
         function createDamageNumber(x, y, damage, isCrit) {
