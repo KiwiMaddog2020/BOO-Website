@@ -4872,11 +4872,10 @@
             border: none !important;
             background: #000 !important;
             z-index: 99999 !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
+            display: block !important;
             margin: 0 !important;
             padding: 0 !important;
+            overflow: hidden !important;
         }
         
         .game-container.pseudo-fullscreen .game-fullscreen-btn {
@@ -4894,37 +4893,38 @@
             pointer-events: none !important;
         }
         
-        /* Mobile Safari pseudo-fullscreen fix - align to top, adjust close button */
+        /* Mobile pseudo-fullscreen close button positioning */
         @media (max-width: 768px) {
-            .game-container.pseudo-fullscreen {
-                align-items: flex-start !important;
-                padding-top: 52px !important;
-            }
-            
             .game-container.pseudo-fullscreen .game-fullscreen-btn {
-                top: 42px !important;
+                top: 48px !important;
                 right: 12px !important;
-            }
-            
-            .game-container.pseudo-fullscreen iframe {
-                margin-top: 0 !important;
             }
         }
         
-        /* iPad pseudo-fullscreen support */
-        @media (min-width: 769px) and (max-width: 1400px) {
-            .game-container.pseudo-fullscreen {
-                align-items: flex-start !important;
-                justify-content: center !important;
-                padding: 20px !important;
+        /* Phone landscape mode */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .game-container.pseudo-fullscreen .game-fullscreen-btn {
+                top: 10px !important;
+                right: 10px !important;
             }
-            
+        }
+        
+        /* Tablet pseudo-fullscreen close button */
+        @media (min-width: 769px) and (max-width: 1400px) {
             .game-container.pseudo-fullscreen .game-fullscreen-btn {
                 top: 25px !important;
                 right: 25px !important;
                 width: 50px !important;
                 height: 50px !important;
                 font-size: 26px !important;
+            }
+        }
+        
+        /* Tablet landscape mode */
+        @media (min-width: 769px) and (max-width: 1400px) and (orientation: landscape) {
+            .game-container.pseudo-fullscreen .game-fullscreen-btn {
+                top: 15px !important;
+                right: 15px !important;
             }
         }
         
@@ -7886,33 +7886,19 @@
                     musicPlayer.style.pointerEvents = 'none';
                 }
                 
-                // Apply fullscreen sizing with device-appropriate padding
+                // Calculate sizing based on available viewport
+                resizePseudoFullscreen();
+            }
+            
+            function resizePseudoFullscreen() {
+                if (!pseudoFullscreen) return;
+                
                 const screenW = window.innerWidth;
                 const screenH = window.innerHeight;
+                const isLandscape = screenW > screenH;
+                const isPhone = Math.min(screenW, screenH) < 500;
                 
-                // Detect device type for padding adjustments
-                const isTablet = screenW >= 768 && screenW <= 1400;
-                const isPhone = screenW < 768;
-                
-                // Apply padding based on device
-                let paddingTop, paddingBottom, paddingSide;
-                if (isPhone) {
-                    paddingTop = 52;
-                    paddingBottom = 10;
-                    paddingSide = 0;
-                } else if (isTablet) {
-                    paddingTop = 20;
-                    paddingBottom = 20;
-                    paddingSide = 20;
-                } else {
-                    paddingTop = 10;
-                    paddingBottom = 10;
-                    paddingSide = 10;
-                }
-                
-                const availableW = screenW - (paddingSide * 2);
-                const availableH = screenH - paddingTop - paddingBottom;
-                
+                // Get game aspect ratio from active pill
                 const activePill = document.querySelector('.arcade-pill.active');
                 const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
                 const aspectParts = aspectStr.split('/');
@@ -7920,27 +7906,53 @@
                 const aspectH = parseFloat(aspectParts[1]) || 773;
                 const gameAspect = aspectW / aspectH;
                 
+                // Safe area padding - more on phones, less on tablets
+                let paddingTop, paddingBottom, paddingHoriz;
+                if (isPhone) {
+                    paddingTop = isLandscape ? 10 : 55;
+                    paddingBottom = isLandscape ? 10 : 15;
+                    paddingHoriz = isLandscape ? 50 : 5;
+                } else {
+                    // Tablet
+                    paddingTop = 25;
+                    paddingBottom = 25;
+                    paddingHoriz = 25;
+                }
+                
+                // Calculate available space
+                const availW = screenW - (paddingHoriz * 2);
+                const availH = screenH - paddingTop - paddingBottom;
+                
+                // Fit game maintaining aspect ratio
                 let targetW, targetH;
-                if (availableW / availableH > gameAspect) {
-                    // Height constrained
-                    targetH = availableH;
+                if (availW / availH > gameAspect) {
+                    // Height constrained - fit to height
+                    targetH = availH;
                     targetW = targetH * gameAspect;
                 } else {
-                    // Width constrained
-                    targetW = availableW;
+                    // Width constrained - fit to width
+                    targetW = availW;
                     targetH = targetW / gameAspect;
                 }
                 
-                const leftPos = (screenW - targetW) / 2;
-                const topPos = paddingTop + (availableH - targetH) / 2;
+                // Ensure we don't exceed available space
+                targetW = Math.min(targetW, availW);
+                targetH = Math.min(targetH, availH);
                 
+                // Center horizontally, position from top
+                const leftPos = (screenW - targetW) / 2;
+                const topPos = paddingTop + (availH - targetH) / 2;
+                
+                // Apply styles
                 arcadeFrameFS.style.position = 'absolute';
-                arcadeFrameFS.style.width = targetW + 'px';
-                arcadeFrameFS.style.height = targetH + 'px';
-                arcadeFrameFS.style.top = topPos + 'px';
-                arcadeFrameFS.style.left = leftPos + 'px';
+                arcadeFrameFS.style.width = Math.floor(targetW) + 'px';
+                arcadeFrameFS.style.height = Math.floor(targetH) + 'px';
+                arcadeFrameFS.style.top = Math.floor(topPos) + 'px';
+                arcadeFrameFS.style.left = Math.floor(leftPos) + 'px';
                 arcadeFrameFS.style.transform = 'none';
                 arcadeFrameFS.style.border = 'none';
+                arcadeFrameFS.style.maxWidth = '100vw';
+                arcadeFrameFS.style.maxHeight = '100vh';
             }
             
             function exitPseudoFullscreen() {
@@ -8046,7 +8058,15 @@
                 }
                 // Handle pseudo-fullscreen resize (iOS and tablets)
                 if (pseudoFullscreen) {
-                    enterPseudoFullscreen(); // Recalculate sizing
+                    resizePseudoFullscreen();
+                }
+            });
+            
+            // Handle orientation changes for tablets/phones
+            window.addEventListener('orientationchange', function() {
+                if (pseudoFullscreen) {
+                    // Small delay to let the browser settle after rotation
+                    setTimeout(resizePseudoFullscreen, 100);
                 }
             });
             
