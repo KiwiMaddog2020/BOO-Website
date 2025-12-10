@@ -27,7 +27,9 @@
         body {
             display: flex;
             justify-content: center;
-            align-items: flex-start;
+            align-items: center;
+            min-height: 100vh;
+            min-height: 100dvh; /* Dynamic viewport height for mobile */
             background: #0a0a0a;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             -webkit-user-select: none;
@@ -42,8 +44,7 @@
             gap: 2px;
             padding: 4px;
             width: fit-content;
-            height: fit-content;
-            max-width: 100%;
+            max-width: calc(100vw - 10px);
             border: 3px solid #0ff;
             box-shadow: 0 0 15px #0ff, inset 0 0 10px rgba(0, 255, 255, 0.1);
             border-radius: 3px;
@@ -556,12 +557,33 @@
 
         // Grid settings - responsive
         const GRID_COUNT = 20;
-        const CANVAS_SIZE = 640; // Match brickbreaker width
-        const GRID_SIZE = CANVAS_SIZE / GRID_COUNT; // 32px per cell
+        const BASE_CANVAS_SIZE = 640; // Desktop target size
+        let CANVAS_SIZE = BASE_CANVAS_SIZE;
+        let GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
 
         // Fullscreen pixel density scaling
         let currentScale = 1;
         const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        
+        // Calculate optimal canvas size based on device width
+        function calculateCanvasSize() {
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const isMobile = viewportWidth <= 768 || 'ontouchstart' in window;
+            
+            if (isMobile) {
+                // Mobile: fit to screen width with padding
+                const padding = 20; // Account for container padding/border
+                const maxWidth = viewportWidth - padding;
+                const maxHeight = viewportHeight - 200; // Leave room for HUD, controls, touch zone
+                const size = Math.min(maxWidth, maxHeight, BASE_CANVAS_SIZE);
+                // Round to nearest multiple of GRID_COUNT for crisp grid lines
+                return Math.floor(size / GRID_COUNT) * GRID_COUNT;
+            } else {
+                // Desktop: use full base size
+                return BASE_CANVAS_SIZE;
+            }
+        }
         
         function handleFullscreenChange() {
             const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
@@ -569,7 +591,7 @@
             if (isFullscreen && isDesktop) {
                 // Scale up for higher pixel density in fullscreen
                 const dpr = window.devicePixelRatio || 1;
-                currentScale = Math.min(dpr, 2); // Cap at 2x to avoid performance issues
+                currentScale = Math.min(dpr, 2);
                 
                 canvas.width = CANVAS_SIZE * currentScale;
                 canvas.height = CANVAS_SIZE * currentScale;
@@ -577,16 +599,11 @@
                 canvas.style.height = CANVAS_SIZE + 'px';
                 ctx.scale(currentScale, currentScale);
             } else {
-                // Restore normal resolution
+                // Restore to current calculated size
                 currentScale = 1;
-                canvas.width = CANVAS_SIZE;
-                canvas.height = CANVAS_SIZE;
-                canvas.style.width = '';
-                canvas.style.height = '';
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                resizeCanvas();
             }
             
-            // Redraw if game isn't running
             if (!gameRunning) {
                 draw();
             }
@@ -596,16 +613,27 @@
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
-        // Set fixed canvas size (like brickbreaker)
+        // Responsive canvas sizing
         function resizeCanvas() {
+            const newSize = calculateCanvasSize();
+            CANVAS_SIZE = newSize;
+            GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
+            
             canvas.width = CANVAS_SIZE;
             canvas.height = CANVAS_SIZE;
+            canvas.style.width = CANVAS_SIZE + 'px';
+            canvas.style.height = CANVAS_SIZE + 'px';
             
-            // Redraw if game isn't running
             if (!gameRunning) {
                 draw();
             }
         }
+        
+        // Resize on orientation change and window resize
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(resizeCanvas, 100); // Delay for orientation to settle
+        });
         
         // Game state
         let snake = [];
