@@ -13,6 +13,12 @@
             box-sizing: border-box;
         }
 
+        :root {
+            --scale: 1;
+            --canvas-width: 640px;
+            --canvas-height: 560px;
+        }
+
         html, body {
             overflow: hidden;
             touch-action: none;
@@ -28,6 +34,8 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            min-height: 100vh;
+            min-height: 100dvh; /* Dynamic viewport height for mobile */
             background: #0a0a0a;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             -webkit-user-select: none;
@@ -43,12 +51,10 @@
             padding: 3px;
             width: fit-content;
             max-width: calc(100vw - 10px);
-            touch-action: none;
             border: 3px solid #0ff;
             box-shadow: 0 0 15px #0ff, inset 0 0 10px rgba(0, 255, 255, 0.1);
             border-radius: 8px;
             background: #0a0a0a;
-            margin: auto;
         }
 
         #gameCanvas {
@@ -1958,9 +1964,70 @@
         const BASE_WIDTH = 640;
         const BASE_HEIGHT = 560;
         
-        // Fullscreen pixel density scaling
+        // Current canvas dimensions (may change on resize)
+        let CANVAS_WIDTH = BASE_WIDTH;
+        let CANVAS_HEIGHT = BASE_HEIGHT;
+        
+        // Scaling
         let currentScale = 1;
         const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        
+        function calculateCanvasSize() {
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const isMobile = viewportWidth <= 768 || 'ontouchstart' in window;
+            
+            if (isMobile) {
+                // Mobile: fit to screen with padding
+                const padding = 20;
+                const maxWidth = viewportWidth - padding;
+                const maxHeight = viewportHeight - 180; // Leave room for HUD and controls
+                
+                // Maintain aspect ratio
+                const aspectRatio = BASE_WIDTH / BASE_HEIGHT;
+                let width = maxWidth;
+                let height = width / aspectRatio;
+                
+                if (height > maxHeight) {
+                    height = maxHeight;
+                    width = height * aspectRatio;
+                }
+                
+                // Don't exceed base size
+                width = Math.min(width, BASE_WIDTH);
+                height = Math.min(height, BASE_HEIGHT);
+                
+                return { width: Math.floor(width), height: Math.floor(height) };
+            } else {
+                // Desktop: use full base size
+                return { width: BASE_WIDTH, height: BASE_HEIGHT };
+            }
+        }
+        
+        function resizeCanvas() {
+            const size = calculateCanvasSize();
+            CANVAS_WIDTH = size.width;
+            CANVAS_HEIGHT = size.height;
+            
+            canvas.width = CANVAS_WIDTH;
+            canvas.height = CANVAS_HEIGHT;
+            canvas.style.width = CANVAS_WIDTH + 'px';
+            canvas.style.height = CANVAS_HEIGHT + 'px';
+            
+            // Calculate scale factor relative to base size
+            const scale = CANVAS_WIDTH / BASE_WIDTH;
+            currentScale = scale;
+            
+            // Scale context so all drawing uses BASE_WIDTH/BASE_HEIGHT coordinates
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+            ctx.scale(scale, scale);
+            
+            // Update CSS custom properties for proportional UI scaling
+            const root = document.documentElement;
+            root.style.setProperty('--scale', scale);
+            root.style.setProperty('--canvas-width', CANVAS_WIDTH + 'px');
+            root.style.setProperty('--canvas-height', CANVAS_HEIGHT + 'px');
+        }
         
         function handleFullscreenChange() {
             const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
@@ -1968,27 +2035,33 @@
             if (isFullscreen && isDesktop) {
                 // Scale up for higher pixel density in fullscreen
                 const dpr = window.devicePixelRatio || 1;
-                currentScale = Math.min(dpr, 2); // Cap at 2x to avoid performance issues
+                const hiDpiScale = Math.min(dpr, 2);
                 
-                canvas.width = BASE_WIDTH * currentScale;
-                canvas.height = BASE_HEIGHT * currentScale;
+                canvas.width = BASE_WIDTH * hiDpiScale;
+                canvas.height = BASE_HEIGHT * hiDpiScale;
                 canvas.style.width = BASE_WIDTH + 'px';
                 canvas.style.height = BASE_HEIGHT + 'px';
-                ctx.scale(currentScale, currentScale);
+                ctx.scale(hiDpiScale, hiDpiScale);
+                currentScale = 1; // Drawing scale stays 1, canvas is hi-dpi
             } else {
-                // Restore normal resolution
-                currentScale = 1;
-                canvas.width = BASE_WIDTH;
-                canvas.height = BASE_HEIGHT;
-                canvas.style.width = '';
-                canvas.style.height = '';
+                // Restore to current calculated size
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
+                resizeCanvas();
             }
         }
         
         // Listen for fullscreen changes
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        
+        // Resize on orientation change and window resize
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => {
+            setTimeout(resizeCanvas, 100); // Delay for orientation to settle
+        });
+        
+        // Initial resize
+        resizeCanvas();
         
         // Constants
         const MAX_PARTICLES = 200;
