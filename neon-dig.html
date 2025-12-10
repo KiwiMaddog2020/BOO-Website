@@ -9,6 +9,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;600;700;800&family=Exo+2:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    
     <style>
         :root {
             --cyan: #00f0ff;
@@ -642,6 +647,20 @@
     <script>
     (function() {
         'use strict';
+        
+        // ==================== FIREBASE INITIALIZATION ====================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCDod9eY_pubWR02GohtHK6M3O2IzLOVKs",
+            authDomain: "bunch-of-others-games.firebaseapp.com",
+            projectId: "bunch-of-others-games",
+            storageBucket: "bunch-of-others-games.firebasestorage.app",
+            messagingSenderId: "421079709042",
+            appId: "1:421079709042:web:17105e8dac21669e9e4f36"
+        };
+        
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const SCORES_COLLECTION = 'neondig_scores';
         
         // ==================== CONSTANTS ====================
         const TILE_SIZE = 28;
@@ -2557,6 +2576,9 @@
             finalScoreEl.textContent = `${score} pts • ${depth}m`;
             scoreModal.classList.add('active');
             usernameInput.value = '';
+            scoreError.textContent = '';
+            submitScoreBtn.disabled = false;
+            submitScoreBtn.textContent = 'SAVE';
             setTimeout(() => usernameInput.focus(), 100);
         }
         
@@ -2572,28 +2594,45 @@
             buttonContainer.style.display = '';
         }
         
-        function saveLocalScore(name, scoreVal, depthVal) {
+        // ==================== FIREBASE SCORE SYSTEM ====================
+        async function saveScoreToFirebase(name, scoreVal, depthVal) {
             try {
-                const scores = JSON.parse(localStorage.getItem('neon_dig_scores') || '[]');
-                scores.push({ name: name, score: scoreVal, depth: depthVal, timestamp: Date.now() });
-                scores.sort((a, b) => b.score - a.score);
-                localStorage.setItem('neon_dig_scores', JSON.stringify(scores.slice(0, 100)));
+                await db.collection(SCORES_COLLECTION).add({
+                    name: name,
+                    score: scoreVal,
+                    depth: depthVal,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                return true;
             } catch (e) {
-                console.warn('Failed to save score:', e);
+                console.error('Failed to save score to Firebase:', e);
+                return false;
             }
         }
         
-        function getLocalScores() {
+        async function getFirebaseScores() {
             try {
-                return JSON.parse(localStorage.getItem('neon_dig_scores') || '[]');
+                const snapshot = await db.collection(SCORES_COLLECTION)
+                    .orderBy('score', 'desc')
+                    .limit(50)
+                    .get();
+                
+                return snapshot.docs.map(doc => ({
+                    name: doc.data().name,
+                    score: doc.data().score,
+                    depth: doc.data().depth || 0
+                }));
             } catch (e) {
+                console.error('Failed to fetch scores:', e);
                 return [];
             }
         }
         
-        function showLeaderboard() {
+        async function showLeaderboard() {
             leaderboardOverlay.classList.add('active');
-            const scores = getLocalScores();
+            leaderboardList.innerHTML = '<div style="text-align: center; color: rgba(255,255,255,0.4); padding: 40px 20px; font-size: 13px;">Loading scores...</div>';
+            
+            const scores = await getFirebaseScores();
             
             if (scores.length === 0) {
                 leaderboardList.innerHTML = '<div style="text-align: center; color: rgba(255,255,255,0.4); padding: 40px 20px; font-size: 13px;">No scores yet.<br><br>Start digging!</div>';
@@ -2650,14 +2689,29 @@
         });
         
         // ==================== EVENT LISTENERS ====================
-        submitScoreBtn.addEventListener('click', () => {
+        submitScoreBtn.addEventListener('click', async () => {
             const name = usernameInput.value.trim();
             if (name.length < 2) {
                 scoreError.textContent = 'Name must be at least 2 characters';
                 return;
             }
-            saveLocalScore(name, score, depth);
-            hideScoreModal();
+            if (name.length > 12) {
+                scoreError.textContent = 'Name must be 12 characters or less';
+                return;
+            }
+            
+            submitScoreBtn.disabled = true;
+            submitScoreBtn.textContent = 'SAVING...';
+            
+            const success = await saveScoreToFirebase(name, score, depth);
+            
+            if (success) {
+                hideScoreModal();
+            } else {
+                scoreError.textContent = 'Failed to save score. Try again.';
+                submitScoreBtn.disabled = false;
+                submitScoreBtn.textContent = 'SAVE';
+            }
         });
         
         skipScoreBtn.addEventListener('click', hideScoreModal);
