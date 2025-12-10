@@ -656,7 +656,8 @@
         const TILE = Object.freeze({
             AIR: 0, DIRT: 1, ROCK: 2, HARD_ROCK: 3,
             GEM_COMMON: 4, GEM_RARE: 5, GEM_EPIC: 6,
-            LAVA: 7, GAS: 8, FUEL: 9
+            LAVA: 7, GAS: 8, FUEL: 9,
+            BOMB: 10, CHEST: 11, UNSTABLE: 12
         });
         
         // ==================== DOM ELEMENTS ====================
@@ -702,6 +703,20 @@
         let depthColorShift = 0;
         let globalTime = 0;
         let worldRowOffset = 0;
+        
+        // ==================== COMBO & FEVER SYSTEM ====================
+        let comboCount = 0;
+        let comboTimer = 0;
+        const COMBO_DECAY_TIME = 90; // frames (~1.5 sec at 60fps)
+        let feverMode = false;
+        let feverTimer = 0;
+        const FEVER_DURATION = 480; // frames (~8 sec)
+        const FEVER_COMBO_THRESHOLD = 8;
+        
+        // ==================== VISUAL EFFECTS ====================
+        let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
+        let speedLines = [];
+        let unstableTiles = []; // Track tiles that are about to collapse
         
         // Upgrade intervals for cleanup
         let activeRollIntervals = [];
@@ -905,48 +920,58 @@
         }
         
         function generateNormalTile(x, y, rand, depthFactor) {
-            if (rand < 0.03 + depthFactor * 0.08) return TILE.HARD_ROCK;
-            if (rand < 0.15 + depthFactor * 0.08) return TILE.ROCK;
-            if (rand < 0.20) {
+            // Rare special tiles
+            if (rand < 0.008 + depthFactor * 0.004) return TILE.CHEST; // Treasure chest
+            if (rand < 0.015 + depthFactor * 0.008) return TILE.BOMB;  // Bomb block
+            if (rand < 0.04 + depthFactor * 0.03) return TILE.UNSTABLE; // Unstable rock
+            
+            if (rand < 0.07 + depthFactor * 0.08) return TILE.HARD_ROCK;
+            if (rand < 0.18 + depthFactor * 0.08) return TILE.ROCK;
+            if (rand < 0.24) {
                 const gemRand = Math.random();
                 if (gemRand < 0.1 + depthFactor * 0.15) return TILE.GEM_EPIC;
                 if (gemRand < 0.35 + depthFactor * 0.1) return TILE.GEM_RARE;
                 return TILE.GEM_COMMON;
             }
-            if (y > 30 && rand < 0.23 + depthFactor * 0.02) {
+            if (y > 30 && rand < 0.27 + depthFactor * 0.02) {
                 return Math.random() < 0.6 ? TILE.LAVA : TILE.GAS;
             }
-            if (rand < 0.28) return TILE.FUEL;
+            if (rand < 0.32) return TILE.FUEL;
             return TILE.DIRT;
         }
         
         function generateCrystalCave(x, y, rand, depthFactor) {
             // More gems, more air pockets, less rock
-            if (rand < 0.12) return TILE.AIR; // Cave pockets
-            if (rand < 0.35) {
+            if (rand < 0.02) return TILE.CHEST; // More chests in crystal caves
+            if (rand < 0.04) return TILE.BOMB;
+            if (rand < 0.16) return TILE.AIR; // Cave pockets
+            if (rand < 0.42) {
                 const gemRand = Math.random();
                 if (gemRand < 0.15 + depthFactor * 0.2) return TILE.GEM_EPIC;
                 if (gemRand < 0.45 + depthFactor * 0.15) return TILE.GEM_RARE;
                 return TILE.GEM_COMMON;
             }
-            if (rand < 0.42) return TILE.FUEL;
-            if (rand < 0.50) return TILE.ROCK;
+            if (rand < 0.50) return TILE.FUEL;
+            if (rand < 0.58) return TILE.ROCK;
             return TILE.DIRT;
         }
         
         function generateLavaZone(x, y, rand, depthFactor) {
             // Dangerous but rewarding - more lava but also epic gems and fuel
-            if (rand < 0.25) return TILE.LAVA;
-            if (rand < 0.30) return TILE.GAS;
-            if (rand < 0.42) {
+            if (rand < 0.015) return TILE.CHEST; // Rare but valuable
+            if (rand < 0.04) return TILE.BOMB;   // Explosions in lava zone!
+            if (rand < 0.08) return TILE.UNSTABLE; // Unstable near lava
+            if (rand < 0.28) return TILE.LAVA;
+            if (rand < 0.34) return TILE.GAS;
+            if (rand < 0.48) {
                 // Higher chance of epic gems as reward for danger
                 const gemRand = Math.random();
                 if (gemRand < 0.35) return TILE.GEM_EPIC;
                 if (gemRand < 0.65) return TILE.GEM_RARE;
                 return TILE.GEM_COMMON;
             }
-            if (rand < 0.52) return TILE.FUEL; // Extra fuel to survive
-            if (rand < 0.60) return TILE.HARD_ROCK;
+            if (rand < 0.58) return TILE.FUEL; // Extra fuel to survive
+            if (rand < 0.68) return TILE.HARD_ROCK;
             return TILE.ROCK;
         }
         
@@ -963,43 +988,53 @@
             // Inside rooms
             if (patternX >= 1 && patternX <= 3 && patternY >= 1 && patternY <= 3) {
                 if (patternX === 2 && patternY === 2) {
-                    // Center treasure
-                    return Math.random() < 0.5 ? TILE.GEM_EPIC : TILE.FUEL;
+                    // Center treasure - higher chest chance in ruins
+                    const treasureRand = Math.random();
+                    if (treasureRand < 0.4) return TILE.CHEST;
+                    if (treasureRand < 0.7) return TILE.GEM_EPIC;
+                    return TILE.FUEL;
                 }
-                if (rand < 0.3) return TILE.AIR;
-                if (rand < 0.5) {
+                if (rand < 0.25) return TILE.AIR;
+                if (rand < 0.45) {
                     return Math.random() < 0.4 ? TILE.GEM_RARE : TILE.GEM_COMMON;
                 }
+                if (rand < 0.5) return TILE.BOMB; // Trapped rooms
                 return TILE.AIR;
             }
             
-            return rand < 0.3 ? TILE.ROCK : TILE.DIRT;
+            if (rand < 0.08) return TILE.UNSTABLE; // Crumbling ruins
+            return rand < 0.35 ? TILE.ROCK : TILE.DIRT;
         }
         
         function generateFuelDeposit(x, y, rand, depthFactor) {
             // Fuel-rich area with easy digging
-            if (rand < 0.30) return TILE.FUEL;
-            if (rand < 0.38) {
+            if (rand < 0.01) return TILE.CHEST;
+            if (rand < 0.03) return TILE.BOMB;
+            if (rand < 0.35) return TILE.FUEL;
+            if (rand < 0.44) {
                 const gemRand = Math.random();
                 if (gemRand < 0.2) return TILE.GEM_RARE;
                 return TILE.GEM_COMMON;
             }
-            if (rand < 0.45) return TILE.AIR; // Easy to navigate
-            if (rand < 0.55) return TILE.ROCK;
+            if (rand < 0.52) return TILE.AIR; // Easy to navigate
+            if (rand < 0.62) return TILE.ROCK;
             return TILE.DIRT;
         }
         
         function generateGemVein(x, y, rand, depthFactor) {
             // Dense gem clusters with moderate difficulty
-            if (rand < 0.40) {
+            if (rand < 0.025) return TILE.CHEST; // Gem veins have treasure
+            if (rand < 0.05) return TILE.BOMB;
+            if (rand < 0.45) {
                 const gemRand = Math.random();
                 if (gemRand < 0.20 + depthFactor * 0.15) return TILE.GEM_EPIC;
                 if (gemRand < 0.55 + depthFactor * 0.1) return TILE.GEM_RARE;
                 return TILE.GEM_COMMON;
             }
-            if (rand < 0.50) return TILE.FUEL;
-            if (rand < 0.65) return TILE.ROCK;
-            if (rand < 0.72) return TILE.HARD_ROCK;
+            if (rand < 0.55) return TILE.FUEL;
+            if (rand < 0.68) return TILE.ROCK;
+            if (rand < 0.78) return TILE.HARD_ROCK;
+            if (rand < 0.82) return TILE.UNSTABLE;
             return TILE.DIRT;
         }
         
@@ -1065,16 +1100,28 @@
             const tile = world[ty][tx];
             if (tile === TILE.AIR) return;
             
-            // BUG FIX: Cap dig speed bonus at 90%
+            // Speed multipliers
             const speedMultiplier = 1 + getEffectiveUpgrade('digSpeed', 300) / 100;
-            let digTime = 0.3 / speedMultiplier;
+            const feverBonus = feverMode ? 1.5 : 1;
+            const totalSpeed = speedMultiplier * feverBonus;
             
-            if (tile === TILE.ROCK) digTime = 0.5 / speedMultiplier;
+            let digTime = 0.25 / totalSpeed; // Base dig time
+            
+            if (tile === TILE.ROCK) digTime = 0.4 / totalSpeed;
             if (tile === TILE.HARD_ROCK) {
-                // BUG FIX: Cap drill power at 90%
                 const drillChance = getEffectiveUpgrade('drillPower', 90);
-                digTime = Math.random() * 100 < drillChance ? 0.1 : 0.8 / speedMultiplier;
+                digTime = Math.random() * 100 < drillChance ? 0.08 : 0.7 / totalSpeed;
             }
+            if (tile === TILE.UNSTABLE) {
+                digTime = 0.5 / totalSpeed; // Takes a bit to break
+                // Start collapse timer if not already started
+                const existing = unstableTiles.find(u => u.tx === tx && u.absoluteTy === absoluteTy);
+                if (!existing) {
+                    startUnstableTimer(tx, absoluteTy);
+                }
+            }
+            if (tile === TILE.BOMB) digTime = 0.15 / totalSpeed; // Quick to trigger
+            if (tile === TILE.CHEST) digTime = 0.35 / totalSpeed; // Satisfying open time
             
             player.digging = true;
             player.digTarget = { x: tx, y: absoluteTy, time: digTime };
@@ -1083,6 +1130,147 @@
         
         // Track last dig direction for continuous digging
         let lastDigDirection = null; // 'down', 'left', 'right'
+        
+        // ==================== COMBO & EFFECTS FUNCTIONS ====================
+        function addCombo() {
+            comboCount++;
+            comboTimer = COMBO_DECAY_TIME;
+            
+            // Check for fever mode activation
+            if (comboCount >= FEVER_COMBO_THRESHOLD && !feverMode) {
+                activateFeverMode();
+            }
+        }
+        
+        function getComboMultiplier() {
+            if (comboCount < 2) return 1;
+            if (comboCount < 5) return 2;
+            if (comboCount < 10) return 3;
+            if (comboCount < 20) return 4;
+            return 5;
+        }
+        
+        function activateFeverMode() {
+            feverMode = true;
+            feverTimer = FEVER_DURATION;
+            triggerScreenFlash('#ff00ff', 0.4, 20);
+            screenShake = 10;
+            createFloatingText('🔥 FEVER MODE! 🔥', player.x + player.width/2, player.y - 30, '#ff00ff');
+        }
+        
+        function triggerScreenFlash(color, alpha, duration) {
+            screenFlash = { active: true, color: color, alpha: alpha, duration: duration };
+        }
+        
+        function createSpeedLine() {
+            if (speedLines.length < 20) {
+                speedLines.push({
+                    x: Math.random() * canvas.width,
+                    y: -20,
+                    length: 30 + Math.random() * 50,
+                    speed: 15 + Math.random() * 10,
+                    alpha: 0.3 + Math.random() * 0.4
+                });
+            }
+        }
+        
+        function explodeBomb(centerTX, centerAbsTY) {
+            // 3x3 explosion
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const tx = centerTX + dx;
+                    const absoluteTy = centerAbsTY + dy;
+                    const ty = getWorldRow(absoluteTy);
+                    
+                    if (tx >= 0 && tx < WORLD_WIDTH && ty >= 0 && ty < world.length) {
+                        const tile = world[ty][tx];
+                        
+                        // Don't destroy hard rock with bombs
+                        if (tile !== TILE.AIR && tile !== TILE.HARD_ROCK) {
+                            // Collect any gems caught in explosion
+                            if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
+                                let value = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
+                                value = Math.floor(value * (1 + permanentUpgrades.gemValue / 100) * getComboMultiplier());
+                                score += value;
+                                addCombo();
+                            }
+                            if (tile === TILE.FUEL) {
+                                fuel = Math.min(fuel + 30, maxFuel);
+                            }
+                            
+                            world[ty][tx] = TILE.AIR;
+                            createParticles(tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE + TILE_SIZE/2, '#ff6600', 4);
+                        }
+                    }
+                }
+            }
+            
+            // Big explosion effects
+            const cx = centerTX * TILE_SIZE + TILE_SIZE/2;
+            const cy = centerAbsTY * TILE_SIZE + TILE_SIZE/2;
+            for (let i = 0; i < 20; i++) {
+                const angle = (Math.PI * 2 * i) / 20;
+                particles.push({
+                    x: cx, y: cy,
+                    vx: Math.cos(angle) * (5 + Math.random() * 5),
+                    vy: Math.sin(angle) * (5 + Math.random() * 5),
+                    size: 4 + Math.random() * 6,
+                    color: Math.random() < 0.5 ? '#ff6600' : '#ffaa00',
+                    life: 1,
+                    type: 'explosion'
+                });
+            }
+            
+            triggerScreenFlash('#ff6600', 0.5, 15);
+            screenShake = 12;
+            scoreEl.textContent = score;
+            updateFuelBar();
+        }
+        
+        function openChest(tx, absoluteTy) {
+            // Huge gem payout!
+            const baseValue = 150 + Math.floor(Math.random() * 100);
+            const value = Math.floor(baseValue * (1 + permanentUpgrades.gemValue / 100) * getComboMultiplier());
+            score += value;
+            
+            // Also give some fuel
+            fuel = Math.min(fuel + 50, maxFuel);
+            
+            const worldY = absoluteTy * TILE_SIZE;
+            createFloatingText(`💎 +${value}! 💎`, tx * TILE_SIZE + TILE_SIZE/2, worldY, '#ffd700');
+            
+            // Shower of particles
+            for (let i = 0; i < 25; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 3 + Math.random() * 5;
+                particles.push({
+                    x: tx * TILE_SIZE + TILE_SIZE/2,
+                    y: worldY + TILE_SIZE/2,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 3,
+                    size: 3 + Math.random() * 5,
+                    color: ['#ffd700', '#ff9500', '#00f0ff', '#ff00ff'][Math.floor(Math.random() * 4)],
+                    life: 1.2,
+                    type: 'gem'
+                });
+            }
+            
+            triggerScreenFlash('#ffd700', 0.4, 25);
+            screenShake = 8;
+            addCombo();
+            scoreEl.textContent = score;
+            updateFuelBar();
+        }
+        
+        function startUnstableTimer(tx, absoluteTy) {
+            // Add to unstable tiles list with a timer
+            unstableTiles.push({
+                tx: tx,
+                absoluteTy: absoluteTy,
+                timer: 45, // ~0.75 seconds to break before collapse
+                warned: false
+            });
+        }
         
         function completeDig(fromMagnet = false) {
             if (!player.digTarget) return;
@@ -1096,43 +1284,104 @@
             }
             
             const tile = world[ty][tx];
+            const worldY = absoluteTy * TILE_SIZE;
+            const tileCenterX = tx * TILE_SIZE + TILE_SIZE/2;
+            const tileCenterY = worldY + TILE_SIZE/2;
             
-            // Collect gems
+            // Apply fever mode speed bonus
+            const feverMultiplier = feverMode ? 1.5 : 1;
+            
+            // ===== GEMS =====
             if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
-                let value = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
-                const color = tile === TILE.GEM_EPIC ? '#ff9500' : tile === TILE.GEM_RARE ? '#ff00ff' : '#00f0ff';
-                value = Math.floor(value * (1 + permanentUpgrades.gemValue / 100));
+                let baseValue = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
+                addCombo();
+                const multiplier = getComboMultiplier();
+                let value = Math.floor(baseValue * (1 + permanentUpgrades.gemValue / 100) * multiplier);
+                
+                // Fever mode bonus
+                if (feverMode) value = Math.floor(value * 1.5);
+                
                 score += value;
                 scoreEl.textContent = score;
                 
-                const worldY = absoluteTy * TILE_SIZE;
-                createFloatingText(`+${value}`, tx * TILE_SIZE + 10, worldY, color);
-                createGemParticles(tx * TILE_SIZE + 10, worldY + 10, color);
-                screenShake = 3;
+                const color = tile === TILE.GEM_EPIC ? '#ff9500' : tile === TILE.GEM_RARE ? '#ff00ff' : '#00f0ff';
+                const text = multiplier > 1 ? `+${value} x${multiplier}!` : `+${value}`;
+                createFloatingText(text, tileCenterX, worldY - 5, color);
+                createGemParticles(tileCenterX, tileCenterY, color);
+                
+                // Epic gem screen flash
+                if (tile === TILE.GEM_EPIC) {
+                    triggerScreenFlash('#ff9500', 0.3, 12);
+                    screenShake = 5;
+                } else {
+                    screenShake = 3;
+                }
             }
             
-            // Fuel canister
+            // ===== FUEL =====
             if (tile === TILE.FUEL) {
-                fuel = Math.min(fuel + 30, maxFuel);
+                const fuelGain = feverMode ? 45 : 30;
+                fuel = Math.min(fuel + fuelGain, maxFuel);
                 updateFuelBar();
-                const worldY = absoluteTy * TILE_SIZE;
-                createFloatingText('+30', tx * TILE_SIZE + 10, worldY, '#ff9500');
-                createParticles(tx * TILE_SIZE + 10, worldY + 10, '#ff9500', 6);
+                createFloatingText(`+${fuelGain}`, tileCenterX, worldY - 5, '#ff9500');
+                createParticles(tileCenterX, tileCenterY, '#ff9500', 8);
             }
             
-            // Hazard damage
+            // ===== BOMB =====
+            if (tile === TILE.BOMB) {
+                world[ty][tx] = TILE.AIR; // Clear bomb first
+                explodeBomb(tx, absoluteTy);
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return; // Skip normal completion
+            }
+            
+            // ===== CHEST =====
+            if (tile === TILE.CHEST) {
+                world[ty][tx] = TILE.AIR;
+                openChest(tx, absoluteTy);
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return;
+            }
+            
+            // ===== UNSTABLE ROCK =====
+            if (tile === TILE.UNSTABLE) {
+                // Successfully mined before collapse - bonus gems!
+                const value = Math.floor(20 * (1 + permanentUpgrades.gemValue / 100) * getComboMultiplier());
+                score += value;
+                scoreEl.textContent = score;
+                createFloatingText(`+${value}`, tileCenterX, worldY - 5, '#aaaaff');
+                createParticles(tileCenterX, tileCenterY, '#8888aa', 10);
+                addCombo();
+                
+                // Remove from unstable tracking
+                unstableTiles = unstableTiles.filter(u => !(u.tx === tx && u.absoluteTy === absoluteTy));
+            }
+            
+            // ===== HAZARDS =====
             if (tile === TILE.LAVA || tile === TILE.GAS) {
                 const baseDamage = tile === TILE.LAVA ? 20 : 10;
                 const damage = baseDamage * (1 - getEffectiveUpgrade('armor', 90) / 100);
                 fuel -= damage;
+                comboCount = 0; // Break combo on damage
+                comboTimer = 0;
                 createFloatingText(`-${Math.floor(damage)}`, player.x + 12, player.y, '#ff3355');
-                createParticles(player.x + 12, player.y + 14 + cameraY, '#ff3355', 6);
+                createParticles(player.x + 12, player.y + 14 + cameraY, '#ff3355', 8);
+                triggerScreenFlash('#ff0000', 0.25, 8);
                 screenShake = 6;
             }
             
             // Don't charge fuel for magnet-collected gems
             if (!fromMagnet) {
-                const fuelCost = 0.5 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
+                let fuelCost = 0.5 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
+                if (feverMode) fuelCost *= 0.5; // Half fuel cost in fever mode
                 fuel -= fuelCost;
             }
             
@@ -1140,7 +1389,7 @@
             
             // Clear tile
             world[ty][tx] = TILE.AIR;
-            createDigParticles(tx * TILE_SIZE + 10, absoluteTy * TILE_SIZE + 10, tile);
+            createDigParticles(tileCenterX, absoluteTy * TILE_SIZE + TILE_SIZE/2, tile);
             
             player.digging = false;
             player.digTarget = null;
@@ -1170,7 +1419,15 @@
             
             const ty = getWorldRow(targetAbsTY);
             if (ty >= 0 && ty < world.length && targetTX >= 0 && targetTX < WORLD_WIDTH) {
-                if (world[ty][targetTX] !== TILE.AIR) {
+                const tile = world[ty][targetTX];
+                if (tile !== TILE.AIR) {
+                    // Start unstable timer when we begin digging unstable rock
+                    if (tile === TILE.UNSTABLE) {
+                        const existing = unstableTiles.find(u => u.tx === targetTX && u.absoluteTy === targetAbsTY);
+                        if (!existing) {
+                            startUnstableTimer(targetTX, targetAbsTY);
+                        }
+                    }
                     dig(targetTX, targetAbsTY);
                     return true;
                 }
@@ -1317,20 +1574,117 @@
                 if (screenShake < 0.1) screenShake = 0;
             }
             
+            // ===== COMBO TIMER DECAY =====
+            if (comboTimer > 0) {
+                comboTimer -= deltaMultiplier;
+                if (comboTimer <= 0) {
+                    comboCount = 0;
+                    comboTimer = 0;
+                }
+            }
+            
+            // ===== FEVER MODE UPDATE =====
+            if (feverMode) {
+                feverTimer -= deltaMultiplier;
+                if (feverTimer <= 0) {
+                    feverMode = false;
+                    feverTimer = 0;
+                    createFloatingText('Fever ended!', player.x + player.width/2, player.y - 20, '#888888');
+                }
+                // Fever mode speed lines
+                if (Math.random() < 0.3) createSpeedLine();
+            }
+            
+            // ===== SCREEN FLASH UPDATE =====
+            if (screenFlash.active) {
+                screenFlash.duration -= deltaMultiplier;
+                if (screenFlash.duration <= 0) {
+                    screenFlash.active = false;
+                }
+            }
+            
+            // ===== SPEED LINES UPDATE =====
+            speedLines = speedLines.filter(line => {
+                line.y += line.speed * deltaMultiplier;
+                return line.y < canvas.height + 50;
+            });
+            
+            // ===== UNSTABLE TILES UPDATE =====
+            unstableTiles = unstableTiles.filter(unstable => {
+                unstable.timer -= deltaMultiplier;
+                
+                // Warning shake when low
+                if (unstable.timer < 20 && !unstable.warned) {
+                    unstable.warned = true;
+                }
+                
+                // Collapse!
+                if (unstable.timer <= 0) {
+                    const ty = getWorldRow(unstable.absoluteTy);
+                    if (ty >= 0 && ty < world.length && world[ty][unstable.tx] === TILE.UNSTABLE) {
+                        // Collapse damages player if nearby
+                        const tileCX = unstable.tx * TILE_SIZE + TILE_SIZE/2;
+                        const tileCY = unstable.absoluteTy * TILE_SIZE + TILE_SIZE/2;
+                        const playerCX = player.x + player.width/2;
+                        const playerCY = player.y + player.height/2;
+                        const dist = Math.sqrt(Math.pow(tileCX - playerCX, 2) + Math.pow(tileCY - playerCY, 2));
+                        
+                        if (dist < TILE_SIZE * 2) {
+                            const damage = 15 * (1 - getEffectiveUpgrade('armor', 90) / 100);
+                            fuel -= damage;
+                            comboCount = 0;
+                            comboTimer = 0;
+                            createFloatingText(`-${Math.floor(damage)}`, player.x + 12, player.y, '#ff3355');
+                            triggerScreenFlash('#ff0000', 0.2, 6);
+                            screenShake = 8;
+                            updateFuelBar();
+                        }
+                        
+                        // Turn into rubble (just air with particles)
+                        world[ty][unstable.tx] = TILE.AIR;
+                        createParticles(tileCX, unstable.absoluteTy * TILE_SIZE + TILE_SIZE/2, '#666688', 12);
+                        
+                        // Cancel dig if we were digging this tile
+                        if (player.digTarget && player.digTarget.x === unstable.tx && player.digTarget.y === unstable.absoluteTy) {
+                            player.digging = false;
+                            player.digTarget = null;
+                        }
+                    }
+                    return false;
+                }
+                return true;
+            });
+            
             player.thrusterFlicker = Math.sin(globalTime * 0.3) * 0.3 + 0.7;
             
+            // ===== DIG CANCELLATION WHEN KEY RELEASED =====
             if (player.digging && player.digTarget) {
-                player.digProgress += (1/60) * deltaMultiplier;
-                if (player.digProgress >= player.digTarget.time) {
-                    completeDig(false);
+                // Check if the direction key for current dig is still held
+                let keyStillHeld = false;
+                if (lastDigDirection === 'down' && keys.down) keyStillHeld = true;
+                if (lastDigDirection === 'left' && keys.left) keyStillHeld = true;
+                if (lastDigDirection === 'right' && keys.right) keyStillHeld = true;
+                
+                if (!keyStillHeld && lastDigDirection !== null) {
+                    // Key released - cancel dig
+                    player.digging = false;
+                    player.digTarget = null;
+                } else {
+                    player.digProgress += (1/60) * deltaMultiplier;
+                    if (player.digProgress >= player.digTarget.time) {
+                        completeDig(false);
+                    }
                 }
             } else {
                 let dx = 0, dy = 0;
                 
-                if (keys.left) dx = -player.speed;
-                if (keys.right) dx = player.speed;
+                // Apply fever mode speed bonus
+                const moveSpeed = player.speed * (feverMode ? 1.3 : 1);
+                
+                if (keys.left) dx = -moveSpeed;
+                if (keys.right) dx = moveSpeed;
                 if (keys.up) {
-                    dy = -player.speed * 0.7 * (1 + permanentUpgrades.climbSpeed / 100);
+                    dy = -moveSpeed * 0.7 * (1 + permanentUpgrades.climbSpeed / 100);
                 }
                 
                 if (keys.down && !player.digging) {
@@ -1350,6 +1704,8 @@
                         const midY = player.y + player.height / 2;
                         if (getTile(checkX, midY) === TILE.AIR) {
                             player.x = newX;
+                            // Speed lines when moving fast in fever mode
+                            if (feverMode && Math.random() < 0.2) createSpeedLine();
                         } else if (!player.digging) {
                             lastDigDirection = dx > 0 ? 'right' : 'left';
                             const tx = Math.floor(checkX / TILE_SIZE);
@@ -1363,20 +1719,21 @@
                     const newY = player.y + dy * deltaMultiplier;
                     if (!checkCollision(player.x, newY, player.width, player.height)) {
                         player.y = newY;
-                        // BUG FIX: Cap fuel efficiency
-                        const climbCost = 0.1 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
+                        let climbCost = 0.1 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
+                        if (feverMode) climbCost *= 0.5;
                         fuel -= climbCost * deltaMultiplier;
                         updateFuelBar();
                         
-                        // Thruster particles (reduced frequency)
-                        if (Math.random() < 0.3 && particles.length < MAX_PARTICLES) {
+                        // Thruster particles
+                        if (Math.random() < 0.4 && particles.length < MAX_PARTICLES) {
+                            const color = feverMode ? '#ff00ff' : '#ff6600';
                             particles.push({
                                 x: player.x + player.width / 2 + (Math.random() - 0.5) * 8,
                                 y: player.y + player.height + cameraY,
                                 vx: (Math.random() - 0.5) * 2,
                                 vy: 2 + Math.random() * 2,
                                 size: 3 + Math.random() * 3,
-                                color: '#ff6600',
+                                color: color,
                                 life: 0.5,
                                 type: 'thruster'
                             });
@@ -1389,6 +1746,8 @@
                     const newY = player.y + 3 * deltaMultiplier;
                     if (!checkCollision(player.x, newY, player.width, player.height)) {
                         player.y = newY;
+                        // Speed lines when falling fast
+                        if (Math.random() < 0.1) createSpeedLine();
                     }
                 }
             }
@@ -1477,9 +1836,18 @@
             const hue1 = 220 - depthColorShift * 40;
             const hue2 = 240 - depthColorShift * 50;
             const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            bgGrad.addColorStop(0, `hsl(${hue1}, 40%, 3%)`);
-            bgGrad.addColorStop(0.5, `hsl(${hue2}, 35%, 2%)`);
-            bgGrad.addColorStop(1, `hsl(${hue2 - 10}, 45%, 1%)`);
+            
+            // Fever mode tints background magenta
+            if (feverMode) {
+                const feverPulse = 0.5 + Math.sin(globalTime * 0.1) * 0.2;
+                bgGrad.addColorStop(0, `hsl(300, 50%, ${4 * feverPulse}%)`);
+                bgGrad.addColorStop(0.5, `hsl(280, 45%, ${3 * feverPulse}%)`);
+                bgGrad.addColorStop(1, `hsl(260, 55%, ${2 * feverPulse}%)`);
+            } else {
+                bgGrad.addColorStop(0, `hsl(${hue1}, 40%, 3%)`);
+                bgGrad.addColorStop(0.5, `hsl(${hue2}, 35%, 2%)`);
+                bgGrad.addColorStop(1, `hsl(${hue2 - 10}, 45%, 1%)`);
+            }
             ctx.fillStyle = bgGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
@@ -1491,17 +1859,32 @@
                 const sy = star.y - cameraY * 0.3;
                 const modY = ((sy % canvas.height) + canvas.height) % canvas.height;
                 const twinkle = 0.5 + Math.sin(starTime + star.twinkle) * 0.5;
-                ctx.fillStyle = `rgba(200, 220, 255, ${twinkle * 0.5})`;
+                ctx.fillStyle = feverMode ? `rgba(255, 150, 255, ${twinkle * 0.6})` : `rgba(200, 220, 255, ${twinkle * 0.5})`;
                 ctx.fillRect(star.x - star.size/2, modY - star.size/2, star.size, star.size);
             }
             ctx.globalAlpha = 1;
+            
+            // ===== SPEED LINES =====
+            if (speedLines.length > 0) {
+                ctx.strokeStyle = feverMode ? 'rgba(255, 100, 255, 0.6)' : 'rgba(100, 200, 255, 0.4)';
+                ctx.lineWidth = 2;
+                for (const line of speedLines) {
+                    ctx.globalAlpha = line.alpha;
+                    ctx.beginPath();
+                    ctx.moveTo(line.x, line.y);
+                    ctx.lineTo(line.x, line.y + line.length);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 1;
+            }
             
             // Ambient particles
             for (let i = 0; i < ambientParticles.length; i++) {
                 const p = ambientParticles[i];
                 const sy = p.y - cameraY;
                 if (sy > -10 && sy < canvas.height + 10) {
-                    ctx.fillStyle = `hsla(${p.hue}, 100%, 60%, ${p.alpha})`;
+                    const hue = feverMode ? 300 : p.hue;
+                    ctx.fillStyle = `hsla(${hue}, 100%, 60%, ${p.alpha})`;
                     ctx.beginPath();
                     ctx.arc(p.x, sy, p.size, 0, Math.PI * 2);
                     ctx.fill();
@@ -1528,14 +1911,20 @@
             drawPlayer();
             drawFloatingTexts();
             
-            // Vignette
+            // Vignette (stronger during fever mode)
             const vignette = ctx.createRadialGradient(
                 canvas.width / 2, canvas.height / 2, canvas.height * 0.25,
                 canvas.width / 2, canvas.height / 2, canvas.height * 0.85
             );
-            vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-            vignette.addColorStop(0.7, 'rgba(0, 0, 0, 0.15)');
-            vignette.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+            if (feverMode) {
+                vignette.addColorStop(0, 'rgba(50, 0, 50, 0)');
+                vignette.addColorStop(0.6, 'rgba(80, 0, 80, 0.15)');
+                vignette.addColorStop(1, 'rgba(100, 0, 100, 0.4)');
+            } else {
+                vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                vignette.addColorStop(0.7, 'rgba(0, 0, 0, 0.15)');
+                vignette.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+            }
             ctx.fillStyle = vignette;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
@@ -1543,6 +1932,77 @@
             if (cachedScanlinePattern) {
                 ctx.fillStyle = cachedScanlinePattern;
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            // ===== SCREEN FLASH =====
+            if (screenFlash.active) {
+                const flashAlpha = screenFlash.alpha * (screenFlash.duration / 20);
+                ctx.fillStyle = screenFlash.color;
+                ctx.globalAlpha = flashAlpha;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalAlpha = 1;
+            }
+            
+            // ===== COMBO METER UI =====
+            if (comboCount > 0) {
+                const comboX = 10;
+                const comboY = canvas.height - 50;
+                const meterWidth = 100;
+                const meterHeight = 8;
+                const progress = comboTimer / COMBO_DECAY_TIME;
+                const multiplier = getComboMultiplier();
+                
+                // Meter background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(comboX, comboY + 20, meterWidth, meterHeight);
+                
+                // Meter fill
+                const meterColor = multiplier >= 4 ? '#ff00ff' : multiplier >= 3 ? '#ff9500' : multiplier >= 2 ? '#00f0ff' : '#00ff88';
+                ctx.fillStyle = meterColor;
+                ctx.fillRect(comboX, comboY + 20, meterWidth * progress, meterHeight);
+                
+                // Meter border
+                ctx.strokeStyle = meterColor;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(comboX, comboY + 20, meterWidth, meterHeight);
+                
+                // Combo text
+                const comboScale = 1 + (multiplier - 1) * 0.1;
+                ctx.font = `bold ${Math.floor(16 * comboScale)}px Oxanium, monospace`;
+                ctx.fillStyle = meterColor;
+                ctx.textAlign = 'left';
+                ctx.shadowColor = meterColor;
+                ctx.shadowBlur = 10;
+                ctx.fillText(`${comboCount} COMBO`, comboX, comboY + 14);
+                
+                if (multiplier > 1) {
+                    ctx.font = `bold ${Math.floor(20 * comboScale)}px Oxanium, monospace`;
+                    ctx.fillText(`x${multiplier}`, comboX + meterWidth + 10, comboY + 26);
+                }
+                ctx.shadowBlur = 0;
+            }
+            
+            // ===== FEVER MODE INDICATOR =====
+            if (feverMode) {
+                const feverProgress = feverTimer / FEVER_DURATION;
+                const feverX = canvas.width - 110;
+                const feverY = canvas.height - 35;
+                
+                // Pulsing "FEVER" text
+                const feverPulse = 1 + Math.sin(globalTime * 0.2) * 0.1;
+                ctx.font = `bold ${Math.floor(18 * feverPulse)}px Oxanium, monospace`;
+                ctx.fillStyle = '#ff00ff';
+                ctx.textAlign = 'right';
+                ctx.shadowColor = '#ff00ff';
+                ctx.shadowBlur = 15;
+                ctx.fillText('🔥 FEVER!', canvas.width - 10, feverY);
+                ctx.shadowBlur = 0;
+                
+                // Timer bar
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(feverX, feverY + 5, 100, 6);
+                ctx.fillStyle = '#ff00ff';
+                ctx.fillRect(feverX, feverY + 5, 100 * feverProgress, 6);
             }
             
             ctx.restore();
@@ -1645,9 +2105,107 @@
                     ctx.fillStyle = '#ff7700';
                     ctx.fillRect(x + 4, y + 3, s - 8, s - 6);
                     ctx.fillStyle = '#fff';
-                    ctx.font = 'bold 9px Arial';
+                    ctx.font = `bold ${Math.floor(s * 0.4)}px Arial`;
                     ctx.textAlign = 'center';
-                    ctx.fillText('F', x + s/2, y + s/2 + 3);
+                    ctx.fillText('F', x + s/2, y + s/2 + 4);
+                    break;
+                    
+                case TILE.BOMB:
+                    // Dark background
+                    ctx.fillStyle = '#1a1515';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Bomb body (pulsing)
+                    const bombPulse = 0.9 + Math.sin(time * 5 + tx + ty) * 0.1;
+                    ctx.fillStyle = '#333333';
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2 + 2, (s/2 - 4) * bombPulse, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Bomb highlight
+                    ctx.fillStyle = '#555555';
+                    ctx.beginPath();
+                    ctx.arc(x + s/2 - 3, y + s/2 - 1, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Fuse
+                    ctx.strokeStyle = '#aa6600';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x + s/2, y + 4);
+                    ctx.quadraticCurveTo(x + s/2 + 4, y + 2, x + s/2 + 6, y + 5);
+                    ctx.stroke();
+                    
+                    // Spark
+                    const sparkAlpha = 0.5 + Math.sin(time * 10) * 0.5;
+                    ctx.fillStyle = `rgba(255, 200, 50, ${sparkAlpha})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2 + 6, y + 4, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                    
+                case TILE.CHEST:
+                    // Dark background
+                    ctx.fillStyle = '#1a1510';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Chest body (golden)
+                    const chestGlow = 0.8 + Math.sin(time * 2 + tx) * 0.2;
+                    ctx.fillStyle = `rgb(${Math.floor(180 * chestGlow)}, ${Math.floor(140 * chestGlow)}, 50)`;
+                    ctx.fillRect(x + 3, y + s/2 - 2, s - 6, s/2);
+                    
+                    // Chest lid
+                    ctx.fillStyle = `rgb(${Math.floor(200 * chestGlow)}, ${Math.floor(160 * chestGlow)}, 60)`;
+                    ctx.beginPath();
+                    ctx.moveTo(x + 2, y + s/2 - 2);
+                    ctx.lineTo(x + s/2, y + 4);
+                    ctx.lineTo(x + s - 2, y + s/2 - 2);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Lock/clasp
+                    ctx.fillStyle = '#ffdd00';
+                    ctx.fillRect(x + s/2 - 3, y + s/2 - 1, 6, 4);
+                    
+                    // Sparkles
+                    ctx.fillStyle = `rgba(255, 255, 200, ${0.3 + Math.sin(time * 4 + tx * 2) * 0.3})`;
+                    ctx.beginPath();
+                    ctx.arc(x + 6, y + 8, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(x + s - 6, y + 10, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                    
+                case TILE.UNSTABLE:
+                    // Check if this tile is about to collapse
+                    const unstableData = unstableTiles.find(u => u.tx === tx && u.absoluteTy === ty);
+                    const isWarning = unstableData && unstableData.timer < 25;
+                    const shakeAmount = isWarning ? Math.sin(time * 20) * 2 : 0;
+                    
+                    // Cracked rock appearance
+                    ctx.fillStyle = isWarning ? '#4a3535' : '#3a3545';
+                    ctx.fillRect(x + shakeAmount, y, s, s);
+                    
+                    // Crack lines
+                    ctx.strokeStyle = isWarning ? '#ff6666' : '#555566';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(x + s/4 + shakeAmount, y);
+                    ctx.lineTo(x + s/3 + shakeAmount, y + s/2);
+                    ctx.lineTo(x + s/5 + shakeAmount, y + s);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x + s*0.7 + shakeAmount, y);
+                    ctx.lineTo(x + s*0.6 + shakeAmount, y + s/3);
+                    ctx.lineTo(x + s*0.8 + shakeAmount, y + s*0.7);
+                    ctx.stroke();
+                    
+                    // Warning glow
+                    if (isWarning) {
+                        ctx.fillStyle = `rgba(255, 100, 100, ${0.2 + Math.sin(time * 15) * 0.2})`;
+                        ctx.fillRect(x, y, s, s);
+                    }
                     break;
             }
             
@@ -1662,41 +2220,56 @@
             const screenY = player.y - cameraY;
             const cx = player.x + player.width / 2;
             
-            // Thruster glow (simplified)
-            if (keys.up) {
-                ctx.fillStyle = `rgba(255, 100, 0, ${0.3 * player.thrusterFlicker})`;
+            // ===== FEVER MODE AURA =====
+            if (feverMode) {
+                const auraSize = 30 + Math.sin(globalTime * 0.15) * 8;
+                const auraGrad = ctx.createRadialGradient(cx, screenY + player.height/2, 5, cx, screenY + player.height/2, auraSize);
+                auraGrad.addColorStop(0, 'rgba(255, 0, 255, 0.4)');
+                auraGrad.addColorStop(0.5, 'rgba(255, 0, 255, 0.15)');
+                auraGrad.addColorStop(1, 'rgba(255, 0, 255, 0)');
+                ctx.fillStyle = auraGrad;
                 ctx.beginPath();
-                ctx.ellipse(cx, screenY + player.height + 6, 8, 12, 0, 0, Math.PI * 2);
+                ctx.arc(cx, screenY + player.height/2, auraSize, 0, Math.PI * 2);
                 ctx.fill();
             }
             
-            // Body
-            ctx.fillStyle = '#00d0d8';
+            // Thruster glow
+            if (keys.up) {
+                const thrusterColor = feverMode ? 'rgba(255, 0, 255,' : 'rgba(255, 100, 0,';
+                ctx.fillStyle = `${thrusterColor} ${0.4 * player.thrusterFlicker})`;
+                ctx.beginPath();
+                ctx.ellipse(cx, screenY + player.height + 8, 10, 15, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Body (tinted magenta in fever mode)
+            ctx.fillStyle = feverMode ? '#d000d8' : '#00d0d8';
             ctx.beginPath();
             ctx.roundRect(player.x + 2, screenY + 4, player.width - 4, player.height - 10, 5);
             ctx.fill();
             
             // Highlight
-            ctx.fillStyle = '#00f0ff';
+            ctx.fillStyle = feverMode ? '#ff00ff' : '#00f0ff';
             ctx.fillRect(player.x + 4, screenY + 5, player.width - 8, 3);
             
             // Cockpit
-            ctx.fillStyle = '#001015';
+            ctx.fillStyle = feverMode ? '#150015' : '#001015';
             ctx.beginPath();
             ctx.roundRect(player.x + 5, screenY + 7, player.width - 10, 10, 3);
             ctx.fill();
             
-            ctx.fillStyle = 'rgba(0, 240, 255, 0.7)';
+            ctx.fillStyle = feverMode ? 'rgba(255, 0, 255, 0.7)' : 'rgba(0, 240, 255, 0.7)';
             ctx.beginPath();
             ctx.roundRect(player.x + 6, screenY + 8, player.width - 12, 8, 2);
             ctx.fill();
             
-            // Drill
-            ctx.fillStyle = '#ffaa00';
+            // Drill (more animated in fever mode)
+            ctx.fillStyle = feverMode ? '#ff00ff' : '#ffaa00';
             ctx.save();
             ctx.translate(cx, screenY + player.height);
             if (player.digging) {
-                ctx.rotate(Math.sin(globalTime * 0.5) * 0.12);
+                const spinSpeed = feverMode ? 0.8 : 0.5;
+                ctx.rotate(Math.sin(globalTime * spinSpeed) * 0.15);
             }
             ctx.beginPath();
             ctx.moveTo(-8, -4);
@@ -1707,7 +2280,7 @@
             ctx.closePath();
             ctx.fill();
             
-            ctx.strokeStyle = '#cc7700';
+            ctx.strokeStyle = feverMode ? '#aa00aa' : '#cc7700';
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(-4, 0);
@@ -1718,16 +2291,17 @@
             ctx.restore();
             
             // Thrusters
-            ctx.fillStyle = '#004550';
+            ctx.fillStyle = feverMode ? '#450045' : '#004550';
             ctx.fillRect(player.x - 1, screenY + 12, 4, 8);
             ctx.fillRect(player.x + player.width - 3, screenY + 12, 4, 8);
             
             // Dig progress indicator
             if (player.digging && player.digTarget) {
                 const progress = player.digProgress / player.digTarget.time;
-                ctx.fillStyle = 'rgba(0, 240, 255, 0.8)';
+                const barColor = feverMode ? 'rgba(255, 0, 255,' : 'rgba(0, 240, 255,';
+                ctx.fillStyle = `${barColor} 0.8)`;
                 ctx.fillRect(player.x, screenY - 6, player.width * progress, 3);
-                ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+                ctx.strokeStyle = `${barColor} 0.4)`;
                 ctx.strokeRect(player.x, screenY - 6, player.width, 3);
             }
         }
@@ -1741,15 +2315,48 @@
                 if (screenY < -20 || screenY > canvas.height + 20) continue;
                 
                 ctx.globalAlpha = p.life;
-                ctx.fillStyle = p.color;
                 
-                if (p.type === 'debris' && p.rotation !== undefined) {
+                if (p.type === 'gem') {
+                    // Glowing gem particles with trail
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 10;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, screenY, p.size * p.life, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                } else if (p.type === 'explosion') {
+                    // Bright explosion particles
+                    ctx.shadowColor = p.color;
+                    ctx.shadowBlur = 15;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, screenY, p.size * p.life, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Trail effect
+                    ctx.globalAlpha = p.life * 0.5;
+                    ctx.beginPath();
+                    ctx.arc(p.x - p.vx * 2, screenY - p.vy * 2, p.size * p.life * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                } else if (p.type === 'thruster') {
+                    // Fiery thruster particles
+                    const gradient = ctx.createRadialGradient(p.x, screenY, 0, p.x, screenY, p.size);
+                    gradient.addColorStop(0, p.color);
+                    gradient.addColorStop(1, 'rgba(255, 50, 0, 0)');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(p.x, screenY, p.size * 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (p.type === 'debris' && p.rotation !== undefined) {
+                    ctx.fillStyle = p.color;
                     ctx.save();
                     ctx.translate(p.x, screenY);
                     ctx.rotate(p.rotation);
                     ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
                     ctx.restore();
                 } else {
+                    ctx.fillStyle = p.color;
                     ctx.beginPath();
                     ctx.arc(p.x, screenY, p.size * p.life, 0, Math.PI * 2);
                     ctx.fill();
@@ -1766,10 +2373,13 @@
                 if (screenY < -50 || screenY > canvas.height + 50) continue;
                 
                 ctx.globalAlpha = t.life;
-                ctx.font = `800 ${Math.round(15 * t.scale)}px Oxanium, monospace`;
+                ctx.font = `800 ${Math.round(16 * t.scale)}px Oxanium, monospace`;
                 ctx.fillStyle = t.color;
                 ctx.textAlign = 'center';
+                ctx.shadowColor = t.color;
+                ctx.shadowBlur = 8;
                 ctx.fillText(t.text, t.x, screenY);
+                ctx.shadowBlur = 0;
             }
             ctx.globalAlpha = 1;
         }
@@ -2082,6 +2692,17 @@
             screenShake = 0;
             depthColorShift = 0;
             globalTime = 0;
+            
+            // Reset combo and fever systems
+            comboCount = 0;
+            comboTimer = 0;
+            feverMode = false;
+            feverTimer = 0;
+            
+            // Reset visual effects
+            screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
+            speedLines = [];
+            unstableTiles = [];
             
             // Reset upgrades
             Object.keys(permanentUpgrades).forEach(k => permanentUpgrades[k] = 0);
