@@ -1116,6 +1116,14 @@
                 </div>
                 
                 <div class="tutorial-step" data-step="7">
+                    <div class="tutorial-icon">🐛</div>
+                    <div class="tutorial-heading">Creatures</div>
+                    <div class="tutorial-text">
+                        Below <span class="tutorial-highlight">50m</span>, watch out for creatures! <span class="tutorial-highlight">Worms</span> burrow toward you, <span class="tutorial-highlight">Beetles</span> patrol tunnels, and <span class="tutorial-highlight">Lava Slugs</span> lurk in hot zones. Drill into them to defeat them!
+                    </div>
+                </div>
+                
+                <div class="tutorial-step" data-step="8">
                     <div class="tutorial-icon">🌟</div>
                     <div class="tutorial-heading">Fever Mode</div>
                     <div class="tutorial-text">
@@ -1302,6 +1310,50 @@
         let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
         let speedLines = [];
         let unstableTiles = []; // Track tiles that are about to collapse
+        
+        // ==================== ENEMY SYSTEM ====================
+        const ENEMY_TYPE = {
+            WORM: 'worm',
+            BEETLE: 'beetle', 
+            LAVA_SLUG: 'lava_slug'
+        };
+        
+        const ENEMY_MIN_DEPTH = 50; // No enemies until 50m
+        let enemies = [];
+        
+        // Spawn rates per 100 tiles generated (very low, scales with depth)
+        function getEnemySpawnChance(depth, biome) {
+            if (depth < ENEMY_MIN_DEPTH) return { worm: 0, beetle: 0, lava_slug: 0 };
+            
+            // Gradual scaling: starts very low, slowly increases
+            const depthFactor = Math.min(1, (depth - ENEMY_MIN_DEPTH) / 400); // Max at depth 450
+            
+            return {
+                worm: 0.003 + depthFactor * 0.008,      // 0.3% to 1.1%
+                beetle: 0.002 + depthFactor * 0.006,    // 0.2% to 0.8%
+                lava_slug: biome === BIOME.LAVA_ZONE ? (0.004 + depthFactor * 0.01) : 0  // Only in lava
+            };
+        }
+        
+        function spawnEnemy(type, tx, ty) {
+            const enemy = {
+                type: type,
+                x: tx * TILE_SIZE + TILE_SIZE / 2,
+                y: (ty + worldRowOffset) * TILE_SIZE + TILE_SIZE / 2,
+                tx: tx,  // Tile coordinates
+                ty: ty + worldRowOffset,
+                width: 14,
+                height: 14,
+                moveTimer: 0,
+                moveDelay: type === ENEMY_TYPE.WORM ? 45 : (type === ENEMY_TYPE.LAVA_SLUG ? 60 : 30),
+                direction: Math.random() < 0.5 ? -1 : 1, // For beetles/slugs
+                health: 1,
+                damage: type === ENEMY_TYPE.LAVA_SLUG ? 15 : 8,
+                inGround: type === ENEMY_TYPE.WORM, // Worms burrow through ground
+                animFrame: 0
+            };
+            enemies.push(enemy);
+        }
         
         // Upgrade intervals for cleanup
         let activeRollIntervals = [];
@@ -1658,6 +1710,27 @@
                     row.push(generateTile(x, y));
                 }
                 world.push(row);
+                
+                // Try to spawn enemies in this new row
+                const depthM = y * TILE_SIZE / 16; // Convert to meters
+                const spawnChances = getEnemySpawnChance(depthM, currentBiome);
+                
+                for (let x = 0; x < WORLD_WIDTH; x++) {
+                    const localY = world.length - 1;
+                    const tile = world[localY][x];
+                    
+                    // Worms spawn in dirt/rock
+                    if ((tile === TILE.DIRT || tile === TILE.ROCK) && Math.random() < spawnChances.worm) {
+                        spawnEnemy(ENEMY_TYPE.WORM, x, localY);
+                    }
+                    // Beetles spawn in air (tunnels) - but we don't have tunnels yet at generation
+                    // They'll spawn when tiles are dug
+                    
+                    // Lava slugs spawn on lava tiles
+                    if (tile === TILE.LAVA && Math.random() < spawnChances.lava_slug) {
+                        spawnEnemy(ENEMY_TYPE.LAVA_SLUG, x, localY);
+                    }
+                }
             }
             
             // MEMORY OPTIMIZATION: Trim old rows that are far above camera
@@ -1667,6 +1740,9 @@
                 if (rowsToTrim > 0) {
                     world.splice(0, rowsToTrim);
                     worldRowOffset += rowsToTrim;
+                    
+                    // Remove enemies that are now above the world
+                    enemies = enemies.filter(e => e.ty >= worldRowOffset);
                 }
             }
         }
@@ -2061,6 +2137,22 @@
             
             updateFuelBar();
             
+            // Chance to spawn beetle when digging creates tunnel
+            const depthM = absoluteTy * TILE_SIZE / 16;
+            const spawnChances = getEnemySpawnChance(depthM, currentBiome);
+            if (spawnChances.beetle > 0 && Math.random() < spawnChances.beetle * 0.3) {
+                // Spawn beetle nearby (not on player's tile)
+                const offsetX = Math.random() < 0.5 ? -1 : 1;
+                const spawnTx = tx + offsetX;
+                if (spawnTx >= 0 && spawnTx < WORLD_WIDTH) {
+                    const spawnTy = ty;
+                    // Check if spawn location is valid (air tile)
+                    if (world[spawnTy] && world[spawnTy][spawnTx] === TILE.AIR) {
+                        spawnEnemy(ENEMY_TYPE.BEETLE, spawnTx, spawnTy);
+                    }
+                }
+            }
+            
             // Clear tile
             world[ty][tx] = TILE.AIR;
             createDigParticles(tileCenterX, absoluteTy * TILE_SIZE + TILE_SIZE/2, tile);
@@ -2243,11 +2335,158 @@
             }
         }
         
+        // ==================== ENEMY UPDATE ====================
+        function updateEnemies() {
+            const playerCenterX = player.x + player.width / 2;
+            const playerCenterY = player.y + player.height / 2;
+            
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                // Animation
+                enemy.animFrame = (enemy.animFrame + 0.1 * deltaMultiplier) % (Math.PI * 2);
+                
+                // Movement timer
+                enemy.moveTimer += deltaMultiplier;
+                
+                if (enemy.moveTimer >= enemy.moveDelay) {
+                    enemy.moveTimer = 0;
+                    
+                    const localTy = enemy.ty - worldRowOffset;
+                    
+                    if (enemy.type === ENEMY_TYPE.WORM) {
+                        // Worms burrow toward player through dirt/rock
+                        const dx = playerCenterX - enemy.x;
+                        const dy = playerCenterY - enemy.y;
+                        
+                        // Prefer moving toward player
+                        let moveTx = enemy.tx;
+                        let moveTy = enemy.ty;
+                        
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            moveTx += dx > 0 ? 1 : -1;
+                        } else {
+                            moveTy += dy > 0 ? 1 : -1;
+                        }
+                        
+                        // Check if can move there
+                        const newLocalTy = moveTy - worldRowOffset;
+                        if (moveTx >= 0 && moveTx < WORLD_WIDTH && newLocalTy >= 0 && newLocalTy < world.length) {
+                            const targetTile = world[newLocalTy][moveTx];
+                            // Can move through dirt, rock, or air
+                            if (targetTile === TILE.DIRT || targetTile === TILE.ROCK || targetTile === TILE.AIR) {
+                                enemy.tx = moveTx;
+                                enemy.ty = moveTy;
+                                enemy.x = moveTx * TILE_SIZE + TILE_SIZE / 2;
+                                enemy.y = moveTy * TILE_SIZE + TILE_SIZE / 2;
+                                enemy.inGround = targetTile !== TILE.AIR;
+                            }
+                        }
+                    } else if (enemy.type === ENEMY_TYPE.BEETLE || enemy.type === ENEMY_TYPE.LAVA_SLUG) {
+                        // Walk along floors, reverse at walls
+                        const nextTx = enemy.tx + enemy.direction;
+                        const belowTy = localTy + 1;
+                        
+                        // Check if can move forward and has ground below
+                        if (nextTx >= 0 && nextTx < WORLD_WIDTH && belowTy < world.length) {
+                            const nextTile = world[localTy] ? world[localTy][nextTx] : TILE.ROCK;
+                            const belowTile = world[belowTy] ? world[belowTy][nextTx] : TILE.AIR;
+                            
+                            // For lava slugs, they can walk on lava
+                            const canWalkOn = enemy.type === ENEMY_TYPE.LAVA_SLUG ? 
+                                (belowTile !== TILE.AIR) : 
+                                (belowTile !== TILE.AIR && belowTile !== TILE.LAVA);
+                            
+                            if (nextTile === TILE.AIR && canWalkOn) {
+                                enemy.tx = nextTx;
+                                enemy.x = nextTx * TILE_SIZE + TILE_SIZE / 2;
+                            } else {
+                                // Reverse direction
+                                enemy.direction *= -1;
+                            }
+                        } else {
+                            enemy.direction *= -1;
+                        }
+                    }
+                }
+                
+                // Check collision with player
+                const distX = Math.abs(enemy.x - playerCenterX);
+                const distY = Math.abs(enemy.y - playerCenterY);
+                
+                if (distX < (enemy.width + player.width) / 2 && distY < (enemy.height + player.height) / 2) {
+                    // Player hit by enemy!
+                    // But if player is digging toward enemy, kill the enemy instead
+                    if (player.digging && player.digTarget) {
+                        const digTx = player.digTarget.x;
+                        const digTy = player.digTarget.y;
+                        if (enemy.tx === digTx && enemy.ty === digTy) {
+                            // Drilling into enemy - kill it!
+                            killEnemy(i);
+                            continue;
+                        }
+                    }
+                    
+                    // Take damage from enemy
+                    const damage = enemy.damage * (1 - getEffectiveUpgrade('armor', 90) / 100);
+                    hull -= damage;
+                    comboCount = 0;
+                    comboTimer = 0;
+                    createFloatingText(`-${Math.floor(damage)}`, player.x + player.width/2, player.y, '#ff3355');
+                    createParticles(player.x + player.width/2, player.y + player.height/2, '#ff3355', 8);
+                    triggerScreenFlash('#ff0000', 0.3, 10);
+                    screenShake = 8;
+                    updateHullBar();
+                    
+                    // Kill enemy after contact
+                    enemies.splice(i, 1);
+                    continue;
+                }
+                
+                // Check if player is drilling into enemy's tile
+                if (player.digging && player.digTarget) {
+                    const digTx = player.digTarget.x;
+                    const digTy = player.digTarget.y;
+                    if (enemy.tx === digTx && enemy.ty === digTy) {
+                        // Player drilling into enemy tile - kill enemy
+                        killEnemy(i);
+                        continue;
+                    }
+                }
+                
+                // Remove enemies that are too far above camera
+                if (enemy.y < cameraY - 200) {
+                    enemies.splice(i, 1);
+                }
+            }
+        }
+        
+        function killEnemy(index) {
+            const enemy = enemies[index];
+            
+            // Reward
+            const baseValue = enemy.type === ENEMY_TYPE.LAVA_SLUG ? 30 : 
+                             enemy.type === ENEMY_TYPE.WORM ? 20 : 15;
+            const value = Math.floor(baseValue * (1 + permanentUpgrades.gemValue / 100));
+            score += value;
+            scoreEl.textContent = score;
+            
+            // Effects
+            const color = enemy.type === ENEMY_TYPE.LAVA_SLUG ? '#ff6600' : 
+                         enemy.type === ENEMY_TYPE.WORM ? '#88ff88' : '#ffaa00';
+            createFloatingText(`+${value} 💀`, enemy.x, enemy.y - 10, color);
+            createParticles(enemy.x, enemy.y, color, 12);
+            screenShake = 4;
+            
+            enemies.splice(index, 1);
+        }
+        
         // ==================== UPDATE ====================
         function update() {
             if (!gameRunning || upgradeSelectionActive) return;
             
             extendWorld();
+            updateEnemies();
             
             // OPTIMIZATION: Wrap globalTime to prevent overflow
             globalTime = (globalTime + deltaMultiplier) % 100000;
@@ -2840,6 +3079,7 @@
             }
             
             drawParticles();
+            drawEnemies();
             drawPlayer();
             drawFloatingTexts();
             
@@ -3356,7 +3596,12 @@
             ctx.roundRect(player.x + 6, screenY + 8, player.width - 12, 8, 2);
             ctx.fill();
             
-            // Drill - color changes with heat
+            // Thrusters (draw before drill so drill appears on top)
+            ctx.fillStyle = feverMode ? '#450045' : (drillOverheated ? '#452020' : '#004550');
+            ctx.fillRect(player.x - 1, screenY + 12, 4, 8);
+            ctx.fillRect(player.x + player.width - 3, screenY + 12, 4, 8);
+            
+            // Drill - color changes with heat (drawn last to appear on top)
             let drillColor = feverMode ? '#ff00ff' : '#e8e8e8';
             if (heatPercent > 0.3 && !feverMode) {
                 // Transition from white to orange to red based on heat
@@ -3374,7 +3619,33 @@
             
             ctx.fillStyle = drillColor;
             ctx.save();
-            ctx.translate(cx, screenY + player.height);
+            
+            // Determine drill direction based on dig target
+            let drillAngle = 0; // 0 = down, -90 = left, 90 = right
+            let drillOffsetX = 0;
+            let drillOffsetY = player.height;
+            
+            if (player.digging && player.digTarget) {
+                const targetWorldX = player.digTarget.x * TILE_SIZE + TILE_SIZE / 2;
+                const playerCenterX = player.x + player.width / 2;
+                const dx = targetWorldX - playerCenterX;
+                
+                if (Math.abs(dx) > TILE_SIZE / 2) {
+                    // Drilling left or right
+                    if (dx < 0) {
+                        drillAngle = Math.PI / 2; // Left - rotate to point left
+                        drillOffsetX = -player.width / 2 - 3;
+                        drillOffsetY = player.height / 2 + 1;
+                    } else {
+                        drillAngle = -Math.PI / 2; // Right - rotate to point right
+                        drillOffsetX = player.width / 2 + 3;
+                        drillOffsetY = player.height / 2 + 1;
+                    }
+                }
+            }
+            
+            ctx.translate(cx + drillOffsetX, screenY + drillOffsetY);
+            ctx.rotate(drillAngle);
             
             // Drill shake when overheated or near overheat
             if (drillOverheated) {
@@ -3415,11 +3686,6 @@
             ctx.lineTo(0, 10);
             ctx.stroke();
             ctx.restore();
-            
-            // Thrusters
-            ctx.fillStyle = feverMode ? '#450045' : (drillOverheated ? '#452020' : '#004550');
-            ctx.fillRect(player.x - 1, screenY + 12, 4, 8);
-            ctx.fillRect(player.x + player.width - 3, screenY + 12, 4, 8);
             
             // Dig progress indicator
             if (player.digging && player.digTarget) {
@@ -3473,6 +3739,173 @@
                     ctx.font = '10px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.fillText('🔥', player.x + player.width/2, heatBarY - 3);
+                }
+            }
+        }
+        
+        function drawEnemies() {
+            for (let i = 0; i < enemies.length; i++) {
+                const enemy = enemies[i];
+                const screenX = enemy.x;
+                const screenY = enemy.y - cameraY;
+                
+                // Skip off-screen enemies
+                if (screenY < -30 || screenY > BASE_HEIGHT + 30) continue;
+                
+                const wobble = Math.sin(enemy.animFrame) * 2;
+                
+                if (enemy.type === ENEMY_TYPE.WORM) {
+                    // Burrowing worm - segmented body
+                    // Only show if in air or partially visible
+                    const localTy = enemy.ty - worldRowOffset;
+                    const isVisible = !enemy.inGround || (localTy >= 0 && localTy < world.length && 
+                        (world[localTy][enemy.tx] === TILE.AIR || Math.random() < 0.3));
+                    
+                    if (isVisible || !enemy.inGround) {
+                        // Head
+                        ctx.fillStyle = '#44dd44';
+                        ctx.beginPath();
+                        ctx.ellipse(screenX, screenY + wobble, 7, 5, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Body segments
+                        ctx.fillStyle = '#33bb33';
+                        for (let seg = 1; seg <= 3; seg++) {
+                            const segWobble = Math.sin(enemy.animFrame + seg * 0.5) * 2;
+                            ctx.beginPath();
+                            ctx.ellipse(screenX - seg * 4, screenY + segWobble, 5 - seg * 0.5, 4 - seg * 0.3, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        
+                        // Eyes
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.arc(screenX + 3, screenY + wobble - 2, 2, 0, Math.PI * 2);
+                        ctx.arc(screenX + 3, screenY + wobble + 2, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#000000';
+                        ctx.beginPath();
+                        ctx.arc(screenX + 4, screenY + wobble - 2, 1, 0, Math.PI * 2);
+                        ctx.arc(screenX + 4, screenY + wobble + 2, 1, 0, Math.PI * 2);
+                        ctx.fill();
+                    } else {
+                        // Underground indicator - dirt mound
+                        ctx.fillStyle = 'rgba(100, 70, 40, 0.6)';
+                        ctx.beginPath();
+                        ctx.arc(screenX, screenY, 6 + Math.sin(enemy.animFrame * 2) * 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                } else if (enemy.type === ENEMY_TYPE.BEETLE) {
+                    // Cave beetle - shiny shell
+                    ctx.save();
+                    ctx.translate(screenX, screenY);
+                    
+                    // Legs
+                    ctx.strokeStyle = '#553300';
+                    ctx.lineWidth = 1.5;
+                    const legWobble = Math.sin(enemy.animFrame * 2);
+                    ctx.beginPath();
+                    ctx.moveTo(-5, 0);
+                    ctx.lineTo(-8, 5 + legWobble);
+                    ctx.moveTo(5, 0);
+                    ctx.lineTo(8, 5 + legWobble);
+                    ctx.moveTo(-3, 2);
+                    ctx.lineTo(-7, 7 - legWobble);
+                    ctx.moveTo(3, 2);
+                    ctx.lineTo(7, 7 - legWobble);
+                    ctx.stroke();
+                    
+                    // Shell
+                    const shellGrad = ctx.createRadialGradient(0, -2, 0, 0, 0, 8);
+                    shellGrad.addColorStop(0, '#aa6622');
+                    shellGrad.addColorStop(0.5, '#774411');
+                    shellGrad.addColorStop(1, '#553300');
+                    ctx.fillStyle = shellGrad;
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 8, 6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Shell line
+                    ctx.strokeStyle = '#442200';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -6);
+                    ctx.lineTo(0, 6);
+                    ctx.stroke();
+                    
+                    // Head
+                    ctx.fillStyle = '#442200';
+                    ctx.beginPath();
+                    ctx.ellipse(enemy.direction * 6, -1, 4, 3, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Antennae
+                    ctx.strokeStyle = '#553300';
+                    ctx.beginPath();
+                    ctx.moveTo(enemy.direction * 8, -2);
+                    ctx.lineTo(enemy.direction * 12, -6 + wobble);
+                    ctx.moveTo(enemy.direction * 8, 0);
+                    ctx.lineTo(enemy.direction * 11, 2 + wobble);
+                    ctx.stroke();
+                    
+                    // Eyes
+                    ctx.fillStyle = '#ff4444';
+                    ctx.beginPath();
+                    ctx.arc(enemy.direction * 8, -2, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.restore();
+                    
+                } else if (enemy.type === ENEMY_TYPE.LAVA_SLUG) {
+                    // Lava slug - glowing orange/red
+                    ctx.save();
+                    ctx.translate(screenX, screenY);
+                    
+                    // Glow effect
+                    const glowPulse = 0.3 + Math.sin(enemy.animFrame * 2) * 0.2;
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 10 + Math.sin(enemy.animFrame) * 3;
+                    
+                    // Body
+                    const bodyGrad = ctx.createLinearGradient(-8, 0, 8, 0);
+                    bodyGrad.addColorStop(0, '#ff2200');
+                    bodyGrad.addColorStop(0.5, '#ff6600');
+                    bodyGrad.addColorStop(1, '#ff4400');
+                    ctx.fillStyle = bodyGrad;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(-8, 2);
+                    ctx.quadraticCurveTo(-6, -5 + wobble, 0, -4 + wobble * 0.5);
+                    ctx.quadraticCurveTo(6, -3 + wobble, 8, 2);
+                    ctx.quadraticCurveTo(4, 5, 0, 5);
+                    ctx.quadraticCurveTo(-4, 5, -8, 2);
+                    ctx.fill();
+                    
+                    ctx.shadowBlur = 0;
+                    
+                    // Hot spots
+                    ctx.fillStyle = `rgba(255, 255, 100, ${0.5 + glowPulse})`;
+                    ctx.beginPath();
+                    ctx.arc(-3, 0, 2, 0, Math.PI * 2);
+                    ctx.arc(3, -1, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Eye stalks
+                    ctx.fillStyle = '#ffaa00';
+                    ctx.beginPath();
+                    ctx.ellipse(enemy.direction * 4, -5 + wobble, 2, 3, 0, 0, Math.PI * 2);
+                    ctx.ellipse(enemy.direction * 1, -6 + wobble * 0.7, 2, 3, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Eyes
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.arc(enemy.direction * 4, -6 + wobble, 1, 0, Math.PI * 2);
+                    ctx.arc(enemy.direction * 1, -7 + wobble * 0.7, 1, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.restore();
                 }
             }
         }
@@ -4030,6 +4463,7 @@
             screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
             speedLines = [];
             unstableTiles = [];
+            enemies = [];
             
             // Reset upgrades
             Object.keys(permanentUpgrades).forEach(k => permanentUpgrades[k] = 0);

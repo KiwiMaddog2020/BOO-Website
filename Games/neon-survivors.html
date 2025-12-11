@@ -7885,7 +7885,8 @@
                 html: `<div style="font-size: 24px;">💀 CURSE ACCEPTED 💀</div><div style="font-size: 14px; color: #ff6666;">Difficulty +${difficultyLevel * 10}% | Rewards +${difficultyLevel * 10}%</div>`,
                 color: '#880088',
                 textShadow: '0 0 20px #880088',
-                duration: 2500
+                duration: 2500,
+                priority: WARNING_PRIORITY.CURSE
             });
             
             // Remove this statue and spawn a new one in an empty quadrant
@@ -7941,8 +7942,31 @@
                 }
                 
                 if (!hasStatue) {
-                    // Spawn in this quadrant
-                    const margin = 100;
+                    // Try to spawn in this quadrant with valid position
+                    const margin = 150;
+                    let attempts = 0;
+                    
+                    while (attempts < 30) {
+                        const x = q.minX + margin + Math.random() * (q.maxX - q.minX - margin * 2);
+                        const y = q.minY + margin + Math.random() * (q.maxY - q.minY - margin * 2);
+                        
+                        // Check not in terrain or lake
+                        if (isInTerrain(x, y, 80) || isInLake(x, y, 100)) {
+                            attempts++;
+                            continue;
+                        }
+                        
+                        // Check not too close to other objects
+                        if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING, 'statue')) {
+                            attempts++;
+                            continue;
+                        }
+                        
+                        skullStatues.push(new SkullStatue(x, y));
+                        return;
+                    }
+                    
+                    // Fallback - just spawn somewhere in quadrant avoiding terrain
                     const x = q.minX + margin + Math.random() * (q.maxX - q.minX - margin * 2);
                     const y = q.minY + margin + Math.random() * (q.maxY - q.minY - margin * 2);
                     skullStatues.push(new SkullStatue(x, y));
@@ -8170,7 +8194,7 @@
             cowboyHat = null;
             playerHasCowboyHat = false;
             
-            const minDistFromObstacles = 60;
+            const minDistFromObstacles = 80;
             let attempts = 0;
             
             while (attempts < 50) {
@@ -8183,8 +8207,14 @@
                     continue;
                 }
                 
-                // Check not in or near terrain
-                if (isInTerrain(x, y, minDistFromObstacles)) {
+                // Check not in or near terrain/lakes
+                if (isInTerrain(x, y, minDistFromObstacles) || isInLake(x, y, minDistFromObstacles + 30)) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not too close to other objects
+                if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING, 'hat')) {
                     attempts++;
                     continue;
                 }
@@ -8354,8 +8384,14 @@
                     const x = quad.minX + Math.random() * (quad.maxX - quad.minX);
                     const y = quad.minY + Math.random() * (quad.maxY - quad.minY);
                     
-                    // Check not in or near terrain
-                    if (isInTerrain(x, y, 50)) {
+                    // Check not in or near terrain/lakes
+                    if (isInTerrain(x, y, 60) || isInLake(x, y, 80)) {
+                        attempts++;
+                        continue;
+                    }
+                    
+                    // Check not too close to other objects
+                    if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING, 'shield')) {
                         attempts++;
                         continue;
                     }
@@ -8687,8 +8723,20 @@
                     continue;
                 }
                 
-                // Check not in or near any terrain (lakes, trees, rocks, bushes)
+                // Check not in or near any terrain (trees, rocks, bushes)
                 if (isInTerrain(x, y, minDistFromObstacles)) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not in or near lakes
+                if (isInLake(x, y, minDistFromObstacles + 30)) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not too close to other objects
+                if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING)) {
                     attempts++;
                     continue;
                 }
@@ -8903,7 +8951,7 @@
         }
         
         function spawnSingleMagnet() {
-            const minDistFromObstacles = 60;
+            const minDistFromObstacles = 80;
             const minDistFromOtherMagnets = 800;
             let attempts = 0;
             
@@ -8923,8 +8971,8 @@
                     continue;
                 }
                 
-                // Check not in terrain
-                if (isInTerrain(x, y, minDistFromObstacles)) {
+                // Check not in terrain or lakes
+                if (isInTerrain(x, y, minDistFromObstacles) || isInLake(x, y, minDistFromObstacles + 30)) {
                     attempts++;
                     continue;
                 }
@@ -8938,6 +8986,12 @@
                     }
                 }
                 if (tooClose) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check not too close to other objects
+                if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING, 'magnet')) {
                     attempts++;
                     continue;
                 }
@@ -9565,8 +9619,60 @@
             return false;
         }
         
-        // Get valid spawn position avoiding terrain
-        function getValidSpawnPosition(minX, maxX, minY, maxY, padding = 50, avoidCenter = 0) {
+        // Check if position is too close to any spawned objects (shrines, chests, statues, etc.)
+        const MIN_OBJECT_SPACING = 150; // Minimum pixels between objects
+        
+        function isTooCloseToObjects(x, y, minDist = MIN_OBJECT_SPACING, excludeType = null) {
+            // Check shrines
+            if (excludeType !== 'shrine') {
+                for (const shrine of shrines) {
+                    if (shrine.activated) continue;
+                    if (Math.hypot(x - shrine.x, y - shrine.y) < minDist) return true;
+                }
+            }
+            
+            // Check chests
+            if (excludeType !== 'chest') {
+                for (const chest of chests) {
+                    if (chest.dead || chest.opened) continue;
+                    if (Math.hypot(x - chest.x, y - chest.y) < minDist) return true;
+                }
+            }
+            
+            // Check skull statues
+            if (excludeType !== 'statue') {
+                for (const statue of skullStatues) {
+                    if (statue.dead) continue;
+                    if (Math.hypot(x - statue.x, y - statue.y) < minDist) return true;
+                }
+            }
+            
+            // Check shield pickups
+            if (excludeType !== 'shield') {
+                for (const shield of shieldPickups) {
+                    if (shield.collected) continue;
+                    if (Math.hypot(x - shield.x, y - shield.y) < minDist) return true;
+                }
+            }
+            
+            // Check cowboy hat
+            if (excludeType !== 'hat' && cowboyHat && !playerHasCowboyHat) {
+                if (Math.hypot(x - cowboyHat.x, y - cowboyHat.y) < minDist) return true;
+            }
+            
+            // Check magnet pickups
+            if (excludeType !== 'magnet') {
+                for (const mag of magnetPickups) {
+                    if (mag.collected) continue;
+                    if (Math.hypot(x - mag.x, y - mag.y) < minDist) return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        // Get valid spawn position avoiding terrain and other objects
+        function getValidSpawnPosition(minX, maxX, minY, maxY, padding = 50, avoidCenter = 0, minObjectDist = MIN_OBJECT_SPACING) {
             let attempts = 0;
             while (attempts < 50) {
                 const x = minX + Math.random() * (maxX - minX);
@@ -9578,13 +9684,34 @@
                     continue;
                 }
                 
-                // Check terrain
+                // Check terrain (includes lakes)
+                if (isInTerrain(x, y, padding)) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check lake specifically with padding
+                if (isInLake(x, y, padding + 50)) {
+                    attempts++;
+                    continue;
+                }
+                
+                // Check distance to other objects
+                if (minObjectDist > 0 && isTooCloseToObjects(x, y, minObjectDist)) {
+                    attempts++;
+                    continue;
+                }
+                
+                return { x, y };
+            }
+            // Fallback - return position anyway (try to at least avoid terrain)
+            for (let i = 0; i < 20; i++) {
+                const x = minX + Math.random() * (maxX - minX);
+                const y = minY + Math.random() * (maxY - minY);
                 if (!isInTerrain(x, y, padding)) {
                     return { x, y };
                 }
-                attempts++;
             }
-            // Fallback - return position anyway
             return { x: minX + Math.random() * (maxX - minX), y: minY + Math.random() * (maxY - minY) };
         }
         
@@ -10152,10 +10279,13 @@
                 this.hitEnemies = new Set();
                 this.spinAngle = 0;
                 this.spawnTime = Date.now();
-                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 2000; // 2 sec default, 5 for returning types
+                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 2000;
                 this.alpha = 1;
-                this.hasTarget = true; // Track if projectile has a valid target
-                this.noTargetTime = 0; // Time without a target
+                this.hasTarget = true;
+                this.noTargetTime = 0;
+                this.lastTargetX = null;
+                this.lastTargetY = null;
+                this.reachedLastTarget = false;
             }
 
             update(dt = 16) {
@@ -10274,17 +10404,36 @@
                         this.vy = Math.sin(newAngle) * this.speed;
                         this.hasTarget = true;
                         this.noTargetTime = 0;
+                        this.lastTargetX = nearestEnemy.x;
+                        this.lastTargetY = nearestEnemy.y;
+                        this.reachedLastTarget = false;
                     } else {
-                        // No target - fade out
-                        this.hasTarget = false;
-                        this.noTargetTime += dt;
-                        if (this.noTargetTime > 100) {
-                            this.alpha = Math.max(0, 1 - (this.noTargetTime - 100) / 300);
-                            if (this.alpha <= 0) {
-                                // Small fizzle effect
-                                spawnParticles(this.x, this.y, this.color, 2);
-                                this.dead = true;
-                                return;
+                        // No living target - travel to last known position
+                        if (this.lastTargetX !== null && !this.reachedLastTarget) {
+                            const toLastTarget = Math.atan2(this.lastTargetY - this.y, this.lastTargetX - this.x);
+                            const distToLast = Math.hypot(this.lastTargetX - this.x, this.lastTargetY - this.y);
+                            
+                            // Reached last target position
+                            if (distToLast < 15) {
+                                this.reachedLastTarget = true;
+                                spawnParticles(this.x, this.y, this.color, 3);
+                            } else {
+                                // Continue toward last known position
+                                this.vx = Math.cos(toLastTarget) * this.speed;
+                                this.vy = Math.sin(toLastTarget) * this.speed;
+                            }
+                        }
+                        
+                        // Fade out after reaching last target or if no last target
+                        if (this.reachedLastTarget || this.lastTargetX === null) {
+                            this.hasTarget = false;
+                            this.noTargetTime += dt;
+                            if (this.noTargetTime > 50) {
+                                this.alpha = Math.max(0, 1 - (this.noTargetTime - 50) / 200);
+                                if (this.alpha <= 0) {
+                                    this.dead = true;
+                                    return;
+                                }
                             }
                         }
                     }
@@ -10355,18 +10504,42 @@
                         this.vy = Math.sin(newAngle) * this.speed;
                         this.hasTarget = true;
                         this.noTargetTime = 0;
+                        this.lastTargetX = nearestEnemy.x;
+                        this.lastTargetY = nearestEnemy.y;
+                        this.reachedLastTarget = false;
                     } else {
-                        // No target found - start fading faster
-                        this.hasTarget = false;
-                        this.noTargetTime += dt;
-                        // Fade out over 400ms when no target
-                        if (this.noTargetTime > 100) {
-                            this.alpha = Math.max(0, 1 - (this.noTargetTime - 100) / 300);
-                            if (this.alpha <= 0) {
-                                // Small fizzle effect
-                                spawnParticles(this.x, this.y, this.color, 2);
-                                this.dead = true;
-                                return;
+                        // No living target - travel to last known position
+                        if (this.lastTargetX !== null && !this.reachedLastTarget) {
+                            const toLastTarget = Math.atan2(this.lastTargetY - this.y, this.lastTargetX - this.x);
+                            const distToLast = Math.hypot(this.lastTargetX - this.x, this.lastTargetY - this.y);
+                            
+                            // Reached last target position
+                            if (distToLast < 15) {
+                                this.reachedLastTarget = true;
+                                spawnParticles(this.x, this.y, this.color, 3);
+                            } else {
+                                // Continue toward last known position with gradual turn
+                                const currentAngle = Math.atan2(this.vy, this.vx);
+                                let angleDiff = toLastTarget - currentAngle;
+                                if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                                else if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                                const turn = Math.max(-0.1, Math.min(0.1, angleDiff));
+                                const newAngle = currentAngle + turn;
+                                this.vx = Math.cos(newAngle) * this.speed;
+                                this.vy = Math.sin(newAngle) * this.speed;
+                            }
+                        }
+                        
+                        // Fade out after reaching last target or if no last target
+                        if (this.reachedLastTarget || this.lastTargetX === null) {
+                            this.hasTarget = false;
+                            this.noTargetTime += dt;
+                            if (this.noTargetTime > 50) {
+                                this.alpha = Math.max(0, 1 - (this.noTargetTime - 50) / 200);
+                                if (this.alpha <= 0) {
+                                    this.dead = true;
+                                    return;
+                                }
                             }
                         }
                     }
@@ -11259,7 +11432,7 @@
                 potX = Math.max(150, Math.min(WORLD.width - 150, potX));
                 potY = Math.max(150, Math.min(WORLD.height - 150, potY));
                 attempts++;
-            } while (isInTerrain(potX, potY, 100) && attempts < 20);
+            } while ((isInTerrain(potX, potY, 100) || isInLake(potX, potY, 120)) && attempts < 20);
             
             // Create rainbow/pot at spawn location
             const rainbow = new Rainbow(potX, potY);
@@ -11282,7 +11455,8 @@
                 html: `<div style="font-size: 28px;">🌈 A rainbow appeared nearby! 🌈</div>`,
                 color: COLORS.gold,
                 textShadow: `0 0 20px ${COLORS.gold}, 0 0 40px ${COLORS.green}`,
-                duration: 2000
+                duration: 2000,
+                priority: WARNING_PRIORITY.LEPRECHAUN
             });
         }
 
@@ -11296,18 +11470,51 @@
             }
         }
         
-        // ===== STACKING WARNING SYSTEM =====
-        let activeWarnings = [];
-        let warningQueue = []; // Queue warnings while upgrade menu is open
+        // ===== QUEUED WARNING SYSTEM =====
+        // Priority levels: higher = more important, shows first
+        const WARNING_PRIORITY = {
+            BOSS: 100,
+            FINAL_SWARM: 95,
+            SWARM: 90,
+            CURSE: 60,
+            LEPRECHAUN: 50,
+            DEFAULT: 40
+        };
+        
+        let activeWarning = null; // Currently displayed warning
+        let warningQueue = []; // Queue of pending warnings
+        let warningTimeout = null;
         
         function showStackedWarning(options) {
+            // Add timestamp and default priority
+            options.timestamp = Date.now();
+            options.priority = options.priority || WARNING_PRIORITY.DEFAULT;
+            
             // If upgrade menu is open, queue the warning for later
             if (DOM.upgradeOverlay && DOM.upgradeOverlay.classList.contains('active')) {
                 warningQueue.push(options);
+                sortWarningQueue();
+                return;
+            }
+            
+            // If a warning is already showing, queue this one
+            if (activeWarning) {
+                warningQueue.push(options);
+                sortWarningQueue();
                 return;
             }
             
             displayWarning(options);
+        }
+        
+        function sortWarningQueue() {
+            // Sort by priority (high to low), then by timestamp (old to new)
+            warningQueue.sort((a, b) => {
+                if (b.priority !== a.priority) {
+                    return b.priority - a.priority;
+                }
+                return a.timestamp - b.timestamp;
+            });
         }
         
         function displayWarning(options) {
@@ -11316,6 +11523,7 @@
             warning.innerHTML = options.html;
             warning.style.cssText = `
                 position: fixed;
+                top: 15%;
                 left: 50%;
                 transform: translateX(-50%);
                 color: ${options.color};
@@ -11324,14 +11532,10 @@
                 z-index: 9999;
                 pointer-events: none;
                 opacity: 0;
-                transition: top 0.3s ease-out;
             `;
             
             document.body.appendChild(warning);
-            
-            // Add to active warnings at the beginning (newest first)
-            activeWarnings.unshift(warning);
-            repositionWarnings();
+            activeWarning = warning;
             
             // Animate in
             requestAnimationFrame(() => {
@@ -11339,36 +11543,39 @@
                 warning.style.animation = 'warningPulse 0.5s ease-out';
             });
             
-            // Remove after duration
-            setTimeout(() => {
+            // Clear any existing timeout
+            if (warningTimeout) clearTimeout(warningTimeout);
+            
+            // Remove after duration and show next
+            warningTimeout = setTimeout(() => {
                 warning.style.opacity = '0';
                 warning.style.transform = 'translateX(-50%) translateY(-20px)';
                 setTimeout(() => {
-                    const idx = activeWarnings.indexOf(warning);
-                    if (idx > -1) activeWarnings.splice(idx, 1);
                     warning.remove();
-                    repositionWarnings();
+                    activeWarning = null;
+                    showNextWarning();
                 }, 300);
             }, options.duration - 300);
         }
         
-        function repositionWarnings() {
-            const startY = 15; // Start from 15% down (above player area)
-            const spacing = 50; // Pixels between warnings
+        function showNextWarning() {
+            if (warningQueue.length === 0) return;
             
-            activeWarnings.forEach((warning, index) => {
-                warning.style.top = `calc(${startY}% + ${index * spacing}px)`;
-            });
+            // Don't show if upgrade menu is open
+            if (DOM.upgradeOverlay && DOM.upgradeOverlay.classList.contains('active')) {
+                return;
+            }
+            
+            // Get the highest priority warning
+            const nextWarning = warningQueue.shift();
+            displayWarning(nextWarning);
         }
         
         function processWarningQueue() {
-            // Show queued warnings with slight delays between them
-            warningQueue.forEach((options, index) => {
-                setTimeout(() => {
-                    displayWarning(options);
-                }, index * 500);
-            });
-            warningQueue = [];
+            // Called after upgrade menu closes
+            if (!activeWarning && warningQueue.length > 0) {
+                showNextWarning();
+            }
         }
         
         // Add warning animation styles once
@@ -11381,7 +11588,7 @@
                     100% { transform: translateX(-50%) scale(1); }
                 }
                 .stacked-warning {
-                    transition: top 0.3s ease-out, opacity 0.3s ease-out, transform 0.3s ease-out;
+                    transition: opacity 0.3s ease-out, transform 0.3s ease-out;
                 }
             `;
             document.head.appendChild(style);
@@ -11480,7 +11687,8 @@
                 html: `<div style="font-size: 36px;">⚠️ ${text} INCOMING! ⚠️</div>`,
                 color: color,
                 textShadow: `0 0 30px ${color}, 0 0 60px #ffffff`,
-                duration: 2500
+                duration: 2500,
+                priority: WARNING_PRIORITY.BOSS
             });
         }
         
@@ -11489,7 +11697,8 @@
                 html: `<div style="font-size: 28px;">🌊 ENEMY SWARM! 🌊</div><div style="font-size: 16px; margin-top: 10px;">Enemies spawning 2x faster for 30 seconds!</div>`,
                 color: '#ff4444',
                 textShadow: '0 0 20px #ff0000',
-                duration: 2000
+                duration: 2000,
+                priority: WARNING_PRIORITY.SWARM
             });
         }
 
@@ -12692,6 +12901,33 @@
                 }
             }
             
+            // Draw lakes on minimap (only in explored areas)
+            minimapCtx.fillStyle = 'rgba(30, 80, 120, 0.8)';
+            minimapCtx.strokeStyle = 'rgba(60, 140, 180, 0.6)';
+            minimapCtx.lineWidth = 1;
+            for (const obs of terrainObstacles) {
+                if (obs.type !== 'lake') continue;
+                
+                // Check if any part of lake is explored
+                const lakeExplored = isExplored(obs.x, obs.y) || 
+                    isExplored(obs.x + obs.radiusX * 0.7, obs.y) ||
+                    isExplored(obs.x - obs.radiusX * 0.7, obs.y) ||
+                    isExplored(obs.x, obs.y + obs.radiusY * 0.7) ||
+                    isExplored(obs.x, obs.y - obs.radiusY * 0.7);
+                    
+                if (!lakeExplored) continue;
+                
+                const lx = obs.x * scale;
+                const ly = obs.y * scale;
+                const lrx = obs.radiusX * scale;
+                const lry = obs.radiusY * scale;
+                
+                minimapCtx.beginPath();
+                minimapCtx.ellipse(lx, ly, lrx, lry, 0, 0, Math.PI * 2);
+                minimapCtx.fill();
+                minimapCtx.stroke();
+            }
+            
             // Viewport indicator (always visible)
             const viewWidth = canvas.width / camera.zoom;
             const viewHeight = canvas.height / camera.zoom;
@@ -12889,8 +13125,14 @@
             swarmTriggeredForBoss = 0;
             
             // Clear any active warnings
-            activeWarnings.forEach(w => w.remove());
-            activeWarnings = [];
+            if (activeWarning) {
+                activeWarning.remove();
+                activeWarning = null;
+            }
+            if (warningTimeout) {
+                clearTimeout(warningTimeout);
+                warningTimeout = null;
+            }
             warningQueue = [];
             
             // Reset chest/legendary tracking
