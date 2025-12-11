@@ -2118,14 +2118,12 @@
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
-            // Detect pseudo-fullscreen (iOS): iframe is nearly filling the screen
-            const screenW = window.screen.width;
-            const screenH = window.screen.height;
+            // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
+            // This works reliably in iframes on iOS where screen.width/height can be unreliable
             const viewW = window.innerWidth;
             const viewH = window.innerHeight;
             const isPseudoFullscreen = !isNativeFullscreen && 
-                                       (viewW >= screenW * 0.85 || viewH >= screenH * 0.85) &&
-                                       (viewW > 500 || viewH > 500);
+                                       (viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const isMobile = window.innerWidth <= 768;
@@ -3530,13 +3528,21 @@
                     if (tower.beamTarget !== bestTarget) {
                         tower.beamTarget = bestTarget;
                         tower.beamLockTime = now;
+                        tower.beamRetargetTime = now; // Track when we switched targets
+                    }
+                    
+                    // Retargeting delay - beam needs 400ms to acquire new target before dealing damage
+                    const retargetDelay = 400;
+                    if (now - tower.beamRetargetTime < retargetDelay) {
+                        // Still acquiring target, no damage yet
+                        return;
                     }
                     
                     // Calculate ramp multiplier - starts at 0.4x, accelerates to massive damage
                     // Reaches ~1.4x at 1 second, ~4.4x at 2 seconds, ~9.4x at 3 seconds
-                    const lockDuration = (now - tower.beamLockTime) / 1000; // seconds
+                    const lockDuration = (now - tower.beamLockTime - retargetDelay) / 1000; // seconds (subtract delay)
                     const rampSpeed = upgrades.rampSpeed || 1;
-                    const rampMultiplier = 0.4 + Math.pow(lockDuration * rampSpeed, 2.0);
+                    const rampMultiplier = 0.4 + Math.pow(Math.max(0, lockDuration) * rampSpeed, 2.0);
                     
                     const damageMultiplier = upgrades.damage || 1;
                     const baseDamage = def.damage * damageMultiplier * (1 + permUpgrades.damageBonus + buffDamageBonus);
@@ -4934,36 +4940,55 @@
                 
                 // Enhanced laser beam with pulsing layers
                 if (def.isBeam && tower.target && tower.target.alive) {
-                    const beamPulse = 0.7 + Math.sin(now / 50) * 0.3;
+                    const retargetDelay = 400;
+                    const isAcquiring = tower.beamRetargetTime && (now - tower.beamRetargetTime < retargetDelay);
                     
-                    // Outer glow beam
-                    ctx.strokeStyle = def.color;
-                    ctx.globalAlpha = 0.3;
-                    ctx.lineWidth = 8 * beamPulse;
-                    ctx.shadowBlur = 20;
-                    ctx.beginPath();
-                    ctx.moveTo(tower.x, tower.y);
-                    ctx.lineTo(tower.target.x, tower.target.y);
-                    ctx.stroke();
-                    
-                    // Middle beam
-                    ctx.globalAlpha = 0.6;
-                    ctx.lineWidth = 4 * beamPulse;
-                    ctx.shadowBlur = 12;
-                    ctx.beginPath();
-                    ctx.moveTo(tower.x, tower.y);
-                    ctx.lineTo(tower.target.x, tower.target.y);
-                    ctx.stroke();
-                    
-                    // Core beam (bright)
-                    ctx.strokeStyle = '#fff';
-                    ctx.globalAlpha = 0.9;
-                    ctx.lineWidth = 2;
-                    ctx.shadowBlur = 5;
-                    ctx.beginPath();
-                    ctx.moveTo(tower.x, tower.y);
-                    ctx.lineTo(tower.target.x, tower.target.y);
-                    ctx.stroke();
+                    if (isAcquiring) {
+                        // Thin flickering "acquiring" beam
+                        const flicker = Math.random() > 0.3 ? 1 : 0.3;
+                        ctx.strokeStyle = def.color;
+                        ctx.globalAlpha = 0.4 * flicker;
+                        ctx.lineWidth = 2;
+                        ctx.shadowBlur = 8;
+                        ctx.setLineDash([8, 8]);
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x, tower.y);
+                        ctx.lineTo(tower.target.x, tower.target.y);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                    } else {
+                        // Full powered beam
+                        const beamPulse = 0.7 + Math.sin(now / 50) * 0.3;
+                        
+                        // Outer glow beam
+                        ctx.strokeStyle = def.color;
+                        ctx.globalAlpha = 0.3;
+                        ctx.lineWidth = 8 * beamPulse;
+                        ctx.shadowBlur = 20;
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x, tower.y);
+                        ctx.lineTo(tower.target.x, tower.target.y);
+                        ctx.stroke();
+                        
+                        // Middle beam
+                        ctx.globalAlpha = 0.6;
+                        ctx.lineWidth = 4 * beamPulse;
+                        ctx.shadowBlur = 12;
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x, tower.y);
+                        ctx.lineTo(tower.target.x, tower.target.y);
+                        ctx.stroke();
+                        
+                        // Core beam (bright)
+                        ctx.strokeStyle = '#fff';
+                        ctx.globalAlpha = 0.9;
+                        ctx.lineWidth = 2;
+                        ctx.shadowBlur = 5;
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x, tower.y);
+                        ctx.lineTo(tower.target.x, tower.target.y);
+                        ctx.stroke();
+                    }
                     
                     ctx.globalAlpha = 1;
                 }
