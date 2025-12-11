@@ -10151,11 +10151,28 @@
                 this.trail = [];
                 this.hitEnemies = new Set();
                 this.spinAngle = 0;
+                this.spawnTime = Date.now();
+                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 2000; // 2 sec default, 5 for returning types
+                this.alpha = 1;
+                this.hasTarget = true; // Track if projectile has a valid target
+                this.noTargetTime = 0; // Time without a target
             }
 
             update(dt = 16) {
                 // Frame-rate independent
                 const dtScale = dt / 16;
+                
+                // Lifetime check - fade out near end of life
+                const age = Date.now() - this.spawnTime;
+                if (age > this.maxLifetime) {
+                    this.dead = true;
+                    return;
+                }
+                // Start fading in last 300ms of life
+                const fadeStart = this.maxLifetime - 300;
+                if (age > fadeStart) {
+                    this.alpha = 1 - (age - fadeStart) / 300;
+                }
                 
                 // Store trail (shorter for daggers)
                 this.trail.push({ x: this.x, y: this.y });
@@ -10255,6 +10272,21 @@
                         
                         this.vx = Math.cos(newAngle) * this.speed;
                         this.vy = Math.sin(newAngle) * this.speed;
+                        this.hasTarget = true;
+                        this.noTargetTime = 0;
+                    } else {
+                        // No target - fade out
+                        this.hasTarget = false;
+                        this.noTargetTime += dt;
+                        if (this.noTargetTime > 100) {
+                            this.alpha = Math.max(0, 1 - (this.noTargetTime - 100) / 300);
+                            if (this.alpha <= 0) {
+                                // Small fizzle effect
+                                spawnParticles(this.x, this.y, this.color, 2);
+                                this.dead = true;
+                                return;
+                            }
+                        }
                     }
                 }
                 // Light homing for non-boomerang, non-sawblade, non-strong-homing projectiles
@@ -10321,6 +10353,22 @@
                         
                         this.vx = Math.cos(newAngle) * this.speed;
                         this.vy = Math.sin(newAngle) * this.speed;
+                        this.hasTarget = true;
+                        this.noTargetTime = 0;
+                    } else {
+                        // No target found - start fading faster
+                        this.hasTarget = false;
+                        this.noTargetTime += dt;
+                        // Fade out over 400ms when no target
+                        if (this.noTargetTime > 100) {
+                            this.alpha = Math.max(0, 1 - (this.noTargetTime - 100) / 300);
+                            if (this.alpha <= 0) {
+                                // Small fizzle effect
+                                spawnParticles(this.x, this.y, this.color, 2);
+                                this.dead = true;
+                                return;
+                            }
+                        }
                     }
                 }
                 
@@ -10407,20 +10455,22 @@
 
             draw() {
                 if (!camera.isVisible(this.x, this.y)) return;
+                if (this.alpha <= 0) return;
                 
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
                 
                 ctx.save();
-                ctx.shadowBlur = 10;
+                ctx.globalAlpha = this.alpha;
+                ctx.shadowBlur = 10 * this.alpha;
                 ctx.shadowColor = this.color;
                 
                 // Trail (skip for bolt and boomerang types)
                 if (this.type !== 'bolt' && this.type !== 'boomerang') {
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = this.type === 'laser' ? 3 : this.type === 'boomerang' ? 2.5 : 2;
-                    ctx.globalAlpha = 0.5;
+                    ctx.globalAlpha = 0.5 * this.alpha;
                     ctx.beginPath();
                     for (let i = 0; i < this.trail.length; i++) {
                         const t = this.trail[i];
@@ -10431,7 +10481,7 @@
                     }
                     ctx.lineTo(sx, sy);
                     ctx.stroke();
-                    ctx.globalAlpha = 1;
+                    ctx.globalAlpha = this.alpha;
                 }
                 
                 ctx.fillStyle = this.color;
@@ -11683,7 +11733,7 @@
         }
         
         function showUpgradeCards() {
-            console.log('showUpgradeCards called, results:', upgradeSlotResults);
+
             // Hide slot machine completely
             DOM.upgradeSlotMachine.style.display = 'none';
             DOM.upgradeSlotMachine.style.visibility = 'hidden';
@@ -11695,7 +11745,7 @@
             if (existingReroll) existingReroll.remove();
             
             upgradeSlotResults.forEach((upgrade, i) => {
-                console.log('Creating card for:', upgrade.name);
+
                 const card = document.createElement('div');
                 card.className = 'upgrade-card revealed';
                 card.style.borderColor = upgrade.color;
@@ -11718,19 +11768,19 @@
                 
                 // Use onclick directly for simplicity
                 card.onclick = function(e) {
-                    console.log('Card clicked:', upgrade.name);
+
                     selectUpgrade(upgrade);
                 };
                 
                 // Also handle touch
                 card.ontouchend = function(e) {
-                    console.log('Card touched:', upgrade.name);
+
                     e.preventDefault();
                     selectUpgrade(upgrade);
                 };
                 
                 DOM.upgradeOptions.appendChild(card);
-                console.log('Card appended to DOM');
+
             });
             
             // Add reroll button if player has rerolls remaining
@@ -11758,15 +11808,11 @@
         }
 
         function selectUpgrade(upgrade) {
-            console.log('selectUpgrade called with:', upgrade);
             if (upgrade.type === 'weapon') {
-                console.log('Adding weapon:', upgrade.id);
                 player.addWeapon(upgrade.id);
             } else if (upgrade.type === 'tome') {
-                console.log('Adding tome:', upgrade.id);
                 player.addTome(upgrade.id);
             } else {
-                console.log('Adding passive:', upgrade.id);
                 player.addPassive(upgrade.id);
             }
             
@@ -11777,8 +11823,6 @@
             
             // Process any queued warnings after a short delay
             setTimeout(processWarningQueue, 300);
-            
-            console.log('Upgrade complete, weapons:', player.weapons, 'tomes:', player.tomes);
         }
 
         function updateWeaponsDisplay() {
