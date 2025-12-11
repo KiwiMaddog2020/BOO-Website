@@ -924,32 +924,70 @@
         const ctx = canvas.getContext('2d');
         const container = document.querySelector('.game-container');
         
-        // Responsive canvas sizing - fit within iframe while maintaining aspect ratio
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
+        const baseWidth = 480;
+        const baseHeight = 720;
+        let displayWidth = baseWidth;
+        let displayHeight = baseHeight;
+        let dprScale = 1;
+        
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
+        
+        // Performance-based DPR limits
+        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
+        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
+        
         function resizeCanvas() {
-            const baseWidth = 480;
-            const baseHeight = 720;
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobile = window.innerWidth <= 768;
             const aspect = baseWidth / baseHeight;
-            const borderSize = 6; // 3px border on each side
+            const borderSize = 6;
             
-            // Available space (account for border)
+            // Available space
             const maxWidth = window.innerWidth - borderSize - 6;
             const maxHeight = window.innerHeight - borderSize - 6;
             
-            let newWidth, newHeight;
-            if (maxWidth / maxHeight > aspect) {
-                // Height constrained
-                newHeight = Math.min(maxHeight, baseHeight);
-                newWidth = Math.floor(newHeight * aspect);
+            // Calculate display dimensions
+            if (isFullscreen) {
+                // Fullscreen: fit to screen while maintaining aspect ratio
+                if (maxWidth / maxHeight > aspect) {
+                    displayHeight = maxHeight;
+                    displayWidth = Math.floor(displayHeight * aspect);
+                } else {
+                    displayWidth = maxWidth;
+                    displayHeight = Math.floor(displayWidth / aspect);
+                }
+                // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
+                dprScale = Math.min(rawDPR, maxFullscreenDPR);
             } else {
-                // Width constrained
-                newWidth = Math.min(maxWidth, baseWidth);
-                newHeight = Math.floor(newWidth / aspect);
+                // Normal mode
+                if (maxWidth / maxHeight > aspect) {
+                    displayHeight = Math.min(maxHeight, baseHeight);
+                    displayWidth = Math.floor(displayHeight * aspect);
+                } else {
+                    displayWidth = Math.min(maxWidth, baseWidth);
+                    displayHeight = Math.floor(displayWidth / aspect);
+                }
+                
+                // Apply DPR scaling based on device type
+                if (isMobile) {
+                    dprScale = Math.min(rawDPR, 1.5);
+                } else if (isTablet || isLaptopOrDesktop) {
+                    dprScale = Math.min(rawDPR, maxNormalDPR);
+                } else {
+                    dprScale = 1;
+                }
             }
             
-            // Update CONFIG with new dimensions
-            CONFIG.canvasWidth = newWidth;
-            CONFIG.canvasHeight = newHeight;
-            CONFIG.scale = newWidth / baseWidth;
+            // Update CONFIG with display dimensions (for game logic)
+            CONFIG.canvasWidth = displayWidth;
+            CONFIG.canvasHeight = displayHeight;
+            CONFIG.scale = displayWidth / baseWidth;
             
             // Scale player/bullet sizes proportionally
             CONFIG.playerWidth = Math.floor(30 * CONFIG.scale);
@@ -957,14 +995,35 @@
             CONFIG.bulletWidth = Math.floor(8 * CONFIG.scale);
             CONFIG.bulletHeight = Math.floor(18 * CONFIG.scale);
             
-            canvas.width = newWidth;
-            canvas.height = newHeight;
-            // Don't set explicit container size - let it wrap the canvas naturally
+            // Set canvas buffer with DPR scaling for sharp rendering
+            canvas.width = Math.round(displayWidth * dprScale);
+            canvas.height = Math.round(displayHeight * dprScale);
+            canvas.style.width = displayWidth + 'px';
+            canvas.style.height = displayHeight + 'px';
+            
+            // Scale context for DPR
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(dprScale, dprScale);
+            
+            // Re-enable image smoothing
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+        }
+        
+        function handleFullscreenChange() {
+            resizeCanvas();
         }
         
         CONFIG.scale = 1;
         resizeCanvas();
+        
+        // Listen for resize and fullscreen changes
         window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
 
         // ========== GAME STATE ==========
         let gameState = 'start';

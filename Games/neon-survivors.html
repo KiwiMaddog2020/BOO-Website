@@ -3551,61 +3551,98 @@
         const BASE_WIDTH = 640;
         const BASE_HEIGHT = 491;
         
-        // Fullscreen pixel density scaling (desktop only)
-        let currentScale = 1;
-        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
+        // Game logic uses gameWidth/gameHeight (always BASE size)
+        
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
+        
+        // Performance-based DPR limits
+        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
+        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
+        
+        // Scaling state
+        let dprScale = 1;
+        let gameWidth = BASE_WIDTH;   // Game logic coordinates (always BASE)
+        let gameHeight = BASE_HEIGHT;
+        let cssWidth = BASE_WIDTH;    // CSS display size
+        let cssHeight = BASE_HEIGHT;
+        
+        function calculateScale() {
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobileView = window.innerWidth <= 600;
+            
+            // Game logic always uses BASE dimensions
+            gameWidth = BASE_WIDTH;
+            gameHeight = BASE_HEIGHT;
+            
+            const availWidth = window.innerWidth;
+            const availHeight = window.innerHeight;
+            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+            
+            if (isFullscreen) {
+                // Fullscreen: scale to fit screen
+                const screenAspect = availWidth / availHeight;
+                if (screenAspect > gameAspect) {
+                    cssHeight = availHeight;
+                    cssWidth = cssHeight * gameAspect;
+                } else {
+                    cssWidth = availWidth;
+                    cssHeight = cssWidth / gameAspect;
+                }
+                dprScale = Math.min(rawDPR, maxFullscreenDPR) * (cssWidth / BASE_WIDTH);
+            } else if (isMobileView) {
+                // Mobile: responsive sizing
+                const containerPadding = 8;
+                const maxAvailWidth = availWidth - containerPadding * 2 - 6;
+                cssWidth = Math.min(BASE_WIDTH, maxAvailWidth);
+                cssHeight = cssWidth / gameAspect;
+                dprScale = Math.min(rawDPR, 1.5) * (cssWidth / BASE_WIDTH);
+            } else {
+                // Desktop/tablet: base size
+                cssWidth = BASE_WIDTH;
+                cssHeight = BASE_HEIGHT;
+                dprScale = Math.min(rawDPR, maxNormalDPR);
+            }
+            
+            // Set canvas buffer
+            canvas.width = Math.round(gameWidth * dprScale);
+            canvas.height = Math.round(gameHeight * dprScale);
+            canvas.style.width = Math.round(cssWidth) + 'px';
+            canvas.style.height = Math.round(cssHeight) + 'px';
+            
+            // Scale context so drawing uses gameWidth coordinates
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(dprScale, dprScale);
+            
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+        }
         
         function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            
-            if (isFullscreen && isDesktop) {
-                // Scale up for higher pixel density in fullscreen
-                const dpr = window.devicePixelRatio || 1;
-                currentScale = Math.min(dpr, 2); // Cap at 2x to avoid performance issues
-                
-                canvas.width = BASE_WIDTH * currentScale;
-                canvas.height = BASE_HEIGHT * currentScale;
-                canvas.style.width = BASE_WIDTH + 'px';
-                canvas.style.height = BASE_HEIGHT + 'px';
-                ctx.scale(currentScale, currentScale);
-            } else {
-                // Restore normal resolution - use resizeCanvas for proper mobile handling
-                currentScale = 1;
-                canvas.style.width = '';
-                canvas.style.height = '';
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                resizeCanvas();
-            }
+            calculateScale();
         }
         
-        // Listen for fullscreen changes
+        function resizeCanvas() {
+            calculateScale();
+        }
+        
+        // Listen for fullscreen changes (all browser variants)
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
         
-        // Canvas sizing - fixed for desktop iframe, responsive for mobile
-        function resizeCanvas() {
-            const isMobileView = window.innerWidth <= 600;
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            
-            // Skip resize if in fullscreen (handled by fullscreen handler)
-            if (isFullscreen && isDesktop) return;
-            
-            if (isMobileView) {
-                // Responsive sizing for mobile
-                const containerPadding = 8;
-                const availableWidth = window.innerWidth - containerPadding * 2 - 6;
-                const aspect = BASE_WIDTH / BASE_HEIGHT;
-                
-                canvas.width = Math.min(BASE_WIDTH, availableWidth);
-                canvas.height = canvas.width / aspect;
-            } else {
-                // Fixed size for desktop iframe
-                canvas.width = BASE_WIDTH;
-                canvas.height = BASE_HEIGHT;
-            }
-        }
-        resizeCanvas();
+        // Listen for resize/orientation changes
         window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+        
+        // Initial scale calculation
+        calculateScale();
 
         // ===== NEON COLOR PALETTE =====
         const COLORS = {
@@ -3648,8 +3685,8 @@
             // Uses the larger of width or height ratio to ensure player appears same size
             updateZoom() {
                 // Calculate zoom needed to fit target visible area
-                const zoomForWidth = canvas.width / TARGET_VISIBLE_WIDTH;
-                const zoomForHeight = canvas.height / TARGET_VISIBLE_HEIGHT;
+                const zoomForWidth = gameWidth / TARGET_VISIBLE_WIDTH;
+                const zoomForHeight = gameHeight / TARGET_VISIBLE_HEIGHT;
                 
                 // Use the LARGER zoom to keep player consistently sized
                 // This means on smaller screens, you see less of the world but player is same size
@@ -3663,12 +3700,12 @@
             
             update() {
                 // Center camera on player (accounting for zoom)
-                this.x = player.x - (canvas.width / this.zoom) / 2;
-                this.y = player.y - (canvas.height / this.zoom) / 2;
+                this.x = player.x - (gameWidth / this.zoom) / 2;
+                this.y = player.y - (gameHeight / this.zoom) / 2;
                 
                 // Clamp to world bounds
-                this.x = Math.max(0, Math.min(WORLD.width - canvas.width / this.zoom, this.x));
-                this.y = Math.max(0, Math.min(WORLD.height - canvas.height / this.zoom, this.y));
+                this.x = Math.max(0, Math.min(WORLD.width - gameWidth / this.zoom, this.x));
+                this.y = Math.max(0, Math.min(WORLD.height - gameHeight / this.zoom, this.y));
             },
             
             // Convert world coords to screen coords
@@ -3681,9 +3718,9 @@
             // Check if world position is visible
             isVisible(x, y, margin = 50) {
                 return x > this.x - margin && 
-                       x < this.x + canvas.width / this.zoom + margin &&
+                       x < this.x + gameWidth / this.zoom + margin &&
                        y > this.y - margin && 
-                       y < this.y + canvas.height / this.zoom + margin;
+                       y < this.y + gameHeight / this.zoom + margin;
             }
         };
         
@@ -3725,7 +3762,7 @@
             if (!player) return;
             
             // Calculate visible range (based on camera view)
-            const viewRadius = Math.max(canvas.width, canvas.height) / camera.zoom / 2 + 100;
+            const viewRadius = Math.max(gameWidth, gameHeight) / camera.zoom / 2 + 100;
             
             // Mark cells within view as explored
             const minCellX = Math.max(0, Math.floor((player.x - viewRadius) / FOG_CELL_SIZE));
@@ -11416,8 +11453,8 @@
                     
                     // Spawn well outside visible area (accounting for zoom)
                     let x, y, spawnAttempts = 0;
-                    const visibleWidth = canvas.width / camera.zoom;
-                    const visibleHeight = canvas.height / camera.zoom;
+                    const visibleWidth = gameWidth / camera.zoom;
+                    const visibleHeight = gameHeight / camera.zoom;
                     const spawnDist = Math.max(visibleWidth, visibleHeight) / 2 + 150;
                     
                     do {
@@ -12697,7 +12734,7 @@
 
         function render() {
             ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             // Grid background (scrolls with camera, scales with zoom)
             ctx.strokeStyle = 'rgba(0, 255, 255, 0.05)';
@@ -12709,16 +12746,16 @@
             const gridOffsetX = (camera.x % worldGridSize) * camera.zoom;
             const gridOffsetY = (camera.y % worldGridSize) * camera.zoom;
             
-            for (let x = -gridOffsetX; x < canvas.width + screenGridSize; x += screenGridSize) {
+            for (let x = -gridOffsetX; x < gameWidth + screenGridSize; x += screenGridSize) {
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
-                ctx.lineTo(x, canvas.height);
+                ctx.lineTo(x, gameHeight);
                 ctx.stroke();
             }
-            for (let y = -gridOffsetY; y < canvas.height + screenGridSize; y += screenGridSize) {
+            for (let y = -gridOffsetY; y < gameHeight + screenGridSize; y += screenGridSize) {
                 ctx.beginPath();
                 ctx.moveTo(0, y);
-                ctx.lineTo(canvas.width, y);
+                ctx.lineTo(gameWidth, y);
                 ctx.stroke();
             }
             
@@ -12843,47 +12880,47 @@
             if (timeStopActive) {
                 const pulse = 0.08 + Math.sin(Date.now() * 0.005) * 0.04;
                 ctx.fillStyle = `rgba(170, 100, 255, ${pulse})`;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
                 
                 // Purple vignette edges
                 const gradient = ctx.createRadialGradient(
-                    canvas.width / 2, canvas.height / 2, canvas.height * 0.4,
-                    canvas.width / 2, canvas.height / 2, canvas.height * 0.8
+                    gameWidth / 2, gameHeight / 2, gameHeight * 0.4,
+                    gameWidth / 2, gameHeight / 2, gameHeight * 0.8
                 );
                 gradient.addColorStop(0, 'rgba(170, 100, 255, 0)');
                 gradient.addColorStop(1, `rgba(170, 100, 255, ${pulse + 0.1})`);
                 ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
             }
             
             // Speed boost visual effect (subtle orange glow at edges)
             if (speedBoostActive) {
                 const pulse = 0.05 + Math.sin(Date.now() * 0.008) * 0.03;
                 const gradient = ctx.createRadialGradient(
-                    canvas.width / 2, canvas.height / 2, canvas.height * 0.5,
-                    canvas.width / 2, canvas.height / 2, canvas.height * 0.9
+                    gameWidth / 2, gameHeight / 2, gameHeight * 0.5,
+                    gameWidth / 2, gameHeight / 2, gameHeight * 0.9
                 );
                 gradient.addColorStop(0, 'rgba(255, 170, 0, 0)');
                 gradient.addColorStop(1, `rgba(255, 170, 0, ${pulse})`);
                 ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
             }
             
             // Low health warning flash
             if (player && player.hp / player.maxHp < 0.3) {
                 const pulse = 0.15 + Math.sin(Date.now() * 0.008) * 0.1;
                 ctx.fillStyle = `rgba(255, 0, 0, ${pulse})`;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
                 
                 // Red vignette edges
                 const gradient = ctx.createRadialGradient(
-                    canvas.width / 2, canvas.height / 2, canvas.height * 0.3,
-                    canvas.width / 2, canvas.height / 2, canvas.height * 0.7
+                    gameWidth / 2, gameHeight / 2, gameHeight * 0.3,
+                    gameWidth / 2, gameHeight / 2, gameHeight * 0.7
                 );
                 gradient.addColorStop(0, 'rgba(255, 0, 0, 0)');
                 gradient.addColorStop(1, `rgba(255, 0, 0, ${pulse + 0.15})`);
                 ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
             }
             
             // Minimap
@@ -12949,8 +12986,8 @@
             }
             
             // Viewport indicator (always visible)
-            const viewWidth = canvas.width / camera.zoom;
-            const viewHeight = canvas.height / camera.zoom;
+            const viewWidth = gameWidth / camera.zoom;
+            const viewHeight = gameHeight / camera.zoom;
             minimapCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
             minimapCtx.lineWidth = 1;
             minimapCtx.strokeRect(
@@ -13285,11 +13322,11 @@
             if (progress < 0.15) {
                 const flashIntensity = progress / 0.15;
                 ctx.fillStyle = `rgba(255, 255, 255, ${flashIntensity * 0.6})`;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
             } else if (progress < 0.3) {
                 const flashIntensity = 1 - ((progress - 0.15) / 0.15);
                 ctx.fillStyle = `rgba(255, 255, 255, ${flashIntensity * 0.6})`;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
             }
             
             // Expanding shockwave rings
@@ -13368,7 +13405,7 @@
                 const fadeProgress = (progress - 0.7) / 0.3;
                 ctx.globalAlpha = fadeProgress * 0.7;
                 ctx.fillStyle = '#000000';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
             }
             
             ctx.restore();

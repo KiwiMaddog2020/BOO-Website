@@ -1570,41 +1570,100 @@
         const powerUpBarEl = document.getElementById('powerUpBar'); // Cached DOM reference
         const permanentUpgradesBarEl = document.getElementById('permanentUpgradesBar'); // Cached DOM reference
 
-        // Base canvas dimensions (before any scaling)
+        // Base canvas dimensions (game logic coordinates)
         const BASE_WIDTH = 653;
         const BASE_HEIGHT = 515;
         
-        // Fullscreen pixel density scaling
-        let currentScale = 1;
-        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
+        // Strategy: Use ctx.scale() for sharp rendering, game logic uses gameWidth/gameHeight
         
-        function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
+        
+        // Performance-based DPR limits
+        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
+        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
+        
+        // Scaling state - game logic ALWAYS uses gameWidth/gameHeight
+        let dprScale = 1;
+        let gameWidth = BASE_WIDTH;   // Logical game coordinates
+        let gameHeight = BASE_HEIGHT;
+        let cssWidth = BASE_WIDTH;    // CSS display size
+        let cssHeight = BASE_HEIGHT;
+        
+        function calculateScale() {
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobile = window.innerWidth <= 768;
             
-            if (isFullscreen && isDesktop) {
-                // Scale up for higher pixel density in fullscreen
-                const dpr = window.devicePixelRatio || 1;
-                currentScale = Math.min(dpr, 2); // Cap at 2x to avoid performance issues
+            if (isFullscreen) {
+                // Fullscreen: scale to fit screen, maintain aspect ratio
+                const availWidth = window.innerWidth;
+                const availHeight = window.innerHeight;
+                const scaleX = availWidth / BASE_WIDTH;
+                const scaleY = availHeight / BASE_HEIGHT;
+                const fitScale = Math.min(scaleX, scaleY);
                 
-                canvas.width = BASE_WIDTH * currentScale;
-                canvas.height = BASE_HEIGHT * currentScale;
-                canvas.style.width = BASE_WIDTH + 'px';
-                canvas.style.height = BASE_HEIGHT + 'px';
-                ctx.scale(currentScale, currentScale);
+                cssWidth = Math.round(BASE_WIDTH * fitScale);
+                cssHeight = Math.round(BASE_HEIGHT * fitScale);
+                gameWidth = BASE_WIDTH;  // Game logic stays at base size
+                gameHeight = BASE_HEIGHT;
+                dprScale = Math.min(rawDPR, maxFullscreenDPR) * fitScale;
             } else {
-                // Restore normal resolution
-                currentScale = 1;
-                canvas.width = BASE_WIDTH;
-                canvas.height = BASE_HEIGHT;
-                canvas.style.width = '';
-                canvas.style.height = '';
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                // Normal mode
+                cssWidth = BASE_WIDTH;
+                cssHeight = BASE_HEIGHT;
+                gameWidth = BASE_WIDTH;
+                gameHeight = BASE_HEIGHT;
+                
+                if (isMobile) {
+                    dprScale = Math.min(rawDPR, 1.5);
+                } else if (isTablet || isLaptopOrDesktop) {
+                    dprScale = Math.min(rawDPR, maxNormalDPR);
+                } else {
+                    dprScale = 1;
+                }
             }
+            
+            // Set canvas buffer (high resolution for sharpness)
+            canvas.width = Math.round(gameWidth * dprScale);
+            canvas.height = Math.round(gameHeight * dprScale);
+            
+            // CSS displays at logical size
+            canvas.style.width = cssWidth + 'px';
+            canvas.style.height = cssHeight + 'px';
+            
+            // Scale context so drawing uses gameWidth coordinates
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(dprScale, dprScale);
+            
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
         }
         
-        // Listen for fullscreen changes
+        function handleFullscreenChange() {
+            calculateScale();
+        }
+        
+        function handleResize() {
+            calculateScale();
+        }
+        
+        // Listen for fullscreen changes (all browser variants)
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+        
+        // Listen for resize/orientation changes
+        window.addEventListener('resize', handleResize);
+        window.addEventListener('orientationchange', () => setTimeout(handleResize, 100));
+        
+        // Initial scale calculation
+        calculateScale();
 
         // Performance detection
         const isMobile = isTrueMobile; // Use unified detection
@@ -1775,7 +1834,7 @@
             {
                 id: 'magnetpaddle',
                 name: 'Magnet Paddle',
-                desc: isTrueMobile ? 'Catch ball, tap to release' : 'Catch ball, click to release',
+                desc: isTrueMobile ? 'Catch every other bounce, tap to release' : 'Catch every other bounce, click to release',
                 icon: '🧲',
                 oneTimeOnly: true,
                 apply: () => { permanentUpgrades.magnetPaddle = true; }
@@ -1881,6 +1940,7 @@
         };
         let balls = []; // Array to hold multiple balls
         let magnetCaughtBall = null; // Ball caught by magnet paddle (stores ball reference and offset)
+        let magnetNextCatch = true; // Toggle: true = next hit catches, false = next hit bounces
         let levelsSinceSkull = 0; // Track levels since last skull brick
         let lastLevelHadSkull = false; // Track if previous level had skull
         
@@ -2178,55 +2238,104 @@
             // At level 10+ and 20+, spawn from center outward
             if (level >= 10) {
                 // Calculate positions starting from center and filling outward
-                const centerX = canvas.width / 2;
+                const centerX = gameWidth / 2;
                 const bossSpacing = bossConfig.width + 20; // Boss width + gap
+                const rowSpacing = bossConfig.height + 15; // Vertical gap between rows
+                const maxBossesPerRow = 10; // Max bosses that fit on top row
                 
-                // Generate positions: center, then alternating left/right
-                const positions = [];
-                positions.push(centerX - bossConfig.width / 2); // Center boss
+                // Split bosses between rows
+                const topRowCount = Math.min(numBosses, maxBossesPerRow);
+                const bottomRowCount = numBosses - topRowCount;
+                
+                // Generate positions for top row
+                const topPositions = [];
+                topPositions.push(centerX - bossConfig.width / 2); // Center boss
                 
                 let offset = 1;
-                while (positions.length < numBosses) {
+                while (topPositions.length < topRowCount) {
                     // Add right position
-                    if (positions.length < numBosses) {
+                    if (topPositions.length < topRowCount) {
                         const rightX = centerX + (offset * bossSpacing) - bossConfig.width / 2;
-                        if (rightX + bossConfig.width <= canvas.width - 10) {
-                            positions.push(rightX);
+                        if (rightX + bossConfig.width <= gameWidth - 10) {
+                            topPositions.push(rightX);
                         }
                     }
                     // Add left position
-                    if (positions.length < numBosses) {
+                    if (topPositions.length < topRowCount) {
                         const leftX = centerX - (offset * bossSpacing) - bossConfig.width / 2;
                         if (leftX >= 10) {
-                            positions.push(leftX);
+                            topPositions.push(leftX);
                         }
                     }
                     offset++;
-                    // Safety break to prevent infinite loop
                     if (offset > 20) break;
                 }
                 
-                // Sort positions left to right for cleaner appearance
-                positions.sort((a, b) => a - b);
+                // Sort positions left to right
+                topPositions.sort((a, b) => a - b);
                 
-                for (let i = 0; i < numBosses && i < positions.length; i++) {
+                // Create top row bosses
+                for (let i = 0; i < topPositions.length; i++) {
                     const initialCooldown = 2000 + Math.random() * 4000;
                     bosses.push({
-                        x: positions[i],
+                        x: topPositions[i],
                         y: baseY,
                         width: bossConfig.width,
                         height: bossConfig.height,
                         hits: 0,
                         alive: true,
-                        direction: i % 2 === 0 ? 1 : -1, // Alternate directions
+                        direction: 1, // All bosses move together
                         color: bossConfig.colors[i % bossConfig.colors.length],
                         flashUntil: 0,
                         nextLaserTime: now + initialCooldown
                     });
                 }
+                
+                // Generate positions for bottom row (overflow bosses)
+                if (bottomRowCount > 0) {
+                    const bottomPositions = [];
+                    bottomPositions.push(centerX - bossConfig.width / 2);
+                    
+                    offset = 1;
+                    while (bottomPositions.length < bottomRowCount) {
+                        if (bottomPositions.length < bottomRowCount) {
+                            const rightX = centerX + (offset * bossSpacing) - bossConfig.width / 2;
+                            if (rightX + bossConfig.width <= gameWidth - 10) {
+                                bottomPositions.push(rightX);
+                            }
+                        }
+                        if (bottomPositions.length < bottomRowCount) {
+                            const leftX = centerX - (offset * bossSpacing) - bossConfig.width / 2;
+                            if (leftX >= 10) {
+                                bottomPositions.push(leftX);
+                            }
+                        }
+                        offset++;
+                        if (offset > 20) break;
+                    }
+                    
+                    bottomPositions.sort((a, b) => a - b);
+                    
+                    // Create bottom row bosses
+                    for (let i = 0; i < bottomPositions.length; i++) {
+                        const initialCooldown = 2000 + Math.random() * 4000;
+                        bosses.push({
+                            x: bottomPositions[i],
+                            y: baseY + rowSpacing,
+                            width: bossConfig.width,
+                            height: bossConfig.height,
+                            hits: 0,
+                            alive: true,
+                            direction: 1, // All bosses move together
+                            color: bossConfig.colors[(topRowCount + i) % bossConfig.colors.length],
+                            flashUntil: 0,
+                            nextLaserTime: now + initialCooldown
+                        });
+                    }
+                }
             } else {
                 // Original evenly-spaced spawning for levels 1-9
-                const spacing = canvas.width / (numBosses + 1);
+                const spacing = gameWidth / (numBosses + 1);
                 
                 for (let i = 0; i < numBosses; i++) {
                     const initialCooldown = 2000 + Math.random() * 4000;
@@ -2358,7 +2467,7 @@
                 if (!boss.alive) return;
                 
                 // Check if boss hits edge
-                if (boss.direction === 1 && boss.x + boss.width >= canvas.width - 10) {
+                if (boss.direction === 1 && boss.x + boss.width >= gameWidth - 10) {
                     needsDrop = true;
                 } else if (boss.direction === -1 && boss.x <= 10) {
                     needsDrop = true;
@@ -2401,7 +2510,7 @@
         function resetBossPositions() {
             const numBosses = bosses.filter(b => b.alive).length;
             const aliveBosses = bosses.filter(b => b.alive);
-            const spacing = canvas.width / (numBosses + 1);
+            const spacing = gameWidth / (numBosses + 1);
             
             // Reset drop animation state
             bossesDropping = false;
@@ -2559,7 +2668,7 @@
                     b.alive && 
                     now >= b.nextLaserTime &&
                     b.x + b.width / 2 > edgeMargin &&
-                    b.x + b.width / 2 < canvas.width - edgeMargin
+                    b.x + b.width / 2 < gameWidth - edgeMargin
                 );
                 
                 if (readyBosses.length > 0) {
@@ -2609,7 +2718,7 @@
                 }
                 
                 // Remove if off screen
-                return laser.y < canvas.height;
+                return laser.y < gameHeight;
             });
         }
         
@@ -2740,7 +2849,7 @@
             if (!immunityStar && !paddleImmunity.active && now - lastStarSpawnTime >= starConfig.spawnInterval) {
                 // Spawn at random position in upper half of play area
                 immunityStar = {
-                    x: 100 + Math.random() * (canvas.width - 200),
+                    x: 100 + Math.random() * (gameWidth - 200),
                     y: 100 + Math.random() * 150,
                     dx: (Math.random() > 0.5 ? 1 : -1) * starConfig.speed,
                     dy: starConfig.speed * 0.8,
@@ -2759,16 +2868,16 @@
                     immunityStar.x = immunityStar.size;
                     immunityStar.dx = Math.abs(immunityStar.dx);
                 }
-                if (immunityStar.x + immunityStar.size > canvas.width) {
-                    immunityStar.x = canvas.width - immunityStar.size;
+                if (immunityStar.x + immunityStar.size > gameWidth) {
+                    immunityStar.x = gameWidth - immunityStar.size;
                     immunityStar.dx = -Math.abs(immunityStar.dx);
                 }
                 if (immunityStar.y - immunityStar.size < 0) {
                     immunityStar.y = immunityStar.size;
                     immunityStar.dy = Math.abs(immunityStar.dy);
                 }
-                if (immunityStar.y + immunityStar.size > canvas.height - 80) {
-                    immunityStar.y = canvas.height - 80 - immunityStar.size;
+                if (immunityStar.y + immunityStar.size > gameHeight - 80) {
+                    immunityStar.y = gameHeight - 80 - immunityStar.size;
                     immunityStar.dy = -Math.abs(immunityStar.dy);
                 }
                 
@@ -3165,7 +3274,7 @@
             
             // Clamp target
             if (paddle.targetX < 0) paddle.targetX = 0;
-            if (paddle.targetX + paddle.width > canvas.width) paddle.targetX = canvas.width - paddle.width;
+            if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
             
             // Smooth interpolation (adjust for frame rate)
             const smoothFactor = 1 - Math.pow(1 - paddle.smoothing, deltaMultiplier);
@@ -3217,8 +3326,8 @@
                     ball.dx = Math.abs(ball.dx); // Force moving right
                 }
                 // Right wall
-                if (ball.x + ball.radius > canvas.width) {
-                    ball.x = canvas.width - ball.radius; // Reposition inside
+                if (ball.x + ball.radius > gameWidth) {
+                    ball.x = gameWidth - ball.radius; // Reposition inside
                     ball.dx = -Math.abs(ball.dx); // Force moving left
                 }
                 // Top wall
@@ -3228,7 +3337,7 @@
                 }
 
                 // Bottom - remove ball
-                if (ball.y + ball.radius > canvas.height) {
+                if (ball.y + ball.radius > gameHeight) {
                     ballsToRemove.push(ballIndex);
                     continue;
                 }
@@ -3241,8 +3350,8 @@
                     
                     ball.y = paddle.y - ball.radius;
                     
-                    // Magnet paddle: catch the ball if enabled and no ball currently caught
-                    if (permanentUpgrades.magnetPaddle && !magnetCaughtBall) {
+                    // Magnet paddle: catch the ball every other hit if enabled
+                    if (permanentUpgrades.magnetPaddle && !magnetCaughtBall && magnetNextCatch) {
                         // Catch the ball - store offset from paddle center
                         magnetCaughtBall = {
                             ball: ball,
@@ -3250,7 +3359,13 @@
                         };
                         ball.dx = 0;
                         ball.dy = 0;
+                        magnetNextCatch = false; // Next hit will bounce
                         continue; // Skip normal bounce processing
+                    }
+                    
+                    // Toggle for next paddle hit (if magnet enabled but didn't catch)
+                    if (permanentUpgrades.magnetPaddle && !magnetCaughtBall) {
+                        magnetNextCatch = true; // Next hit will catch
                     }
                     
                     // Angle based on where ball hits paddle (-0.8 to 0.8 range for max angle)
@@ -3457,7 +3572,7 @@
             
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             // Magenta text (matches game over)
             const fontSize = isTrueMobile ? 26 : 32;
@@ -3466,7 +3581,7 @@
             ctx.textAlign = 'center';
             ctx.shadowColor = '#f0f';
             ctx.shadowBlur = 10;
-            ctx.fillText(`${lives} ${lives === 1 ? 'LIFE' : 'LIVES'} REMAINING`, canvas.width / 2, canvas.height / 2);
+            ctx.fillText(`${lives} ${lives === 1 ? 'LIFE' : 'LIVES'} REMAINING`, gameWidth / 2, gameHeight / 2);
             ctx.shadowBlur = 0;
         }
 
@@ -3559,9 +3674,11 @@
                     return true;
                 });
                 
-                currentUpgradeChoices = [...availableLegendary];
+                // Shuffle and pick up to 3 legendary upgrades
+                const shuffled = [...availableLegendary].sort(() => Math.random() - 0.5);
+                currentUpgradeChoices = shuffled.slice(0, 3);
                 
-                // Determine how many slots to show (2 if boss damage maxed, 3 otherwise)
+                // Determine how many slots to show (up to 3)
                 const slotsToShow = currentUpgradeChoices.length;
                 
                 // Reset slots to rolling state with legendary styling
@@ -3776,7 +3893,7 @@
             
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             // Blue text for extra life
             ctx.font = 'bold 42px Arial';
@@ -3784,7 +3901,7 @@
             ctx.textAlign = 'center';
             ctx.shadowColor = '#00aaff';
             ctx.shadowBlur = 25;
-            ctx.fillText('+1 LIFE', canvas.width / 2, canvas.height / 2);
+            ctx.fillText('+1 LIFE', gameWidth / 2, gameHeight / 2);
             ctx.shadowBlur = 0;
         }
         
@@ -3793,7 +3910,7 @@
             
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             // Warning text - same pink as start button
             ctx.font = 'bold 36px Arial';
@@ -3801,7 +3918,7 @@
             ctx.textAlign = 'center';
             ctx.shadowColor = '#f0f';
             ctx.shadowBlur = 20;
-            ctx.fillText('BOSS INCOMING!', canvas.width / 2, canvas.height / 2);
+            ctx.fillText('BOSS INCOMING!', gameWidth / 2, gameHeight / 2);
             ctx.shadowBlur = 0;
         }
         
@@ -3810,7 +3927,7 @@
             
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             // Victory text - same cyan as paddle
             ctx.font = 'bold 36px Arial';
@@ -3818,7 +3935,7 @@
             ctx.textAlign = 'center';
             ctx.shadowColor = '#0ff';
             ctx.shadowBlur = 20;
-            ctx.fillText(`LEVEL ${level} CLEAR!`, canvas.width / 2, canvas.height / 2);
+            ctx.fillText(`LEVEL ${level} CLEAR!`, gameWidth / 2, gameHeight / 2);
             ctx.shadowBlur = 0;
         }
 
@@ -3890,9 +4007,9 @@
                 paddle.x = 0;
                 paddle.targetX = 0;
             }
-            if (paddle.x + paddle.width > canvas.width) {
-                paddle.x = canvas.width - paddle.width;
-                paddle.targetX = canvas.width - paddle.width;
+            if (paddle.x + paddle.width > gameWidth) {
+                paddle.x = gameWidth - paddle.width;
+                paddle.targetX = gameWidth - paddle.width;
             }
             
             if (progress >= 1) {
@@ -4066,8 +4183,9 @@
         }
 
         function resetBall() {
-            // Clear any magnet-caught ball
+            // Clear any magnet-caught ball and reset catch toggle
             magnetCaughtBall = null;
+            magnetNextCatch = true; // First hit after reset will catch
             
             // Apply permanent speed reduction bonus
             const speedMultiplier = 1 - (permanentUpgrades.speedReduction / 100);
@@ -4125,19 +4243,19 @@
         
         function drawGameOverScreen() {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             ctx.font = 'bold 52px Arial';
             ctx.fillStyle = '#f0f';
             ctx.textAlign = 'center';
             ctx.shadowColor = '#f0f';
             ctx.shadowBlur = isMobile ? 15 : 25;
-            ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 60);
+            ctx.fillText('GAME OVER', gameWidth / 2, gameHeight / 2 - 60);
             ctx.shadowBlur = 0;
             
             ctx.font = '24px Arial';
             ctx.fillStyle = '#0ff';
-            ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 - 15);
+            ctx.fillText(`Final Score: ${score}`, gameWidth / 2, gameHeight / 2 - 15);
         }
         
         function showGameOverButtons() {
@@ -4148,13 +4266,13 @@
         function draw() {
             // Background fill (no need for clearRect since we fill the whole canvas)
             ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
             
             // Draw horizontal line at top (under HUD area) - matches border style
             const topLineY = 1;
             ctx.beginPath();
             ctx.moveTo(0, topLineY);
-            ctx.lineTo(canvas.width, topLineY);
+            ctx.lineTo(gameWidth, topLineY);
             ctx.strokeStyle = '#0ff';
             ctx.lineWidth = 1;
             ctx.shadowColor = '#0ff';
@@ -4403,7 +4521,7 @@
             livesEl.textContent = lives;
             levelEl.textContent = level;
             
-            paddle.x = canvas.width / 2 - paddle.width / 2;
+            paddle.x = gameWidth / 2 - paddle.width / 2;
             paddle.targetX = paddle.x;
             createBricks();
             resetBall();
@@ -4450,11 +4568,11 @@
         document.addEventListener('mousemove', (e) => {
             if (!mouseControlActive) return;
             const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
+            const scaleX = gameWidth / rect.width;
             const mouseX = (e.clientX - rect.left) * scaleX;
             paddle.targetX = mouseX - paddle.width / 2;
             if (paddle.targetX < 0) paddle.targetX = 0;
-            if (paddle.targetX + paddle.width > canvas.width) paddle.targetX = canvas.width - paddle.width;
+            if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
         });
         
         // Activate mouse control when clicking on canvas or game container
@@ -4478,12 +4596,12 @@
             if (e.touches.length === 0) return;
             e.preventDefault();
             const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
+            const scaleX = gameWidth / rect.width;
             const touch = e.touches[0];
             const touchX = (touch.clientX - rect.left) * scaleX;
             paddle.targetX = touchX - paddle.width / 2;
             if (paddle.targetX < 0) paddle.targetX = 0;
-            if (paddle.targetX + paddle.width > canvas.width) paddle.targetX = canvas.width - paddle.width;
+            if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
         }
 
         // Only add canvas touch listeners - they check gameRunning internally
@@ -4503,13 +4621,13 @@
             
             // Map touch X position to canvas coordinates
             const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
+            const scaleX = gameWidth / rect.width;
             const touchX = (touch.clientX - rect.left) * scaleX;
             
             // Move paddle to touch position (centered on touch)
             paddle.targetX = touchX - paddle.width / 2;
             if (paddle.targetX < 0) paddle.targetX = 0;
-            if (paddle.targetX + paddle.width > canvas.width) paddle.targetX = canvas.width - paddle.width;
+            if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
         }
         
         // Trackpad zone handles touch events for paddle control

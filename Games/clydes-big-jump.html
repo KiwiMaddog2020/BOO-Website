@@ -964,50 +964,69 @@
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         
-        // DPR scaling for sharp visuals
-        let dpr = Math.min(window.devicePixelRatio || 1, isLowPerf ? 2 : 3);
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
+        const baseWidth = 400;
+        const baseHeight = 600;
+        let displayWidth = baseWidth;
+        let displayHeight = baseHeight;
+        let dprScale = 1;
         
-        // Fullscreen pixel density scaling (desktop only)
-        let currentScale = 1;
-        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
         
-        function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            
-            if (isFullscreen && isDesktop) {
-                // Scale up for higher pixel density in fullscreen
-                const baseDpr = window.devicePixelRatio || 1;
-                currentScale = Math.min(baseDpr, 2); // Cap at 2x to avoid performance issues
-            } else {
-                // Restore normal resolution
-                currentScale = 1;
-            }
-            resizeCanvas();
-        }
+        // Performance-based DPR limits
+        const maxNormalDPR = isLowPerf ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerf ? 2 : 3;
         
-        // Listen for fullscreen changes
-        document.addEventListener('fullscreenchange', handleFullscreenChange);
-        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-        
-        // Responsive sizing
         function resizeCanvas() {
-            const maxWidth = Math.min(400, window.innerWidth - 20);
-            const maxHeight = Math.min(600, window.innerHeight - 20);
-            const ratio = 400 / 600;
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobile = window.innerWidth <= 768;
+            const ratio = baseWidth / baseHeight;
             
-            let displayWidth, displayHeight;
-            if (maxWidth / maxHeight > ratio) {
-                displayHeight = maxHeight;
-                displayWidth = maxHeight * ratio;
+            // Available space
+            const maxWidth = Math.min(baseWidth, window.innerWidth - 20);
+            const maxHeight = Math.min(baseHeight, window.innerHeight - 20);
+            
+            // Calculate display dimensions
+            if (isFullscreen) {
+                // Fullscreen: fit to screen while maintaining aspect ratio
+                const availWidth = window.innerWidth;
+                const availHeight = window.innerHeight;
+                if (availWidth / availHeight > ratio) {
+                    displayHeight = availHeight;
+                    displayWidth = displayHeight * ratio;
+                } else {
+                    displayWidth = availWidth;
+                    displayHeight = displayWidth / ratio;
+                }
+                // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
+                dprScale = Math.min(rawDPR, maxFullscreenDPR);
             } else {
-                displayWidth = maxWidth;
-                displayHeight = maxWidth / ratio;
+                // Normal mode
+                if (maxWidth / maxHeight > ratio) {
+                    displayHeight = maxHeight;
+                    displayWidth = maxHeight * ratio;
+                } else {
+                    displayWidth = maxWidth;
+                    displayHeight = maxWidth / ratio;
+                }
+                
+                // Apply DPR scaling based on device type
+                if (isMobile) {
+                    dprScale = Math.min(rawDPR, 1.5);
+                } else if (isTablet || isLaptopOrDesktop) {
+                    dprScale = Math.min(rawDPR, maxNormalDPR);
+                } else {
+                    dprScale = 1;
+                }
             }
             
-            // Set canvas buffer with DPR scaling (boosted in fullscreen)
-            const effectiveScale = dpr * currentScale;
-            canvas.width = displayWidth * effectiveScale;
-            canvas.height = displayHeight * effectiveScale;
+            // Set canvas buffer with DPR scaling for sharp rendering
+            canvas.width = Math.round(displayWidth * dprScale);
+            canvas.height = Math.round(displayHeight * dprScale);
             
             // Set CSS display size
             canvas.style.width = displayWidth + 'px';
@@ -1019,8 +1038,21 @@
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
         }
+        
+        function handleFullscreenChange() {
+            resizeCanvas();
+        }
+        
+        // Initial resize
         resizeCanvas();
+        
+        // Listen for resize and fullscreen changes
         window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
 
         // Game state
         let gameState = 'loading'; // 'loading', 'intro', 'start', 'playing', 'gameover'

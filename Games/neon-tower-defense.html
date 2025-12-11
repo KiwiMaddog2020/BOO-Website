@@ -1992,31 +1992,42 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Base canvas dimensions (before any scaling)
+        // Base canvas dimensions (game logic coordinates)
         const BASE_WIDTH = 644;
         const BASE_HEIGHT = 582;
         
-        // Current canvas dimensions (may change on resize)
+        // Current canvas dimensions
         let CANVAS_WIDTH = BASE_WIDTH;
         let CANVAS_HEIGHT = BASE_HEIGHT;
         
-        // Scaling
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
         let currentScale = 1;
-        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        let dprScale = 1;
+        let displayWidth = BASE_WIDTH;
+        let displayHeight = BASE_HEIGHT;
+        
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
+        
+        // Performance-based DPR limits
+        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
+        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
         
         function calculateCanvasSize() {
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
-            const isMobile = viewportWidth <= 768 || 'ontouchstart' in window;
+            const isMobile = viewportWidth <= 768;
             
             if (isMobile) {
-                // Mobile: fit to screen with padding
                 const padding = 20;
                 const maxWidth = viewportWidth - padding;
-                const maxHeight = viewportHeight - 180; // Leave room for HUD and controls
-                
-                // Maintain aspect ratio
+                const maxHeight = viewportHeight - 180;
                 const aspectRatio = BASE_WIDTH / BASE_HEIGHT;
+                
                 let width = maxWidth;
                 let height = width / aspectRatio;
                 
@@ -2025,75 +2036,100 @@
                     width = height * aspectRatio;
                 }
                 
-                // Don't exceed base size
                 width = Math.min(width, BASE_WIDTH);
                 height = Math.min(height, BASE_HEIGHT);
                 
                 return { width: Math.floor(width), height: Math.floor(height) };
             } else {
-                // Desktop: use full base size
                 return { width: BASE_WIDTH, height: BASE_HEIGHT };
             }
         }
         
-        function resizeCanvas() {
-            const size = calculateCanvasSize();
-            CANVAS_WIDTH = size.width;
-            CANVAS_HEIGHT = size.height;
+        function calculateScale() {
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobile = window.innerWidth <= 768;
             
-            canvas.width = CANVAS_WIDTH;
-            canvas.height = CANVAS_HEIGHT;
-            canvas.style.width = CANVAS_WIDTH + 'px';
-            canvas.style.height = CANVAS_HEIGHT + 'px';
+            // Get available space
+            const availWidth = window.innerWidth;
+            const availHeight = window.innerHeight;
+            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
             
-            // Calculate scale factor relative to base size
-            const scale = CANVAS_WIDTH / BASE_WIDTH;
-            currentScale = scale;
+            if (isFullscreen) {
+                // Fullscreen: fit to screen while maintaining aspect ratio
+                const screenAspect = availWidth / availHeight;
+                if (screenAspect > gameAspect) {
+                    displayHeight = availHeight;
+                    displayWidth = displayHeight * gameAspect;
+                } else {
+                    displayWidth = availWidth;
+                    displayHeight = displayWidth / gameAspect;
+                }
+                dprScale = Math.min(rawDPR, maxFullscreenDPR);
+            } else {
+                // Normal mode
+                const size = calculateCanvasSize();
+                displayWidth = size.width;
+                displayHeight = size.height;
+                
+                if (isMobile) {
+                    dprScale = Math.min(rawDPR, 1.5);
+                } else if (isTablet || isLaptopOrDesktop) {
+                    dprScale = Math.min(rawDPR, maxNormalDPR);
+                } else {
+                    dprScale = 1;
+                }
+            }
             
-            // Scale context so all drawing uses BASE_WIDTH/BASE_HEIGHT coordinates
-            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
-            ctx.scale(scale, scale);
+            CANVAS_WIDTH = displayWidth;
+            CANVAS_HEIGHT = displayHeight;
+            
+            // Calculate UI scale factor (for responsive elements)
+            const uiScale = displayWidth / BASE_WIDTH;
+            currentScale = uiScale;
+            
+            // Apply to canvas with DPR scaling for sharp rendering
+            canvas.width = Math.round(displayWidth * dprScale);
+            canvas.height = Math.round(displayHeight * dprScale);
+            canvas.style.width = displayWidth + 'px';
+            canvas.style.height = displayHeight + 'px';
+            
+            // Reset and apply combined scale (UI scale * DPR)
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(uiScale * dprScale, uiScale * dprScale);
             
             // Update CSS custom properties for proportional UI scaling
             const root = document.documentElement;
-            root.style.setProperty('--scale', scale);
-            root.style.setProperty('--canvas-width', CANVAS_WIDTH + 'px');
-            root.style.setProperty('--canvas-height', CANVAS_HEIGHT + 'px');
+            root.style.setProperty('--scale', uiScale);
+            root.style.setProperty('--canvas-width', displayWidth + 'px');
+            root.style.setProperty('--canvas-height', displayHeight + 'px');
+            
+            // Re-enable image smoothing
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+        }
+        
+        function resizeCanvas() {
+            calculateScale();
         }
         
         function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            
-            if (isFullscreen && isDesktop) {
-                // Scale up for higher pixel density in fullscreen
-                const dpr = window.devicePixelRatio || 1;
-                const hiDpiScale = Math.min(dpr, 2);
-                
-                canvas.width = BASE_WIDTH * hiDpiScale;
-                canvas.height = BASE_HEIGHT * hiDpiScale;
-                canvas.style.width = BASE_WIDTH + 'px';
-                canvas.style.height = BASE_HEIGHT + 'px';
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.scale(hiDpiScale, hiDpiScale);
-            } else {
-                // Restore to current calculated size
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                resizeCanvas();
-            }
+            calculateScale();
         }
         
-        // Listen for fullscreen changes
+        // Listen for fullscreen changes (all browser variants)
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
         
         // Resize on orientation change and window resize
         window.addEventListener('resize', resizeCanvas);
         window.addEventListener('orientationchange', () => {
-            setTimeout(resizeCanvas, 100); // Delay for orientation to settle
+            setTimeout(resizeCanvas, 100);
         });
         
-        // Initial resize
-        resizeCanvas();
+        // Initial scale calculation
+        calculateScale();
         
         // Constants
         const MAX_PARTICLES = 200;

@@ -4515,12 +4515,22 @@
         }
         
         // ==================== RESPONSIVE SCALING ====================
-        // Fullscreen pixel density scaling
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
         let currentScale = 1;
-        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        let renderScale = 1;
+        
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
+        
+        // Performance-based limits
+        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
+        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
         
         function getViewportSize() {
-            // Use visualViewport for more accurate sizing in iframes
             if (window.visualViewport) {
                 return {
                     width: window.visualViewport.width,
@@ -4537,27 +4547,40 @@
             const viewport = getViewportSize();
             const viewportWidth = viewport.width;
             const viewportHeight = viewport.height;
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobile = viewportWidth <= 768;
             
             // Get HUD height
             const hud = document.querySelector('.hud');
             const hudHeight = hud ? hud.offsetHeight : 50;
             
-            // Scale internal resolution based on display size
-            // 1x for mobile, 2x for HD desktop, 2.5x for 2K+
-            if (viewportWidth >= 2560 || viewportHeight >= 1440) {
-                renderScale = 2.5; // 2K+ displays
-            } else if (viewportWidth >= 800) {
-                renderScale = 2; // HD desktop
+            // Calculate effective DPR based on context
+            let effectiveDPR;
+            if (isFullscreen) {
+                // Fullscreen: use higher DPR (up to 3x for 2K+ monitors)
+                effectiveDPR = Math.min(rawDPR, maxFullscreenDPR);
+            } else if (isMobile) {
+                effectiveDPR = Math.min(rawDPR, 1.5);
+            } else if (isTablet || isLaptopOrDesktop) {
+                effectiveDPR = Math.min(rawDPR, maxNormalDPR);
             } else {
-                renderScale = 1; // Mobile
+                effectiveDPR = 1;
             }
             
+            // Set render scale based on effective DPR and screen size
+            renderScale = effectiveDPR;
+            currentScale = renderScale;
+            
             // Set internal canvas resolution (scaled for quality)
-            canvas.width = BASE_WIDTH * renderScale;
-            canvas.height = BASE_HEIGHT * renderScale;
+            canvas.width = Math.round(BASE_WIDTH * renderScale);
+            canvas.height = Math.round(BASE_HEIGHT * renderScale);
             
             // Scale the context so drawing code stays the same
             ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+            
+            // Re-enable image smoothing after canvas resize
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
             
             // Stretch canvas via CSS to fill available space
             const availableWidth = viewportWidth;
@@ -4571,9 +4594,6 @@
         }
         
         function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            
-            // Just call resize - it handles both fullscreen and normal
             handleResize();
             
             if (!gameRunning) {
@@ -4591,16 +4611,22 @@
             window.visualViewport.addEventListener('scroll', handleResize);
         }
         
-        // Handle fullscreen changes
+        // Handle fullscreen changes (all browser variants)
         document.addEventListener('fullscreenchange', () => {
             setTimeout(handleFullscreenChange, 50);
             setTimeout(handleResize, 150);
-            setTimeout(handleResize, 500);
         });
         document.addEventListener('webkitfullscreenchange', () => {
             setTimeout(handleFullscreenChange, 50);
             setTimeout(handleResize, 150);
-            setTimeout(handleResize, 500);
+        });
+        document.addEventListener('mozfullscreenchange', () => {
+            setTimeout(handleFullscreenChange, 50);
+            setTimeout(handleResize, 150);
+        });
+        document.addEventListener('MSFullscreenChange', () => {
+            setTimeout(handleFullscreenChange, 50);
+            setTimeout(handleResize, 150);
         });
         
         // Handle orientation changes on mobile
@@ -4612,7 +4638,6 @@
         // Re-check size after delays for iframe loading
         setTimeout(handleResize, 100);
         setTimeout(handleResize, 300);
-        setTimeout(handleResize, 500);
         
         // ==================== INITIALIZATION ====================
         createScanlinePattern();

@@ -550,98 +550,121 @@
         let CANVAS_SIZE = BASE_CANVAS_SIZE;
         let GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
 
-        // Fullscreen pixel density scaling
+        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
         let currentScale = 1;
-        const isDesktop = !('ontouchstart' in window) && window.innerWidth > 768;
+        let displaySize = BASE_CANVAS_SIZE;
         
-        // Calculate optimal canvas size based on device width
+        // Device detection
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
+        const rawDPR = window.devicePixelRatio || 1;
+        
+        // Performance-based DPR limits
+        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
+        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
+        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
+        
+        // Calculate optimal canvas display size based on device
         function calculateCanvasSize() {
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
-            const isMobile = viewportWidth <= 768 || 'ontouchstart' in window;
+            const isMobile = viewportWidth <= 768;
             
             if (isMobile) {
-                // Mobile: fit to screen width with padding
-                const padding = 20; // Account for container padding/border
+                // Mobile: fit to screen with padding
+                const padding = 20;
                 const maxWidth = viewportWidth - padding;
-                const maxHeight = viewportHeight - 200; // Leave room for HUD, controls, touch zone
+                const maxHeight = viewportHeight - 200;
                 const size = Math.min(maxWidth, maxHeight, BASE_CANVAS_SIZE);
-                // Round to nearest multiple of GRID_COUNT for crisp grid lines
                 return Math.floor(size / GRID_COUNT) * GRID_COUNT;
             } else {
-                // Desktop: use full base size
                 return BASE_CANVAS_SIZE;
             }
         }
         
-        function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        function calculateScale() {
+            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            const isMobile = window.innerWidth <= 768;
             
-            if (isFullscreen && isDesktop) {
-                // Scale up for higher pixel density in fullscreen
-                const dpr = window.devicePixelRatio || 1;
-                currentScale = Math.min(dpr, 2);
+            // Calculate display size
+            displaySize = calculateCanvasSize();
+            CANVAS_SIZE = displaySize;
+            GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
+            
+            if (isFullscreen) {
+                // Fullscreen: fit to screen
+                const availWidth = window.innerWidth;
+                const availHeight = window.innerHeight;
+                displaySize = Math.min(availWidth, availHeight);
+                displaySize = Math.floor(displaySize / GRID_COUNT) * GRID_COUNT;
+                CANVAS_SIZE = displaySize;
+                GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
                 
-                canvas.width = CANVAS_SIZE * currentScale;
-                canvas.height = CANVAS_SIZE * currentScale;
-                canvas.style.width = CANVAS_SIZE + 'px';
-                canvas.style.height = CANVAS_SIZE + 'px';
-                ctx.scale(currentScale, currentScale);
+                // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
+                currentScale = Math.min(rawDPR, maxFullscreenDPR);
+            } else if (isMobile) {
+                currentScale = Math.min(rawDPR, 1.5);
+            } else if (isTablet || isLaptopOrDesktop) {
+                currentScale = Math.min(rawDPR, maxNormalDPR);
             } else {
-                // Restore to current calculated size
                 currentScale = 1;
-                resizeCanvas();
             }
+            
+            // Apply to canvas with DPR scaling
+            canvas.width = Math.round(displaySize * currentScale);
+            canvas.height = Math.round(displaySize * currentScale);
+            canvas.style.width = displaySize + 'px';
+            canvas.style.height = displaySize + 'px';
+            
+            // Reset and apply scale transform
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(currentScale, currentScale);
+            
+            // Update CSS custom properties for proportional UI scaling
+            const uiScale = displaySize / BASE_CANVAS_SIZE;
+            const root = document.documentElement;
+            root.style.setProperty('--scale', uiScale);
+            root.style.setProperty('--canvas-size', displaySize + 'px');
+            root.style.setProperty('--hud-font', Math.round(14 * uiScale) + 'px');
+            root.style.setProperty('--btn-font', Math.round(14 * uiScale) + 'px');
+            root.style.setProperty('--btn-padding', Math.round(8 * uiScale) + 'px ' + Math.round(14 * uiScale) + 'px');
+            root.style.setProperty('--btn-min-width', Math.round(100 * uiScale) + 'px');
+            root.style.setProperty('--gap', Math.round(2 * uiScale) + 'px');
+            root.style.setProperty('--container-padding', Math.round(4 * uiScale) + 'px');
+            root.style.setProperty('--touch-zone-height', Math.round(80 * uiScale) + 'px');
+            root.style.setProperty('--game-over-title', Math.round(24 * uiScale) + 'px');
+            root.style.setProperty('--game-over-text', Math.round(16 * uiScale) + 'px');
+            
+            // Re-enable image smoothing after canvas resize
+            ctx.imageSmoothingEnabled = false; // Keep crisp pixels for snake game
             
             if (!gameRunning) {
                 draw();
             }
         }
         
-        // Listen for fullscreen changes
+        function handleFullscreenChange() {
+            calculateScale();
+        }
+        
+        function resizeCanvas() {
+            calculateScale();
+        }
+        
+        // Listen for fullscreen changes (all browser variants)
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-
-        // Responsive canvas sizing
-        function resizeCanvas() {
-            const newSize = calculateCanvasSize();
-            CANVAS_SIZE = newSize;
-            GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
-            
-            canvas.width = CANVAS_SIZE;
-            canvas.height = CANVAS_SIZE;
-            canvas.style.width = CANVAS_SIZE + 'px';
-            canvas.style.height = CANVAS_SIZE + 'px';
-            
-            // Calculate scale factor relative to base size
-            const scale = CANVAS_SIZE / BASE_CANVAS_SIZE;
-            
-            // Update CSS custom properties for proportional UI scaling
-            const root = document.documentElement;
-            root.style.setProperty('--scale', scale);
-            root.style.setProperty('--canvas-size', CANVAS_SIZE + 'px');
-            root.style.setProperty('--hud-font', Math.round(14 * scale) + 'px');
-            root.style.setProperty('--btn-font', Math.round(14 * scale) + 'px');
-            root.style.setProperty('--btn-padding', Math.round(8 * scale) + 'px ' + Math.round(14 * scale) + 'px');
-            root.style.setProperty('--btn-min-width', Math.round(100 * scale) + 'px');
-            root.style.setProperty('--gap', Math.round(2 * scale) + 'px');
-            root.style.setProperty('--container-padding', Math.round(4 * scale) + 'px');
-            root.style.setProperty('--touch-zone-height', Math.round(80 * scale) + 'px');
-            root.style.setProperty('--game-over-title', Math.round(24 * scale) + 'px');
-            root.style.setProperty('--game-over-text', Math.round(16 * scale) + 'px');
-            
-            if (!gameRunning) {
-                draw();
-            }
-        }
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
         
         // Resize on orientation change and window resize
         window.addEventListener('resize', resizeCanvas);
         window.addEventListener('orientationchange', () => {
-            setTimeout(resizeCanvas, 100); // Delay for orientation to settle
+            setTimeout(resizeCanvas, 100);
         });
         
-        // Game state
+        // Game state (must be declared before calculateScale which calls draw)
         let snake = [];
         let direction = { x: 1, y: 0 };
         let nextDirection = { x: 1, y: 0 };
@@ -669,6 +692,9 @@
             foodGlow: 'rgba(255, 255, 0, 0.6)',
             grid: 'rgba(0, 255, 255, 0.05)'
         };
+        
+        // Initial scale calculation (after all draw() dependencies are declared)
+        calculateScale();
 
         function initGame() {
             snake = [
