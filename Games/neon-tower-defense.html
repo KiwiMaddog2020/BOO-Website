@@ -330,9 +330,13 @@
         /* Placement Tooltip */
         .placement-tooltip {
             display: none;
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
             text-align: center;
             padding: 6px 14px;
-            background: rgba(0, 0, 0, 0.85);
+            background: rgba(0, 0, 0, 0.92);
             border: 2px solid rgba(0, 255, 255, 0.6);
             border-radius: 6px;
             color: #fff;
@@ -340,6 +344,8 @@
             text-shadow: 0 0 8px #0ff;
             box-shadow: 0 0 12px rgba(0, 255, 255, 0.3);
             white-space: nowrap;
+            z-index: 150;
+            pointer-events: none;
         }
         
         .placement-tooltip.active {
@@ -354,6 +360,13 @@
         .placement-tooltip .tower-desc {
             color: #ccc;
             margin-left: 6px;
+        }
+        
+        /* Tower bar disabled state during wave */
+        .tower-bar.wave-active .tower-btn {
+            opacity: 0.4;
+            pointer-events: none;
+            cursor: not-allowed;
         }
         
         /* Shop Overlay */
@@ -2545,12 +2558,18 @@
             document.getElementById('restartBtn').addEventListener('click', startGame);
             waveBtn.addEventListener('click', showConfirmWave);
             
-            // Speed button
+            // Speed button - cycle through 1x, 2x, 3x
             document.getElementById('speedBtn').addEventListener('click', () => {
-                gameSpeed = gameSpeed === 1 ? 2 : 1;
+                if (gameSpeed === 1) {
+                    gameSpeed = 2;
+                } else if (gameSpeed === 2) {
+                    gameSpeed = 3;
+                } else {
+                    gameSpeed = 1;
+                }
                 const btn = document.getElementById('speedBtn');
                 btn.textContent = '▶▶ ' + gameSpeed + 'x';
-                btn.classList.toggle('active', gameSpeed === 2);
+                btn.classList.toggle('active', gameSpeed > 1);
             });
             
             // Exit button
@@ -2714,7 +2733,8 @@
             pendingPlacement = null;
             showingPlacementPreview = false;
             
-            // Deselect all tower buttons
+            // Deselect all tower buttons and reset wave-active state
+            towerBar.classList.remove('wave-active');
             towerBar.querySelectorAll('.tower-btn').forEach(b => b.classList.remove('selected'));
             updatePlacementTooltip();
             
@@ -2868,32 +2888,32 @@
                 // Waves 1-5: No extra scaling, just base formula
                 healthMult = 1;
                 speedMult = 1;
-            } else if (wave <= 10) {
-                // Waves 6-10: Gradual ramp (1.0 to 1.4 over 5 waves)
-                const progress = (wave - 5) / 5; // 0 to 1
+            } else if (wave <= 9) {
+                // Waves 6-9: Gradual ramp (1.0 to 1.4 over 4 waves)
+                const progress = (wave - 5) / 4; // 0 to 1
                 healthMult = 1 + (progress * 0.4);  // 1.0 to 1.4
                 speedMult = 1 + (progress * 0.1);   // 1.0 to 1.1
                 dangerMult = progress * 0.5;        // 0 to 0.5
             } else if (wave <= 40) {
-                // Waves 11-40: Exponential scaling
-                const wavesPast10 = wave - 10;
-                // Health scales exponentially: 1.4 * 1.12^(waves past 10)
-                healthMult = 1.4 * Math.pow(1.12, wavesPast10);
-                // Speed scales more gently
-                speedMult = 1.1 + (wavesPast10 * 0.02);
-                // Danger multiplier for enemy types
-                dangerMult = 0.5 + (wavesPast10 * 0.03);
+                // Waves 10-40: More aggressive exponential scaling
+                const wavesPast9 = wave - 9;
+                // Health scales exponentially: 1.4 * 1.15^(waves past 9) - faster scaling
+                healthMult = 1.4 * Math.pow(1.15, wavesPast9);
+                // Speed scales more noticeably
+                speedMult = 1.1 + (wavesPast9 * 0.025);
+                // Danger multiplier for enemy types - more dangerous enemies earlier
+                dangerMult = 0.6 + (wavesPast9 * 0.04);
             } else {
                 // Waves 41+: EXTREME scaling - the wall
                 const wavesPast40 = wave - 40;
-                // Calculate wave 40 baseline first
-                const wave40HealthMult = 1.4 * Math.pow(1.12, 30); // ~41.8x at wave 40
+                // Calculate wave 40 baseline first (31 waves past 9 with 1.15 multiplier)
+                const wave40HealthMult = 1.4 * Math.pow(1.15, 31); // ~107x at wave 40
                 // Then apply brutal exponential on top: 1.25^(waves past 40)
                 healthMult = wave40HealthMult * Math.pow(1.25, wavesPast40);
                 // Speed caps but stays intense
-                speedMult = 1.7 + (wavesPast40 * 0.03);
+                speedMult = 1.875 + (wavesPast40 * 0.03);
                 // Max danger - lots of bosses and tanks
-                dangerMult = 1.4 + (wavesPast40 * 0.05);
+                dangerMult = 1.84 + (wavesPast40 * 0.05);
             }
             
             // Base stats with scaling applied
@@ -3479,22 +3499,23 @@
             waveInProgress = true;
             waveBtn.disabled = true;
             waveBtn.textContent = 'WAVE ' + wave;
+            towerBar.classList.add('wave-active');
             updateShopButton();
             
             // Enemy count scaling to match difficulty curve
             let countMult = 1;
             if (wave <= 5) {
                 countMult = 1;
-            } else if (wave <= 10) {
-                const progress = (wave - 5) / 5;
+            } else if (wave <= 9) {
+                const progress = (wave - 5) / 4;
                 countMult = 1 + (progress * 0.25); // 1.0 to 1.25
             } else if (wave <= 40) {
-                const wavesPast10 = wave - 10;
-                countMult = 1.25 + (wavesPast10 * 0.08); // +8% per wave after 10
+                const wavesPast9 = wave - 9;
+                countMult = 1.25 + (wavesPast9 * 0.10); // +10% per wave after 9 (was 8%)
             } else {
                 // Waves 41+: EXTREME enemy count scaling
                 const wavesPast40 = wave - 40;
-                const wave40CountMult = 1.25 + (30 * 0.08); // 3.65 at wave 40
+                const wave40CountMult = 1.25 + (31 * 0.10); // 4.35 at wave 40
                 // Exponential enemy count increase: 1.15^(waves past 40)
                 countMult = wave40CountMult * Math.pow(1.15, wavesPast40);
             }
@@ -3512,6 +3533,7 @@
             waveInProgress = false;
             waveBtn.disabled = false;
             waveBtn.textContent = 'START WAVE';
+            towerBar.classList.remove('wave-active');
             updateShopButton();
             
             // Interest bonus
