@@ -1499,6 +1499,45 @@
         }
         
         /* Also pause nav animations during scroll */
+        /* ========== ARCADE MODE - DISABLE INTENSIVE OVERLAYS (DESKTOP) ========== */
+        /* When on arcade section, hide GPU-intensive animations to maximize game performance */
+        @media (min-width: 769px) {
+            body.arcade-active .wavy-flutter,
+            body.arcade-active .psych-fractals,
+            body.arcade-active .liquid-overlay,
+            body.arcade-active .lava-blobs,
+            body.arcade-active .lava-blob,
+            body.arcade-active .color-splotches,
+            body.arcade-active .splotch,
+            body.arcade-active .color-mist,
+            body.arcade-active .color-mist::before,
+            body.arcade-active .color-mist::after,
+            body.arcade-active .oil-slick,
+            body.arcade-active .chrome-color-sweep,
+            body.arcade-active .chrome-shimmer,
+            body.arcade-active section::before {
+                animation: none !important;
+                -webkit-animation: none !important;
+                opacity: 0 !important;
+                visibility: hidden !important;
+            }
+            
+            /* Keep only essential overlays for visual consistency */
+            body.arcade-active #game .darken-overlay {
+                opacity: 0.85 !important;
+            }
+            body.arcade-active #game .fade-overlay {
+                opacity: 1 !important;
+            }
+            
+            /* Frame-lock arcade: disable scrolling when on game section (desktop) */
+            body.arcade-scroll-locked .scroll-container {
+                overflow: hidden !important;
+                scroll-snap-type: none !important;
+                -webkit-scroll-snap-type: none !important;
+            }
+        }
+        
         body.scrolling nav::after {
             animation-play-state: paused !important;
         }
@@ -7311,6 +7350,13 @@
             
             isTransitioning = true;
             
+            // ARCADE: Unlock scroll before transitioning away (allows menu navigation)
+            if (document.body.classList.contains('arcade-scroll-locked') && targetId !== 'game') {
+                unlockArcadeScroll();
+                // Re-enable scroll container for transition
+                scrollContainer.style.overflow = '';
+            }
+            
             // Safety timeout - reset transition state after max 2 seconds
             transitionSafetyTimeout = setTimeout(function() {
                 resetTransitionState();
@@ -7505,7 +7551,29 @@
                     scrollTicking = true;
                 }
             }, { passive: true });
+            
+            // ========== ARCADE FRAME LOCK (DESKTOP) ==========
+            // Block wheel scrolling when arcade is active on desktop
+            scrollContainer.addEventListener('wheel', function(e) {
+                if (document.body.classList.contains('arcade-scroll-locked')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                }
+            }, { passive: false });
         }
+        
+        // Block keyboard scroll keys when arcade is active on desktop
+        document.addEventListener('keydown', function(e) {
+            if (document.body.classList.contains('arcade-scroll-locked')) {
+                const scrollKeys = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '];
+                if (scrollKeys.includes(e.key)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                }
+            }
+        }, { passive: false });
         
         // Scroll/wheel uses native scroll-snap behavior
         // No interception needed - CSS scroll-snap-type: y mandatory handles it
@@ -7596,6 +7664,34 @@
 
         // Wrap IntersectionObserver in try-catch for Safari compatibility
         var observer = null;
+        var isArcadeActive = false;
+        var isDesktop = window.innerWidth > 768;
+        
+        // Update desktop detection on resize
+        window.addEventListener('resize', function() {
+            isDesktop = window.innerWidth > 768;
+            // If we resized while on arcade, update lock state
+            if (isArcadeActive) {
+                if (isDesktop) {
+                    lockArcadeScroll();
+                } else {
+                    unlockArcadeScroll();
+                }
+            }
+        });
+        
+        // Arcade scroll lock functions (desktop only)
+        function lockArcadeScroll() {
+            if (!isDesktop) return;
+            document.body.classList.add('arcade-active');
+            document.body.classList.add('arcade-scroll-locked');
+        }
+        
+        function unlockArcadeScroll() {
+            document.body.classList.remove('arcade-active');
+            document.body.classList.remove('arcade-scroll-locked');
+        }
+        
         try {
             observer = new IntersectionObserver(function(entries) {
                 entries.forEach(function(entry) {
@@ -7610,6 +7706,20 @@
                             updateActiveMenuItem(entry.target.id);
                             // Update URL hash to reflect current section
                             updateUrlHash(entry.target.id);
+                            
+                            // ARCADE MODE: Disable overlays and lock scroll on desktop
+                            if (entry.target.id === 'game') {
+                                isArcadeActive = true;
+                                if (isDesktop) {
+                                    lockArcadeScroll();
+                                }
+                            } else {
+                                // Leaving arcade - restore normal behavior
+                                if (isArcadeActive) {
+                                    isArcadeActive = false;
+                                    unlockArcadeScroll();
+                                }
+                            }
                         }
                     } else {
                         // Section leaving view - pause animations for performance
