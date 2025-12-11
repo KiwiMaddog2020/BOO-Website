@@ -1243,7 +1243,7 @@
             GEM_COMMON: 4, GEM_RARE: 5, GEM_EPIC: 6,
             LAVA: 7, GAS: 8, FUEL: 9,
             BOMB: 10, CHEST: 11, UNSTABLE: 12, BEDROCK: 13,
-            UPGRADE_CHEST: 14
+            UPGRADE_CHEST: 14, REPAIR: 15
         });
         
         // Surface refuel settings
@@ -1603,6 +1603,10 @@
             // Rare fuel canisters (strategic pickups)
             if (rand < 0.048 + depthFactor * 0.01) return TILE.FUEL;
             
+            // Very rare repair kits (scarcer than fuel, decrease with depth)
+            const repairChance = Math.max(0.005, 0.025 - depthFactor * 0.02);
+            if (rand < 0.048 + depthFactor * 0.01 + repairChance) return TILE.REPAIR;
+            
             // DEPTH-SCALED ROCK: More hard rock at deeper levels
             // But scale gradually to keep early game accessible
             const hardRockChance = 0.06 + depthFactor * 0.12; // 6% at surface, up to 18%+ deep
@@ -1630,6 +1634,7 @@
             if (rand < 0.02) return TILE.CHEST; // More chests in crystal caves
             if (rand < 0.04) return TILE.BOMB;
             if (rand < 0.05) return TILE.FUEL; // Rare fuel
+            if (rand < 0.065) return TILE.REPAIR; // Repair kits in caves
             if (rand < 0.18) return TILE.AIR; // Cave pockets
             if (rand < 0.52) {
                 const gemRand = Math.random();
@@ -1649,6 +1654,7 @@
             if (rand < 0.015) return TILE.CHEST; // Rare but valuable
             if (rand < 0.04) return TILE.BOMB;   // Explosions in lava zone!
             if (rand < 0.055) return TILE.FUEL;  // Rare fuel in danger zone
+            if (rand < 0.065) return TILE.REPAIR; // Very rare repair in lava zone
             if (rand < 0.11) return TILE.UNSTABLE; // Unstable near lava
             if (rand < 0.31) return TILE.LAVA;
             if (rand < 0.37) return TILE.GAS;
@@ -1699,6 +1705,7 @@
             if (rand < 0.015) return TILE.CHEST;
             if (rand < 0.03) return TILE.BOMB;
             if (rand < 0.04) return TILE.FUEL; // Rare fuel
+            if (rand < 0.055) return TILE.REPAIR; // Repair kits more common in easy zone
             if (rand < 0.20) return TILE.AIR; // Easy to navigate
             if (rand < 0.40) {
                 const gemRand = Math.random();
@@ -1714,6 +1721,7 @@
             if (rand < 0.025) return TILE.CHEST; // Gem veins have treasure
             if (rand < 0.05) return TILE.BOMB;
             if (rand < 0.058) return TILE.FUEL; // Rare fuel
+            if (rand < 0.068) return TILE.REPAIR; // Rare repair in gem veins
             if (rand < 0.52) {
                 const gemRand = Math.random();
                 if (gemRand < 0.20 + depthFactor * 0.15) return TILE.GEM_EPIC;
@@ -2087,6 +2095,16 @@
                 createFloatingText(`+${fuelGain} ⛽`, tileCenterX, worldY - 5, '#ff9500');
                 createParticles(tileCenterX, tileCenterY, '#ff9500', 10);
                 triggerScreenFlash('#ff8800', 0.15, 8);
+            }
+            
+            // ===== REPAIR KIT =====
+            if (tile === TILE.REPAIR) {
+                const hullGain = feverMode ? 20 : 15;
+                hull = Math.min(hull + hullGain, maxHull);
+                updateHullBar();
+                createFloatingText(`+${hullGain} 🔧`, tileCenterX, worldY - 5, '#00ffaa');
+                createParticles(tileCenterX, tileCenterY, '#00ffaa', 12);
+                triggerScreenFlash('#00ffaa', 0.2, 10);
             }
             
             // ===== BOMB =====
@@ -3354,6 +3372,30 @@
                     ctx.font = `bold ${Math.floor(s * 0.35)}px Arial`;
                     ctx.textAlign = 'center';
                     ctx.fillText('F', x + s/2, y + s/2 + 5);
+                    break;
+                    
+                case TILE.REPAIR:
+                    // Repair kit - green/teal with pulsing glow
+                    const repairPulse = 0.8 + Math.sin(time * 2.5 + tx + ty) * 0.2;
+                    ctx.fillStyle = '#0a1a12';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Kit body (toolbox shape)
+                    ctx.fillStyle = `rgba(0, 220, 150, ${repairPulse})`;
+                    ctx.beginPath();
+                    ctx.roundRect(x + 5, y + 6, s - 10, s - 10, 3);
+                    ctx.fill();
+                    
+                    // Handle
+                    ctx.fillStyle = '#00ffaa';
+                    ctx.fillRect(x + s/2 - 5, y + 3, 10, 4);
+                    ctx.fillStyle = '#0a1a12';
+                    ctx.fillRect(x + s/2 - 3, y + 4, 6, 2);
+                    
+                    // Cross/plus symbol for repair
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(x + s/2 - 1, y + 10, 3, s - 18);
+                    ctx.fillRect(x + 9, y + s/2 - 1, s - 18, 3);
                     break;
                     
                 case TILE.BOMB:
