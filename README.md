@@ -7,11 +7,6 @@ Website for BOO — psychedelic rock from Kelowna, BC.
 BOO came together in 2024 after Jeff lost his brother Kyle, who fronted Fields of Green. Jeff found Kyle's unreleased recordings and picked up a guitar to bring those songs back to life. Joe (who played with Kyle and mentored Jeff), Johnny (Fields of Green's drummer), and Shawn on bass complete the lineup.
 The music draws from good times, loss, love, and the need to create something others can connect with.
 ## The Site
-<<<<<<< Updated upstream
-Single-page psychedelic experience with animated gradients, breathing effects, and layered visuals. Built with vanilla HTML, CSS, and JavaScript — no frameworks, no dependencies.
-**Sections:** Home, Bio, Videos, Photos, Arcade, Merch, Events
-=======
-<<<<<<< HEAD
 
 Single-page psychedelic experience with layered visual effects, smooth transitions, and full mobile support. Built with vanilla HTML, CSS, and JavaScript — no frameworks, no dependencies.
 
