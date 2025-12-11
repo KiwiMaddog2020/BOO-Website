@@ -87,16 +87,16 @@
 
         .menu-title {
             font-size: 42px;
-            color: #f0f;
-            text-shadow: 0 0 30px #f0f, 0 0 60px #f0f;
+            color: #0ff;
+            text-shadow: 0 0 30px #0ff, 0 0 60px #0ff;
             margin-bottom: 10px;
             letter-spacing: 4px;
         }
 
         .menu-subtitle {
             font-size: 16px;
-            color: #0ff;
-            text-shadow: 0 0 15px #0ff;
+            color: #f0f;
+            text-shadow: 0 0 15px #f0f;
             margin-bottom: 40px;
         }
 
@@ -106,17 +106,17 @@
             font-size: 14px;
             font-weight: bold;
             background: transparent;
-            border: 2px solid #f0f;
+            border: 2px solid #0ff;
             border-radius: 6px;
-            color: #f0f;
+            color: #0ff;
             cursor: pointer;
             transition: background 0.2s, color 0.2s;
-            box-shadow: 0 0 8px #f0f;
+            box-shadow: 0 0 8px #0ff;
             text-align: center;
         }
 
         .menu-btn:hover {
-            background: #f0f;
+            background: #0ff;
             color: #000;
         }
 
@@ -138,17 +138,17 @@
             font-size: 14px;
             font-weight: bold;
             background: transparent;
-            border: 2px solid #0ff;
+            border: 2px solid #f0f;
             border-radius: 6px;
-            color: #0ff;
+            color: #f0f;
             cursor: pointer;
             transition: background 0.2s, color 0.2s;
-            box-shadow: 0 0 8px #0ff;
+            box-shadow: 0 0 8px #f0f;
             text-align: center;
         }
 
         .tutorial-btn:hover {
-            background: #0ff;
+            background: #f0f;
             color: #000;
         }
 
@@ -637,6 +637,7 @@
         .upgrade-slot[data-type="extralives"] .upgrade-icon { color: #ff3366; }
         .upgrade-slot[data-type="bossdamage"] .upgrade-icon { color: #ff4400; }
         .upgrade-slot[data-type="dualball"] .upgrade-icon { color: #ffcc00; }
+        .upgrade-slot[data-type="magnetpaddle"] .upgrade-icon { color: #00ffcc; }
         
         /* Legendary title - hidden by default */
         .legendary-title {
@@ -1372,7 +1373,7 @@
             <div>Lives: <span id="lives">3</span></div>
             <div>Level: <span id="level">1</span></div>
         </div>
-        <canvas id="gameCanvas" width="648" height="510"></canvas>
+        <canvas id="gameCanvas" width="653" height="515"></canvas>
         
         <!-- Unified trackpad zone: power-up timers at top, instructions + permanent upgrades at bottom -->
         <div class="trackpad-zone" id="trackpadZone">
@@ -1570,8 +1571,8 @@
         const permanentUpgradesBarEl = document.getElementById('permanentUpgradesBar'); // Cached DOM reference
 
         // Base canvas dimensions (before any scaling)
-        const BASE_WIDTH = 648;
-        const BASE_HEIGHT = 510;
+        const BASE_WIDTH = 653;
+        const BASE_HEIGHT = 515;
         
         // Fullscreen pixel density scaling
         let currentScale = 1;
@@ -1674,7 +1675,8 @@
             multiBallBounceBonus: 0, // Extra bounces for multiball
             // Legendary upgrades
             bossDamageBonus: 0,      // Extra damage per hit to bosses
-            dualBallStart: 0         // Start each round with extra balls (staggered)
+            dualBallStart: 0,        // Start each round with extra balls (staggered)
+            magnetPaddle: false      // Ball catches on paddle, release with tap/click
         };
         
         // Upgrade definitions
@@ -1740,7 +1742,8 @@
             // Legendary upgrades
             extralives: { icon: '❤️', color: '#ff3366' },
             bossdamage: { icon: '⚔️', color: '#ff4400' },
-            dualball: { icon: '🌟', color: '#ffcc00' }
+            dualball: { icon: '🌟', color: '#ffcc00' },
+            magnetpaddle: { icon: '🧲', color: '#00ffcc' }
         };
         
         // Legendary upgrade definitions (shown at levels 5, 10, 15, etc.)
@@ -1768,6 +1771,14 @@
                 desc: '+1 Extra ball to launch',
                 icon: '🌟',
                 apply: () => { permanentUpgrades.dualBallStart += 1; }
+            },
+            {
+                id: 'magnetpaddle',
+                name: 'Magnet Paddle',
+                desc: isTrueMobile ? 'Catch ball, tap to release' : 'Catch ball, click to release',
+                icon: '🧲',
+                oneTimeOnly: true,
+                apply: () => { permanentUpgrades.magnetPaddle = true; }
             }
         ];
         
@@ -1786,6 +1797,7 @@
             // Legendary upgrades
             const bossDamageStacks = permanentUpgrades.bossDamageBonus;
             const dualBallStacks = permanentUpgrades.dualBallStart;
+            const hasMagnetPaddle = permanentUpgrades.magnetPaddle;
             
             if (paddleStacks > 0) upgrades.push({ id: 'paddle', stacks: paddleStacks });
             if (speedStacks > 0) upgrades.push({ id: 'speed', stacks: speedStacks });
@@ -1797,6 +1809,7 @@
             // Legendary upgrades (show with special styling)
             if (bossDamageStacks > 0) upgrades.push({ id: 'bossdamage', stacks: bossDamageStacks, legendary: true });
             if (dualBallStacks > 0) upgrades.push({ id: 'dualball', stacks: dualBallStacks, legendary: true });
+            if (hasMagnetPaddle) upgrades.push({ id: 'magnetpaddle', stacks: 1, legendary: true });
             
             // Build HTML with squircle backgrounds
             const html = upgrades.map(u => {
@@ -1867,6 +1880,7 @@
             smallPaddle: { active: false, timeLeft: 0, originalWidth: 107 }
         };
         let balls = []; // Array to hold multiple balls
+        let magnetCaughtBall = null; // Ball caught by magnet paddle (stores ball reference and offset)
         let levelsSinceSkull = 0; // Track levels since last skull brick
         let lastLevelHadSkull = false; // Track if previous level had skull
         
@@ -3156,6 +3170,19 @@
             // Smooth interpolation (adjust for frame rate)
             const smoothFactor = 1 - Math.pow(1 - paddle.smoothing, deltaMultiplier);
             paddle.x += (paddle.targetX - paddle.x) * smoothFactor;
+            
+            // Update magnet caught ball position to follow paddle
+            if (magnetCaughtBall && magnetCaughtBall.ball) {
+                magnetCaughtBall.ball.x = paddle.x + paddle.width / 2 + magnetCaughtBall.offsetX;
+                magnetCaughtBall.ball.y = paddle.y - magnetCaughtBall.ball.radius;
+                // Clamp ball to stay within paddle bounds
+                if (magnetCaughtBall.ball.x < paddle.x + magnetCaughtBall.ball.radius) {
+                    magnetCaughtBall.ball.x = paddle.x + magnetCaughtBall.ball.radius;
+                }
+                if (magnetCaughtBall.ball.x > paddle.x + paddle.width - magnetCaughtBall.ball.radius) {
+                    magnetCaughtBall.ball.x = paddle.x + paddle.width - magnetCaughtBall.ball.radius;
+                }
+            }
         }
 
         function moveBall() {
@@ -3173,6 +3200,11 @@
             for (let ballIndex = 0; ballIndex < balls.length; ballIndex++) {
                 if (levelChanged) break;
                 const ball = balls[ballIndex];
+                
+                // Skip balls caught by magnet paddle (they're handled in movePaddle)
+                if (magnetCaughtBall && magnetCaughtBall.ball === ball) {
+                    continue;
+                }
                 
                 // Apply delta time for frame-rate independent movement
                 ball.x += ball.dx * deltaMultiplier;
@@ -3208,6 +3240,18 @@
                     ball.x < paddle.x + paddle.width) {
                     
                     ball.y = paddle.y - ball.radius;
+                    
+                    // Magnet paddle: catch the ball if enabled and no ball currently caught
+                    if (permanentUpgrades.magnetPaddle && !magnetCaughtBall) {
+                        // Catch the ball - store offset from paddle center
+                        magnetCaughtBall = {
+                            ball: ball,
+                            offsetX: ball.x - (paddle.x + paddle.width / 2)
+                        };
+                        ball.dx = 0;
+                        ball.dy = 0;
+                        continue; // Skip normal bounce processing
+                    }
                     
                     // Angle based on where ball hits paddle (-0.8 to 0.8 range for max angle)
                     let hitPoint = (ball.x - paddle.x) / paddle.width;
@@ -3504,10 +3548,13 @@
             isLegendaryUpgrade = legendary;
             
             if (legendary) {
-                // Filter legendary upgrades - remove boss damage if already taken twice
+                // Filter legendary upgrades - remove one-time upgrades if already taken
                 let availableLegendary = legendaryUpgradeDefinitions.filter(u => {
                     if (u.id === 'bossdamage' && permanentUpgrades.bossDamageBonus >= 2) {
                         return false; // Cap boss damage at 2
+                    }
+                    if (u.id === 'magnetpaddle' && permanentUpgrades.magnetPaddle) {
+                        return false; // One-time only upgrade
                     }
                     return true;
                 });
@@ -4019,6 +4066,9 @@
         }
 
         function resetBall() {
+            // Clear any magnet-caught ball
+            magnetCaughtBall = null;
+            
             // Apply permanent speed reduction bonus
             const speedMultiplier = 1 - (permanentUpgrades.speedReduction / 100);
             const speed = ballTemplate.speed * speedMultiplier;
@@ -4303,7 +4353,8 @@
                 multiBallBounceBonus: 0,
                 // Legendary upgrades
                 bossDamageBonus: 0,
-                dualBallStart: 0
+                dualBallStart: 0,
+                magnetPaddle: false
             };
             
             // Reset smart RNG history for upgrades
@@ -4464,6 +4515,52 @@
         // Trackpad zone handles touch events for paddle control
         trackpadZone.addEventListener('touchstart', handleTrackpad, { passive: false });
         trackpadZone.addEventListener('touchmove', handleTrackpad, { passive: false });
+        
+        // Magnet paddle release function
+        function releaseMagnetBall() {
+            if (magnetCaughtBall && magnetCaughtBall.ball && gameRunning) {
+                const ball = magnetCaughtBall.ball;
+                // Calculate release angle based on ball position on paddle
+                let hitPoint = (ball.x - paddle.x) / paddle.width;
+                let angle = (hitPoint - 0.5) * 1.6; // Max angle ~38 degrees
+                
+                // Launch ball upward with angle
+                ball.dx = ball.speed * Math.sin(angle * Math.PI / 2);
+                ball.dy = -ball.speed * Math.cos(angle * Math.PI / 2);
+                
+                // Ensure ball always moves upward
+                if (ball.dy > -ball.speed * 0.3) {
+                    ball.dy = -ball.speed * 0.3;
+                    const dxMax = Math.sqrt(ball.speed * ball.speed - ball.dy * ball.dy);
+                    ball.dx = Math.sign(ball.dx) * Math.min(Math.abs(ball.dx), dxMax);
+                }
+                
+                magnetCaughtBall = null;
+            }
+        }
+        
+        // Desktop: Click to release magnet ball
+        canvas.addEventListener('click', releaseMagnetBall);
+        trackpadZone.addEventListener('click', releaseMagnetBall);
+        
+        // Mobile: Tap to release magnet ball (use touchend for tap detection)
+        let magnetTapStart = null;
+        trackpadZone.addEventListener('touchstart', (e) => {
+            if (magnetCaughtBall && gameRunning) {
+                magnetTapStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
+            }
+        }, { passive: true });
+        
+        trackpadZone.addEventListener('touchend', (e) => {
+            if (magnetCaughtBall && gameRunning && magnetTapStart) {
+                const elapsed = Date.now() - magnetTapStart.time;
+                // Quick tap (under 300ms) releases the ball
+                if (elapsed < 300) {
+                    releaseMagnetBall();
+                }
+            }
+            magnetTapStart = null;
+        }, { passive: true });
         
         // AGGRESSIVE scroll prevention - use capture phase on document
         // This fires BEFORE any element handlers and prevents scroll at the root
