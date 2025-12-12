@@ -51,10 +51,9 @@
             height: 100%;
             display: flex;
             justify-content: center;
-            align-items: flex-start;
+            align-items: center;
             pointer-events: none;
             z-index: 1;
-            padding-top: 5px;
         }
 
         .game-container {
@@ -2135,55 +2134,61 @@
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
-            // Detect pseudo-fullscreen more conservatively:
-            // Only trigger if BOTH dimensions are significantly larger AND the aspect suggests full screen
-            // This prevents triggering in embedded iframe scenarios
+            // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
+            // This works reliably in iframes on iOS where screen.width/height can be unreliable
             const viewW = window.innerWidth;
             const viewH = window.innerHeight;
-            const viewAspect = viewW / viewH;
-            const screenAspect = screen.width / screen.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
-                                       viewW > BASE_WIDTH * 1.3 && 
-                                       viewH > BASE_HEIGHT * 1.3 &&
-                                       Math.abs(viewAspect - screenAspect) < 0.1; // Aspect matches screen
+                                       (viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const isMobile = window.innerWidth <= 768;
             
-            // Get available space
+            // Control bar takes about 155px (two rows of towers + buttons + padding)
+            const CONTROL_BAR_HEIGHT = 155;
+            // Total game height = canvas + control bar
+            const TOTAL_GAME_HEIGHT = BASE_HEIGHT + CONTROL_BAR_HEIGHT; // 582 + 155 = 737
+            const gameAspect = BASE_WIDTH / TOTAL_GAME_HEIGHT;
+            
             const availWidth = window.innerWidth;
             const availHeight = window.innerHeight;
-            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
-            
-            // Control bar height to reserve
-            const controlBarHeight = 160;
             
             if (isFullscreen) {
-                // Fullscreen: fit to screen while maintaining aspect ratio
-                // Reserve space for control bar
-                const usableHeight = availHeight - controlBarHeight;
-                const screenAspect = availWidth / usableHeight;
-                if (screenAspect > gameAspect) {
-                    displayHeight = usableHeight;
-                    displayWidth = displayHeight * gameAspect;
-                } else {
-                    displayWidth = availWidth;
-                    displayHeight = displayWidth / gameAspect;
-                }
-                dprScale = Math.min(rawDPR, maxFullscreenDPR);
-            } else {
-                // Normal mode
-                const size = calculateCanvasSize();
-                displayWidth = size.width;
-                displayHeight = size.height;
+                // Fullscreen/iframe: scale to fit available space
+                const screenAspect = availWidth / availHeight;
+                let targetWidth, targetHeight;
                 
-                if (isMobile) {
-                    dprScale = Math.min(rawDPR, 1.5);
-                } else if (isTablet || isLaptopOrDesktop) {
-                    dprScale = Math.min(rawDPR, maxNormalDPR);
+                if (screenAspect > gameAspect) {
+                    // Height constrained
+                    targetHeight = availHeight;
+                    targetWidth = targetHeight * gameAspect;
                 } else {
-                    dprScale = 1;
+                    // Width constrained
+                    targetWidth = availWidth;
+                    targetHeight = targetWidth / gameAspect;
                 }
+                
+                // Calculate canvas size (proportional to total game size)
+                const scaleFactor = targetWidth / BASE_WIDTH;
+                displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
+                displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
+                
+                dprScale = Math.min(rawDPR, maxFullscreenDPR);
+            } else if (isMobile) {
+                // Mobile: responsive sizing
+                const containerPadding = 10;
+                const maxWidth = availWidth - containerPadding * 2;
+                const scaleFactor = Math.min(1, maxWidth / BASE_WIDTH);
+                
+                displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
+                displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
+                
+                dprScale = Math.min(rawDPR, 1.5);
+            } else {
+                // Desktop not in iframe: base size
+                displayWidth = BASE_WIDTH;
+                displayHeight = BASE_HEIGHT;
+                dprScale = Math.min(rawDPR, maxNormalDPR);
             }
             
             CANVAS_WIDTH = displayWidth;
