@@ -2874,66 +2874,71 @@
 
         // ========== ENEMY SYSTEM ==========
         function spawnEnemy() {
-            // Progressive difficulty scaling
-            // Waves 1-5: baseline difficulty
-            // Waves 6-10: gradual ramp up
-            // Waves 11-40: aggressive scaling that outpaces player upgrades
-            // Waves 41+: EXTREME exponential scaling - guaranteed to overwhelm
+            // Progressive difficulty scaling - gentle early, brutal late
+            // Waves 1-9: Easy - let players learn and build up
+            // Waves 10-20: Slightly harder - noticeable but manageable
+            // Waves 21-29: Medium - requires good tower placement
+            // Waves 30-39: Hard - tests player skill
+            // Waves 40+: Extremely hard scaling towards impossible
             
             let healthMult = 1;
             let speedMult = 1;
             let dangerMult = 0; // For enemy type chances
             
-            if (wave <= 5) {
-                // Waves 1-5: No extra scaling, just base formula
+            if (wave <= 9) {
+                // Waves 1-9: Easy - no extra multipliers, just base formula
                 healthMult = 1;
                 speedMult = 1;
-            } else if (wave <= 9) {
-                // Waves 6-9: Gradual ramp (1.0 to 1.4 over 4 waves)
-                const progress = (wave - 5) / 4; // 0 to 1
-                healthMult = 1 + (progress * 0.4);  // 1.0 to 1.4
+                dangerMult = 0;
+            } else if (wave <= 20) {
+                // Waves 10-20: Slightly harder - gentle linear scaling
+                const progress = (wave - 9) / 11; // 0 to 1
+                healthMult = 1 + (progress * 0.5);  // 1.0 to 1.5
                 speedMult = 1 + (progress * 0.1);   // 1.0 to 1.1
-                dangerMult = progress * 0.5;        // 0 to 0.5
-            } else if (wave <= 40) {
-                // Waves 10-40: More aggressive exponential scaling
-                const wavesPast9 = wave - 9;
-                // Health scales exponentially: 1.4 * 1.15^(waves past 9) - faster scaling
-                healthMult = 1.4 * Math.pow(1.15, wavesPast9);
-                // Speed scales more noticeably
-                speedMult = 1.1 + (wavesPast9 * 0.025);
-                // Danger multiplier for enemy types - more dangerous enemies earlier
-                dangerMult = 0.6 + (wavesPast9 * 0.04);
+                dangerMult = progress * 0.3;        // 0 to 0.3
+            } else if (wave <= 29) {
+                // Waves 21-29: Medium - moderate scaling
+                const progress = (wave - 20) / 9; // 0 to 1
+                healthMult = 1.5 + (progress * 1.5);  // 1.5 to 3.0
+                speedMult = 1.1 + (progress * 0.15);  // 1.1 to 1.25
+                dangerMult = 0.3 + (progress * 0.4);  // 0.3 to 0.7
+            } else if (wave <= 39) {
+                // Waves 30-39: Hard - exponential health scaling begins
+                const wavesPast29 = wave - 29;
+                healthMult = 3.0 * Math.pow(1.12, wavesPast29); // 3.0 to ~9.3 at wave 39
+                speedMult = 1.25 + (wavesPast29 * 0.02);        // 1.25 to 1.45
+                dangerMult = 0.7 + (wavesPast29 * 0.06);        // 0.7 to 1.3
             } else {
-                // Waves 41+: EXTREME scaling - the wall
-                const wavesPast40 = wave - 40;
-                // Calculate wave 40 baseline first (31 waves past 9 with 1.15 multiplier)
-                const wave40HealthMult = 1.4 * Math.pow(1.15, 31); // ~107x at wave 40
-                // Then apply brutal exponential on top: 1.25^(waves past 40)
-                healthMult = wave40HealthMult * Math.pow(1.25, wavesPast40);
-                // Speed caps but stays intense
-                speedMult = 1.875 + (wavesPast40 * 0.03);
+                // Waves 40+: EXTREME scaling - the wall
+                const wavesPast39 = wave - 39;
+                // Wave 39 baseline: 3.0 * 1.12^10 ≈ 9.3
+                const wave39HealthMult = 3.0 * Math.pow(1.12, 10);
+                // Brutal exponential: 1.20^(waves past 39)
+                healthMult = wave39HealthMult * Math.pow(1.20, wavesPast39);
+                // Speed gets punishing
+                speedMult = 1.45 + (wavesPast39 * 0.04);
                 // Max danger - lots of bosses and tanks
-                dangerMult = 1.84 + (wavesPast40 * 0.05);
+                dangerMult = 1.3 + (wavesPast39 * 0.08);
             }
             
-            // Base stats with scaling applied
-            const baseHealth = (25 + wave * 15) * healthMult;
-            const baseSpeed = (1.2 + wave * 0.04) * speedMult;
+            // Base stats with scaling applied (reduced base health formula)
+            const baseHealth = (20 + wave * 12) * healthMult;
+            const baseSpeed = (1.1 + wave * 0.03) * speedMult;
             
             // Random enemy types based on wave
             let type = 'normal';
             const roll = Math.random();
             
             // Enemy type chances increase with dangerMult
-            const bossChance = 0.08 + (dangerMult * 0.08);
-            const tankChance = 0.20 + (dangerMult * 0.12);
-            const fastChance = 0.28 + (dangerMult * 0.10);
+            const bossChance = 0.05 + (dangerMult * 0.10);
+            const tankChance = 0.15 + (dangerMult * 0.15);
+            const fastChance = 0.25 + (dangerMult * 0.12);
             
-            if (wave >= 8 && roll < bossChance) {
+            if (wave >= 15 && roll < bossChance) {
                 type = 'boss';
-            } else if (wave >= 5 && roll < tankChance) {
+            } else if (wave >= 8 && roll < tankChance) {
                 type = 'tank';
-            } else if (wave >= 3 && roll < fastChance) {
+            } else if (wave >= 5 && roll < fastChance) {
                 type = 'fast';
             }
             
@@ -3504,22 +3509,29 @@
             
             // Enemy count scaling to match difficulty curve
             let countMult = 1;
-            if (wave <= 5) {
+            if (wave <= 9) {
+                // Waves 1-9: Base count only
                 countMult = 1;
-            } else if (wave <= 9) {
-                const progress = (wave - 5) / 4;
-                countMult = 1 + (progress * 0.25); // 1.0 to 1.25
-            } else if (wave <= 40) {
-                const wavesPast9 = wave - 9;
-                countMult = 1.25 + (wavesPast9 * 0.10); // +10% per wave after 9 (was 8%)
+            } else if (wave <= 20) {
+                // Waves 10-20: Gentle increase
+                const progress = (wave - 9) / 11;
+                countMult = 1 + (progress * 0.3); // 1.0 to 1.3
+            } else if (wave <= 29) {
+                // Waves 21-29: Moderate increase
+                const progress = (wave - 20) / 9;
+                countMult = 1.3 + (progress * 0.5); // 1.3 to 1.8
+            } else if (wave <= 39) {
+                // Waves 30-39: Harder scaling
+                const wavesPast29 = wave - 29;
+                countMult = 1.8 + (wavesPast29 * 0.12); // 1.8 to 3.0
             } else {
-                // Waves 41+: EXTREME enemy count scaling
-                const wavesPast40 = wave - 40;
-                const wave40CountMult = 1.25 + (31 * 0.10); // 4.35 at wave 40
-                // Exponential enemy count increase: 1.15^(waves past 40)
-                countMult = wave40CountMult * Math.pow(1.15, wavesPast40);
+                // Waves 40+: EXTREME enemy count scaling
+                const wavesPast39 = wave - 39;
+                const wave39CountMult = 3.0;
+                // Exponential enemy count increase
+                countMult = wave39CountMult * Math.pow(1.12, wavesPast39);
             }
-            enemiesToSpawn = Math.floor((6 + wave * 3) * countMult);
+            enemiesToSpawn = Math.floor((5 + wave * 2) * countMult);
             
             spawnTimer = 0;
             
@@ -5174,3 +5186,4 @@
     </script>
 </body>
 </html>
+
