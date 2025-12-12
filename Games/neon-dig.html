@@ -1808,6 +1808,49 @@
             return false;
         }
         
+        // Check horizontal collision with multiple points
+        function checkHorizontalCollision(x, y, width, height, direction) {
+            const checkX = direction > 0 ? x + width - 2 : x + 2;
+            const points = [
+                [checkX, y + 4],           // Top
+                [checkX, y + height / 2],   // Middle
+                [checkX, y + height - 4]    // Bottom
+            ];
+            for (const [px, py] of points) {
+                if (getTile(px, py) !== TILE.AIR) return true;
+            }
+            return false;
+        }
+        
+        // Push player out of walls if stuck
+        function unstuckPlayer() {
+            const margin = 2;
+            let stuck = true;
+            let attempts = 0;
+            
+            while (stuck && attempts < 10) {
+                stuck = false;
+                attempts++;
+                
+                // Check if any corner is stuck
+                const corners = [
+                    { x: player.x + margin, y: player.y + margin },
+                    { x: player.x + player.width - margin, y: player.y + margin },
+                    { x: player.x + margin, y: player.y + player.height - margin },
+                    { x: player.x + player.width - margin, y: player.y + player.height - margin }
+                ];
+                
+                for (const corner of corners) {
+                    if (getTile(corner.x, corner.y) !== TILE.AIR) {
+                        stuck = true;
+                        // Push up primarily (most common case is falling into ground)
+                        player.y -= 1;
+                        break;
+                    }
+                }
+            }
+        }
+        
         // ==================== DIGGING ====================
         function dig(tx, absoluteTy) {
             const ty = getWorldRow(absoluteTy);
@@ -2593,6 +2636,9 @@
             let particleDrillX = player.x + player.width / 2;
             let particleDrillY = player.y + player.height;
             
+            // Determine drill direction
+            let particleDrillDirection = 'down';
+            
             // Check if actively digging sideways
             if (player.digging && player.digTarget) {
                 const targetWorldX = player.digTarget.x * TILE_SIZE + TILE_SIZE / 2;
@@ -2600,20 +2646,27 @@
                 const dx = targetWorldX - playerCenterX;
                 
                 if (Math.abs(dx) > TILE_SIZE / 2) {
-                    if (dx < 0) {
-                        particleDrillX = player.x - 3;
-                        particleDrillY = player.y + player.height / 2 + 1;
-                    } else {
-                        particleDrillX = player.x + player.width + 3;
-                        particleDrillY = player.y + player.height / 2 + 1;
-                    }
+                    particleDrillDirection = dx < 0 ? 'left' : 'right';
                 }
             }
             // If not digging but holding left/right keys
             else if (keys.left && !keys.right) {
+                particleDrillDirection = 'left';
+            } else if (keys.right && !keys.left) {
+                particleDrillDirection = 'right';
+            }
+            // When overheated, remember last dig direction
+            else if (drillOverheated && lastDigDirection === 'left') {
+                particleDrillDirection = 'left';
+            } else if (drillOverheated && lastDigDirection === 'right') {
+                particleDrillDirection = 'right';
+            }
+            
+            // Apply direction offsets
+            if (particleDrillDirection === 'left') {
                 particleDrillX = player.x - 3;
                 particleDrillY = player.y + player.height / 2 + 1;
-            } else if (keys.right && !keys.left) {
+            } else if (particleDrillDirection === 'right') {
                 particleDrillX = player.x + player.width + 3;
                 particleDrillY = player.y + player.height / 2 + 1;
             }
@@ -2802,14 +2855,15 @@
                 if (dx !== 0) {
                     const newX = player.x + dx * deltaMultiplier;
                     if (newX >= 0 && newX + player.width <= BASE_WIDTH) {
-                        const checkX = dx > 0 ? newX + player.width : newX;
-                        const midY = player.y + player.height / 2;
-                        if (getTile(checkX, midY) === TILE.AIR) {
+                        // Use multi-point horizontal collision check
+                        if (!checkHorizontalCollision(newX, player.y, player.width, player.height, dx)) {
                             player.x = newX;
                             // Speed lines when moving fast in fever mode
                             if (feverMode && Math.random() < 0.2) createSpeedLine();
                         } else if (!player.digging) {
                             lastDigDirection = dx > 0 ? 'right' : 'left';
+                            const checkX = dx > 0 ? newX + player.width : newX;
+                            const midY = player.y + player.height / 2;
                             const tx = Math.floor(checkX / TILE_SIZE);
                             const absoluteTy = Math.floor(midY / TILE_SIZE);
                             dig(tx, absoluteTy);
@@ -2850,12 +2904,17 @@
                         player.y = newY;
                     }
                 }
+                
+                // Unstuck player if somehow inside a wall
+                unstuckPlayer();
             }
             
-            // Clear dig direction when keys released (checked every frame, even while digging)
-            if (!keys.down && lastDigDirection === 'down') lastDigDirection = null;
-            if (!keys.left && lastDigDirection === 'left') lastDigDirection = null;
-            if (!keys.right && lastDigDirection === 'right') lastDigDirection = null;
+            // Clear dig direction when keys released (but keep direction during overheat for visual feedback)
+            if (!drillOverheated) {
+                if (!keys.down && lastDigDirection === 'down') lastDigDirection = null;
+                if (!keys.left && lastDigDirection === 'left') lastDigDirection = null;
+                if (!keys.right && lastDigDirection === 'right') lastDigDirection = null;
+            }
             
             // Gem magnet
             if (permanentUpgrades.gemMagnet > 0) {
@@ -3715,6 +3774,9 @@
             let drillOffsetX = 0;
             let drillOffsetY = player.height;
             
+            // Determine drill direction
+            let drillDirection = 'down'; // Track current direction
+            
             // Check if actively digging sideways
             if (player.digging && player.digTarget) {
                 const targetWorldX = player.digTarget.x * TILE_SIZE + TILE_SIZE / 2;
@@ -3724,22 +3786,31 @@
                 if (Math.abs(dx) > TILE_SIZE / 2) {
                     // Drilling left or right
                     if (dx < 0) {
-                        drillAngle = Math.PI / 2; // Left - rotate to point left
-                        drillOffsetX = -player.width / 2 - 3;
-                        drillOffsetY = player.height / 2 + 1;
+                        drillDirection = 'left';
                     } else {
-                        drillAngle = -Math.PI / 2; // Right - rotate to point right
-                        drillOffsetX = player.width / 2 + 3;
-                        drillOffsetY = player.height / 2 + 1;
+                        drillDirection = 'right';
                     }
                 }
             } 
             // If not digging but holding left/right keys, point drill that direction
             else if (keys.left && !keys.right) {
+                drillDirection = 'left';
+            } else if (keys.right && !keys.left) {
+                drillDirection = 'right';
+            }
+            // When overheated, remember last dig direction
+            else if (drillOverheated && lastDigDirection === 'left') {
+                drillDirection = 'left';
+            } else if (drillOverheated && lastDigDirection === 'right') {
+                drillDirection = 'right';
+            }
+            
+            // Apply direction offsets
+            if (drillDirection === 'left') {
                 drillAngle = Math.PI / 2;
                 drillOffsetX = -player.width / 2 - 3;
                 drillOffsetY = player.height / 2 + 1;
-            } else if (keys.right && !keys.left) {
+            } else if (drillDirection === 'right') {
                 drillAngle = -Math.PI / 2;
                 drillOffsetX = player.width / 2 + 3;
                 drillOffsetY = player.height / 2 + 1;
