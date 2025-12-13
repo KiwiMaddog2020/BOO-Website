@@ -112,26 +112,6 @@
             max-height: 100%;
             border-radius: 0;
         }
-        
-        /* Mobile native fullscreen fix - ensures proper vertical centering */
-        @media (max-width: 1024px) and (pointer: coarse) {
-            html:not(.in-iframe) body:has(.fullscreen-mode) {
-                position: fixed;
-                inset: 0;
-                width: 100%;
-                height: 100%;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }
-            
-            html:not(.in-iframe) .game-container.fullscreen-mode {
-                position: relative;
-                width: 100%;
-                height: 100%;
-                max-height: 100%;
-            }
-        }
 
         #gameCanvas {
             border-radius: calc(3px * var(--scale, 1));
@@ -3693,6 +3673,7 @@
             // Find target (furthest along path within range)
             // Beam towers prefer slow high-health enemies (megaboss > boss > tank)
             // Cannon towers prefer fast high-health enemies
+            // Skip enemies that will die from incoming projectiles
             let bestTarget = null;
             let bestProgress = -1;
             let bestPriority = 0; // Higher priority for special enemies
@@ -3704,6 +3685,17 @@
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 
                 if (dist <= range) {
+                    // Calculate incoming damage from projectiles targeting this enemy
+                    let incomingDamage = 0;
+                    for (const proj of projectiles) {
+                        if (proj.alive && proj.target === enemy) {
+                            incomingDamage += proj.damage;
+                        }
+                    }
+                    
+                    // Skip if enemy will die from incoming projectiles
+                    if (enemy.health <= incomingDamage) continue;
+                    
                     const progress = enemy.pathIndex + enemy.pathProgress;
                     // Default priority is 1
                     let priority = 1;
@@ -3779,24 +3771,9 @@
             const def = TOWERS[tower.type];
             const upgrades = tower.upgrades || getTowerUpgrades(tower.type);
             
-            // Calculate lead prediction for moving targets
-            let targetX = target.x;
-            let targetY = target.y;
-            
-            // If enemy is moving, predict where they'll be
-            if (target.vx !== undefined && target.vy !== undefined) {
-                const dx = target.x - tower.x;
-                const dy = target.y - tower.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const timeToHit = dist / def.projectileSpeed;
-                
-                // Predict position (with a small multiplier to slightly over-lead)
-                targetX = target.x + target.vx * timeToHit * 0.8;
-                targetY = target.y + target.vy * timeToHit * 0.8;
-            }
-            
-            const dx = targetX - tower.x;
-            const dy = targetY - tower.y;
+            // Fire directly at target - homing will handle tracking
+            const dx = target.x - tower.x;
+            const dy = target.y - tower.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
             if (dist === 0) return;
@@ -3812,6 +3789,8 @@
                 y: tower.y,
                 vx: (dx / dist) * def.projectileSpeed,
                 vy: (dy / dist) * def.projectileSpeed,
+                speed: def.projectileSpeed,
+                target: target, // Store target reference for homing
                 damage: def.damage * damageMultiplier * (1 + permUpgrades.damageBonus + buffBonus),
                 color: def.projectileColor,
                 type: tower.type,
@@ -3827,6 +3806,46 @@
         }
 
         function updateProjectile(proj, dt) {
+            // Home in on target if it's still alive
+            if (proj.target && proj.target.alive) {
+                const dx = proj.target.x - proj.x;
+                const dy = proj.target.y - proj.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > 0) {
+                    // Smoothly adjust velocity toward target (homing)
+                    const targetVx = (dx / dist) * proj.speed;
+                    const targetVy = (dy / dist) * proj.speed;
+                    
+                    // Strong homing - 85% toward target direction
+                    proj.vx = proj.vx * 0.15 + targetVx * 0.85;
+                    proj.vy = proj.vy * 0.15 + targetVy * 0.85;
+                    
+                    // Normalize to maintain speed
+                    const currentSpeed = Math.sqrt(proj.vx * proj.vx + proj.vy * proj.vy);
+                    if (currentSpeed > 0) {
+                        proj.vx = (proj.vx / currentSpeed) * proj.speed;
+                        proj.vy = (proj.vy / currentSpeed) * proj.speed;
+                    }
+                }
+            } else if (proj.target && !proj.target.alive) {
+                // Target died, find new closest target
+                let closestEnemy = null;
+                let closestDist = Infinity;
+                for (const enemy of enemies) {
+                    if (!enemy.alive) continue;
+                    if (proj.hitEnemies && proj.hitEnemies.includes(enemy)) continue;
+                    const dx = enemy.x - proj.x;
+                    const dy = enemy.y - proj.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < closestDist) {
+                        closestDist = dist;
+                        closestEnemy = enemy;
+                    }
+                }
+                proj.target = closestEnemy;
+            }
+            
             proj.x += proj.vx * dt;
             proj.y += proj.vy * dt;
             
@@ -3897,11 +3916,12 @@
                             // Redirect projectile to next target
                             proj.x = enemy.x;
                             proj.y = enemy.y;
+                            proj.target = nextTarget; // Update target for homing
                             const ndx = nextTarget.x - proj.x;
                             const ndy = nextTarget.y - proj.y;
                             const ndist = Math.sqrt(ndx * ndx + ndy * ndy);
-                            proj.vx = (ndx / ndist) * towerDef.projectileSpeed;
-                            proj.vy = (ndy / ndist) * towerDef.projectileSpeed;
+                            proj.vx = (ndx / ndist) * proj.speed;
+                            proj.vy = (ndy / ndist) * proj.speed;
                             proj.chainCount--;
                             createParticles(proj.x, proj.y, proj.color, 5);
                         } else {
