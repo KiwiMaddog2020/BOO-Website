@@ -129,16 +129,17 @@
             display: flex;
             gap: calc(20px * var(--scale, 1));
             color: #fff;
-            font-size: calc(14px * var(--scale, 1));
+            font-size: calc(18px * var(--scale, 1));
             text-shadow: 0 0 10px #0ff;
             z-index: 100;
             pointer-events: none;
+            font-weight: bold;
         }
         
         @media (max-width: 700px) {
             .hud {
                 gap: calc(10px * var(--scale, 1));
-                font-size: calc(12px * var(--scale, 1));
+                font-size: calc(15px * var(--scale, 1));
                 top: calc(5px * var(--scale, 1));
             }
         }
@@ -146,7 +147,7 @@
         @media (max-width: 500px) {
             .hud {
                 gap: calc(6px * var(--scale, 1));
-                font-size: calc(11px * var(--scale, 1));
+                font-size: calc(13px * var(--scale, 1));
             }
         }
         
@@ -2385,7 +2386,7 @@
                 name: 'Beam',
                 cost: 150,
                 range: 120,
-                damage: 8,
+                damage: 12,
                 fireRate: 100,
                 color: '#ffff00',
                 isBeam: true,
@@ -2412,6 +2413,7 @@
                 projectileSpeed: 6,
                 projectileColor: '#8844ff',
                 splashRadius: 35,
+                isCannon: true,
                 icon: '💣'
             },
             poison: {
@@ -3255,7 +3257,8 @@
             const megabossChance = wave >= 30 ? 0.02 + (dangerMult * 0.02) : 0; // Rare but terrifying
             const bossChance = 0.05 + (dangerMult * 0.06);
             const tankChance = 0.12 + (dangerMult * 0.10);
-            const fastChance = 0.20 + (dangerMult * 0.08);
+            // Fast enemies spawn less frequently after wave 10
+            const fastChance = wave > 10 ? 0.15 + (dangerMult * 0.05) : 0.20 + (dangerMult * 0.08);
             
             // Pushed back special enemy wave requirements
             if (wave >= 30 && roll < megabossChance) {
@@ -3668,10 +3671,11 @@
             const fireInterval = def.fireRate / (fireRateMultiplier * (1 + permUpgrades.fireRateBonus + buffFireRateBonus) * gameSpeed);
             
             // Find target (furthest along path within range)
-            // Beam towers prefer bosses and tanks
+            // Beam towers prefer slow high-health enemies (megaboss > boss > tank)
+            // Cannon towers prefer fast high-health enemies
             let bestTarget = null;
             let bestProgress = -1;
-            let bestPriority = 0; // Higher priority for bosses
+            let bestPriority = 0; // Higher priority for special enemies
             
             for (const enemy of enemies) {
                 if (!enemy.alive) continue;
@@ -3681,11 +3685,24 @@
                 
                 if (dist <= range) {
                     const progress = enemy.pathIndex + enemy.pathProgress;
-                    // Beam towers prioritize bosses (3) > tanks (2) > normal (1)
+                    // Default priority is 1
                     let priority = 1;
+                    
                     if (def.isBeam) {
-                        if (enemy.type === 'boss') priority = 3;
-                        else if (enemy.type === 'tank') priority = 2;
+                        // Beam prioritizes slow, high-health enemies that stay in range longer
+                        // megaboss (5) > boss (4) > tank (3) > normal (1) > fast (0)
+                        if (enemy.type === 'megaboss') priority = 5;
+                        else if (enemy.type === 'boss') priority = 4;
+                        else if (enemy.type === 'tank') priority = 3;
+                        else if (enemy.type === 'fast') priority = 0;
+                    } else if (def.isCannon) {
+                        // Cannon prioritizes fast, high-health enemies
+                        // fast (4) > megaboss (3) > boss (2) > tank (1) > normal (0)
+                        if (enemy.type === 'fast') priority = 4;
+                        else if (enemy.type === 'megaboss') priority = 3;
+                        else if (enemy.type === 'boss') priority = 2;
+                        else if (enemy.type === 'tank') priority = 1;
+                        else priority = 0;
                     }
                     
                     // Pick target with highest priority, or furthest progress if same priority
