@@ -696,13 +696,16 @@
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
+            // Detect if we're in an iframe
+            const isInIframe = window.self !== window.top;
+            
             // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
-            // This works reliably in iframes on iOS where screen.width/height can be unreliable
+            // OR we're in an iframe (always use fullscreen layout in iframe)
             const viewport = getViewportSize();
             const viewW = viewport.width;
             const viewH = viewport.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
-                                       (viewW > BASE_CANVAS_SIZE * 1.15 || viewH > BASE_CANVAS_SIZE * 1.15);
+                                       (isInIframe || viewW > BASE_CANVAS_SIZE * 1.15 || viewH > BASE_CANVAS_SIZE * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const isMobile = viewW <= 768;
@@ -732,29 +735,13 @@
                 let canvasSize, trackpadHeight;
                 
                 if (viewportAspect >= 1) {
-                    // Wide viewport: canvas takes full height, minimal trackpad
-                    canvasSize = Math.min(availWidth, availHeight);
+                    // Wide viewport: canvas takes full height, no trackpad
+                    canvasSize = availHeight;
                     trackpadHeight = 0;
                 } else {
-                    // Tall viewport: fit canvas + trackpad into height
-                    // Canvas width = availWidth, canvas height = availWidth (square)
-                    // Trackpad fills remaining height
+                    // Tall viewport: canvas takes full width, trackpad fills rest
                     canvasSize = availWidth;
                     trackpadHeight = availHeight - canvasSize;
-                    
-                    // If trackpad would be too small (< 15% of canvas), just use square
-                    if (trackpadHeight < canvasSize * 0.15) {
-                        canvasSize = Math.min(availWidth, availHeight);
-                        trackpadHeight = 0;
-                    }
-                    
-                    // If trackpad would be too tall (> 60% of canvas), cap it
-                    if (trackpadHeight > canvasSize * 0.6) {
-                        // Recalculate: total height = canvas + 0.6*canvas = 1.6*canvas
-                        canvasSize = availHeight / 1.6;
-                        canvasSize = Math.min(canvasSize, availWidth); // Don't exceed width
-                        trackpadHeight = availHeight - canvasSize;
-                    }
                 }
                 
                 // Snap canvas to grid
@@ -762,14 +749,19 @@
                 CANVAS_SIZE = displaySize;
                 GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
                 
+                // Recalculate trackpad height after snapping
+                trackpadHeight = availHeight - displaySize;
+                
                 // Set trackpad height
                 if (trackpadZone) {
-                    if (trackpadHeight > 50) {
+                    if (trackpadHeight > 30) {
                         trackpadZone.style.height = trackpadHeight + 'px';
                         trackpadZone.style.minHeight = trackpadHeight + 'px';
+                        trackpadZone.style.display = 'flex';
                     } else {
                         trackpadZone.style.height = '0px';
                         trackpadZone.style.minHeight = '0px';
+                        trackpadZone.style.display = 'none';
                     }
                 }
                 
@@ -778,10 +770,11 @@
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
                 
-                // Reset trackpad height
+                // Reset trackpad
                 if (trackpadZone) {
                     trackpadZone.style.height = '';
                     trackpadZone.style.minHeight = '';
+                    trackpadZone.style.display = '';
                 }
                 
                 if (isMobile) {
