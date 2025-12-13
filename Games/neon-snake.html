@@ -65,6 +65,18 @@
             background: #0a0a0a;
         }
 
+        /* Fullscreen/iframe mode: fill entire viewport */
+        .game-container.fullscreen-mode {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            padding: 0;
+            gap: 0;
+            border-radius: 0;
+            justify-content: center;
+        }
+
         .hud {
             display: flex;
             justify-content: space-between;
@@ -583,18 +595,34 @@
             }
         }
         
+        // Get accurate viewport size (works better in iframes)
+        function getViewportSize() {
+            if (window.visualViewport) {
+                return {
+                    width: window.visualViewport.width,
+                    height: window.visualViewport.height
+                };
+            }
+            return {
+                width: window.innerWidth,
+                height: window.innerHeight
+            };
+        }
+        
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
             // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
             // This works reliably in iframes on iOS where screen.width/height can be unreliable
-            const viewW = window.innerWidth;
-            const viewH = window.innerHeight;
+            const viewport = getViewportSize();
+            const viewW = viewport.width;
+            const viewH = viewport.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (viewW > BASE_CANVAS_SIZE * 1.15 || viewH > BASE_CANVAS_SIZE * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
-            const isMobile = window.innerWidth <= 768;
+            const isMobile = viewW <= 768;
+            const gameContainer = document.querySelector('.game-container');
             
             // Calculate display size
             displaySize = calculateCanvasSize();
@@ -602,9 +630,14 @@
             GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
             
             if (isFullscreen) {
-                // Fullscreen: fit to screen
-                const availWidth = window.innerWidth;
-                const availHeight = window.innerHeight;
+                // Fullscreen/iframe: fill viewport accounting for border only
+                gameContainer.classList.add('fullscreen-mode');
+                
+                const borderWidth = 3;
+                const availWidth = viewW - (borderWidth * 2);
+                const availHeight = viewH - (borderWidth * 2);
+                
+                // Snake is square, so use minimum dimension
                 displaySize = Math.min(availWidth, availHeight);
                 displaySize = Math.floor(displaySize / GRID_COUNT) * GRID_COUNT;
                 CANVAS_SIZE = displaySize;
@@ -612,12 +645,16 @@
                 
                 // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
                 currentScale = Math.min(rawDPR, maxFullscreenDPR);
-            } else if (isMobile) {
-                currentScale = Math.min(rawDPR, 1.5);
-            } else if (isTablet || isLaptopOrDesktop) {
-                currentScale = Math.min(rawDPR, maxNormalDPR);
             } else {
-                currentScale = 1;
+                gameContainer.classList.remove('fullscreen-mode');
+                
+                if (isMobile) {
+                    currentScale = Math.min(rawDPR, 1.5);
+                } else if (isTablet || isLaptopOrDesktop) {
+                    currentScale = Math.min(rawDPR, maxNormalDPR);
+                } else {
+                    currentScale = 1;
+                }
             }
             
             // Apply to canvas with DPR scaling
@@ -672,6 +709,16 @@
         window.addEventListener('orientationchange', () => {
             setTimeout(resizeCanvas, 100);
         });
+        
+        // Use visualViewport resize event if available (better for iframes)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', resizeCanvas);
+            window.visualViewport.addEventListener('scroll', resizeCanvas);
+        }
+        
+        // Re-check size after delays for iframe loading
+        setTimeout(resizeCanvas, 100);
+        setTimeout(resizeCanvas, 300);
         
         // Game state (must be declared before calculateScale which calls draw)
         let snake = [];

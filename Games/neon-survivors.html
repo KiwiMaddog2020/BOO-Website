@@ -62,6 +62,17 @@
             background: #0a0a0a;
         }
 
+        /* Fullscreen/iframe mode: fill entire viewport */
+        .game-container.fullscreen-mode {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            padding: 0;
+            gap: 0;
+            border-radius: 0;
+        }
+
         #gameCanvas {
             border-radius: 3px;
             max-width: 100%;
@@ -3576,62 +3587,98 @@
         let cssWidth = BASE_WIDTH;    // CSS display size
         let cssHeight = BASE_HEIGHT;
         
+        // Get accurate viewport size (works better in iframes)
+        function getViewportSize() {
+            if (window.visualViewport) {
+                return {
+                    width: window.visualViewport.width,
+                    height: window.visualViewport.height
+                };
+            }
+            return {
+                width: window.innerWidth,
+                height: window.innerHeight
+            };
+        }
+        
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
             // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
             // This works reliably in iframes on iOS where screen.width/height can be unreliable
-            const viewW = window.innerWidth;
-            const viewH = window.innerHeight;
+            const viewport = getViewportSize();
+            const viewW = viewport.width;
+            const viewH = viewport.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
-            const isMobileView = window.innerWidth <= 600;
+            const isMobileView = viewW <= 600;
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            const gameContainer = document.querySelector('.game-container');
             
             // Game logic always uses BASE dimensions
             gameWidth = BASE_WIDTH;
             gameHeight = BASE_HEIGHT;
             
-            const availWidth = window.innerWidth;
-            const availHeight = window.innerHeight;
-            
-            // Trackpad zone is ~360px tall - account for full game container
-            const TRACKPAD_HEIGHT = 360;
-            const TOTAL_GAME_HEIGHT = BASE_HEIGHT + TRACKPAD_HEIGHT; // 491 + 360 = 851
-            const totalAspect = BASE_WIDTH / TOTAL_GAME_HEIGHT;
             const canvasAspect = BASE_WIDTH / BASE_HEIGHT;
             
             if (isFullscreen) {
-                // Fullscreen/iframe: scale to fit available space accounting for trackpad
-                const screenAspect = availWidth / availHeight;
+                // Fullscreen/iframe: fill viewport accounting for border only
+                gameContainer.classList.add('fullscreen-mode');
+                
+                const borderWidth = 3;
+                const availWidth = viewW - (borderWidth * 2);
+                const availHeight = viewH - (borderWidth * 2);
+                
+                // For desktop iframe (no touch), scale to fit canvas directly
+                // For touch devices, account for trackpad zone
                 let targetWidth, targetHeight;
                 
-                if (screenAspect > totalAspect) {
-                    // Height constrained
-                    targetHeight = availHeight;
-                    targetWidth = targetHeight * totalAspect;
+                if (isTouchDevice && isMobileView) {
+                    // Mobile with trackpad: account for 360px trackpad zone
+                    const TRACKPAD_HEIGHT = 360;
+                    const TOTAL_GAME_HEIGHT = BASE_HEIGHT + TRACKPAD_HEIGHT;
+                    const totalAspect = BASE_WIDTH / TOTAL_GAME_HEIGHT;
+                    const screenAspect = availWidth / availHeight;
+                    
+                    if (screenAspect > totalAspect) {
+                        targetHeight = availHeight;
+                        targetWidth = targetHeight * totalAspect;
+                    } else {
+                        targetWidth = availWidth;
+                        targetHeight = targetWidth / totalAspect;
+                    }
+                    const scaleFactor = targetWidth / BASE_WIDTH;
+                    cssWidth = Math.floor(BASE_WIDTH * scaleFactor);
+                    cssHeight = Math.floor(BASE_HEIGHT * scaleFactor);
                 } else {
-                    // Width constrained
-                    targetWidth = availWidth;
-                    targetHeight = targetWidth / totalAspect;
+                    // Desktop iframe: scale canvas to fit viewport directly
+                    const screenAspect = availWidth / availHeight;
+                    
+                    if (screenAspect > canvasAspect) {
+                        // Height-constrained
+                        cssHeight = availHeight;
+                        cssWidth = cssHeight * canvasAspect;
+                    } else {
+                        // Width-constrained
+                        cssWidth = availWidth;
+                        cssHeight = cssWidth / canvasAspect;
+                    }
                 }
                 
-                // Scale factor based on width
-                const scaleFactor = targetWidth / BASE_WIDTH;
-                cssWidth = Math.floor(BASE_WIDTH * scaleFactor);
-                cssHeight = Math.floor(BASE_HEIGHT * scaleFactor);
-                
-                dprScale = Math.min(rawDPR, maxFullscreenDPR) * scaleFactor;
+                dprScale = Math.min(rawDPR, maxFullscreenDPR) * (cssWidth / BASE_WIDTH);
             } else if (isMobileView) {
                 // Mobile: responsive sizing
+                gameContainer.classList.remove('fullscreen-mode');
                 const containerPadding = 8;
-                const maxAvailWidth = availWidth - containerPadding * 2 - 6;
+                const maxAvailWidth = viewW - containerPadding * 2 - 6;
                 cssWidth = Math.min(BASE_WIDTH, maxAvailWidth);
                 cssHeight = cssWidth / canvasAspect;
                 dprScale = Math.min(rawDPR, 1.5) * (cssWidth / BASE_WIDTH);
             } else {
                 // Desktop/tablet: base size
+                gameContainer.classList.remove('fullscreen-mode');
                 cssWidth = BASE_WIDTH;
                 cssHeight = BASE_HEIGHT;
                 dprScale = Math.min(rawDPR, maxNormalDPR);
@@ -3672,6 +3719,16 @@
         // Listen for resize/orientation changes
         window.addEventListener('resize', resizeCanvas);
         window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 100));
+        
+        // Use visualViewport resize event if available (better for iframes)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', resizeCanvas);
+            window.visualViewport.addEventListener('scroll', resizeCanvas);
+        }
+        
+        // Re-check size after delays for iframe loading
+        setTimeout(resizeCanvas, 100);
+        setTimeout(resizeCanvas, 300);
         
         // Initial scale calculation
         calculateScale();

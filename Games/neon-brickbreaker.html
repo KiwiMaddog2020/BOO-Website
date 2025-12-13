@@ -66,6 +66,17 @@
             background: #0a0a0a;
         }
 
+        /* Fullscreen/iframe mode: fill entire viewport */
+        .game-container.fullscreen-mode {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            padding: 0;
+            gap: 0;
+            border-radius: 0;
+        }
+
         /* Main Menu Overlay */
         .menu-overlay {
             position: fixed;
@@ -1613,25 +1624,42 @@
         let cssWidth = BASE_WIDTH;    // CSS display size
         let cssHeight = BASE_HEIGHT;
         
+        // Get accurate viewport size (works better in iframes)
+        function getViewportSize() {
+            if (window.visualViewport) {
+                return {
+                    width: window.visualViewport.width,
+                    height: window.visualViewport.height
+                };
+            }
+            return {
+                width: window.innerWidth,
+                height: window.innerHeight
+            };
+        }
+        
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
             // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
             // This works reliably in iframes on iOS where screen.width/height can be unreliable
-            const viewW = window.innerWidth;
-            const viewH = window.innerHeight;
+            const viewport = getViewportSize();
+            const viewW = viewport.width;
+            const viewH = viewport.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
-            const isMobile = window.innerWidth <= 768;
+            const isMobile = viewW <= 768;
+            const gameContainer = document.querySelector('.game-container');
             
             if (isFullscreen) {
-                // Fullscreen: scale to fit screen, maintain aspect ratio
-                // Account for container padding (6px) + border (3px) on each side
-                const containerOverhead = 18; // (6 + 3) * 2
-                const availWidth = window.innerWidth - containerOverhead;
-                const availHeight = window.innerHeight - containerOverhead;
+                // Fullscreen/iframe: fill entire viewport, accounting for border only
+                gameContainer.classList.add('fullscreen-mode');
+                
+                const borderWidth = 3; // 3px border on each side
+                const availWidth = viewW - (borderWidth * 2);
+                const availHeight = viewH - (borderWidth * 2);
                 const gameAspect = BASE_WIDTH / BASE_HEIGHT;
                 const screenAspect = availWidth / availHeight;
                 
@@ -1650,6 +1678,7 @@
                 dprScale = Math.min(rawDPR, maxFullscreenDPR) * (cssWidth / BASE_WIDTH);
             } else {
                 // Normal mode
+                gameContainer.classList.remove('fullscreen-mode');
                 cssWidth = BASE_WIDTH;
                 cssHeight = BASE_HEIGHT;
                 gameWidth = BASE_WIDTH;
@@ -1697,6 +1726,16 @@
         // Listen for resize/orientation changes
         window.addEventListener('resize', handleResize);
         window.addEventListener('orientationchange', () => setTimeout(handleResize, 100));
+        
+        // Use visualViewport resize event if available (better for iframes)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', handleResize);
+            window.visualViewport.addEventListener('scroll', handleResize);
+        }
+        
+        // Re-check size after delays for iframe loading
+        setTimeout(handleResize, 100);
+        setTimeout(handleResize, 300);
         
         // Initial scale calculation
         calculateScale();

@@ -73,6 +73,18 @@
             background: #0a0a0a;
         }
 
+        /* Fullscreen/iframe mode: fill entire viewport */
+        .game-container.fullscreen-mode {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            padding: 0;
+            gap: 0;
+            border-radius: 0;
+            border-width: 3px;
+        }
+
         #gameCanvas {
             border-radius: calc(3px * var(--scale, 1));
             max-width: 100%;
@@ -2131,17 +2143,33 @@
             return { width, height };
         }
         
+        // Get accurate viewport size (works better in iframes)
+        function getViewportSize() {
+            if (window.visualViewport) {
+                return {
+                    width: window.visualViewport.width,
+                    height: window.visualViewport.height
+                };
+            }
+            return {
+                width: window.innerWidth,
+                height: window.innerHeight
+            };
+        }
+        
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
             // Detect pseudo-fullscreen/iframe: viewport differs significantly from base canvas
-            const viewW = window.innerWidth;
-            const viewH = window.innerHeight;
+            const viewport = getViewportSize();
+            const viewW = viewport.width;
+            const viewH = viewport.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
-            const isMobile = window.innerWidth <= 768;
+            const isMobile = viewW <= 768;
+            const gameContainer = document.querySelector('.game-container');
             
             // Control bar takes about 155px (two rows of towers + buttons + padding)
             const CONTROL_BAR_HEIGHT = 155;
@@ -2149,11 +2177,14 @@
             const TOTAL_GAME_HEIGHT = BASE_HEIGHT + CONTROL_BAR_HEIGHT + 15; // 582 + 155 + 15 = 752
             const TOTAL_GAME_WIDTH = BASE_WIDTH + 12; // Add container padding
             
-            const availWidth = window.innerWidth;
-            const availHeight = window.innerHeight;
-            
             if (isFullscreen) {
-                // Fullscreen/iframe: scale to fit available space
+                // Fullscreen/iframe: fill viewport accounting for border only
+                gameContainer.classList.add('fullscreen-mode');
+                
+                const borderWidth = 3;
+                const availWidth = viewW - (borderWidth * 2);
+                const availHeight = viewH - (borderWidth * 2);
+                
                 // Calculate scale factors for both dimensions
                 const scaleByWidth = availWidth / TOTAL_GAME_WIDTH;
                 const scaleByHeight = availHeight / TOTAL_GAME_HEIGHT;
@@ -2167,9 +2198,10 @@
                 dprScale = Math.min(rawDPR, maxFullscreenDPR);
             } else if (isMobile) {
                 // Mobile: responsive sizing based on both dimensions
+                gameContainer.classList.remove('fullscreen-mode');
                 const containerPadding = 10;
-                const maxWidth = availWidth - containerPadding * 2;
-                const maxHeight = availHeight - CONTROL_BAR_HEIGHT - 20;
+                const maxWidth = viewW - containerPadding * 2;
+                const maxHeight = viewH - CONTROL_BAR_HEIGHT - 20;
                 
                 const scaleByWidth = maxWidth / BASE_WIDTH;
                 const scaleByHeight = maxHeight / BASE_HEIGHT;
@@ -2181,6 +2213,7 @@
                 dprScale = Math.min(rawDPR, 1.5);
             } else {
                 // Desktop not in iframe: base size
+                gameContainer.classList.remove('fullscreen-mode');
                 displayWidth = BASE_WIDTH;
                 displayHeight = BASE_HEIGHT;
                 dprScale = Math.min(rawDPR, maxNormalDPR);
@@ -2233,6 +2266,16 @@
         window.addEventListener('orientationchange', () => {
             setTimeout(resizeCanvas, 100);
         });
+        
+        // Use visualViewport resize event if available (better for iframes)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', resizeCanvas);
+            window.visualViewport.addEventListener('scroll', resizeCanvas);
+        }
+        
+        // Re-check size after delays for iframe loading
+        setTimeout(resizeCanvas, 100);
+        setTimeout(resizeCanvas, 300);
         
         // Initial scale calculation
         calculateScale();

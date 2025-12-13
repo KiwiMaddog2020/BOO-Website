@@ -47,6 +47,16 @@
             transform: translateZ(0);
         }
 
+        /* Fullscreen/iframe mode: fill entire viewport */
+        .game-container.fullscreen-mode {
+            width: 100% !important;
+            height: 100% !important;
+            border-radius: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
         #gameCanvas {
             display: block;
             border-radius: 2px;
@@ -981,29 +991,45 @@
         const maxNormalDPR = isLowPerf ? 1.5 : 2;
         const maxFullscreenDPR = isLowPerf ? 2 : 3;
         
+        // Get accurate viewport size (works better in iframes)
+        function getViewportSize() {
+            if (window.visualViewport) {
+                return {
+                    width: window.visualViewport.width,
+                    height: window.visualViewport.height
+                };
+            }
+            return {
+                width: window.innerWidth,
+                height: window.innerHeight
+            };
+        }
+        
         function resizeCanvas() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             
             // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
             // This works reliably in iframes on iOS where screen.width/height can be unreliable
-            const viewW = window.innerWidth;
-            const viewH = window.innerHeight;
+            const viewport = getViewportSize();
+            const viewW = viewport.width;
+            const viewH = viewport.height;
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (viewW > baseWidth * 1.15 || viewH > baseHeight * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
-            const isMobile = window.innerWidth <= 768;
+            const isMobile = viewW <= 768;
             const ratio = baseWidth / baseHeight;
-            
-            // Available space
-            const maxWidth = Math.min(baseWidth, window.innerWidth - 20);
-            const maxHeight = Math.min(baseHeight, window.innerHeight - 20);
+            const gameContainer = document.querySelector('.game-container');
             
             // Calculate display dimensions
             if (isFullscreen) {
-                // Fullscreen: fit to screen while maintaining aspect ratio
-                const availWidth = window.innerWidth;
-                const availHeight = window.innerHeight;
+                // Fullscreen/iframe: fill viewport accounting for border only
+                gameContainer.classList.add('fullscreen-mode');
+                
+                const borderWidth = 3;
+                const availWidth = viewW - (borderWidth * 2);
+                const availHeight = viewH - (borderWidth * 2);
+                
                 if (availWidth / availHeight > ratio) {
                     displayHeight = availHeight;
                     displayWidth = displayHeight * ratio;
@@ -1014,6 +1040,12 @@
                 // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
                 dprScale = Math.min(rawDPR, maxFullscreenDPR);
             } else {
+                gameContainer.classList.remove('fullscreen-mode');
+                
+                // Available space
+                const maxWidth = Math.min(baseWidth, viewW - 20);
+                const maxHeight = Math.min(baseHeight, viewH - 20);
+                
                 // Normal mode
                 if (maxWidth / maxHeight > ratio) {
                     displayHeight = maxHeight;
@@ -1040,8 +1072,12 @@
             // Set CSS display size
             canvas.style.width = displayWidth + 'px';
             canvas.style.height = displayHeight + 'px';
-            canvas.parentElement.style.width = displayWidth + 'px';
-            canvas.parentElement.style.height = displayHeight + 'px';
+            
+            // Only set parent size in non-fullscreen mode
+            if (!isFullscreen) {
+                canvas.parentElement.style.width = displayWidth + 'px';
+                canvas.parentElement.style.height = displayHeight + 'px';
+            }
             
             // Re-apply smoothing after resize (canvas resize resets context)
             ctx.imageSmoothingEnabled = true;
@@ -1062,6 +1098,16 @@
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
         document.addEventListener('mozfullscreenchange', handleFullscreenChange);
         document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+        
+        // Use visualViewport resize event if available (better for iframes)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', resizeCanvas);
+            window.visualViewport.addEventListener('scroll', resizeCanvas);
+        }
+        
+        // Re-check size after delays for iframe loading
+        setTimeout(resizeCanvas, 100);
+        setTimeout(resizeCanvas, 300);
 
         // Game state
         let gameState = 'loading'; // 'loading', 'intro', 'start', 'playing', 'gameover'
