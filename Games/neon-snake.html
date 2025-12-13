@@ -74,7 +74,82 @@
             padding: 0;
             gap: 0;
             border-radius: 0;
+            justify-content: flex-start;
+        }
+        
+        .game-container.fullscreen-mode .canvas-wrapper {
+            flex-shrink: 0;
+        }
+        
+        /* Trackpad zone for fullscreen desktop */
+        .trackpad-zone {
+            display: none;
+            width: 100%;
+            background: linear-gradient(180deg, rgba(0, 20, 30, 0.9) 0%, rgba(5, 10, 15, 0.95) 100%);
+            border-top: 1px solid rgba(0, 255, 255, 0.2);
+            position: relative;
+            cursor: crosshair;
+        }
+        
+        .game-container.fullscreen-mode .trackpad-zone {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             justify-content: center;
+            flex: 1;
+        }
+        
+        .trackpad-inner {
+            width: 80%;
+            max-width: 400px;
+            height: 60%;
+            max-height: 200px;
+            border: 2px solid rgba(0, 255, 255, 0.3);
+            border-radius: 12px;
+            background: rgba(0, 255, 255, 0.03);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .trackpad-hint {
+            color: rgba(0, 255, 255, 0.5);
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            pointer-events: none;
+        }
+        
+        .trackpad-arrows {
+            position: absolute;
+            color: rgba(0, 255, 255, 0.25);
+            font-size: 24px;
+        }
+        
+        .trackpad-arrows.up { top: 15px; }
+        .trackpad-arrows.down { bottom: 15px; }
+        .trackpad-arrows.left { left: 20px; }
+        .trackpad-arrows.right { right: 20px; }
+        
+        /* Hide mobile touch zone in fullscreen, show trackpad instead */
+        .game-container.fullscreen-mode .touch-zone {
+            display: none;
+        }
+        
+        /* Hide controls row in fullscreen mode - integrate into trackpad area */
+        .game-container.fullscreen-mode .controls {
+            position: absolute;
+            bottom: 10px;
+            left: 0;
+            right: 0;
+            z-index: 10;
+            background: transparent;
+            padding: 0 20px;
+        }
+        
+        .game-container.fullscreen-mode .instructions {
+            display: none;
         }
 
         .hud {
@@ -517,6 +592,15 @@
         <div class="touch-zone" id="touchZone">
             <span class="touch-hint">◄ SWIPE TO MOVE ►</span>
         </div>
+        <div class="trackpad-zone" id="trackpadZone">
+            <div class="trackpad-inner" id="trackpadInner">
+                <span class="trackpad-arrows up">▲</span>
+                <span class="trackpad-arrows down">▼</span>
+                <span class="trackpad-arrows left">◄</span>
+                <span class="trackpad-arrows right">►</span>
+                <span class="trackpad-hint">Click or drag to move</span>
+            </div>
+        </div>
     </div>
 
     <!-- Score Input Modal -->
@@ -623,6 +707,7 @@
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const isMobile = viewW <= 768;
             const gameContainer = document.querySelector('.game-container');
+            const trackpadZone = document.getElementById('trackpadZone');
             
             // Calculate display size
             displaySize = calculateCanvasSize();
@@ -630,23 +715,74 @@
             GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
             
             if (isFullscreen) {
-                // Fullscreen/iframe: fill viewport accounting for border only
+                // Fullscreen/iframe: use rectangular layout with trackpad
                 gameContainer.classList.add('fullscreen-mode');
                 
                 const borderWidth = 3;
                 const availWidth = viewW - (borderWidth * 2);
                 const availHeight = viewH - (borderWidth * 2);
                 
-                // Snake is square, so use minimum dimension
-                displaySize = Math.min(availWidth, availHeight);
-                displaySize = Math.floor(displaySize / GRID_COUNT) * GRID_COUNT;
+                // Calculate how much trackpad space we need to fill the viewport
+                // Canvas is square, so find optimal canvas size that leaves room for trackpad
+                // Target: trackpad should be about 25-40% of canvas height for good proportions
+                const viewportAspect = availWidth / availHeight;
+                
+                // If viewport is taller than wide (aspect < 1), we have more trackpad room
+                // If viewport is wider than tall (aspect > 1), canvas dominates
+                let canvasSize, trackpadHeight;
+                
+                if (viewportAspect >= 1) {
+                    // Wide viewport: canvas takes full height, minimal trackpad
+                    canvasSize = Math.min(availWidth, availHeight);
+                    trackpadHeight = 0;
+                } else {
+                    // Tall viewport: fit canvas + trackpad into height
+                    // Canvas width = availWidth, canvas height = availWidth (square)
+                    // Trackpad fills remaining height
+                    canvasSize = availWidth;
+                    trackpadHeight = availHeight - canvasSize;
+                    
+                    // If trackpad would be too small (< 15% of canvas), just use square
+                    if (trackpadHeight < canvasSize * 0.15) {
+                        canvasSize = Math.min(availWidth, availHeight);
+                        trackpadHeight = 0;
+                    }
+                    
+                    // If trackpad would be too tall (> 60% of canvas), cap it
+                    if (trackpadHeight > canvasSize * 0.6) {
+                        // Recalculate: total height = canvas + 0.6*canvas = 1.6*canvas
+                        canvasSize = availHeight / 1.6;
+                        canvasSize = Math.min(canvasSize, availWidth); // Don't exceed width
+                        trackpadHeight = availHeight - canvasSize;
+                    }
+                }
+                
+                // Snap canvas to grid
+                displaySize = Math.floor(canvasSize / GRID_COUNT) * GRID_COUNT;
                 CANVAS_SIZE = displaySize;
                 GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
+                
+                // Set trackpad height
+                if (trackpadZone) {
+                    if (trackpadHeight > 50) {
+                        trackpadZone.style.height = trackpadHeight + 'px';
+                        trackpadZone.style.minHeight = trackpadHeight + 'px';
+                    } else {
+                        trackpadZone.style.height = '0px';
+                        trackpadZone.style.minHeight = '0px';
+                    }
+                }
                 
                 // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
                 currentScale = Math.min(rawDPR, maxFullscreenDPR);
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
+                
+                // Reset trackpad height
+                if (trackpadZone) {
+                    trackpadZone.style.height = '';
+                    trackpadZone.style.minHeight = '';
+                }
                 
                 if (isMobile) {
                     currentScale = Math.min(rawDPR, 1.5);
@@ -1001,6 +1137,128 @@
         document.body.addEventListener('touchmove', (e) => {
             e.preventDefault();
         }, { passive: false });
+
+        // ========== TRACKPAD ZONE CONTROLS ==========
+        const trackpadZone = document.getElementById('trackpadZone');
+        const trackpadInner = document.getElementById('trackpadInner');
+        let trackpadStartX = 0;
+        let trackpadStartY = 0;
+        let isTrackpadDragging = false;
+        
+        function handleTrackpadClick(e) {
+            if (!gameRunning) return;
+            
+            const rect = trackpadInner.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            
+            const dx = e.clientX - centerX;
+            const dy = e.clientY - centerY;
+            
+            // Determine direction based on which quadrant was clicked
+            if (Math.abs(dx) > Math.abs(dy)) {
+                // Horizontal
+                if (dx > 0 && direction.x !== -1) {
+                    nextDirection = { x: 1, y: 0 };
+                } else if (dx < 0 && direction.x !== 1) {
+                    nextDirection = { x: -1, y: 0 };
+                }
+            } else {
+                // Vertical
+                if (dy > 0 && direction.y !== -1) {
+                    nextDirection = { x: 0, y: 1 };
+                } else if (dy < 0 && direction.y !== 1) {
+                    nextDirection = { x: 0, y: -1 };
+                }
+            }
+        }
+        
+        function handleTrackpadMouseDown(e) {
+            trackpadStartX = e.clientX;
+            trackpadStartY = e.clientY;
+            isTrackpadDragging = true;
+        }
+        
+        function handleTrackpadMouseUp(e) {
+            if (!isTrackpadDragging) return;
+            isTrackpadDragging = false;
+            
+            if (!gameRunning) return;
+            
+            const dx = e.clientX - trackpadStartX;
+            const dy = e.clientY - trackpadStartY;
+            const minDrag = 20;
+            
+            // If it's a small movement, treat as click
+            if (Math.abs(dx) < minDrag && Math.abs(dy) < minDrag) {
+                handleTrackpadClick(e);
+                return;
+            }
+            
+            // Swipe/drag detection
+            if (Math.abs(dx) > Math.abs(dy)) {
+                if (dx > minDrag && direction.x !== -1) {
+                    nextDirection = { x: 1, y: 0 };
+                } else if (dx < -minDrag && direction.x !== 1) {
+                    nextDirection = { x: -1, y: 0 };
+                }
+            } else {
+                if (dy > minDrag && direction.y !== -1) {
+                    nextDirection = { x: 0, y: 1 };
+                } else if (dy < -minDrag && direction.y !== 1) {
+                    nextDirection = { x: 0, y: -1 };
+                }
+            }
+        }
+        
+        if (trackpadInner) {
+            trackpadInner.addEventListener('mousedown', handleTrackpadMouseDown);
+            trackpadInner.addEventListener('mouseup', handleTrackpadMouseUp);
+            trackpadInner.addEventListener('mouseleave', () => { isTrackpadDragging = false; });
+            
+            // Touch support for trackpad on tablets
+            trackpadInner.addEventListener('touchstart', (e) => {
+                trackpadStartX = e.touches[0].clientX;
+                trackpadStartY = e.touches[0].clientY;
+                isTrackpadDragging = true;
+            }, { passive: true });
+            
+            trackpadInner.addEventListener('touchend', (e) => {
+                if (!isTrackpadDragging || !gameRunning) return;
+                isTrackpadDragging = false;
+                
+                const touch = e.changedTouches[0];
+                const dx = touch.clientX - trackpadStartX;
+                const dy = touch.clientY - trackpadStartY;
+                const minDrag = 20;
+                
+                if (Math.abs(dx) < minDrag && Math.abs(dy) < minDrag) {
+                    // Treat as tap - use center-relative positioning
+                    const rect = trackpadInner.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+                    const tapDx = touch.clientX - centerX;
+                    const tapDy = touch.clientY - centerY;
+                    
+                    if (Math.abs(tapDx) > Math.abs(tapDy)) {
+                        if (tapDx > 0 && direction.x !== -1) nextDirection = { x: 1, y: 0 };
+                        else if (tapDx < 0 && direction.x !== 1) nextDirection = { x: -1, y: 0 };
+                    } else {
+                        if (tapDy > 0 && direction.y !== -1) nextDirection = { x: 0, y: 1 };
+                        else if (tapDy < 0 && direction.y !== 1) nextDirection = { x: 0, y: -1 };
+                    }
+                    return;
+                }
+                
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    if (dx > minDrag && direction.x !== -1) nextDirection = { x: 1, y: 0 };
+                    else if (dx < -minDrag && direction.x !== 1) nextDirection = { x: -1, y: 0 };
+                } else {
+                    if (dy > minDrag && direction.y !== -1) nextDirection = { x: 0, y: 1 };
+                    else if (dy < -minDrag && direction.y !== 1) nextDirection = { x: 0, y: -1 };
+                }
+            }, { passive: true });
+        }
 
         startBtn.addEventListener('click', startGame);
         startBtn.addEventListener('touchend', (e) => {
