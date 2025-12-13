@@ -471,7 +471,7 @@
         .upgrade-subtitle {
             font-size: 11px;
             color: rgba(255, 255, 255, 0.4);
-            margin-top: 8px;
+            margin-top: 13px;
             letter-spacing: 4px;
             text-transform: uppercase;
         }
@@ -537,6 +537,12 @@
         .upgrade-slot.legendary { border-color: rgba(255, 0, 255, 0.5); box-shadow: 0 0 40px rgba(255, 0, 255, 0.25); }
         .upgrade-slot.legendary.revealed:hover { box-shadow: 0 0 55px rgba(255, 0, 255, 0.45); }
         .upgrade-overlay.legendary .upgrade-title { color: var(--magenta); text-shadow: 0 0 40px var(--magenta), 0 0 80px var(--magenta); }
+        
+        /* Chest upgrade style */
+        .upgrade-overlay.chest .upgrade-title { color: #ffd700; text-shadow: 0 0 40px #ffd700, 0 0 80px #ff9500; }
+        .upgrade-slot.chest { border-color: rgba(255, 215, 0, 0.5); box-shadow: 0 0 40px rgba(255, 215, 0, 0.25); }
+        .upgrade-slot.chest.revealed { border-color: rgba(255, 215, 0, 0.7); box-shadow: 0 0 50px rgba(255, 215, 0, 0.35); }
+        .upgrade-slot.chest.revealed:hover { box-shadow: 0 0 60px rgba(255, 215, 0, 0.5); border-color: #ffd700; }
 
         .upgrade-content {
             display: flex;
@@ -1345,6 +1351,7 @@
         let upgradeSelectionActive = false;
         let upgradeSelected = false;
         let isLegendaryUpgrade = false;
+        let isChestUpgrade = false;
         let lastFrameTime = 0;
         let deltaMultiplier = 1;
         let screenShake = 0;
@@ -2095,13 +2102,6 @@
             const allUpgrades = [...upgradeDefinitions, ...legendaryUpgradeDefinitions];
             const upgrade = allUpgrades[Math.floor(Math.random() * allUpgrades.length)];
             
-            // Apply the upgrade immediately
-            upgrade.apply();
-            
-            // Special effects for the rare find
-            createFloatingText(`🎁 ${upgrade.icon} ${upgrade.name}!`, tx * TILE_SIZE + TILE_SIZE/2, worldY - 10, '#00ffaa');
-            createFloatingText(upgrade.desc, tx * TILE_SIZE + TILE_SIZE/2, worldY + 15, '#aaffaa');
-            
             // Rainbow particle explosion
             for (let i = 0; i < 35; i++) {
                 const angle = Math.random() * Math.PI * 2;
@@ -2119,19 +2119,115 @@
                 });
             }
             
-            // Big screen flash and shake
-            triggerScreenFlash('#00ffaa', 0.5, 30);
+            // Screen effects
+            triggerScreenFlash('#ffd700', 0.5, 30);
             screenShake = 12;
             
-            // Also give some bonus score
+            // Bonus score
             const bonusScore = 100;
             score += bonusScore;
             scoreEl.textContent = score;
             
-            // Update any relevant displays
+            // Show upgrade overlay with single slot
+            showChestUpgrade(upgrade);
+        }
+        
+        function showChestUpgrade(upgrade) {
+            upgradeSelectionActive = true;
+            upgradeSelected = false;
+            isChestUpgrade = true;
+            isLegendaryUpgrade = false;
+            
+            currentUpgradeChoices = [upgrade];
+            
+            // Update title and subtitle
+            const titleEl = upgradeOverlay.querySelector('.upgrade-title');
+            const subtitleEl = upgradeOverlay.querySelector('.upgrade-subtitle');
+            titleEl.textContent = 'TREASURE FOUND';
+            subtitleEl.textContent = 'Claim your reward';
+            
+            // Set chest styling
+            upgradeOverlay.classList.remove('legendary');
+            upgradeOverlay.classList.add('chest');
+            
+            // Show only the first slot, hide others
+            slots.forEach((slot, i) => {
+                if (i === 0) {
+                    slot.className = 'upgrade-slot rolling chest';
+                    slot.style.display = '';
+                    slot.querySelector('.upgrade-icon').textContent = '?';
+                    slot.querySelector('.upgrade-name').textContent = '???';
+                    slot.querySelector('.upgrade-desc').textContent = '???';
+                } else {
+                    slot.style.display = 'none';
+                }
+            });
+            
+            upgradeOverlay.classList.add('active');
+            rollChestSlot(upgrade);
+        }
+        
+        function rollChestSlot(upgrade) {
+            clearRollTimers();
+            
+            const rollDuration = 1200;
+            const allDefs = [...upgradeDefinitions, ...legendaryUpgradeDefinitions];
+            const slot = slots[0];
+            
+            const rollInterval = setInterval(() => {
+                const r = allDefs[Math.floor(Math.random() * allDefs.length)];
+                slot.querySelector('.upgrade-icon').textContent = r.icon;
+                slot.querySelector('.upgrade-name').textContent = r.name;
+                slot.querySelector('.upgrade-desc').textContent = r.desc;
+            }, 100);
+            
+            activeRollIntervals.push(rollInterval);
+            
+            const timeout = setTimeout(() => {
+                clearInterval(rollInterval);
+                slot.className = 'upgrade-slot revealed chest';
+                slot.querySelector('.upgrade-icon').textContent = upgrade.icon;
+                slot.querySelector('.upgrade-name').textContent = upgrade.name;
+                slot.querySelector('.upgrade-desc').textContent = upgrade.desc;
+                slot.onclick = () => selectChestUpgrade(upgrade);
+                slot.ontouchend = (e) => { e.preventDefault(); e.stopPropagation(); selectChestUpgrade(upgrade); };
+            }, rollDuration);
+            
+            activeRollTimeouts.push(timeout);
+        }
+        
+        function selectChestUpgrade(upgrade) {
+            if (!upgradeSelectionActive || upgradeSelected) return;
+            upgradeSelected = true;
+            
+            slots[0].classList.add('selected');
+            
+            // Apply the upgrade
+            upgrade.apply();
+            updatePermanentUpgradesDisplay();
             updateFuelBar();
             updateHullBar();
-            updatePermanentUpgradesDisplay();
+            
+            setTimeout(() => {
+                upgradeSelectionActive = false;
+                isChestUpgrade = false;
+                upgradeOverlay.classList.remove('active', 'chest');
+                
+                // Reset title and subtitle for next time
+                const titleEl = upgradeOverlay.querySelector('.upgrade-title');
+                const subtitleEl = upgradeOverlay.querySelector('.upgrade-subtitle');
+                titleEl.textContent = 'UPGRADE';
+                subtitleEl.textContent = 'Choose your enhancement';
+                
+                slots.forEach(s => {
+                    s.style.display = '';
+                    s.style.opacity = '';
+                    s.style.pointerEvents = '';
+                    s.classList.remove('selected', 'chest');
+                    s.onclick = null;
+                    s.ontouchend = null;
+                });
+            }, 600);
         }
         
         function startUnstableTimer(tx, absoluteTy) {
@@ -4119,7 +4215,7 @@
                 const dangerPulse = 0.5 + Math.sin(enemy.animFrame * 3) * 0.3;
                 
                 // ===== DANGER AURA (all enemies) =====
-                const auraSize = 25 + Math.sin(enemy.animFrame * 2) * 5;
+                const auraSize = 35 + Math.sin(enemy.animFrame * 2) * 8;
                 let auraR, auraG, auraB;
                 if (enemy.type === ENEMY_TYPE.LAVA_SLUG) {
                     auraR = 255; auraG = 68; auraB = 0;
@@ -4129,9 +4225,10 @@
                     auraR = 255; auraG = 51; auraB = 102;
                 }
                 
-                const auraGrad = ctx.createRadialGradient(screenX, screenY, 5, screenX, screenY, auraSize);
-                auraGrad.addColorStop(0, `rgba(${auraR}, ${auraG}, ${auraB}, ${dangerPulse})`);
-                auraGrad.addColorStop(0.5, `rgba(255, 50, 50, ${dangerPulse * 0.3})`);
+                const auraGrad = ctx.createRadialGradient(screenX, screenY, 3, screenX, screenY, auraSize);
+                auraGrad.addColorStop(0, `rgba(${auraR}, ${auraG}, ${auraB}, ${dangerPulse * 0.9})`);
+                auraGrad.addColorStop(0.4, `rgba(${auraR}, ${auraG}, ${auraB}, ${dangerPulse * 0.5})`);
+                auraGrad.addColorStop(0.7, `rgba(255, 50, 50, ${dangerPulse * 0.25})`);
                 auraGrad.addColorStop(1, 'rgba(255, 0, 0, 0)');
                 ctx.fillStyle = auraGrad;
                 ctx.beginPath();
@@ -4141,60 +4238,55 @@
                 // ===== WARNING INDICATOR =====
                 ctx.save();
                 ctx.fillStyle = '#ff3366';
-                ctx.font = 'bold 14px sans-serif';
+                ctx.font = 'bold 18px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.shadowColor = '#ff0000';
-                ctx.shadowBlur = 8;
-                const warningY = screenY - 20 - Math.sin(enemy.animFrame * 4) * 3;
+                ctx.shadowBlur = 12;
+                const warningY = screenY - 25 - Math.sin(enemy.animFrame * 4) * 4;
                 ctx.fillText('⚠', screenX, warningY);
                 ctx.restore();
                 
                 if (enemy.type === ENEMY_TYPE.WORM) {
-                    // Burrowing worm - segmented body
-                    const localTy = enemy.ty - worldRowOffset;
-                    const isVisible = !enemy.inGround || (localTy >= 0 && localTy < world.length && 
-                        (world[localTy][enemy.tx] === TILE.AIR || Math.random() < 0.3));
+                    // Burrowing worm - always visible on top of blocks
+                    // Glow effect
+                    ctx.shadowColor = '#44ff44';
+                    ctx.shadowBlur = 15;
                     
-                    if (isVisible || !enemy.inGround) {
-                        // Glow effect
-                        ctx.shadowColor = '#44ff44';
-                        ctx.shadowBlur = 12;
-                        
-                        // Head (larger)
-                        ctx.fillStyle = '#44ff44';
+                    // Head outline (white border for visibility)
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(screenX, screenY + wobble, 10, 8, 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Head (larger)
+                    ctx.fillStyle = '#44ff44';
+                    ctx.beginPath();
+                    ctx.ellipse(screenX, screenY + wobble, 9, 7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Body segments (larger)
+                    ctx.fillStyle = '#33dd33';
+                    for (let seg = 1; seg <= 3; seg++) {
+                        const segWobble = Math.sin(enemy.animFrame + seg * 0.5) * 2;
                         ctx.beginPath();
-                        ctx.ellipse(screenX, screenY + wobble, 9, 7, 0, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        // Body segments (larger)
-                        ctx.fillStyle = '#33dd33';
-                        for (let seg = 1; seg <= 3; seg++) {
-                            const segWobble = Math.sin(enemy.animFrame + seg * 0.5) * 2;
-                            ctx.beginPath();
-                            ctx.ellipse(screenX - seg * 5, screenY + segWobble, 7 - seg * 0.5, 5 - seg * 0.3, 0, 0, Math.PI * 2);
-                            ctx.fill();
-                        }
-                        
-                        ctx.shadowBlur = 0;
-                        
-                        // Eyes (larger, angrier)
-                        ctx.fillStyle = '#ffffff';
-                        ctx.beginPath();
-                        ctx.arc(screenX + 4, screenY + wobble - 2, 3, 0, Math.PI * 2);
-                        ctx.arc(screenX + 4, screenY + wobble + 2, 3, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.fillStyle = '#ff0000';
-                        ctx.beginPath();
-                        ctx.arc(screenX + 5, screenY + wobble - 2, 1.5, 0, Math.PI * 2);
-                        ctx.arc(screenX + 5, screenY + wobble + 2, 1.5, 0, Math.PI * 2);
-                        ctx.fill();
-                    } else {
-                        // Underground indicator - pulsing dirt mound
-                        ctx.fillStyle = `rgba(100, 200, 100, ${0.4 + dangerPulse * 0.3})`;
-                        ctx.beginPath();
-                        ctx.arc(screenX, screenY, 10 + Math.sin(enemy.animFrame * 2) * 3, 0, Math.PI * 2);
+                        ctx.ellipse(screenX - seg * 5, screenY + segWobble, 7 - seg * 0.5, 5 - seg * 0.3, 0, 0, Math.PI * 2);
                         ctx.fill();
                     }
+                    
+                    ctx.shadowBlur = 0;
+                    
+                    // Eyes (larger, angrier)
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(screenX + 4, screenY + wobble - 2, 3, 0, Math.PI * 2);
+                    ctx.arc(screenX + 4, screenY + wobble + 2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ff0000';
+                    ctx.beginPath();
+                    ctx.arc(screenX + 5, screenY + wobble - 2, 1.5, 0, Math.PI * 2);
+                    ctx.arc(screenX + 5, screenY + wobble + 2, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
                     
                 } else if (enemy.type === ENEMY_TYPE.BEETLE) {
                     // Cave beetle - larger and glowing
@@ -4203,7 +4295,14 @@
                     
                     // Glow
                     ctx.shadowColor = '#ff6600';
-                    ctx.shadowBlur = 10;
+                    ctx.shadowBlur = 12;
+                    
+                    // Shell outline (white border for visibility)
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 13, 10, 0, 0, Math.PI * 2);
+                    ctx.stroke();
                     
                     // Legs (larger)
                     ctx.strokeStyle = '#774422';
@@ -4273,7 +4372,18 @@
                     
                     // Intense glow effect
                     ctx.shadowColor = '#ff4400';
-                    ctx.shadowBlur = 15 + Math.sin(enemy.animFrame) * 5;
+                    ctx.shadowBlur = 18 + Math.sin(enemy.animFrame) * 5;
+                    
+                    // Body outline (white border for visibility)
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(-12, 4);
+                    ctx.quadraticCurveTo(-10, -7 + wobble, 0, -6 + wobble * 0.5);
+                    ctx.quadraticCurveTo(10, -5 + wobble, 12, 4);
+                    ctx.quadraticCurveTo(6, 9, 0, 9);
+                    ctx.quadraticCurveTo(-6, 9, -12, 4);
+                    ctx.stroke();
                     
                     // Body (larger)
                     const bodyGrad = ctx.createLinearGradient(-10, 0, 10, 0);
@@ -4521,15 +4631,17 @@
             
             setTimeout(() => {
                 upgradeSelectionActive = false;
-                upgradeOverlay.classList.remove('active', 'legendary');
+                upgradeOverlay.classList.remove('active', 'legendary', 'chest');
                 slots.forEach(s => {
+                    s.style.display = '';
                     s.style.opacity = '';
                     s.style.pointerEvents = '';
-                    s.classList.remove('selected', 'legendary');
+                    s.classList.remove('selected', 'legendary', 'chest');
                     s.onclick = null;
                     s.ontouchend = null;
                 });
                 isLegendaryUpgrade = false;
+                isChestUpgrade = false;
             }, 600);
         }
         
@@ -4875,6 +4987,12 @@
             unstableTiles = [];
             enemies = [];
             firstEnemySpawned = false;
+            
+            // Reset upgrade overlay states
+            upgradeSelectionActive = false;
+            isLegendaryUpgrade = false;
+            isChestUpgrade = false;
+            upgradeOverlay.classList.remove('active', 'legendary', 'chest');
             
             // Reset upgrades
             Object.keys(permanentUpgrades).forEach(k => permanentUpgrades[k] = 0);
