@@ -1859,8 +1859,9 @@
         
         function checkCollision(x, y, width, height) {
             const points = [
-                [x + 3, y + 3],
-                [x + width - 3, y + 3],
+                [x + 3, y + 1],              // Top left (tighter margin)
+                [x + width - 3, y + 1],      // Top right (tighter margin)
+                [x + width / 2, y + 1],      // Top center (new)
                 [x + 3, y + height - 3],
                 [x + width - 3, y + height - 3],
                 [x + width / 2, y + height - 3]
@@ -2947,8 +2948,23 @@
                 
                 if (dy < 0) {
                     const MIN_PLAYER_Y = 10; // Prevent flying too high
-                    const newY = Math.max(MIN_PLAYER_Y, player.y + dy * deltaMultiplier);
-                    if (newY >= MIN_PLAYER_Y && !checkCollision(player.x, newY, player.width, player.height)) {
+                    const targetY = Math.max(MIN_PLAYER_Y, player.y + dy * deltaMultiplier);
+                    
+                    // Step-by-step collision check to prevent tunneling through rocks
+                    const step = 2; // Check every 2 pixels
+                    let newY = player.y;
+                    let blocked = false;
+                    
+                    while (newY > targetY && !blocked) {
+                        const nextY = Math.max(targetY, newY - step);
+                        if (checkCollision(player.x, nextY, player.width, player.height)) {
+                            blocked = true;
+                        } else {
+                            newY = nextY;
+                        }
+                    }
+                    
+                    if (newY < player.y && newY >= MIN_PLAYER_Y) {
                         player.y = newY;
                         let climbCost = 0.1 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
                         if (feverMode) climbCost *= 0.5;
@@ -4100,156 +4116,203 @@
                 if (screenY < -30 || screenY > BASE_HEIGHT + 30) continue;
                 
                 const wobble = Math.sin(enemy.animFrame) * 2;
+                const dangerPulse = 0.5 + Math.sin(enemy.animFrame * 3) * 0.3;
+                
+                // ===== DANGER AURA (all enemies) =====
+                const auraSize = 25 + Math.sin(enemy.animFrame * 2) * 5;
+                let auraR, auraG, auraB;
+                if (enemy.type === ENEMY_TYPE.LAVA_SLUG) {
+                    auraR = 255; auraG = 68; auraB = 0;
+                } else if (enemy.type === ENEMY_TYPE.WORM) {
+                    auraR = 68; auraG = 255; auraB = 68;
+                } else {
+                    auraR = 255; auraG = 51; auraB = 102;
+                }
+                
+                const auraGrad = ctx.createRadialGradient(screenX, screenY, 5, screenX, screenY, auraSize);
+                auraGrad.addColorStop(0, `rgba(${auraR}, ${auraG}, ${auraB}, ${dangerPulse})`);
+                auraGrad.addColorStop(0.5, `rgba(255, 50, 50, ${dangerPulse * 0.3})`);
+                auraGrad.addColorStop(1, 'rgba(255, 0, 0, 0)');
+                ctx.fillStyle = auraGrad;
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, auraSize, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // ===== WARNING INDICATOR =====
+                ctx.save();
+                ctx.fillStyle = '#ff3366';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#ff0000';
+                ctx.shadowBlur = 8;
+                const warningY = screenY - 20 - Math.sin(enemy.animFrame * 4) * 3;
+                ctx.fillText('⚠', screenX, warningY);
+                ctx.restore();
                 
                 if (enemy.type === ENEMY_TYPE.WORM) {
                     // Burrowing worm - segmented body
-                    // Only show if in air or partially visible
                     const localTy = enemy.ty - worldRowOffset;
                     const isVisible = !enemy.inGround || (localTy >= 0 && localTy < world.length && 
                         (world[localTy][enemy.tx] === TILE.AIR || Math.random() < 0.3));
                     
                     if (isVisible || !enemy.inGround) {
-                        // Head
-                        ctx.fillStyle = '#44dd44';
+                        // Glow effect
+                        ctx.shadowColor = '#44ff44';
+                        ctx.shadowBlur = 12;
+                        
+                        // Head (larger)
+                        ctx.fillStyle = '#44ff44';
                         ctx.beginPath();
-                        ctx.ellipse(screenX, screenY + wobble, 7, 5, 0, 0, Math.PI * 2);
+                        ctx.ellipse(screenX, screenY + wobble, 9, 7, 0, 0, Math.PI * 2);
                         ctx.fill();
                         
-                        // Body segments
-                        ctx.fillStyle = '#33bb33';
+                        // Body segments (larger)
+                        ctx.fillStyle = '#33dd33';
                         for (let seg = 1; seg <= 3; seg++) {
                             const segWobble = Math.sin(enemy.animFrame + seg * 0.5) * 2;
                             ctx.beginPath();
-                            ctx.ellipse(screenX - seg * 4, screenY + segWobble, 5 - seg * 0.5, 4 - seg * 0.3, 0, 0, Math.PI * 2);
+                            ctx.ellipse(screenX - seg * 5, screenY + segWobble, 7 - seg * 0.5, 5 - seg * 0.3, 0, 0, Math.PI * 2);
                             ctx.fill();
                         }
                         
-                        // Eyes
+                        ctx.shadowBlur = 0;
+                        
+                        // Eyes (larger, angrier)
                         ctx.fillStyle = '#ffffff';
                         ctx.beginPath();
-                        ctx.arc(screenX + 3, screenY + wobble - 2, 2, 0, Math.PI * 2);
-                        ctx.arc(screenX + 3, screenY + wobble + 2, 2, 0, Math.PI * 2);
+                        ctx.arc(screenX + 4, screenY + wobble - 2, 3, 0, Math.PI * 2);
+                        ctx.arc(screenX + 4, screenY + wobble + 2, 3, 0, Math.PI * 2);
                         ctx.fill();
-                        ctx.fillStyle = '#000000';
+                        ctx.fillStyle = '#ff0000';
                         ctx.beginPath();
-                        ctx.arc(screenX + 4, screenY + wobble - 2, 1, 0, Math.PI * 2);
-                        ctx.arc(screenX + 4, screenY + wobble + 2, 1, 0, Math.PI * 2);
+                        ctx.arc(screenX + 5, screenY + wobble - 2, 1.5, 0, Math.PI * 2);
+                        ctx.arc(screenX + 5, screenY + wobble + 2, 1.5, 0, Math.PI * 2);
                         ctx.fill();
                     } else {
-                        // Underground indicator - dirt mound
-                        ctx.fillStyle = 'rgba(100, 70, 40, 0.6)';
+                        // Underground indicator - pulsing dirt mound
+                        ctx.fillStyle = `rgba(100, 200, 100, ${0.4 + dangerPulse * 0.3})`;
                         ctx.beginPath();
-                        ctx.arc(screenX, screenY, 6 + Math.sin(enemy.animFrame * 2) * 2, 0, Math.PI * 2);
+                        ctx.arc(screenX, screenY, 10 + Math.sin(enemy.animFrame * 2) * 3, 0, Math.PI * 2);
                         ctx.fill();
                     }
                     
                 } else if (enemy.type === ENEMY_TYPE.BEETLE) {
-                    // Cave beetle - shiny shell
+                    // Cave beetle - larger and glowing
                     ctx.save();
                     ctx.translate(screenX, screenY);
                     
-                    // Legs
-                    ctx.strokeStyle = '#553300';
-                    ctx.lineWidth = 1.5;
+                    // Glow
+                    ctx.shadowColor = '#ff6600';
+                    ctx.shadowBlur = 10;
+                    
+                    // Legs (larger)
+                    ctx.strokeStyle = '#774422';
+                    ctx.lineWidth = 2;
                     const legWobble = Math.sin(enemy.animFrame * 2);
                     ctx.beginPath();
-                    ctx.moveTo(-5, 0);
-                    ctx.lineTo(-8, 5 + legWobble);
-                    ctx.moveTo(5, 0);
-                    ctx.lineTo(8, 5 + legWobble);
-                    ctx.moveTo(-3, 2);
-                    ctx.lineTo(-7, 7 - legWobble);
-                    ctx.moveTo(3, 2);
-                    ctx.lineTo(7, 7 - legWobble);
+                    ctx.moveTo(-6, 0);
+                    ctx.lineTo(-10, 6 + legWobble);
+                    ctx.moveTo(6, 0);
+                    ctx.lineTo(10, 6 + legWobble);
+                    ctx.moveTo(-4, 2);
+                    ctx.lineTo(-9, 8 - legWobble);
+                    ctx.moveTo(4, 2);
+                    ctx.lineTo(9, 8 - legWobble);
                     ctx.stroke();
                     
-                    // Shell
-                    const shellGrad = ctx.createRadialGradient(0, -2, 0, 0, 0, 8);
-                    shellGrad.addColorStop(0, '#aa6622');
-                    shellGrad.addColorStop(0.5, '#774411');
-                    shellGrad.addColorStop(1, '#553300');
+                    // Shell (larger)
+                    const shellGrad = ctx.createRadialGradient(0, -2, 0, 0, 0, 12);
+                    shellGrad.addColorStop(0, '#cc8833');
+                    shellGrad.addColorStop(0.5, '#996622');
+                    shellGrad.addColorStop(1, '#664411');
                     ctx.fillStyle = shellGrad;
                     ctx.beginPath();
-                    ctx.ellipse(0, 0, 8, 6, 0, 0, Math.PI * 2);
+                    ctx.ellipse(0, 0, 11, 8, 0, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Shell line
-                    ctx.strokeStyle = '#442200';
-                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = '#553311';
+                    ctx.lineWidth = 1.5;
                     ctx.beginPath();
-                    ctx.moveTo(0, -6);
-                    ctx.lineTo(0, 6);
+                    ctx.moveTo(0, -8);
+                    ctx.lineTo(0, 8);
                     ctx.stroke();
                     
-                    // Head
-                    ctx.fillStyle = '#442200';
+                    ctx.shadowBlur = 0;
+                    
+                    // Head (larger)
+                    ctx.fillStyle = '#553311';
                     ctx.beginPath();
-                    ctx.ellipse(enemy.direction * 6, -1, 4, 3, 0, 0, Math.PI * 2);
+                    ctx.ellipse(enemy.direction * 8, -1, 5, 4, 0, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Antennae
-                    ctx.strokeStyle = '#553300';
+                    ctx.strokeStyle = '#664422';
+                    ctx.lineWidth = 1.5;
                     ctx.beginPath();
-                    ctx.moveTo(enemy.direction * 8, -2);
-                    ctx.lineTo(enemy.direction * 12, -6 + wobble);
-                    ctx.moveTo(enemy.direction * 8, 0);
-                    ctx.lineTo(enemy.direction * 11, 2 + wobble);
+                    ctx.moveTo(enemy.direction * 10, -2);
+                    ctx.lineTo(enemy.direction * 15, -8 + wobble);
+                    ctx.moveTo(enemy.direction * 10, 0);
+                    ctx.lineTo(enemy.direction * 14, 3 + wobble);
                     ctx.stroke();
                     
-                    // Eyes
-                    ctx.fillStyle = '#ff4444';
+                    // Eyes (angry red)
+                    ctx.fillStyle = '#ff2222';
+                    ctx.shadowColor = '#ff0000';
+                    ctx.shadowBlur = 5;
                     ctx.beginPath();
-                    ctx.arc(enemy.direction * 8, -2, 1.5, 0, Math.PI * 2);
+                    ctx.arc(enemy.direction * 10, -2, 2, 0, Math.PI * 2);
                     ctx.fill();
                     
                     ctx.restore();
                     
                 } else if (enemy.type === ENEMY_TYPE.LAVA_SLUG) {
-                    // Lava slug - glowing orange/red
+                    // Lava slug - larger, more glow
                     ctx.save();
                     ctx.translate(screenX, screenY);
                     
-                    // Glow effect
-                    const glowPulse = 0.3 + Math.sin(enemy.animFrame * 2) * 0.2;
+                    // Intense glow effect
                     ctx.shadowColor = '#ff4400';
-                    ctx.shadowBlur = 10 + Math.sin(enemy.animFrame) * 3;
+                    ctx.shadowBlur = 15 + Math.sin(enemy.animFrame) * 5;
                     
-                    // Body
-                    const bodyGrad = ctx.createLinearGradient(-8, 0, 8, 0);
+                    // Body (larger)
+                    const bodyGrad = ctx.createLinearGradient(-10, 0, 10, 0);
                     bodyGrad.addColorStop(0, '#ff2200');
-                    bodyGrad.addColorStop(0.5, '#ff6600');
+                    bodyGrad.addColorStop(0.5, '#ff7700');
                     bodyGrad.addColorStop(1, '#ff4400');
                     ctx.fillStyle = bodyGrad;
                     
                     ctx.beginPath();
-                    ctx.moveTo(-8, 2);
-                    ctx.quadraticCurveTo(-6, -5 + wobble, 0, -4 + wobble * 0.5);
-                    ctx.quadraticCurveTo(6, -3 + wobble, 8, 2);
-                    ctx.quadraticCurveTo(4, 5, 0, 5);
-                    ctx.quadraticCurveTo(-4, 5, -8, 2);
+                    ctx.moveTo(-10, 3);
+                    ctx.quadraticCurveTo(-8, -6 + wobble, 0, -5 + wobble * 0.5);
+                    ctx.quadraticCurveTo(8, -4 + wobble, 10, 3);
+                    ctx.quadraticCurveTo(5, 7, 0, 7);
+                    ctx.quadraticCurveTo(-5, 7, -10, 3);
                     ctx.fill();
                     
                     ctx.shadowBlur = 0;
                     
-                    // Hot spots
-                    ctx.fillStyle = `rgba(255, 255, 100, ${0.5 + glowPulse})`;
+                    // Hot spots (brighter)
+                    const glowPulse = 0.6 + Math.sin(enemy.animFrame * 2) * 0.3;
+                    ctx.fillStyle = `rgba(255, 255, 150, ${glowPulse})`;
                     ctx.beginPath();
-                    ctx.arc(-3, 0, 2, 0, Math.PI * 2);
-                    ctx.arc(3, -1, 1.5, 0, Math.PI * 2);
+                    ctx.arc(-4, 0, 3, 0, Math.PI * 2);
+                    ctx.arc(4, -1, 2.5, 0, Math.PI * 2);
+                    ctx.arc(0, 2, 2, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    // Eye stalks
-                    ctx.fillStyle = '#ffaa00';
+                    // Eye stalks (larger)
+                    ctx.fillStyle = '#ffcc00';
                     ctx.beginPath();
-                    ctx.ellipse(enemy.direction * 4, -5 + wobble, 2, 3, 0, 0, Math.PI * 2);
-                    ctx.ellipse(enemy.direction * 1, -6 + wobble * 0.7, 2, 3, 0, 0, Math.PI * 2);
+                    ctx.ellipse(enemy.direction * 5, -7 + wobble, 3, 4, 0, 0, Math.PI * 2);
+                    ctx.ellipse(enemy.direction * 1, -8 + wobble * 0.7, 3, 4, 0, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Eyes
                     ctx.fillStyle = '#000000';
                     ctx.beginPath();
-                    ctx.arc(enemy.direction * 4, -6 + wobble, 1, 0, Math.PI * 2);
-                    ctx.arc(enemy.direction * 1, -7 + wobble * 0.7, 1, 0, Math.PI * 2);
+                    ctx.arc(enemy.direction * 5, -8 + wobble, 1.5, 0, Math.PI * 2);
+                    ctx.arc(enemy.direction * 1, -9 + wobble * 0.7, 1.5, 0, Math.PI * 2);
                     ctx.fill();
                     
                     ctx.restore();
