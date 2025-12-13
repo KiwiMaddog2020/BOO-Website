@@ -1284,8 +1284,8 @@
             display: none;
             flex-direction: column;
             align-items: center;
-            justify-content: flex-start;
-            padding-top: 60px;
+            justify-content: flex-end;
+            padding-bottom: 15px;
             z-index: 1200;
             pointer-events: none;
         }
@@ -1295,33 +1295,33 @@
         }
         
         .placement-preview-container {
-            background: rgba(10, 10, 20, 0.95);
+            background: rgba(10, 10, 20, 0.92);
             border: 2px solid #0ff;
-            border-radius: 10px;
-            padding: 10px 18px;
+            border-radius: 8px;
+            padding: 6px 12px;
             text-align: center;
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.4);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
             pointer-events: auto;
         }
         
         .placement-preview-text {
-            font-size: 13px;
+            font-size: 11px;
             color: #fff;
-            margin-bottom: 10px;
+            margin-bottom: 6px;
             text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
         }
         
         .placement-preview-buttons {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             justify-content: center;
         }
         
         .placement-btn {
-            padding: 8px 16px;
-            font-size: 12px;
+            padding: 5px 12px;
+            font-size: 11px;
             font-weight: bold;
-            border-radius: 6px;
+            border-radius: 5px;
             cursor: pointer;
             transition: all 0.2s;
         }
@@ -1830,10 +1830,10 @@
     <!-- Tower Placement Preview Overlay (Mobile) -->
     <div class="placement-preview-overlay" id="placementPreviewOverlay">
         <div class="placement-preview-container">
-            <div class="placement-preview-text">Place tower here?</div>
+            <div class="placement-preview-text">Place here?</div>
             <div class="placement-preview-buttons">
-                <button class="placement-btn yes" id="placementConfirm">CONFIRM</button>
-                <button class="placement-btn no" id="placementCancel">CANCEL</button>
+                <button class="placement-btn yes" id="placementConfirm">✓</button>
+                <button class="placement-btn no" id="placementCancel">✕</button>
             </div>
         </div>
     </div>
@@ -2877,6 +2877,42 @@
             // Canvas click for tower placement
             canvas.addEventListener('click', handleCanvasClick);
             canvas.addEventListener('touchend', handleCanvasTouch);
+            
+            // Mobile drag-to-place: touchstart begins preview, touchmove updates position
+            canvas.addEventListener('touchstart', (e) => {
+                if (!selectedTower || waveInProgress) return;
+                e.preventDefault();
+                const touch = e.touches[0];
+                const pos = getCanvasCoords(touch.clientX, touch.clientY);
+                
+                // Check if touching a placed tower first
+                const tappedTower = getTowerAtPoint(pos.x, pos.y);
+                if (tappedTower) return; // Let touchend handle tower inspection
+                
+                // Start placement preview if valid spot
+                if (isValidPlacement(pos.x, pos.y)) {
+                    pendingPlacement = { x: pos.x, y: pos.y, type: selectedTower };
+                    showingPlacementPreview = true;
+                    mouseX = pos.x;
+                    mouseY = pos.y;
+                    // Don't show confirm dialog yet - wait for touchend
+                }
+            }, { passive: false });
+            
+            canvas.addEventListener('touchmove', (e) => {
+                if (!showingPlacementPreview || !pendingPlacement) return;
+                e.preventDefault();
+                const touch = e.touches[0];
+                const pos = getCanvasCoords(touch.clientX, touch.clientY);
+                
+                // Update preview position if valid
+                if (isValidPlacement(pos.x, pos.y)) {
+                    pendingPlacement.x = pos.x;
+                    pendingPlacement.y = pos.y;
+                    mouseX = pos.x;
+                    mouseY = pos.y;
+                }
+            }, { passive: false });
 
             // Mouse tracking for placement preview
             canvas.addEventListener('mousemove', (e) => {
@@ -3131,9 +3167,9 @@
             } else if (wave <= 20) {
                 // Waves 10-20: SLIGHTLY HARDER - Gentle exponential
                 const wavesPast9 = wave - 9;
-                healthMult = 1.25 * Math.pow(1.06, wavesPast9); // ~2.24x at wave 20
-                speedMult = 1 + (wavesPast9 * 0.015); // 1.0 to 1.165
-                dangerMult = 0.4 + (wavesPast9 * 0.03); // 0.4 to 0.73
+                healthMult = 1.25 * Math.pow(1.05, wavesPast9); // ~2.0x at wave 20 (was 1.06 = 2.24x)
+                speedMult = 1 + (wavesPast9 * 0.012); // 1.0 to 1.132 (slightly slower)
+                dangerMult = 0.4 + (wavesPast9 * 0.025); // 0.4 to 0.675 (fewer specials)
             } else if (wave <= 30) {
                 // Waves 21-30: MODERATE - Real challenge, steeper exponential
                 const wavesPast20 = wave - 20;
@@ -3384,8 +3420,20 @@
             // Tower placement logic
             if (!selectedTower || waveInProgress) return;
             
-            // On mobile, show placement preview instead of placing directly
-            showPlacementPreview(pos.x, pos.y);
+            // If we're already showing a preview from drag, show confirm dialog
+            if (showingPlacementPreview && pendingPlacement) {
+                // Update final position and show confirmation
+                if (isValidPlacement(pos.x, pos.y)) {
+                    pendingPlacement.x = pos.x;
+                    pendingPlacement.y = pos.y;
+                    mouseX = pos.x;
+                    mouseY = pos.y;
+                }
+                document.getElementById('placementPreviewOverlay').classList.add('active');
+            } else {
+                // Direct tap without drag - show placement preview
+                showPlacementPreview(pos.x, pos.y);
+            }
         }
         
         function showPlacementPreview(x, y) {
@@ -5211,6 +5259,7 @@
         }
 
         function drawProjectiles() {
+            ctx.globalAlpha = 1; // Ensure visibility
             for (const proj of projectiles) {
                 // Draw trail
                 if (proj.trail && proj.trail.length > 1) {
