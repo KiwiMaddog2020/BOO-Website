@@ -279,7 +279,7 @@
         .game-title {
             font-size: 42px;
             color: #0ff;
-            text-shadow: 0 0 15px #ffcc00, 0 0 40px rgba(255, 204, 0, 0.6);
+            text-shadow: 0 0 10px #ffcc00, 0 0 25px #ffcc00, 0 0 50px rgba(255, 204, 0, 0.5);
             margin-bottom: 10px;
             letter-spacing: 4px;
             text-align: center;
@@ -1383,6 +1383,7 @@
         
         const ENEMY_MIN_DEPTH = 50; // No worms/lava slugs until 50m
         let enemies = [];
+        let firstEnemySpawned = false; // Track if player has encountered first enemy
         
         // Spawn rates per 100 tiles generated (very low, scales with depth)
         function getEnemySpawnChance(depth, biome) {
@@ -1432,6 +1433,7 @@
                 animFrame: 0
             };
             enemies.push(enemy);
+            firstEnemySpawned = true;
         }
         
         // Upgrade intervals for cleanup
@@ -2273,7 +2275,18 @@
             // Chance to spawn beetle when digging creates tunnel
             const depthM = absoluteTy * TILE_SIZE / 16;
             const spawnChances = getEnemySpawnChance(depthM, currentBiome);
-            if (spawnChances.beetle > 0 && Math.random() < spawnChances.beetle * 0.3) {
+            
+            // Guaranteed first enemy encounter between 40-50m depth
+            let shouldSpawnBeetle = false;
+            if (!firstEnemySpawned && depthM >= 40 && depthM < 50) {
+                // High chance that increases as we approach 50m (guaranteed by 48m)
+                const urgency = (depthM - 40) / 8; // 0 at 40m, 1 at 48m
+                shouldSpawnBeetle = Math.random() < (0.15 + urgency * 0.85);
+            } else if (spawnChances.beetle > 0) {
+                shouldSpawnBeetle = Math.random() < spawnChances.beetle * 0.3;
+            }
+            
+            if (shouldSpawnBeetle) {
                 // Spawn beetle nearby (not on player's tile)
                 const offsetX = Math.random() < 0.5 ? -1 : 1;
                 const spawnTx = tx + offsetX;
@@ -4798,6 +4811,7 @@
             speedLines = [];
             unstableTiles = [];
             enemies = [];
+            firstEnemySpawned = false;
             
             // Reset upgrades
             Object.keys(permanentUpgrades).forEach(k => permanentUpgrades[k] = 0);
