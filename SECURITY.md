@@ -11,7 +11,7 @@
 If you discover a security vulnerability in this project, please report it responsibly:
 
 1. **Do not** open a public GitHub issue
-2. Email details to: kevinmadson@gmail.com
+2. Email details to: kevinmadson3@gmail.com
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
