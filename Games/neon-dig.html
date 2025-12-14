@@ -1321,6 +1321,15 @@
         // ==================== DOM ELEMENTS ====================
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d', { alpha: false });
+        
+        // ==================== DEVICE DETECTION ====================
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        const isIPad = /iPad/.test(navigator.userAgent) || 
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                      (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+        const isTablet = isTouchDevice && (isIPad || Math.min(window.screen.width, window.screen.height) >= 600);
+        const rawDPR = window.devicePixelRatio || 1;
+        
         const depthEl = document.getElementById('depth');
         const scoreEl = document.getElementById('score');
         const fuelBar = document.getElementById('fuelBar');
@@ -5107,6 +5116,39 @@
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
+            }
+            
+            // Tablet-specific scaling (iPad, etc.) - simplified approach
+            if ((isTablet || isIPad) && isFullscreen) {
+                const availWidth = viewportWidth - borderWidth;
+                const availHeight = viewportHeight - hudHeight - borderWidth;
+                const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+                const screenAspect = availWidth / availHeight;
+                
+                // Calculate CSS display size maintaining aspect ratio
+                let cssWidth, cssHeight;
+                if (screenAspect > gameAspect) {
+                    cssHeight = availHeight;
+                    cssWidth = cssHeight * gameAspect;
+                } else {
+                    cssWidth = availWidth;
+                    cssHeight = cssWidth / gameAspect;
+                }
+                
+                // Simple approach: buffer = BASE * 2, let CSS stretch
+                const bufferScale = 2;
+                canvas.width = Math.round(BASE_WIDTH * bufferScale);
+                canvas.height = Math.round(BASE_HEIGHT * bufferScale);
+                canvas.style.width = cssWidth + 'px';
+                canvas.style.height = cssHeight + 'px';
+                
+                // Scale context by buffer scale
+                renderScale = bufferScale;
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(bufferScale, bufferScale);
+                
+                WORLD_WIDTH = Math.floor(BASE_WIDTH / TILE_SIZE);
+                return;
             }
             
             // Scale internal resolution based on display size
