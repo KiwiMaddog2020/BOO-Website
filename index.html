@@ -5071,6 +5071,30 @@
 
         .game-container { width: 100%; max-width: 660px; aspect-ratio: 640/690; max-height: 90vh; border-radius: 8px; overflow: hidden; border: 2px solid rgba(0, 255, 204, 0.4); box-shadow: 0 0 30px rgba(0, 255, 204, 0.3), 0 0 60px rgba(255, 0, 255, 0.2); position: relative; z-index: 10; touch-action: none; overscroll-behavior: none; -webkit-overflow-scrolling: auto; }
         
+        /* Tablet-specific game container - iPads and similar devices */
+        @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) {
+            .game-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                max-height: 90vh !important;
+                aspect-ratio: auto !important;
+            }
+            .game-container iframe {
+                width: 100% !important;
+                height: 100% !important;
+            }
+        }
+        
+        /* Tablet game section - reduce padding to maximize game space */
+        @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) {
+            #game {
+                padding-top: 50px !important;
+                padding-bottom: 60px !important;
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+            }
+        }
+        
         .game-container iframe { touch-action: none; overscroll-behavior: none; pointer-events: auto; }
         
         /* Hide touch blockers on desktop - only needed for mobile */
@@ -8274,13 +8298,27 @@
                 // Scale the iframe to fill more of the screen in fullscreen mode
                 if (arcadeFrameFS) {
                     if (isFullscreen) {
-                        // Detect mobile
-                        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+                        // Detect mobile/tablet properly (iPadOS 13+ reports as Macintosh)
+                        const isIPadFS = /iPad/.test(navigator.userAgent) || 
+                                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                                        (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+                        const isMobile = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+                        const isTabletFS = isIPadFS || (('ontouchstart' in window) && Math.min(window.screen.width, window.screen.height) >= 600);
                         
-                        if (isMobile) {
-                            // MOBILE: Calculate dimensions and center with absolute positioning
-                            const screenW = window.innerWidth;
-                            const screenH = window.innerHeight;
+                        // DEBUG: Show parent container info
+                        let debugParent = document.getElementById('parent-debug');
+                        if (!debugParent) {
+                            debugParent = document.createElement('div');
+                            debugParent.id = 'parent-debug';
+                            debugParent.style.cssText = 'position:fixed;top:10px;right:10px;background:rgba(0,100,255,0.9);color:#fff;padding:8px;font:11px monospace;z-index:999999;border-radius:4px;max-width:280px;text-align:left;';
+                            document.body.appendChild(debugParent);
+                        }
+                        
+                        const screenW = window.innerWidth;
+                        const screenH = window.innerHeight;
+                        
+                        if (isMobile || isTabletFS) {
+                            // MOBILE/TABLET: Calculate dimensions and center with absolute positioning
                             
                             // Get aspect ratio from active pill
                             const activePill = document.querySelector('.arcade-pill.active');
@@ -8313,6 +8351,17 @@
                             arcadeFrameFS.style.left = leftPos + 'px';
                             arcadeFrameFS.style.transform = 'none';
                             arcadeFrameFS.style.border = 'none';
+                            
+                            debugParent.innerHTML = `
+                                <b>Parent Debug (Tablet)</b><br>
+                                screen: ${screenW}×${screenH}<br>
+                                aspect: ${aspectStr} = ${gameAspect.toFixed(3)}<br>
+                                target: ${Math.round(targetW)}×${Math.round(targetH)}<br>
+                                pos: L${Math.round(leftPos)} T${Math.round(topPos)}<br>
+                                isIPad: ${isIPadFS}<br>
+                                isMobile: ${isMobile}<br>
+                                isTablet: ${isTabletFS}
+                            `;
                         } else {
                             // DESKTOP: Use transform scaling
                             requestAnimationFrame(() => {
@@ -8348,6 +8397,10 @@
                         arcadeFrameFS.style.transform = '';
                         arcadeFrameFS.style.transformOrigin = '';
                         arcadeFrameFS.style.border = '';
+                        
+                        // Remove debug overlay
+                        const debugParent = document.getElementById('parent-debug');
+                        if (debugParent) debugParent.remove();
                         
                         // Restore aspect ratio from active pill (critical for mobile)
                         const activePill = document.querySelector('.arcade-pill.active');
