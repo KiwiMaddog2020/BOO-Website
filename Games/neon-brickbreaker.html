@@ -1682,6 +1682,64 @@
             const isMobile = viewW <= 768;
             const gameContainer = document.querySelector('.game-container');
             
+            // Tablet-specific scaling (iPad, etc.)
+            if ((isTablet || isIPad) && isFullscreen) {
+                gameContainer.classList.add('fullscreen-mode');
+                document.body.classList.add('fullscreen-active');
+                
+                const borderWidth = 3;
+                const availWidth = viewW - (borderWidth * 2);
+                const availHeight = viewH - (borderWidth * 2);
+                const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+                const screenAspect = availWidth / availHeight;
+                
+                // Calculate CSS display size (fit to screen maintaining aspect ratio)
+                if (screenAspect > gameAspect) {
+                    cssHeight = availHeight;
+                    cssWidth = cssHeight * gameAspect;
+                } else {
+                    cssWidth = availWidth;
+                    cssHeight = cssWidth / gameAspect;
+                }
+                
+                // Game logic uses base coordinates
+                gameWidth = BASE_WIDTH;
+                gameHeight = BASE_HEIGHT;
+                
+                // Tablet: buffer at CSS size * DPR (capped at 2x)
+                const tabletDPR = Math.min(rawDPR, 2);
+                const bufferWidth = Math.round(cssWidth * tabletDPR);
+                const bufferHeight = Math.round(cssHeight * tabletDPR);
+                
+                // Memory safety check
+                const totalPixels = bufferWidth * bufferHeight;
+                let finalBufferWidth = bufferWidth;
+                let finalBufferHeight = bufferHeight;
+                if (totalPixels > MAX_CANVAS_PIXELS) {
+                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    finalBufferWidth = Math.round(bufferWidth * scaleFactor);
+                    finalBufferHeight = Math.round(bufferHeight * scaleFactor);
+                }
+                
+                canvas.width = finalBufferWidth;
+                canvas.height = finalBufferHeight;
+                canvas.style.width = cssWidth + 'px';
+                canvas.style.height = cssHeight + 'px';
+                
+                // Scale context to map game coordinates to buffer
+                const scaleX = finalBufferWidth / BASE_WIDTH;
+                const scaleY = finalBufferHeight / BASE_HEIGHT;
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(scaleX, scaleY);
+                
+                // Store for touch coordinate mapping
+                dprScale = scaleX;
+                
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                return;
+            }
+            
             if (isFullscreen) {
                 // Fullscreen/iframe: fill entire viewport, accounting for border only
                 gameContainer.classList.add('fullscreen-mode');
