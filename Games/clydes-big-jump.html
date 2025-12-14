@@ -996,11 +996,17 @@
         let displayHeight = baseHeight;
         let dprScale = 1;
         
-        // Device detection
+        // Device detection - improved for iPadOS 13+ which reports as Macintosh
         const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        const isTablet = isTouchDevice && Math.min(window.screen.width, window.screen.height) >= 600;
+        const isIPad = /iPad/.test(navigator.userAgent) || 
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                      (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+        const isTablet = isTouchDevice && (isIPad || Math.min(window.screen.width, window.screen.height) >= 600);
         const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
         const rawDPR = window.devicePixelRatio || 1;
+        
+        // iOS canvas memory limit: 16,777,216 pixels max (approx 4096x4096)
+        const MAX_CANVAS_PIXELS = 16777216;
         
         // Performance-based DPR limits
         const maxNormalDPR = isLowPerf ? 1.5 : 2;
@@ -1086,8 +1092,21 @@
             }
             
             // Set canvas buffer with DPR scaling for sharp rendering
-            canvas.width = Math.round(displayWidth * dprScale);
-            canvas.height = Math.round(displayHeight * dprScale);
+            // iOS canvas memory safety check
+            let bufferWidth = Math.round(displayWidth * dprScale);
+            let bufferHeight = Math.round(displayHeight * dprScale);
+            const totalPixels = bufferWidth * bufferHeight;
+            
+            if (totalPixels > MAX_CANVAS_PIXELS) {
+                // Scale down dprScale to fit within limit
+                const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                dprScale = dprScale * scaleFactor;
+                bufferWidth = Math.round(displayWidth * dprScale);
+                bufferHeight = Math.round(displayHeight * dprScale);
+            }
+            
+            canvas.width = bufferWidth;
+            canvas.height = bufferHeight;
             
             // Set CSS display size
             canvas.style.width = displayWidth + 'px';
