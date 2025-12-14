@@ -1334,6 +1334,29 @@
             }
         };
         
+        // ========== iOS GESTURE PREVENTION ==========
+        // Prevent iOS "swipe down to exit fullscreen" gesture
+        (function() {
+            if (!('ontouchstart' in window)) return;
+            
+            let touchStartY = 0;
+            const EDGE_THRESHOLD = 50; // Pixels from top edge
+            
+            document.addEventListener('touchstart', (e) => {
+                touchStartY = e.touches[0].clientY;
+            }, { passive: true });
+            
+            document.addEventListener('touchmove', (e) => {
+                // If touch started near top edge and is moving down, block it
+                if (touchStartY < EDGE_THRESHOLD) {
+                    const currentY = e.touches[0].clientY;
+                    if (currentY > touchStartY + 10) {
+                        e.preventDefault();
+                    }
+                }
+            }, { passive: false });
+        })();
+        
         // Tile types
         const TILE = Object.freeze({
             AIR: 0, DIRT: 1, ROCK: 2, HARD_ROCK: 3,
@@ -4903,6 +4926,45 @@
             keys.left = keys.right = keys.up = keys.down = false;
         });
         
+        // Canvas touch handling for iPad/tablet fullscreen mode
+        // (control-zone may be hidden in fullscreen, so enable canvas touch too)
+        let canvasTouchStartX = 0, canvasTouchStartY = 0;
+        let canvasTouchActive = false;
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (upgradeSelectionActive || !gameRunning) return;
+            e.preventDefault();
+            canvasTouchStartX = e.touches[0].clientX;
+            canvasTouchStartY = e.touches[0].clientY;
+            canvasTouchActive = true;
+        }, { passive: false });
+        
+        canvas.addEventListener('touchmove', (e) => {
+            if (upgradeSelectionActive || !gameRunning || !canvasTouchActive) return;
+            e.preventDefault();
+            const dx = e.touches[0].clientX - canvasTouchStartX;
+            const dy = e.touches[0].clientY - canvasTouchStartY;
+            // Use larger threshold for canvas (more movement space)
+            keys.left = dx < -25;
+            keys.right = dx > 25;
+            keys.up = dy < -25;
+            keys.down = dy > 25;
+        }, { passive: false });
+        
+        canvas.addEventListener('touchend', () => {
+            if (canvasTouchActive) {
+                keys.left = keys.right = keys.up = keys.down = false;
+                canvasTouchActive = false;
+            }
+        });
+        
+        canvas.addEventListener('touchcancel', () => {
+            if (canvasTouchActive) {
+                keys.left = keys.right = keys.up = keys.down = false;
+                canvasTouchActive = false;
+            }
+        });
+        
         // ==================== EVENT LISTENERS ====================
         submitScoreBtn.addEventListener('click', async () => {
             const name = usernameInput.value.trim();
@@ -5142,8 +5204,9 @@
                 document.body.classList.add('fullscreen-active');
                 
                 // Universal margin system
+                // iPad needs extra margin for status bar, home indicator, and close buttons
                 const borderWidth = 3;
-                const safetyPadding = isInIframe ? 4 : 0;
+                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 10 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
                 const availWidth = viewportWidth - totalMargin;
