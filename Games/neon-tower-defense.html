@@ -2146,6 +2146,36 @@
         let CANVAS_WIDTH = BASE_WIDTH;
         let CANVAS_HEIGHT = BASE_HEIGHT;
         
+        // ========== DEBUG UTILITY ==========
+        const GameDebug = {
+            enabled: false, // Toggle for debugging
+            el: null,
+            show(data) {
+                if (!this.enabled) return this.hide();
+                if (!this.el) {
+                    this.el = document.createElement('div');
+                    this.el.id = 'game-debug';
+                    this.el.style.cssText = `
+                        position: fixed; top: 60px; left: 10px;
+                        background: rgba(255,0,0,0.9); color: #fff;
+                        padding: 8px; font: 12px monospace;
+                        z-index: 99999; border-radius: 4px;
+                        max-width: 300px; pointer-events: none;
+                    `;
+                    document.body.appendChild(this.el);
+                }
+                this.el.innerHTML = Object.entries(data)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join('<br>');
+            },
+            hide() {
+                if (this.el) {
+                    this.el.remove();
+                    this.el = null;
+                }
+            }
+        };
+        
         // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
         let currentScale = 1;
         let dprScale = 1;
@@ -2229,14 +2259,12 @@
         
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
-            
-            // Detect if we're in an iframe (embedded on website)
             const isInIframe = window.self !== window.top;
             
-            // Detect pseudo-fullscreen/iframe: viewport differs significantly from base canvas
             const viewport = getViewportSize();
             const viewW = viewport.width;
             const viewH = viewport.height;
+            
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (isInIframe || viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
@@ -2246,20 +2274,24 @@
             
             // Control bar takes about 155px (two rows of towers + buttons + padding)
             const CONTROL_BAR_HEIGHT = 155;
-            // Total game height = canvas + control bar + container padding
-            const TOTAL_GAME_HEIGHT = BASE_HEIGHT + CONTROL_BAR_HEIGHT + 15; // 582 + 155 + 15 = 752
-            const TOTAL_GAME_WIDTH = BASE_WIDTH + 12; // Add container padding
+            const TOTAL_GAME_HEIGHT = BASE_HEIGHT + CONTROL_BAR_HEIGHT + 15;
+            const TOTAL_GAME_WIDTH = BASE_WIDTH + 12;
             
-            // Tablet-specific scaling (iPad, etc.) - simplified approach
-            if ((isTablet || isIPad) && isFullscreen) {
+            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+            
+            if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
+                // Universal margin system
                 const borderWidth = 3;
-                const availWidth = viewW - (borderWidth * 2);
-                const availHeight = viewH - (borderWidth * 2);
+                const safetyPadding = isInIframe ? 4 : 0;
+                const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Calculate scale to fit total game (canvas + control bar)
+                const availWidth = viewW - totalMargin;
+                const availHeight = viewH - totalMargin;
+                
+                // Calculate scale factors for both dimensions
                 const scaleByWidth = availWidth / TOTAL_GAME_WIDTH;
                 const scaleByHeight = availHeight / TOTAL_GAME_HEIGHT;
                 const scaleFactor = Math.min(scaleByWidth, scaleByHeight);
@@ -2270,16 +2302,34 @@
                 CANVAS_WIDTH = displayWidth;
                 CANVAS_HEIGHT = displayHeight;
                 
-                // Simple approach: buffer = BASE * 2, let CSS stretch
-                const bufferScale = 2;
-                canvas.width = Math.round(BASE_WIDTH * bufferScale);
-                canvas.height = Math.round(BASE_HEIGHT * bufferScale);
+                // Determine buffer scale
+                let bufferScale;
+                if (isTablet || isIPad) {
+                    bufferScale = 2;
+                } else {
+                    bufferScale = Math.min(rawDPR, maxFullscreenDPR);
+                }
+                
+                // iOS canvas memory safety check
+                let bufferWidth = Math.round(BASE_WIDTH * bufferScale);
+                let bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
+                const totalPixels = bufferWidth * bufferHeight;
+                
+                if (totalPixels > MAX_CANVAS_PIXELS) {
+                    const memScaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    bufferScale *= memScaleFactor;
+                    bufferWidth = Math.round(BASE_WIDTH * bufferScale);
+                    bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
+                }
+                
+                canvas.width = bufferWidth;
+                canvas.height = bufferHeight;
                 canvas.style.width = displayWidth + 'px';
                 canvas.style.height = displayHeight + 'px';
                 
-                // Scale context by buffer scale (draw at BASE coords)
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(bufferScale, bufferScale);
+                dprScale = bufferScale;
                 
                 // Update CSS custom properties
                 const uiScale = displayWidth / BASE_WIDTH;
@@ -2289,35 +2339,19 @@
                 root.style.setProperty('--canvas-width', displayWidth + 'px');
                 root.style.setProperty('--canvas-height', displayHeight + 'px');
                 
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                return;
-            }
-            
-            if (isFullscreen) {
-                // Fullscreen/iframe: fill viewport accounting for border only
-                gameContainer.classList.add('fullscreen-mode');
-                document.body.classList.add('fullscreen-active');
-                
-                const borderWidth = 3;
-                const availWidth = viewW - (borderWidth * 2);
-                const availHeight = viewH - (borderWidth * 2);
-                
-                // Calculate scale factors for both dimensions
-                const scaleByWidth = availWidth / TOTAL_GAME_WIDTH;
-                const scaleByHeight = availHeight / TOTAL_GAME_HEIGHT;
-                
-                // Use the smaller scale to ensure everything fits
-                const scaleFactor = Math.min(scaleByWidth, scaleByHeight);
-                
-                displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
-                displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
-                
-                dprScale = Math.min(rawDPR, maxFullscreenDPR);
+                // Debug overlay
+                GameDebug.show({
+                    viewport: `${viewW}×${viewH}`,
+                    avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
+                    display: `${displayWidth}×${displayHeight}`,
+                    buffer: `${bufferWidth}×${bufferHeight}`,
+                    iframe: isInIframe ? 'YES' : 'NO',
+                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
+                });
             } else if (isMobile) {
-                // Mobile: responsive sizing based on both dimensions
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
+                
                 const containerPadding = 10;
                 const maxWidth = viewW - containerPadding * 2;
                 const maxHeight = viewH - CONTROL_BAR_HEIGHT - 20;
@@ -2329,53 +2363,80 @@
                 displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
                 displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
                 
+                CANVAS_WIDTH = displayWidth;
+                CANVAS_HEIGHT = displayHeight;
+                
                 dprScale = Math.min(rawDPR, 1.5);
+                
+                let bufferWidth = Math.round(displayWidth * dprScale);
+                let bufferHeight = Math.round(displayHeight * dprScale);
+                const totalPixels = bufferWidth * bufferHeight;
+                
+                if (totalPixels > MAX_CANVAS_PIXELS) {
+                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    dprScale *= scaleFactor;
+                    bufferWidth = Math.round(displayWidth * dprScale);
+                    bufferHeight = Math.round(displayHeight * dprScale);
+                }
+                
+                canvas.width = bufferWidth;
+                canvas.height = bufferHeight;
+                canvas.style.width = displayWidth + 'px';
+                canvas.style.height = displayHeight + 'px';
+                
+                const uiScale = displayWidth / BASE_WIDTH;
+                currentScale = uiScale;
+                
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(uiScale * dprScale, uiScale * dprScale);
+                
+                const root = document.documentElement;
+                root.style.setProperty('--scale', uiScale);
+                root.style.setProperty('--canvas-width', displayWidth + 'px');
+                root.style.setProperty('--canvas-height', displayHeight + 'px');
+                
+                GameDebug.hide();
             } else {
-                // Desktop not in iframe: base size
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
+                
                 displayWidth = BASE_WIDTH;
                 displayHeight = BASE_HEIGHT;
+                CANVAS_WIDTH = displayWidth;
+                CANVAS_HEIGHT = displayHeight;
+                
                 dprScale = Math.min(rawDPR, maxNormalDPR);
+                
+                let bufferWidth = Math.round(displayWidth * dprScale);
+                let bufferHeight = Math.round(displayHeight * dprScale);
+                const totalPixels = bufferWidth * bufferHeight;
+                
+                if (totalPixels > MAX_CANVAS_PIXELS) {
+                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    dprScale *= scaleFactor;
+                    bufferWidth = Math.round(displayWidth * dprScale);
+                    bufferHeight = Math.round(displayHeight * dprScale);
+                }
+                
+                canvas.width = bufferWidth;
+                canvas.height = bufferHeight;
+                canvas.style.width = displayWidth + 'px';
+                canvas.style.height = displayHeight + 'px';
+                
+                const uiScale = 1;
+                currentScale = uiScale;
+                
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(uiScale * dprScale, uiScale * dprScale);
+                
+                const root = document.documentElement;
+                root.style.setProperty('--scale', uiScale);
+                root.style.setProperty('--canvas-width', displayWidth + 'px');
+                root.style.setProperty('--canvas-height', displayHeight + 'px');
+                
+                GameDebug.hide();
             }
             
-            CANVAS_WIDTH = displayWidth;
-            CANVAS_HEIGHT = displayHeight;
-            
-            // Calculate UI scale factor (for responsive elements)
-            const uiScale = displayWidth / BASE_WIDTH;
-            currentScale = uiScale;
-            
-            // Apply to canvas with DPR scaling for sharp rendering
-            // iOS canvas memory safety check
-            let bufferWidth = Math.round(displayWidth * dprScale);
-            let bufferHeight = Math.round(displayHeight * dprScale);
-            const totalPixels = bufferWidth * bufferHeight;
-            
-            if (totalPixels > MAX_CANVAS_PIXELS) {
-                // Scale down dprScale to fit within limit
-                const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
-                dprScale = dprScale * scaleFactor;
-                bufferWidth = Math.round(displayWidth * dprScale);
-                bufferHeight = Math.round(displayHeight * dprScale);
-            }
-            
-            canvas.width = bufferWidth;
-            canvas.height = bufferHeight;
-            canvas.style.width = displayWidth + 'px';
-            canvas.style.height = displayHeight + 'px';
-            
-            // Reset and apply combined scale (UI scale * DPR)
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.scale(uiScale * dprScale, uiScale * dprScale);
-            
-            // Update CSS custom properties for proportional UI scaling
-            const root = document.documentElement;
-            root.style.setProperty('--scale', uiScale);
-            root.style.setProperty('--canvas-width', displayWidth + 'px');
-            root.style.setProperty('--canvas-height', displayHeight + 'px');
-            
-            // Re-enable image smoothing
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
         }

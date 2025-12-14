@@ -1079,6 +1079,36 @@
         let CANVAS_SIZE = BASE_CANVAS_SIZE;
         let GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
 
+        // ========== DEBUG UTILITY ==========
+        const GameDebug = {
+            enabled: false, // Toggle for debugging
+            el: null,
+            show(data) {
+                if (!this.enabled) return this.hide();
+                if (!this.el) {
+                    this.el = document.createElement('div');
+                    this.el.id = 'game-debug';
+                    this.el.style.cssText = `
+                        position: fixed; top: 60px; left: 10px;
+                        background: rgba(255,0,0,0.9); color: #fff;
+                        padding: 8px; font: 12px monospace;
+                        z-index: 99999; border-radius: 4px;
+                        max-width: 300px; pointer-events: none;
+                    `;
+                    document.body.appendChild(this.el);
+                }
+                this.el.innerHTML = Object.entries(data)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join('<br>');
+            },
+            hide() {
+                if (this.el) {
+                    this.el.remove();
+                    this.el = null;
+                }
+            }
+        };
+
         // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
         let currentScale = 1;
         let displaySize = BASE_CANVAS_SIZE;
@@ -1134,15 +1164,12 @@
         
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
-            
-            // Detect if we're in an iframe
             const isInIframe = window.self !== window.top;
             
-            // Detect pseudo-fullscreen: viewport is significantly larger than base canvas
-            // OR we're in an iframe (always use fullscreen layout in iframe)
             const viewport = getViewportSize();
             const viewW = viewport.width;
             const viewH = viewport.height;
+            
             const isPseudoFullscreen = !isNativeFullscreen && 
                                        (isInIframe || viewW > BASE_CANVAS_SIZE * 1.15 || viewH > BASE_CANVAS_SIZE * 1.15);
             
@@ -1151,71 +1178,19 @@
             const gameContainer = document.querySelector('.game-container');
             const trackpadZone = document.getElementById('trackpadZone');
             
-            // Tablet-specific scaling (iPad, etc.) - simplified approach
-            if ((isTablet || isIPad) && isFullscreen) {
-                gameContainer.classList.add('fullscreen-mode');
-                document.body.classList.add('fullscreen-active');
-                
-                const borderWidth = 3;
-                const availWidth = viewW - (borderWidth * 2);
-                const availHeight = viewH - (borderWidth * 2);
-                
-                // Snake is square - use smaller dimension, snap to grid
-                const maxSize = Math.min(availWidth, availHeight);
-                displaySize = Math.floor(maxSize / GRID_COUNT) * GRID_COUNT;
-                CANVAS_SIZE = displaySize;
-                GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
-                
-                // Hide trackpad on tablet
-                if (trackpadZone) {
-                    trackpadZone.style.display = 'none';
-                }
-                
-                // Simple approach: buffer = display * 2 for sharpness
-                const bufferScale = 2;
-                const bufferSize = displaySize * bufferScale;
-                
-                canvas.width = bufferSize;
-                canvas.height = bufferSize;
-                canvas.style.width = displaySize + 'px';
-                canvas.style.height = displaySize + 'px';
-                
-                // Scale context: drawing at displaySize coords → buffer coords
-                currentScale = bufferScale;
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.scale(bufferScale, bufferScale);
-                
-                // Update CSS custom properties
-                const uiScale = displaySize / BASE_CANVAS_SIZE;
-                const root = document.documentElement;
-                root.style.setProperty('--scale', uiScale);
-                root.style.setProperty('--canvas-size', displaySize + 'px');
-                
-                ctx.imageSmoothingEnabled = false;
-                return;
-            }
-            
-            // Calculate display size
-            displaySize = calculateCanvasSize();
-            CANVAS_SIZE = displaySize;
-            GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
-            
             if (isFullscreen) {
-                // Fullscreen/iframe: use rectangular layout with trackpad
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
+                // Universal margin system
                 const borderWidth = 3;
-                const availWidth = viewW - (borderWidth * 2);
-                const availHeight = viewH - (borderWidth * 2);
+                const safetyPadding = isInIframe ? 4 : 0;
+                const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Calculate how much trackpad space we need to fill the viewport
-                // Canvas is square, so find optimal canvas size that leaves room for trackpad
-                // Target: trackpad should be about 25-40% of canvas height for good proportions
+                const availWidth = viewW - totalMargin;
+                const availHeight = viewH - totalMargin;
                 const viewportAspect = availWidth / availHeight;
                 
-                // If viewport is taller than wide (aspect < 1), we have more trackpad room
-                // If viewport is wider than tall (aspect > 1), canvas dominates
                 let canvasSize, trackpadHeight;
                 
                 if (viewportAspect >= 1) {
@@ -1228,7 +1203,7 @@
                     trackpadHeight = availHeight - canvasSize;
                 }
                 
-                // Snap canvas to grid
+                // Snap canvas to grid for clean snake movement
                 displaySize = Math.floor(canvasSize / GRID_COUNT) * GRID_COUNT;
                 CANVAS_SIZE = displaySize;
                 GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
@@ -1236,16 +1211,16 @@
                 // Recalculate trackpad height after snapping
                 trackpadHeight = availHeight - displaySize;
                 
-                // Set trackpad height
+                // Set trackpad visibility
                 if (trackpadZone) {
-                    if (trackpadHeight > 120) {
-                        // Full trackpad with inner control area
+                    if (isTablet || isIPad) {
+                        trackpadZone.style.display = 'none';
+                    } else if (trackpadHeight > 120) {
                         trackpadZone.style.height = trackpadHeight + 'px';
                         trackpadZone.style.minHeight = trackpadHeight + 'px';
                         trackpadZone.style.display = 'flex';
                         trackpadZone.classList.remove('compact');
                     } else if (trackpadHeight > 40) {
-                        // Compact trackpad - just enough for controls
                         trackpadZone.style.height = trackpadHeight + 'px';
                         trackpadZone.style.minHeight = trackpadHeight + 'px';
                         trackpadZone.style.display = 'flex';
@@ -1258,8 +1233,48 @@
                     }
                 }
                 
-                // Use higher DPR in fullscreen (up to 3x for 2K+ monitors)
-                currentScale = Math.min(rawDPR, maxFullscreenDPR);
+                // Determine buffer scale
+                let bufferScale;
+                if (isTablet || isIPad) {
+                    bufferScale = 2;
+                } else {
+                    bufferScale = Math.min(rawDPR, maxFullscreenDPR);
+                }
+                
+                // iOS canvas memory safety check
+                let bufferSize = Math.round(displaySize * bufferScale);
+                const totalPixels = bufferSize * bufferSize;
+                
+                if (totalPixels > MAX_CANVAS_PIXELS) {
+                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    bufferScale *= scaleFactor;
+                    bufferSize = Math.round(displaySize * bufferScale);
+                }
+                
+                canvas.width = bufferSize;
+                canvas.height = bufferSize;
+                canvas.style.width = displaySize + 'px';
+                canvas.style.height = displaySize + 'px';
+                
+                currentScale = bufferScale;
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(bufferScale, bufferScale);
+                
+                // Update CSS custom properties
+                const uiScale = displaySize / BASE_CANVAS_SIZE;
+                const root = document.documentElement;
+                root.style.setProperty('--scale', uiScale);
+                root.style.setProperty('--canvas-size', displaySize + 'px');
+                
+                // Debug overlay
+                GameDebug.show({
+                    viewport: `${viewW}×${viewH}`,
+                    display: `${displaySize}×${displaySize}`,
+                    buffer: `${bufferSize}×${bufferSize}`,
+                    trackpad: trackpadHeight,
+                    iframe: isInIframe ? 'YES' : 'NO',
+                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
+                });
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
@@ -1272,6 +1287,11 @@
                     trackpadZone.classList.remove('compact');
                 }
                 
+                // Calculate display size
+                displaySize = calculateCanvasSize();
+                CANVAS_SIZE = displaySize;
+                GRID_SIZE = CANVAS_SIZE / GRID_COUNT;
+                
                 if (isMobile) {
                     currentScale = Math.min(rawDPR, 1.5);
                 } else if (isTablet || isLaptopOrDesktop) {
@@ -1279,44 +1299,43 @@
                 } else {
                     currentScale = 1;
                 }
+                
+                // Apply canvas with DPR scaling
+                let bufferSize = Math.round(displaySize * currentScale);
+                const totalPixels = bufferSize * bufferSize;
+                
+                if (totalPixels > MAX_CANVAS_PIXELS) {
+                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    currentScale *= scaleFactor;
+                    bufferSize = Math.round(displaySize * currentScale);
+                }
+                
+                canvas.width = bufferSize;
+                canvas.height = bufferSize;
+                canvas.style.width = displaySize + 'px';
+                canvas.style.height = displaySize + 'px';
+                
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(currentScale, currentScale);
+                
+                // Update CSS custom properties
+                const uiScale = displaySize / BASE_CANVAS_SIZE;
+                const root = document.documentElement;
+                root.style.setProperty('--scale', uiScale);
+                root.style.setProperty('--canvas-size', displaySize + 'px');
+                root.style.setProperty('--hud-font', Math.round(14 * uiScale) + 'px');
+                root.style.setProperty('--btn-font', Math.round(14 * uiScale) + 'px');
+                root.style.setProperty('--btn-padding', Math.round(8 * uiScale) + 'px ' + Math.round(14 * uiScale) + 'px');
+                root.style.setProperty('--btn-min-width', Math.round(100 * uiScale) + 'px');
+                root.style.setProperty('--gap', Math.round(2 * uiScale) + 'px');
+                root.style.setProperty('--container-padding', Math.round(4 * uiScale) + 'px');
+                root.style.setProperty('--touch-zone-height', Math.round(80 * uiScale) + 'px');
+                root.style.setProperty('--game-over-title', Math.round(24 * uiScale) + 'px');
+                root.style.setProperty('--game-over-text', Math.round(16 * uiScale) + 'px');
+                
+                GameDebug.hide();
             }
             
-            // Apply to canvas with DPR scaling and iOS memory safety
-            let bufferSize = Math.round(displaySize * currentScale);
-            const totalPixels = bufferSize * bufferSize;
-            
-            if (totalPixels > MAX_CANVAS_PIXELS) {
-                // Scale down to fit within limit
-                const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
-                currentScale = currentScale * scaleFactor;
-                bufferSize = Math.round(displaySize * currentScale);
-            }
-            
-            canvas.width = bufferSize;
-            canvas.height = bufferSize;
-            canvas.style.width = displaySize + 'px';
-            canvas.style.height = displaySize + 'px';
-            
-            // Reset and apply scale transform
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.scale(currentScale, currentScale);
-            
-            // Update CSS custom properties for proportional UI scaling
-            const uiScale = displaySize / BASE_CANVAS_SIZE;
-            const root = document.documentElement;
-            root.style.setProperty('--scale', uiScale);
-            root.style.setProperty('--canvas-size', displaySize + 'px');
-            root.style.setProperty('--hud-font', Math.round(14 * uiScale) + 'px');
-            root.style.setProperty('--btn-font', Math.round(14 * uiScale) + 'px');
-            root.style.setProperty('--btn-padding', Math.round(8 * uiScale) + 'px ' + Math.round(14 * uiScale) + 'px');
-            root.style.setProperty('--btn-min-width', Math.round(100 * uiScale) + 'px');
-            root.style.setProperty('--gap', Math.round(2 * uiScale) + 'px');
-            root.style.setProperty('--container-padding', Math.round(4 * uiScale) + 'px');
-            root.style.setProperty('--touch-zone-height', Math.round(80 * uiScale) + 'px');
-            root.style.setProperty('--game-over-title', Math.round(24 * uiScale) + 'px');
-            root.style.setProperty('--game-over-text', Math.round(16 * uiScale) + 'px');
-            
-            // Re-enable image smoothing after canvas resize
             ctx.imageSmoothingEnabled = false; // Keep crisp pixels for snake game
             
             if (!gameRunning) {
