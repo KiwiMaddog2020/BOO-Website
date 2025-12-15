@@ -295,7 +295,7 @@
             justify-content: center;
             gap: calc(8px * var(--scale, 1));
             width: 100%;
-            margin: calc(6px * var(--scale, 1)) 0 calc(4px * var(--scale, 1)) 0;
+            margin: calc(4px * var(--scale, 1)) 0 calc(2px * var(--scale, 1)) 0;
             max-width: 100%;
             box-sizing: border-box;
         }
@@ -1922,9 +1922,9 @@
             width: 100%;
             /* Responsive height - use flex-grow to fill available space */
             height: auto;
-            min-height: calc(300px * var(--scale, 1));
+            min-height: calc(230px * var(--scale, 1));
             flex: 1 1 auto;
-            padding: 0px calc(12px * var(--scale, 1)) calc(8px * var(--scale, 1)) calc(12px * var(--scale, 1));
+            padding: 0px calc(12px * var(--scale, 1)) calc(4px * var(--scale, 1)) calc(12px * var(--scale, 1));
             box-sizing: border-box;
             /* Touch control */
             touch-action: none;
@@ -2043,10 +2043,11 @@
             flex-shrink: 0;
         }
         
-        /* Spacer - grows to fill remaining space */
+        /* Spacer - minimal space before instructions */
         .trackpad-spacer {
-            flex: 1;
-            min-height: 8px;
+            flex: 0 0 auto;
+            min-height: 4px;
+            height: 4px;
             width: 100%;
             pointer-events: none;
         }
@@ -2056,10 +2057,10 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            height: calc(24px * var(--scale, 1));
-            min-height: calc(24px * var(--scale, 1));
+            height: calc(20px * var(--scale, 1));
+            min-height: calc(20px * var(--scale, 1));
             width: 100%;
-            font-size: calc(11px * var(--scale, 1));
+            font-size: calc(10px * var(--scale, 1));
             color: rgba(0, 255, 255, 0.7);
             letter-spacing: 1px;
             text-transform: uppercase;
@@ -3622,7 +3623,7 @@
         
         // Base canvas dimensions
         const BASE_WIDTH = 800;
-        const BASE_HEIGHT = 450;
+        const BASE_HEIGHT = 520;
         
         // ========== DEBUG UTILITY ==========
         const GameDebug = {
@@ -3752,9 +3753,9 @@
                 
                 // Account for trackpad zone below canvas
                 // Trackpad base height is 360px, scales proportionally with canvas
-                const TRACKPAD_BASE_HEIGHT = 300;
-                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 450 + 300 = 750
-                const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.6
+                const TRACKPAD_BASE_HEIGHT = 230;
+                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 230 = 750
+                const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.69
                 
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
@@ -6890,44 +6891,82 @@
             potRewardQueue = [];
             potRewardIndex = 0;
             
-            // Generate 3 rewards with higher legendary chance (8% base)
-            for (let i = 0; i < 3; i++) {
-                let legendaryChance = 0.08 + (gameTime / 60) * 0.01;
-                legendaryChance = Math.min(legendaryChance, 0.25);
-                
-                if (guaranteedLegendaryNext && legendaryCount < MAX_LEGENDARIES) {
-                    legendaryChance = 1.0;
-                }
-                if (legendaryCount >= MAX_LEGENDARIES) {
-                    legendaryChance = 0;
-                }
-                
-                if (Math.random() < legendaryChance) {
-                    const legendaryKeys = Object.keys(LEGENDARY_UPGRADES);
-                    const randomKey = legendaryKeys[Math.floor(Math.random() * legendaryKeys.length)];
-                    const legendary = LEGENDARY_UPGRADES[randomKey];
-                    potRewardQueue.push({ 
-                        type: 'legendary', 
-                        id: randomKey,
-                        icon: legendary.icon, 
-                        name: '⭐ ' + legendary.name + ' ⭐', 
-                        desc: legendary.desc,
-                        color: legendary.color 
-                    });
-                } else {
-                    const powerupIds = Object.keys(SHRINE_POWERUPS);
-                    const randomId = powerupIds[Math.floor(Math.random() * powerupIds.length)];
-                    const powerup = SHRINE_POWERUPS[randomId];
-                    potRewardQueue.push({ 
-                        type: 'shrine', 
-                        id: randomId,
-                        icon: powerup.icon,
-                        name: powerup.name,
-                        desc: powerup.desc,
-                        color: powerup.color
-                    });
-                }
+            // Calculate number of legendaries based on luck (smooth scaling)
+            // 0-49% luck: max 1 legendary (chance-based)
+            // 50% luck: 1 guaranteed, chance for 2nd
+            // 100% luck: 2 guaranteed
+            // 150%+ luck: 3 guaranteed (max)
+            const luckPercent = player.luck * 100; // Convert to percentage (0.5 luck = 50%)
+            
+            let guaranteedLegendaries = 0;
+            let extraLegendaryChance = 0;
+            
+            if (luckPercent >= 150) {
+                guaranteedLegendaries = 3;
+            } else if (luckPercent >= 100) {
+                guaranteedLegendaries = 2;
+                extraLegendaryChance = (luckPercent - 100) / 50; // 0-100% chance for 3rd
+            } else if (luckPercent >= 50) {
+                guaranteedLegendaries = 1;
+                extraLegendaryChance = (luckPercent - 50) / 50; // 0-100% chance for 2nd
+            } else {
+                // 0-49% luck: base chance system with max 1 legendary
+                guaranteedLegendaries = 0;
+                // Base 8% + time bonus, scaled by luck (luck 0% = base, luck 49% = almost guaranteed)
+                let baseChance = 0.08 + (gameTime / 60) * 0.01;
+                baseChance = Math.min(baseChance, 0.25);
+                extraLegendaryChance = baseChance + (luckPercent / 50) * (1 - baseChance);
             }
+            
+            // Apply guaranteed legendary override if active
+            if (guaranteedLegendaryNext && legendaryCount < MAX_LEGENDARIES) {
+                guaranteedLegendaries = Math.max(guaranteedLegendaries, 1);
+            }
+            
+            // Calculate actual legendary count
+            let legendaryOfferCount = guaranteedLegendaries;
+            if (legendaryOfferCount < 3 && Math.random() < extraLegendaryChance) {
+                legendaryOfferCount++;
+            }
+            
+            // Cap at max legendaries remaining
+            const legendariesRemaining = MAX_LEGENDARIES - legendaryCount;
+            legendaryOfferCount = Math.min(legendaryOfferCount, legendariesRemaining, 3);
+            
+            // Generate rewards: legendaries first, then shrine powerups
+            const legendaryKeys = Object.keys(LEGENDARY_UPGRADES);
+            const shuffledLegendaries = legendaryKeys.sort(() => Math.random() - 0.5);
+            
+            for (let i = 0; i < legendaryOfferCount; i++) {
+                const randomKey = shuffledLegendaries[i % shuffledLegendaries.length];
+                const legendary = LEGENDARY_UPGRADES[randomKey];
+                potRewardQueue.push({ 
+                    type: 'legendary', 
+                    id: randomKey,
+                    icon: legendary.icon, 
+                    name: '⭐ ' + legendary.name + ' ⭐', 
+                    desc: legendary.desc,
+                    color: legendary.color 
+                });
+            }
+            
+            // Fill remaining slots with shrine powerups
+            const powerupIds = Object.keys(SHRINE_POWERUPS);
+            for (let i = legendaryOfferCount; i < 3; i++) {
+                const randomId = powerupIds[Math.floor(Math.random() * powerupIds.length)];
+                const powerup = SHRINE_POWERUPS[randomId];
+                potRewardQueue.push({ 
+                    type: 'shrine', 
+                    id: randomId,
+                    icon: powerup.icon,
+                    name: powerup.name,
+                    desc: powerup.desc,
+                    color: powerup.color
+                });
+            }
+            
+            // Shuffle the queue so legendaries aren't always first
+            potRewardQueue.sort(() => Math.random() - 0.5);
             
             showNextPotReward();
         }
@@ -13142,7 +13181,6 @@
             
             // Draw shield pickups
             drawShieldPickups();
-            drawPowerDrops();
             
             // Draw healing fairy
             drawFairy();
@@ -13158,6 +13196,10 @@
             
             // Draw entities
             for (const gem of xpGems) gem.draw();
+            
+            // Draw power drops (heart, shoe, hourglass) above XP gems
+            drawPowerDrops();
+            
             for (const enemy of enemies) {
                 if (!enemy.dead) enemy.draw();
             }
