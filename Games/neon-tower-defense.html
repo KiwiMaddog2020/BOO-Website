@@ -2872,21 +2872,33 @@
         }
         resetTowerLevels();
 
-        // Path waypoints - designed for 644x582 canvas to fit iframe
+        // Path waypoints - aligned to grid cell centers (GRID_SIZE=36)
+        // Cell centers at: 18, 54, 90, 126, 162, 198, 234, 270, 306, 342, 378, 414, 450, 486, 522, 558, 594, 630
         const PATH = [
-            { x: 0, y: 60 },
-            { x: 160, y: 60 },
-            { x: 160, y: 175 },
-            { x: 480, y: 175 },
-            { x: 480, y: 60 },
-            { x: 585, y: 60 },
-            { x: 585, y: 295 },
-            { x: 55, y: 295 },
-            { x: 55, y: 428 },
-            { x: 480, y: 428 },
-            { x: 480, y: 532 },
-            { x: 644, y: 532 }
+            { x: 0, y: 54 },      // Entry (y snapped to row 2 center)
+            { x: 162, y: 54 },    // First corner
+            { x: 162, y: 162 },   // Down to row 5
+            { x: 486, y: 162 },   // Across to right
+            { x: 486, y: 54 },    // Up to row 2
+            { x: 594, y: 54 },    // Right side
+            { x: 594, y: 306 },   // Down to row 9
+            { x: 54, y: 306 },    // Across to left
+            { x: 54, y: 414 },    // Down to row 12
+            { x: 486, y: 414 },   // Across to right
+            { x: 486, y: 522 },   // Down to row 15
+            { x: 644, y: 522 }    // Exit
         ];
+        
+        // Grid size for tower snap-to-grid placement
+        // Yellow line segment should equal exactly 3 grid squares
+        const GRID_SIZE = 36;
+        
+        // Snap coordinates to grid center
+        function snapToGrid(x, y) {
+            const snappedX = Math.floor(x / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
+            const snappedY = Math.floor(y / GRID_SIZE) * GRID_SIZE + GRID_SIZE / 2;
+            return { x: snappedX, y: snappedY };
+        }
 
         // Game State
         let gameRunning = false;
@@ -3108,12 +3120,15 @@
                 const tappedTower = getTowerAtPoint(pos.x, pos.y);
                 if (tappedTower) return; // Let touchend handle tower inspection
                 
+                // Snap to grid
+                const snapped = snapToGrid(pos.x, pos.y);
+                
                 // Start placement preview if valid spot
-                if (isValidPlacement(pos.x, pos.y)) {
-                    pendingPlacement = { x: pos.x, y: pos.y, type: selectedTower };
+                if (isValidPlacement(snapped.x, snapped.y)) {
+                    pendingPlacement = { x: snapped.x, y: snapped.y, type: selectedTower };
                     showingPlacementPreview = true;
-                    mouseX = pos.x;
-                    mouseY = pos.y;
+                    mouseX = snapped.x;
+                    mouseY = snapped.y;
                     // Don't show confirm dialog yet - wait for touchend
                 }
             }, { passive: false });
@@ -3124,12 +3139,15 @@
                 const touch = e.touches[0];
                 const pos = getCanvasCoords(touch.clientX, touch.clientY);
                 
+                // Snap to grid
+                const snapped = snapToGrid(pos.x, pos.y);
+                
                 // Update preview position if valid
-                if (isValidPlacement(pos.x, pos.y)) {
-                    pendingPlacement.x = pos.x;
-                    pendingPlacement.y = pos.y;
-                    mouseX = pos.x;
-                    mouseY = pos.y;
+                if (isValidPlacement(snapped.x, snapped.y)) {
+                    pendingPlacement.x = snapped.x;
+                    pendingPlacement.y = snapped.y;
+                    mouseX = snapped.x;
+                    mouseY = snapped.y;
                 }
             }, { passive: false });
 
@@ -3640,23 +3658,31 @@
             // Tower placement logic
             if (!selectedTower || waveInProgress) return;
             
+            // Snap to grid for placement
+            const snapped = snapToGrid(pos.x, pos.y);
+            
             // If we're already showing a preview from drag, show confirm dialog
             if (showingPlacementPreview && pendingPlacement) {
                 // Update final position and show confirmation
-                if (isValidPlacement(pos.x, pos.y)) {
-                    pendingPlacement.x = pos.x;
-                    pendingPlacement.y = pos.y;
-                    mouseX = pos.x;
-                    mouseY = pos.y;
+                if (isValidPlacement(snapped.x, snapped.y)) {
+                    pendingPlacement.x = snapped.x;
+                    pendingPlacement.y = snapped.y;
+                    mouseX = snapped.x;
+                    mouseY = snapped.y;
                 }
                 document.getElementById('placementPreviewOverlay').classList.add('active');
             } else {
                 // Direct tap without drag - show placement preview
-                showPlacementPreview(pos.x, pos.y);
+                showPlacementPreview(snapped.x, snapped.y);
             }
         }
         
         function showPlacementPreview(x, y) {
+            // Snap to grid
+            const snapped = snapToGrid(x, y);
+            x = snapped.x;
+            y = snapped.y;
+            
             if (!isValidPlacement(x, y)) return;
             
             // Store pending placement
@@ -3716,6 +3742,11 @@
         }
 
         function placeTower(x, y) {
+            // Snap to grid
+            const snapped = snapToGrid(x, y);
+            x = snapped.x;
+            y = snapped.y;
+            
             if (!isValidPlacement(x, y)) return;
             
             // Check tower limit
@@ -4834,10 +4865,47 @@
             if (e.key === 'Escape') hideTutorial();
         });
 
+        // Draw subtle grid for tower placement
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.08)';
+            ctx.lineWidth = 1;
+            
+            // Vertical lines
+            for (let x = GRID_SIZE; x < BASE_WIDTH; x += GRID_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, BASE_HEIGHT);
+                ctx.stroke();
+            }
+            
+            // Horizontal lines
+            for (let y = GRID_SIZE; y < BASE_HEIGHT; y += GRID_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(BASE_WIDTH, y);
+                ctx.stroke();
+            }
+            
+            // Draw grid cell centers as small dots
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.12)';
+            for (let x = GRID_SIZE / 2; x < BASE_WIDTH; x += GRID_SIZE) {
+                for (let y = GRID_SIZE / 2; y < BASE_HEIGHT; y += GRID_SIZE) {
+                    ctx.beginPath();
+                    ctx.arc(x, y, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
         // ========== RENDERING ==========
         function render() {
             ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+            
+            // Draw snap grid when placing towers
+            if ((selectedTower && !waveInProgress) || showingPlacementPreview) {
+                drawGrid();
+            }
             
             drawPath();
             
@@ -5591,6 +5659,11 @@
                 previewY = mouseY;
                 towerType = selectedTower;
             }
+            
+            // Snap preview to grid
+            const snapped = snapToGrid(previewX, previewY);
+            previewX = snapped.x;
+            previewY = snapped.y;
             
             if (!towerType) return;
             
