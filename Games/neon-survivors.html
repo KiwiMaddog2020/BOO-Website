@@ -3948,8 +3948,8 @@
         
         // Target visible world area - consistent across all devices
         // Desktop baseline: 800x600 canvas at 0.665 zoom shows ~1203x903 world units
-        const TARGET_VISIBLE_WIDTH = 900;  // Reduced for more zoom on desktop
-        const TARGET_VISIBLE_HEIGHT = 675; // Maintains 4:3 aspect ratio
+        const TARGET_VISIBLE_WIDTH = 1040;  // 10% more visible area (was 945)
+        const TARGET_VISIBLE_HEIGHT = 780; // Maintains 4:3 aspect ratio (was 709)
         const BASE_ZOOM = 0.665; // Reference zoom level
         
         const camera = {
@@ -5048,9 +5048,10 @@
                 const fireRate = def.baseFireRate * Math.pow(0.98, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
-                // Filter out dead enemies and include bosses
-                const aliveEnemies = enemies.filter(e => !e.dead);
-                const aliveBosses = bosses.filter(b => !b.dead);
+                // Filter enemies within range (180 base + 15 per level)
+                const chainRange = 180 + level * 15;
+                const aliveEnemies = enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < chainRange);
+                const aliveBosses = bosses.filter(b => !b.dead && Math.hypot(b.x - this.x, b.y - this.y) < chainRange);
                 const allTargets = [...aliveEnemies, ...aliveBosses];
                 if (allTargets.length === 0) return;
                 
@@ -5071,9 +5072,9 @@
                     spawnParticles(target.x, target.y, def.color, 8);
                 }
                 
-                // Clean up old chain targets (older than 100ms)
+                // Clean up old chain targets (slower fade - 280ms)
                 if (state.chainTargets) {
-                    state.chainTargets = state.chainTargets.filter(t => now - t.time < 180);
+                    state.chainTargets = state.chainTargets.filter(t => now - t.time < 280);
                 }
             }
 
@@ -5911,7 +5912,7 @@
                     // Toxic aura visual
                     if (def.type === 'aura' && state.auraRadius) {
                         const auraR = camera.scale(state.auraRadius);
-                        const pulseT = (Date.now() - (state.auraPulse || 0)) / 600;
+                        const pulseT = (Date.now() - (state.auraPulse || 0)) / 1200; // Slower pulse (was 600)
                         const pulseAlpha = Math.max(0, 0.45 - pulseT * 0.25);
                         
                         // Constant outer glow
@@ -6024,8 +6025,8 @@
                         
                         for (const target of state.chainTargets) {
                             const age = now - target.time;
-                            if (age > 180) continue;
-                            ctx.globalAlpha = 1 - age / 180;
+                            if (age > 280) continue;
+                            ctx.globalAlpha = 1 - age / 280;
                             ctx.beginPath();
                             ctx.moveTo(sx, sy);
                             ctx.lineTo(camera.screenX(target.x), camera.screenY(target.y));
@@ -6379,6 +6380,8 @@
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
+                const s = r; // Size shorthand for consistency
+                const time = Date.now();
                 
                 ctx.save();
                 
@@ -6390,20 +6393,135 @@
                     mainColor = COLORS.freeze;
                 }
                 
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = mainColor;
-                ctx.fillStyle = mainColor;
+                // Gentle floating animation
+                const floatOffset = Math.sin(time / 300 + this.x * 0.01) * camera.scale(2);
+                const ghostY = sy + floatOffset;
                 
-                // Hexagon shape for variety
-                ctx.beginPath();
-                for (let i = 0; i < 6; i++) {
-                    const angle = (Math.PI / 3) * i - Math.PI / 2;
-                    const x = sx + Math.cos(angle) * r;
-                    const y = sy + Math.sin(angle) * r;
-                    if (i === 0) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
+                // Status effect outer glow
+                if (this.freezeTimer > 0 || this.shockTimer > 0) {
+                    const pulse = 0.5 + Math.sin(time / 100) * 0.3;
+                    ctx.fillStyle = mainColor;
+                    ctx.globalAlpha = 0.3 * pulse;
+                    ctx.beginPath();
+                    ctx.arc(sx, ghostY, s * 1.4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
                 }
+                
+                // ===== GHOST BODY SHAPE =====
+                ctx.fillStyle = mainColor;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 12;
+                
+                ctx.beginPath();
+                // Dome top (semicircle from left to right)
+                ctx.arc(sx, ghostY - s * 0.2, s, Math.PI, 0, false);
+                
+                // Wavy bottom - 3 curves for the ghostly tail
+                const bottomY = ghostY + s * 0.8;
+                const waveAmp = s * 0.25;
+                const tailWiggle = Math.sin(time / 200 + this.x * 0.05) * s * 0.1;
+                
+                // Right side down
+                ctx.lineTo(sx + s, bottomY - waveAmp);
+                
+                // First wave (right)
+                ctx.quadraticCurveTo(
+                    sx + s * 0.7 + tailWiggle, bottomY + waveAmp,
+                    sx + s * 0.33, bottomY - waveAmp * 0.5
+                );
+                
+                // Second wave (center)
+                ctx.quadraticCurveTo(
+                    sx + tailWiggle * 0.5, bottomY + waveAmp * 1.2,
+                    sx - s * 0.33, bottomY - waveAmp * 0.5
+                );
+                
+                // Third wave (left)
+                ctx.quadraticCurveTo(
+                    sx - s * 0.7 - tailWiggle, bottomY + waveAmp,
+                    sx - s, bottomY - waveAmp
+                );
+                
+                // Left side up to dome
                 ctx.closePath();
+                ctx.fill();
+                
+                // Ghost outline for definition
+                ctx.strokeStyle = this.type === 'tank' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = this.type === 'tank' ? 2 : 1.5;
+                ctx.shadowBlur = 0;
+                ctx.stroke();
+                
+                // ===== GHOST FACE =====
+                const eyeY = ghostY - s * 0.25;
+                const eyeSpacing = s * 0.35;
+                const eyeSize = s * 0.22;
+                const mouthY = ghostY + s * 0.2;
+                
+                if (this.type === 'tank') {
+                    // Tank: Determined, flat serious expression
+                    ctx.fillStyle = '#1a0033';
+                    ctx.beginPath();
+                    ctx.ellipse(sx - eyeSpacing, eyeY, eyeSize * 0.9, eyeSize * 0.7, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx + eyeSpacing, eyeY, eyeSize * 0.9, eyeSize * 0.7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Flat determined mouth
+                    ctx.strokeStyle = '#1a0033';
+                    ctx.lineWidth = s * 0.08;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(sx - s * 0.15, mouthY);
+                    ctx.lineTo(sx + s * 0.15, mouthY);
+                    ctx.stroke();
+                } else if (this.type === 'fast') {
+                    // Fast: Excited/happy with blush marks
+                    ctx.fillStyle = '#1a1a00';
+                    ctx.beginPath();
+                    ctx.ellipse(sx - eyeSpacing, eyeY, eyeSize * 0.8, eyeSize * 0.9, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx + eyeSpacing, eyeY, eyeSize * 0.8, eyeSize * 0.9, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Blush marks
+                    ctx.fillStyle = 'rgba(255, 150, 150, 0.5)';
+                    ctx.beginPath();
+                    ctx.ellipse(sx - eyeSpacing * 1.5, eyeY + s * 0.15, s * 0.12, s * 0.08, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx + eyeSpacing * 1.5, eyeY + s * 0.15, s * 0.12, s * 0.08, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Happy open mouth
+                    ctx.fillStyle = '#1a1a00';
+                    ctx.beginPath();
+                    ctx.ellipse(sx, mouthY, s * 0.15, s * 0.12, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (this.type === 'swarm') {
+                    // Swarm: Tiny mischievous face
+                    ctx.fillStyle = '#0a1a0a';
+                    ctx.beginPath();
+                    ctx.arc(sx - eyeSpacing * 0.8, eyeY, eyeSize * 0.6, 0, Math.PI * 2);
+                    ctx.arc(sx + eyeSpacing * 0.8, eyeY, eyeSize * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Tiny smile
+                    ctx.strokeStyle = '#0a1a0a';
+                    ctx.lineWidth = s * 0.06;
+                    ctx.beginPath();
+                    ctx.arc(sx, mouthY - s * 0.05, s * 0.1, 0.2, Math.PI - 0.2);
+                    ctx.stroke();
+                } else {
+                    // Normal/Basic: Classic cute ghost face (like favicon)
+                    ctx.fillStyle = '#1a1a1a';
+                    ctx.beginPath();
+                    ctx.ellipse(sx - eyeSpacing, eyeY, eyeSize * 0.7, eyeSize * 0.85, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx + eyeSpacing, eyeY, eyeSize * 0.7, eyeSize * 0.85, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Small "o" mouth (surprised/cute)
+                    ctx.beginPath();
+                    ctx.ellipse(sx, mouthY, s * 0.12, s * 0.1, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                // Highlight shine on ghost head
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+                ctx.beginPath();
+                ctx.ellipse(sx - s * 0.35, ghostY - s * 0.55, s * 0.25, s * 0.2, -0.3, 0, Math.PI * 2);
                 ctx.fill();
                 
                 // Burn effect - flickering flames
@@ -6414,9 +6532,9 @@
                     const flicker = Math.random() * 0.3 + 0.7;
                     ctx.globalAlpha = flicker;
                     for (let i = 0; i < 3; i++) {
-                        const flameAngle = (Date.now() * 0.01 + i * 2) % (Math.PI * 2);
-                        const fx = sx + Math.cos(flameAngle) * r * 0.6;
-                        const fy = sy + Math.sin(flameAngle) * r * 0.6 - camera.scale(5);
+                        const flameAngle = (time * 0.01 + i * 2) % (Math.PI * 2);
+                        const fx = sx + Math.cos(flameAngle) * s * 0.6;
+                        const fy = ghostY + Math.sin(flameAngle) * s * 0.6 - camera.scale(5);
                         ctx.beginPath();
                         ctx.moveTo(fx, fy);
                         ctx.lineTo(fx - camera.scale(3), fy + camera.scale(8));
@@ -6436,8 +6554,8 @@
                     ctx.globalAlpha = 0.8;
                     for (let i = 0; i < 4; i++) {
                         const iceAngle = i * Math.PI / 2;
-                        const ix = sx + Math.cos(iceAngle) * r * 1.2;
-                        const iy = sy + Math.sin(iceAngle) * r * 1.2;
+                        const ix = sx + Math.cos(iceAngle) * s * 1.2;
+                        const iy = ghostY + Math.sin(iceAngle) * s * 1.2;
                         ctx.beginPath();
                         ctx.moveTo(ix, iy - camera.scale(4));
                         ctx.lineTo(ix, iy + camera.scale(4));
@@ -6456,15 +6574,15 @@
                     ctx.shadowColor = COLORS.shock;
                     const sparkCount = 3;
                     for (let i = 0; i < sparkCount; i++) {
-                        const angle = (Date.now() * 0.02 + i * Math.PI * 2 / sparkCount) % (Math.PI * 2);
-                        const startR = r * 0.5;
-                        const endR = r * 1.3;
+                        const angle = (time * 0.02 + i * Math.PI * 2 / sparkCount) % (Math.PI * 2);
+                        const startR = s * 0.5;
+                        const endR = s * 1.3;
                         ctx.beginPath();
-                        ctx.moveTo(sx + Math.cos(angle) * startR, sy + Math.sin(angle) * startR);
+                        ctx.moveTo(sx + Math.cos(angle) * startR, ghostY + Math.sin(angle) * startR);
                         // Jagged line
                         const midAngle = angle + (Math.random() - 0.5) * 0.5;
-                        ctx.lineTo(sx + Math.cos(midAngle) * (startR + endR) / 2, sy + Math.sin(midAngle) * (startR + endR) / 2);
-                        ctx.lineTo(sx + Math.cos(angle) * endR, sy + Math.sin(angle) * endR);
+                        ctx.lineTo(sx + Math.cos(midAngle) * (startR + endR) / 2, ghostY + Math.sin(midAngle) * (startR + endR) / 2);
+                        ctx.lineTo(sx + Math.cos(angle) * endR, ghostY + Math.sin(angle) * endR);
                         ctx.stroke();
                     }
                 }
@@ -6473,9 +6591,9 @@
                 if (this.type === 'tank' && this.hp < this.maxHp) {
                     ctx.shadowBlur = 0;
                     ctx.fillStyle = '#333';
-                    ctx.fillRect(sx - camera.scale(15), sy - r - camera.scale(8), camera.scale(30), camera.scale(4));
+                    ctx.fillRect(sx - camera.scale(15), ghostY - s - camera.scale(12), camera.scale(30), camera.scale(4));
                     ctx.fillStyle = this.color;
-                    ctx.fillRect(sx - camera.scale(15), sy - r - camera.scale(8), camera.scale(30) * (this.hp / this.maxHp), camera.scale(4));
+                    ctx.fillRect(sx - camera.scale(15), ghostY - s - camera.scale(12), camera.scale(30) * (this.hp / this.maxHp), camera.scale(4));
                 }
                 
                 ctx.restore();
@@ -7333,58 +7451,144 @@
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
+                const s = r;
+                const time = Date.now();
                 
                 ctx.save();
                 
                 // Pulsing glow
-                const pulse = 0.8 + Math.sin(Date.now() * 0.005) * 0.2;
-                ctx.shadowBlur = 30 * pulse;
-                ctx.shadowColor = this.color;
+                const pulse = 0.8 + Math.sin(time * 0.005) * 0.2;
                 
-                // Main body
-                ctx.fillStyle = this.color;
+                // Outer fire aura ring
+                ctx.strokeStyle = '#ff6600';
+                ctx.lineWidth = 3;
+                ctx.globalAlpha = 0.4 * pulse;
+                ctx.shadowColor = '#ff6600';
+                ctx.shadowBlur = 20;
                 ctx.beginPath();
-                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                ctx.arc(sx, sy, s * 1.5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+                
+                // Floating animation
+                const floatOffset = Math.sin(time / 250) * camera.scale(3);
+                const ghostY = sy + floatOffset;
+                
+                // ===== GHOST BODY SHAPE with fiery glow =====
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 30 * pulse;
+                
+                // Fire gradient for ghost body
+                const bodyGrad = ctx.createRadialGradient(sx, ghostY, 0, sx, ghostY, s);
+                bodyGrad.addColorStop(0, '#ffaa00');
+                bodyGrad.addColorStop(0.6, '#ff6600');
+                bodyGrad.addColorStop(1, '#cc4400');
+                ctx.fillStyle = bodyGrad;
+                
+                ctx.beginPath();
+                // Dome top
+                ctx.arc(sx, ghostY - s * 0.2, s, Math.PI, 0, false);
+                
+                // Wavy bottom with more aggressive wave for mini boss
+                const bottomY = ghostY + s * 0.8;
+                const waveAmp = s * 0.3;
+                const tailWiggle = Math.sin(time / 150) * s * 0.15;
+                
+                ctx.lineTo(sx + s, bottomY - waveAmp);
+                ctx.quadraticCurveTo(sx + s * 0.7 + tailWiggle, bottomY + waveAmp * 1.2, sx + s * 0.33, bottomY - waveAmp * 0.5);
+                ctx.quadraticCurveTo(sx + tailWiggle * 0.5, bottomY + waveAmp * 1.5, sx - s * 0.33, bottomY - waveAmp * 0.5);
+                ctx.quadraticCurveTo(sx - s * 0.7 - tailWiggle, bottomY + waveAmp * 1.2, sx - s, bottomY - waveAmp);
+                ctx.closePath();
                 ctx.fill();
                 
-                // Inner ring
+                // Fiery outline
                 ctx.strokeStyle = '#ffaa00';
-                ctx.lineWidth = 4;
-                ctx.beginPath();
-                ctx.arc(sx, sy, r * 0.7, 0, Math.PI * 2);
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = '#ffaa00';
                 ctx.stroke();
                 
-                // Eyes
-                ctx.fillStyle = '#fff';
+                // Inner fire pattern
+                ctx.strokeStyle = '#ffcc00';
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 8;
+                for (let i = 0; i < 3; i++) {
+                    const crackAngle = (i / 3) * Math.PI * 2 + time * 0.002;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, ghostY);
+                    ctx.lineTo(sx + Math.cos(crackAngle) * s * 0.5, ghostY + Math.sin(crackAngle) * s * 0.5);
+                    ctx.stroke();
+                }
+                
+                // ===== ANGRY GHOST FACE =====
+                const eyeY = ghostY - s * 0.2;
+                const eyeSpacing = s * 0.35;
+                const eyeSize = s * 0.2;
+                
+                // Dark eye sockets
+                ctx.fillStyle = '#000';
                 ctx.shadowBlur = 0;
                 ctx.beginPath();
-                ctx.arc(sx - r * 0.3, sy - r * 0.1, r * 0.15, 0, Math.PI * 2);
-                ctx.arc(sx + r * 0.3, sy - r * 0.1, r * 0.15, 0, Math.PI * 2);
+                ctx.ellipse(sx - eyeSpacing, eyeY, eyeSize, eyeSize * 0.8, 0, 0, Math.PI * 2);
+                ctx.ellipse(sx + eyeSpacing, eyeY, eyeSize, eyeSize * 0.8, 0, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Red pupils
+                // Glowing red pupils
                 ctx.fillStyle = '#ff0000';
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = '#ff0000';
+                const pupilPulse = 0.1 + Math.sin(time * 0.01) * 0.03;
                 ctx.beginPath();
-                ctx.arc(sx - r * 0.3, sy - r * 0.1, r * 0.08, 0, Math.PI * 2);
-                ctx.arc(sx + r * 0.3, sy - r * 0.1, r * 0.08, 0, Math.PI * 2);
+                ctx.arc(sx - eyeSpacing, eyeY, s * pupilPulse, 0, Math.PI * 2);
+                ctx.arc(sx + eyeSpacing, eyeY, s * pupilPulse, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Angry eyebrows
+                ctx.strokeStyle = '#ffaa00';
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = '#ff6600';
+                ctx.beginPath();
+                ctx.moveTo(sx - eyeSpacing - eyeSize, eyeY - eyeSize * 1.2);
+                ctx.lineTo(sx - eyeSpacing + eyeSize * 0.3, eyeY - eyeSize * 0.5);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(sx + eyeSpacing + eyeSize, eyeY - eyeSize * 1.2);
+                ctx.lineTo(sx + eyeSpacing - eyeSize * 0.3, eyeY - eyeSize * 0.5);
+                ctx.stroke();
+                
+                // Frowning mouth
+                ctx.strokeStyle = '#330000';
+                ctx.lineWidth = s * 0.08;
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.arc(sx, ghostY + s * 0.4, s * 0.2, Math.PI + 0.3, -0.3);
+                ctx.stroke();
+                
+                // Highlight shine
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+                ctx.beginPath();
+                ctx.ellipse(sx - s * 0.35, ghostY - s * 0.55, s * 0.2, s * 0.15, -0.3, 0, Math.PI * 2);
                 ctx.fill();
                 
                 // HP bar
                 ctx.shadowBlur = 0;
                 const barWidth = r * 2;
                 ctx.fillStyle = '#333';
-                ctx.fillRect(sx - barWidth/2, sy - r - 20, barWidth, 8);
+                ctx.fillRect(sx - barWidth/2, ghostY - s - 25, barWidth, 8);
                 ctx.fillStyle = '#ff0000';
-                ctx.fillRect(sx - barWidth/2, sy - r - 20, barWidth * (this.hp / this.maxHp), 8);
+                ctx.fillRect(sx - barWidth/2, ghostY - s - 25, barWidth * (this.hp / this.maxHp), 8);
                 ctx.strokeStyle = '#fff';
                 ctx.lineWidth = 1;
-                ctx.strokeRect(sx - barWidth/2, sy - r - 20, barWidth, 8);
+                ctx.strokeRect(sx - barWidth/2, ghostY - s - 25, barWidth, 8);
                 
                 // "MINI BOSS" label
                 ctx.fillStyle = '#fff';
                 ctx.font = `bold ${camera.scale(10)}px sans-serif`;
                 ctx.textAlign = 'center';
-                ctx.fillText('MINI BOSS', sx, sy - r - 25);
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ff6600';
+                ctx.fillText('👻 MINI BOSS', sx, ghostY - s - 30);
                 
                 ctx.restore();
             }
@@ -7638,6 +7842,7 @@
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
+                const s = r;
                 const time = Date.now();
                 
                 ctx.save();
@@ -7646,74 +7851,94 @@
                 const pulseSpeed = 0.003 + this.phase * 0.002;
                 const pulse = 0.7 + Math.sin(time * pulseSpeed) * 0.3;
                 
-                // Animated flame aura around boss
+                // Animated flame aura around boss ghost
                 ctx.shadowBlur = 50 * pulse;
                 ctx.shadowColor = this.phase === 3 ? '#ff0000' : '#ff4400';
                 
-                // Outer flame tendrils
+                // Floating animation (more intense for boss)
+                const floatOffset = Math.sin(time / 200) * camera.scale(4);
+                const ghostY = sy + floatOffset;
+                
+                // Outer flame tendrils emanating from ghost
                 for (let i = 0; i < 8; i++) {
                     const flameAngle = (i / 8) * Math.PI * 2 + time * 0.002;
-                    const flameLen = r * (0.3 + Math.sin(time * 0.008 + i) * 0.15);
-                    const fx = sx + Math.cos(flameAngle) * (r + flameLen);
-                    const fy = sy + Math.sin(flameAngle) * (r + flameLen);
+                    const flameLen = s * (0.4 + Math.sin(time * 0.008 + i) * 0.2);
+                    const fx = sx + Math.cos(flameAngle) * (s + flameLen);
+                    const fy = ghostY + Math.sin(flameAngle) * (s + flameLen);
                     
                     ctx.fillStyle = this.phase === 3 ? '#ff2200' : '#ff6600';
                     ctx.globalAlpha = 0.6 + Math.sin(time * 0.01 + i * 2) * 0.3;
                     ctx.beginPath();
-                    ctx.moveTo(sx + Math.cos(flameAngle) * r * 0.9, sy + Math.sin(flameAngle) * r * 0.9);
+                    ctx.moveTo(sx + Math.cos(flameAngle) * s * 0.9, ghostY + Math.sin(flameAngle) * s * 0.9);
                     ctx.quadraticCurveTo(
-                        sx + Math.cos(flameAngle + 0.2) * (r + flameLen * 0.5),
-                        sy + Math.sin(flameAngle + 0.2) * (r + flameLen * 0.5),
+                        sx + Math.cos(flameAngle + 0.2) * (s + flameLen * 0.5),
+                        ghostY + Math.sin(flameAngle + 0.2) * (s + flameLen * 0.5),
                         fx, fy
                     );
                     ctx.quadraticCurveTo(
-                        sx + Math.cos(flameAngle - 0.2) * (r + flameLen * 0.5),
-                        sy + Math.sin(flameAngle - 0.2) * (r + flameLen * 0.5),
-                        sx + Math.cos(flameAngle) * r * 0.9,
-                        sy + Math.sin(flameAngle) * r * 0.9
+                        sx + Math.cos(flameAngle - 0.2) * (s + flameLen * 0.5),
+                        ghostY + Math.sin(flameAngle - 0.2) * (s + flameLen * 0.5),
+                        sx + Math.cos(flameAngle) * s * 0.9,
+                        ghostY + Math.sin(flameAngle) * s * 0.9
                     );
                     ctx.fill();
                 }
                 ctx.globalAlpha = 1;
                 
-                // Main body - dark core with fiery edge
-                const bodyGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+                // ===== GHOST BODY SHAPE with inferno gradient =====
+                const bodyGrad = ctx.createRadialGradient(sx, ghostY, 0, sx, ghostY, s);
                 if (this.phase === 3) {
-                    bodyGrad.addColorStop(0, '#220000');
-                    bodyGrad.addColorStop(0.6, '#660000');
+                    bodyGrad.addColorStop(0, '#660000');
+                    bodyGrad.addColorStop(0.5, '#aa0000');
                     bodyGrad.addColorStop(1, '#ff2200');
                 } else if (this.phase === 2) {
-                    bodyGrad.addColorStop(0, '#221100');
-                    bodyGrad.addColorStop(0.6, '#663300');
+                    bodyGrad.addColorStop(0, '#663300');
+                    bodyGrad.addColorStop(0.5, '#aa4400');
                     bodyGrad.addColorStop(1, '#ff6600');
                 } else {
-                    bodyGrad.addColorStop(0, '#331100');
-                    bodyGrad.addColorStop(0.6, '#664400');
+                    bodyGrad.addColorStop(0, '#664400');
+                    bodyGrad.addColorStop(0.5, '#aa5500');
                     bodyGrad.addColorStop(1, '#ff6600');
                 }
                 ctx.fillStyle = bodyGrad;
+                
                 ctx.beginPath();
-                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                // Dome top - larger for major boss
+                ctx.arc(sx, ghostY - s * 0.15, s, Math.PI, 0, false);
+                
+                // Wavy bottom with aggressive flame-like waves
+                const bottomY = ghostY + s * 0.85;
+                const waveAmp = s * 0.35;
+                const tailWiggle = Math.sin(time / 120) * s * 0.2;
+                
+                ctx.lineTo(sx + s, bottomY - waveAmp);
+                ctx.quadraticCurveTo(sx + s * 0.7 + tailWiggle, bottomY + waveAmp * 1.3, sx + s * 0.33, bottomY - waveAmp * 0.4);
+                ctx.quadraticCurveTo(sx + tailWiggle * 0.5, bottomY + waveAmp * 1.5, sx - s * 0.33, bottomY - waveAmp * 0.4);
+                ctx.quadraticCurveTo(sx - s * 0.7 - tailWiggle, bottomY + waveAmp * 1.3, sx - s, bottomY - waveAmp);
+                ctx.closePath();
                 ctx.fill();
                 
-                // Inner lava cracks
+                // Fiery outline
+                ctx.strokeStyle = this.phase === 3 ? '#ff4400' : '#ffaa00';
+                ctx.lineWidth = 4;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = ctx.strokeStyle;
+                ctx.stroke();
+                
+                // Inner lava cracks on ghost body
                 ctx.strokeStyle = this.phase === 3 ? '#ff4400' : '#ffaa00';
                 ctx.lineWidth = 3;
                 ctx.shadowBlur = 10;
-                ctx.shadowColor = ctx.strokeStyle;
                 for (let i = 0; i < 5; i++) {
                     const crackAngle = (i / 5) * Math.PI * 2 + time * 0.001;
                     ctx.beginPath();
-                    ctx.moveTo(sx, sy);
-                    ctx.lineTo(
-                        sx + Math.cos(crackAngle) * r * 0.7,
-                        sy + Math.sin(crackAngle) * r * 0.7
-                    );
+                    ctx.moveTo(sx, ghostY);
+                    ctx.lineTo(sx + Math.cos(crackAngle) * s * 0.6, ghostY + Math.sin(crackAngle) * s * 0.6);
                     ctx.stroke();
                 }
                 
-                // Molten core
-                const coreGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 0.35);
+                // Molten core glow
+                const coreGrad = ctx.createRadialGradient(sx, ghostY - s * 0.1, 0, sx, ghostY - s * 0.1, s * 0.35);
                 coreGrad.addColorStop(0, '#ffffff');
                 coreGrad.addColorStop(0.4, '#ffff00');
                 coreGrad.addColorStop(1, '#ff6600');
@@ -7721,67 +7946,111 @@
                 ctx.shadowBlur = 25;
                 ctx.shadowColor = '#ffaa00';
                 ctx.beginPath();
-                ctx.arc(sx, sy, r * 0.3, 0, Math.PI * 2);
+                ctx.arc(sx, ghostY - s * 0.1, s * 0.25, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Menacing eyes - larger and angrier
-                const eyeY = sy - r * 0.1;
-                const eyeSpacing = r * 0.4;
-                const eyeSize = r * 0.18;
+                // ===== MENACING MEGABOSS GHOST FACE =====
+                const eyeY = ghostY - s * 0.15;
+                const eyeSpacing = s * 0.35;
+                const eyeSize = s * 0.18;
                 
-                // Eye sockets (dark)
+                // Skull-like eye sockets
                 ctx.fillStyle = '#000';
                 ctx.shadowBlur = 0;
                 ctx.beginPath();
-                ctx.arc(sx - eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
-                ctx.arc(sx + eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
+                // Angular skull eye shapes
+                ctx.moveTo(sx - eyeSpacing - eyeSize, eyeY - eyeSize * 0.3);
+                ctx.lineTo(sx - eyeSpacing, eyeY - eyeSize);
+                ctx.lineTo(sx - eyeSpacing + eyeSize, eyeY - eyeSize * 0.3);
+                ctx.lineTo(sx - eyeSpacing + eyeSize * 0.5, eyeY + eyeSize);
+                ctx.lineTo(sx - eyeSpacing - eyeSize * 0.5, eyeY + eyeSize);
+                ctx.closePath();
                 ctx.fill();
                 
-                // Glowing pupils - pulsing red/orange
+                ctx.beginPath();
+                ctx.moveTo(sx + eyeSpacing - eyeSize, eyeY - eyeSize * 0.3);
+                ctx.lineTo(sx + eyeSpacing, eyeY - eyeSize);
+                ctx.lineTo(sx + eyeSpacing + eyeSize, eyeY - eyeSize * 0.3);
+                ctx.lineTo(sx + eyeSpacing + eyeSize * 0.5, eyeY + eyeSize);
+                ctx.lineTo(sx + eyeSpacing - eyeSize * 0.5, eyeY + eyeSize);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Glowing demonic pupils
                 const pupilColor = this.phase === 3 ? '#ff0000' : '#ff4400';
                 ctx.fillStyle = pupilColor;
-                ctx.shadowBlur = 15;
+                ctx.shadowBlur = 20;
                 ctx.shadowColor = pupilColor;
-                const pupilPulse = 0.08 + Math.sin(time * 0.01) * 0.02;
+                const pupilPulse = 0.1 + Math.sin(time * 0.012) * 0.04;
                 ctx.beginPath();
-                ctx.arc(sx - eyeSpacing, eyeY, r * pupilPulse, 0, Math.PI * 2);
-                ctx.arc(sx + eyeSpacing, eyeY, r * pupilPulse, 0, Math.PI * 2);
+                ctx.arc(sx - eyeSpacing, eyeY, s * pupilPulse, 0, Math.PI * 2);
+                ctx.arc(sx + eyeSpacing, eyeY, s * pupilPulse, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Angry eyebrows (flame wisps above eyes)
+                // Angry flame eyebrows
                 ctx.strokeStyle = this.phase === 3 ? '#ff2200' : '#ff6600';
-                ctx.lineWidth = 4;
-                ctx.shadowBlur = 8;
+                ctx.lineWidth = 5;
+                ctx.shadowBlur = 12;
                 ctx.beginPath();
-                ctx.moveTo(sx - eyeSpacing - eyeSize, eyeY - eyeSize * 1.3);
-                ctx.lineTo(sx - eyeSpacing + eyeSize * 0.5, eyeY - eyeSize * 0.8);
+                ctx.moveTo(sx - eyeSpacing - eyeSize * 1.2, eyeY - eyeSize * 1.5);
+                ctx.lineTo(sx - eyeSpacing + eyeSize * 0.3, eyeY - eyeSize * 0.7);
                 ctx.stroke();
                 ctx.beginPath();
-                ctx.moveTo(sx + eyeSpacing + eyeSize, eyeY - eyeSize * 1.3);
-                ctx.lineTo(sx + eyeSpacing - eyeSize * 0.5, eyeY - eyeSize * 0.8);
+                ctx.moveTo(sx + eyeSpacing + eyeSize * 1.2, eyeY - eyeSize * 1.5);
+                ctx.lineTo(sx + eyeSpacing - eyeSize * 0.3, eyeY - eyeSize * 0.7);
                 ctx.stroke();
+                
+                // Jagged teeth mouth
+                const mouthY = ghostY + s * 0.35;
+                ctx.fillStyle = '#000';
+                ctx.shadowBlur = 0;
+                ctx.beginPath();
+                ctx.moveTo(sx - s * 0.3, mouthY - s * 0.05);
+                ctx.lineTo(sx + s * 0.3, mouthY - s * 0.05);
+                ctx.lineTo(sx + s * 0.25, mouthY + s * 0.15);
+                ctx.lineTo(sx - s * 0.25, mouthY + s * 0.15);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Teeth
+                ctx.fillStyle = '#ffccaa';
+                for (let i = 0; i < 5; i++) {
+                    const tx = sx - s * 0.2 + (i * s * 0.1);
+                    ctx.beginPath();
+                    ctx.moveTo(tx, mouthY - s * 0.03);
+                    ctx.lineTo(tx + s * 0.04, mouthY + s * 0.08);
+                    ctx.lineTo(tx - s * 0.04, mouthY + s * 0.08);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                
+                // Highlight shine
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.beginPath();
+                ctx.ellipse(sx - s * 0.4, ghostY - s * 0.5, s * 0.2, s * 0.15, -0.3, 0, Math.PI * 2);
+                ctx.fill();
                 
                 // HP bar
                 ctx.shadowBlur = 0;
                 const barWidth = r * 2.5;
                 ctx.fillStyle = '#333';
-                ctx.fillRect(sx - barWidth/2, sy - r - 25, barWidth, 10);
+                ctx.fillRect(sx - barWidth/2, ghostY - s - 30, barWidth, 10);
                 
                 // HP bar color based on phase
                 const hpColor = this.phase === 3 ? '#ff0000' : (this.phase === 2 ? '#ffaa00' : '#00ff00');
                 ctx.fillStyle = hpColor;
-                ctx.fillRect(sx - barWidth/2, sy - r - 25, barWidth * (this.hp / this.maxHp), 10);
+                ctx.fillRect(sx - barWidth/2, ghostY - s - 30, barWidth * (this.hp / this.maxHp), 10);
                 ctx.strokeStyle = '#fff';
                 ctx.lineWidth = 2;
-                ctx.strokeRect(sx - barWidth/2, sy - r - 25, barWidth, 10);
+                ctx.strokeRect(sx - barWidth/2, ghostY - s - 30, barWidth, 10);
                 
-                // "INFERNO BOSS" label
+                // "INFERNO BOSS" label with ghost emoji
                 ctx.fillStyle = '#fff';
                 ctx.font = `bold ${camera.scale(14)}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.shadowBlur = 15;
                 ctx.shadowColor = '#ff4400';
-                ctx.fillText('🔥 INFERNO BOSS 🔥', sx, sy - r - 32);
+                ctx.fillText('🔥 INFERNO GHOST 🔥', sx, ghostY - s - 38);
                 
                 ctx.restore();
             }
