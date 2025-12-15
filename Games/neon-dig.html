@@ -4928,32 +4928,73 @@
         });
         
         let touchStartX = 0, touchStartY = 0;
+        let touchActive = false;
+        
+        function updateTouchKeys(touchX, touchY) {
+            const dx = touchX - touchStartX;
+            const dy = touchY - touchStartY;
+            
+            // Use smaller threshold for more responsive controls
+            const threshold = 12;
+            
+            // Allow diagonal movement by checking each axis independently
+            keys.left = dx < -threshold;
+            keys.right = dx > threshold;
+            keys.up = dy < -threshold;
+            keys.down = dy > threshold;
+        }
+        
+        function clearTouchKeys() {
+            keys.left = keys.right = keys.up = keys.down = false;
+            touchActive = false;
+        }
         
         controlZone.addEventListener('touchstart', (e) => {
             if (upgradeSelectionActive) return;
+            e.preventDefault();
             touchStartX = e.touches[0].clientX;
             touchStartY = e.touches[0].clientY;
-        }, { passive: true });
-        
-        controlZone.addEventListener('touchmove', (e) => {
-            if (upgradeSelectionActive) return;
-            e.preventDefault();
-            const dx = e.touches[0].clientX - touchStartX;
-            const dy = e.touches[0].clientY - touchStartY;
-            keys.left = dx < -15;
-            keys.right = dx > 15;
-            keys.up = dy < -15;
-            keys.down = dy > 15;
+            touchActive = true;
         }, { passive: false });
         
-        controlZone.addEventListener('touchend', () => {
-            keys.left = keys.right = keys.up = keys.down = false;
+        controlZone.addEventListener('touchmove', (e) => {
+            if (upgradeSelectionActive || !touchActive) return;
+            e.preventDefault();
+            updateTouchKeys(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: false });
+        
+        controlZone.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            clearTouchKeys();
+        }, { passive: false });
+        
+        controlZone.addEventListener('touchcancel', (e) => {
+            e.preventDefault();
+            clearTouchKeys();
+        }, { passive: false });
+        
+        // Also clear if touch leaves the control zone
+        controlZone.addEventListener('touchleave', (e) => {
+            clearTouchKeys();
         });
         
         // Canvas touch handling for iPad/tablet fullscreen mode
         // (control-zone may be hidden in fullscreen, so enable canvas touch too)
         let canvasTouchStartX = 0, canvasTouchStartY = 0;
         let canvasTouchActive = false;
+        
+        function updateCanvasTouchKeys(touchX, touchY) {
+            const dx = touchX - canvasTouchStartX;
+            const dy = touchY - canvasTouchStartY;
+            
+            // Use slightly larger threshold for canvas (more space to move)
+            const threshold = 20;
+            
+            keys.left = dx < -threshold;
+            keys.right = dx > threshold;
+            keys.up = dy < -threshold;
+            keys.down = dy > threshold;
+        }
         
         canvas.addEventListener('touchstart', (e) => {
             if (upgradeSelectionActive || !gameRunning) return;
@@ -4966,28 +5007,24 @@
         canvas.addEventListener('touchmove', (e) => {
             if (upgradeSelectionActive || !gameRunning || !canvasTouchActive) return;
             e.preventDefault();
-            const dx = e.touches[0].clientX - canvasTouchStartX;
-            const dy = e.touches[0].clientY - canvasTouchStartY;
-            // Use larger threshold for canvas (more movement space)
-            keys.left = dx < -25;
-            keys.right = dx > 25;
-            keys.up = dy < -25;
-            keys.down = dy > 25;
+            updateCanvasTouchKeys(e.touches[0].clientX, e.touches[0].clientY);
         }, { passive: false });
         
-        canvas.addEventListener('touchend', () => {
+        canvas.addEventListener('touchend', (e) => {
             if (canvasTouchActive) {
+                e.preventDefault();
                 keys.left = keys.right = keys.up = keys.down = false;
                 canvasTouchActive = false;
             }
-        });
+        }, { passive: false });
         
-        canvas.addEventListener('touchcancel', () => {
+        canvas.addEventListener('touchcancel', (e) => {
             if (canvasTouchActive) {
+                e.preventDefault();
                 keys.left = keys.right = keys.up = keys.down = false;
                 canvasTouchActive = false;
             }
-        });
+        }, { passive: false });
         
         // ==================== EVENT LISTENERS ====================
         submitScoreBtn.addEventListener('click', async () => {
@@ -5368,6 +5405,28 @@
         window.addEventListener('orientationchange', () => {
             setTimeout(handleResize, 100);
             setTimeout(handleResize, 300);
+        });
+        
+        // Clear stuck keys when page loses focus or visibility changes
+        // This prevents keys from staying stuck if user switches apps or tabs
+        function clearAllKeys() {
+            keys.left = keys.right = keys.up = keys.down = false;
+            touchActive = false;
+            canvasTouchActive = false;
+        }
+        
+        window.addEventListener('blur', clearAllKeys);
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                clearAllKeys();
+            }
+        });
+        
+        // Also clear keys when any modal/overlay becomes active
+        // (in case touch events get lost during transitions)
+        window.addEventListener('focus', () => {
+            // Small delay to let touch events settle
+            setTimeout(clearAllKeys, 50);
         });
         
         // Re-check size after delays for iframe loading
