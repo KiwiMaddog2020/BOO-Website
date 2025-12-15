@@ -1815,6 +1815,45 @@
             text-shadow: 0 0 20px #ffd700;
         }
         
+        .leaderboard-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        
+        .leaderboard-tab {
+            flex: 1;
+            padding: 10px 16px;
+            background: transparent;
+            border: 2px solid #555;
+            border-radius: 8px;
+            color: #888;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+        
+        .leaderboard-tab:hover {
+            border-color: #888;
+            color: #aaa;
+        }
+        
+        .leaderboard-tab.active-campaign {
+            border-color: #f0f;
+            color: #f0f;
+            background: rgba(255, 0, 255, 0.15);
+            box-shadow: 0 0 15px rgba(255, 0, 255, 0.3);
+        }
+        
+        .leaderboard-tab.active-classic {
+            border-color: #0ff;
+            color: #0ff;
+            background: rgba(0, 255, 255, 0.15);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+        }
+        
         .leaderboard-close {
             width: 36px;
             height: 36px;
@@ -2142,6 +2181,7 @@
         <div class="score-modal-content">
             <div class="score-modal-title" id="scoreModalTitle">HIGH SCORE</div>
             <div class="score-stats">
+                <span id="finalModeDisplay" style="color: #f0f; font-weight: bold;">CAMPAIGN</span><br>
                 Waves: <span id="finalWaveDisplay">0</span><br>
                 Kills: <span id="finalKillsDisplay">0</span>
             </div>
@@ -2159,8 +2199,12 @@
     <div class="leaderboard-overlay" id="leaderboardOverlay">
         <div class="leaderboard-container">
             <div class="leaderboard-header">
-                <div class="leaderboard-title">🏆 TOP 100</div>
+                <div class="leaderboard-title">🏆 LEADERBOARD</div>
                 <button class="leaderboard-close" id="leaderboardClose">✕</button>
+            </div>
+            <div class="leaderboard-tabs">
+                <button class="leaderboard-tab active-campaign" id="tabCampaign">Campaign</button>
+                <button class="leaderboard-tab" id="tabClassic">Classic</button>
             </div>
             <div class="leaderboard-list" id="leaderboardList">
                 <div class="leaderboard-loading">Loading scores...</div>
@@ -4961,15 +5005,22 @@
         const scoreErrorMsg = document.getElementById('scoreErrorMsg');
         const finalWaveDisplay = document.getElementById('finalWaveDisplay');
         const finalKillsDisplay = document.getElementById('finalKillsDisplay');
+        const finalModeDisplay = document.getElementById('finalModeDisplay');
         
         let pendingWave = 0;
         let pendingKills = 0;
+        let pendingMode = 'campaign';
         
         async function showScoreModal(finalWave, finalKills) {
             pendingWave = finalWave;
             pendingKills = finalKills;
+            pendingMode = gameMode === 'endless' ? 'campaign' : 'classic';
+            
             finalWaveDisplay.textContent = finalWave;
             finalKillsDisplay.textContent = finalKills;
+            finalModeDisplay.textContent = pendingMode.toUpperCase();
+            finalModeDisplay.style.color = pendingMode === 'campaign' ? '#f0f' : '#0ff';
+            
             usernameInput.value = '';
             scoreErrorMsg.textContent = '';
             usernameInput.classList.remove('error');
@@ -5000,11 +5051,17 @@
                         .limit(100)
                         .get();
                     snapshot.forEach(doc => {
-                        scores.push(doc.data().wave);
+                        const data = doc.data();
+                        // Filter by mode (treat missing mode as 'classic' for legacy scores)
+                        if ((data.mode || 'classic') === pendingMode) {
+                            scores.push(data.wave);
+                        }
                     });
                 } else {
                     const localScores = getLocalScores();
-                    scores = localScores.map(s => s.wave);
+                    scores = localScores
+                        .filter(s => (s.mode || 'classic') === pendingMode)
+                        .map(s => s.wave);
                 }
                 
                 let rank = 1;
@@ -5055,17 +5112,18 @@
                         name: username,
                         wave: pendingWave,
                         kills: pendingKills,
+                        mode: pendingMode,
                         timestamp: firebase.firestore.FieldValue.serverTimestamp()
                     });
                 } else {
-                    saveLocalScore(username, pendingWave, pendingKills);
+                    saveLocalScore(username, pendingWave, pendingKills, pendingMode);
                 }
                 
                hideScoreModal();
                 
             } catch (e) {
                 console.warn('Score submission failed:', e);
-                saveLocalScore(username, pendingWave, pendingKills);
+                saveLocalScore(username, pendingWave, pendingKills, pendingMode);
                 hideScoreModal();
             }
             
@@ -5073,10 +5131,10 @@
             submitScoreBtn.disabled = false;
         }
         
-        function saveLocalScore(name, waveNum, killCount) {
+        function saveLocalScore(name, waveNum, killCount, mode) {
             try {
                 const scores = JSON.parse(localStorage.getItem('towerdefense_scores') || '[]');
-                scores.push({ name, wave: waveNum, kills: killCount, timestamp: Date.now() });
+                scores.push({ name, wave: waveNum, kills: killCount, mode: mode, timestamp: Date.now() });
                 scores.sort((a, b) => b.wave - a.wave || b.kills - a.kills);
                 localStorage.setItem('towerdefense_scores', JSON.stringify(scores.slice(0, 100)));
             } catch (e) {
@@ -5126,43 +5184,65 @@
         const leaderboardClose = document.getElementById('leaderboardClose');
         const leaderboardBtn = document.getElementById('leaderboardBtn');
         const menuLeaderboardBtn = document.getElementById('menuLeaderboardBtn');
+        const tabCampaign = document.getElementById('tabCampaign');
+        const tabClassic = document.getElementById('tabClassic');
+        
+        let currentLeaderboardMode = 'campaign';
+        let cachedScores = []; // Cache scores to avoid refetching on tab switch
         
         async function showLeaderboard() {
             leaderboardOverlay.classList.add('active');
             leaderboardList.innerHTML = '<div class="leaderboard-loading">Loading scores...</div>';
             
+            // Reset to campaign tab
+            currentLeaderboardMode = 'campaign';
+            updateLeaderboardTabs();
+            
             try {
-                let scores = [];
+                cachedScores = [];
                 
                 if (firebaseReady && db) {
                     const snapshot = await db.collection('towerdefense_scores')
                         .orderBy('wave', 'desc')
-                        .limit(100)
+                        .limit(200)
                         .get();
                     
                     snapshot.forEach(doc => {
-                        scores.push(doc.data());
+                        cachedScores.push(doc.data());
                     });
                 } else {
-                    scores = getLocalScores();
+                    cachedScores = getLocalScores();
                 }
                 
-                renderLeaderboard(scores);
+                renderLeaderboard();
                 
             } catch (e) {
                 console.warn('Leaderboard fetch failed:', e);
-                renderLeaderboard(getLocalScores());
+                cachedScores = getLocalScores();
+                renderLeaderboard();
             }
         }
         
-        function renderLeaderboard(scores) {
-            if (scores.length === 0) {
+        function updateLeaderboardTabs() {
+            tabCampaign.className = 'leaderboard-tab' + (currentLeaderboardMode === 'campaign' ? ' active-campaign' : '');
+            tabClassic.className = 'leaderboard-tab' + (currentLeaderboardMode === 'classic' ? ' active-classic' : '');
+        }
+        
+        function renderLeaderboard() {
+            // Filter scores by current mode (treat missing mode as 'classic' for legacy)
+            const filteredScores = cachedScores.filter(s => (s.mode || 'classic') === currentLeaderboardMode);
+            
+            if (filteredScores.length === 0) {
                 leaderboardList.innerHTML = '<div class="leaderboard-empty">No scores yet. Be the first!</div>';
                 return;
             }
             
+            // Sort and limit to top 100
+            filteredScores.sort((a, b) => b.wave - a.wave || b.kills - a.kills);
+            const topScores = filteredScores.slice(0, 100);
+            
             let html = '';
-            scores.forEach((entry, index) => {
+            topScores.forEach((entry, index) => {
                 const rank = index + 1;
                 const isTop3 = rank <= 3;
                 const rankClass = isTop3 ? `top-3 leaderboard-rank-${rank}` : '';
@@ -5179,6 +5259,23 @@
             
             leaderboardList.innerHTML = html;
         }
+        
+        // Tab click handlers
+        tabCampaign.addEventListener('click', () => {
+            if (currentLeaderboardMode !== 'campaign') {
+                currentLeaderboardMode = 'campaign';
+                updateLeaderboardTabs();
+                renderLeaderboard();
+            }
+        });
+        
+        tabClassic.addEventListener('click', () => {
+            if (currentLeaderboardMode !== 'classic') {
+                currentLeaderboardMode = 'classic';
+                updateLeaderboardTabs();
+                renderLeaderboard();
+            }
+        });
         
         function hideLeaderboard() {
             leaderboardOverlay.classList.remove('active');
