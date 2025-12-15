@@ -4892,12 +4892,17 @@
                 const fireRate = def.baseFireRate * Math.pow(0.975, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
-                const target = findNearestEnemy(this.x, this.y);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.07);
+                const projectileCount = def.baseProjectiles + Math.floor(level / 4);
+                const totalDamage = baseDamage * projectileCount;
+                
+                const target = findNearestEnemy(this.x, this.y, totalDamage);
                 if (!target) return;
                 
+                // Track incoming damage on target
+                target.incomingDamage += totalDamage;
+                
                 state.lastFire = now;
-                const projectileCount = def.baseProjectiles + Math.floor(level / 4);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.07);
                 const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
@@ -5022,12 +5027,16 @@
                 const fireRate = def.baseFireRate * Math.pow(0.975, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
-                const target = findNearestEnemy(this.x, this.y);
-                if (!target) return;
-                
-                state.lastFire = now;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.08);
                 const pierce = def.pierce + Math.floor(level / 4);
+                
+                const target = findNearestEnemy(this.x, this.y, baseDamage);
+                if (!target) return;
+                
+                // Track incoming damage on target
+                target.incomingDamage += baseDamage;
+                
+                state.lastFire = now;
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 projectiles.push(new Projectile(
@@ -5302,12 +5311,17 @@
                 const fireRate = def.baseFireRate * Math.pow(0.975, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
-                const target = findNearestEnemy(this.x, this.y);
-                if (!target) return;
-                
-                state.lastFire = now;
                 const shardCount = def.baseProjectiles + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.06);
+                const totalDamage = baseDamage * shardCount;
+                
+                const target = findNearestEnemy(this.x, this.y, totalDamage);
+                if (!target) return;
+                
+                // Track incoming damage on target
+                target.incomingDamage += totalDamage;
+                
+                state.lastFire = now;
                 const pierce = 1 + Math.floor(level / 4); // +1 pierce per 4 levels
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
@@ -6083,6 +6097,7 @@
                 this.y = y;
                 this.type = type;
                 this.orbHitCooldown = 0;
+                this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Status effects
                 this.burnDamage = 0;
@@ -6303,6 +6318,8 @@
 
             takeDamage(amount, isCrit = false) {
                 this.hp -= amount;
+                // Reduce tracked incoming damage (projectile has hit)
+                this.incomingDamage = Math.max(0, this.incomingDamage - amount);
                 spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
                 
                 if (this.hp <= 0 && !this.dead) {
@@ -6473,6 +6490,7 @@
                 this.guardX = guardX; // Pot of gold location to guard
                 this.guardY = guardY;
                 this.radius = 16;
+                this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Time-based scaling for leprechaun
                 const timeScale = 1 + Math.floor(gameTime / 60) * 0.25; // +25% per minute
@@ -6610,6 +6628,8 @@
 
             takeDamage(amount, isCrit = false) {
                 this.hp -= amount;
+                // Reduce tracked incoming damage (projectile has hit)
+                this.incomingDamage = Math.max(0, this.incomingDamage - amount);
                 spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
                 spawnParticles(this.x, this.y, COLORS.green, 5);
                 
@@ -7167,6 +7187,7 @@
                 this.x = x;
                 this.y = y;
                 this.radius = 35;
+                this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Time-based scaling for mini boss
                 const timeScale = 1 + Math.floor(gameTime / 60) * 0.20; // +20% per minute
@@ -7259,6 +7280,8 @@
             
             takeDamage(amount, isCrit = false) {
                 this.hp -= amount;
+                // Reduce tracked incoming damage (projectile has hit)
+                this.incomingDamage = Math.max(0, this.incomingDamage - amount);
                 spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
                 
                 if (this.hp <= 0 && !this.dead) {
@@ -7373,6 +7396,7 @@
                 this.x = x;
                 this.y = y;
                 this.radius = 55;
+                this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Time-based scaling for major boss
                 const timeScale = 1 + Math.floor(gameTime / 60) * 0.25; // +25% per minute
@@ -7548,6 +7572,8 @@
             
             takeDamage(amount, isCrit = false) {
                 this.hp -= amount;
+                // Reduce tracked incoming damage (projectile has hit)
+                this.incomingDamage = Math.max(0, this.incomingDamage - amount);
                 spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
                 
                 if (this.hp <= 0 && !this.dead) {
@@ -11665,9 +11691,15 @@
         // Shot counter for alternating leprechaun targeting
         let shotCounter = 0;
         
-        function findNearestEnemy(x, y) {
+        function findNearestEnemy(x, y, projectileDamage = 0) {
             let nearest = null;
             let minDist = Infinity;
+            
+            // Helper to check if target will survive incoming damage
+            const willSurvive = (target) => {
+                if (!projectileDamage) return true; // No damage check needed
+                return target.hp > target.incomingDamage;
+            };
             
             // Fixed targeting range based on target visible area (consistent across all devices)
             const maxRange = Math.hypot(TARGET_VISIBLE_WIDTH, TARGET_VISIBLE_HEIGHT) / 2 * 0.75;
@@ -11679,7 +11711,7 @@
             if (preferLeprechaun) {
                 // Check for nearby leprechaun (within screen range)
                 for (const lep of leprechauns) {
-                    if (lep.dead) continue;
+                    if (lep.dead || !willSurvive(lep)) continue;
                     const dist = Math.hypot(lep.x - x, lep.y - y);
                     if (dist < maxRange && dist < minDist) {
                         minDist = dist;
@@ -11692,7 +11724,7 @@
             
             // Normal enemy targeting (within screen range)
             for (const enemy of enemies) {
-                if (enemy.dead) continue;
+                if (enemy.dead || !willSurvive(enemy)) continue;
                 const dist = Math.hypot(enemy.x - x, enemy.y - y);
                 if (dist < maxRange && dist < minDist) {
                     minDist = dist;
@@ -11702,7 +11734,7 @@
             
             // Also check leprechauns if no enemy found or leprechaun is closer
             for (const lep of leprechauns) {
-                if (lep.dead) continue;
+                if (lep.dead || !willSurvive(lep)) continue;
                 const dist = Math.hypot(lep.x - x, lep.y - y);
                 if (dist < maxRange && dist < minDist) {
                     minDist = dist;
@@ -11712,7 +11744,7 @@
             
             // Check bosses within range
             for (const boss of bosses) {
-                if (boss.dead) continue;
+                if (boss.dead || !willSurvive(boss)) continue;
                 const dist = Math.hypot(boss.x - x, boss.y - y);
                 if (dist < maxRange && dist < minDist) {
                     minDist = dist;
