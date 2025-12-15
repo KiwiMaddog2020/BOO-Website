@@ -1988,20 +1988,37 @@
                 stuck = false;
                 attempts++;
                 
-                // Check if any corner is stuck
-                const corners = [
-                    { x: player.x + margin, y: player.y + margin },
-                    { x: player.x + player.width - margin, y: player.y + margin },
-                    { x: player.x + margin, y: player.y + player.height - margin },
-                    { x: player.x + player.width - margin, y: player.y + player.height - margin }
-                ];
+                // Check each corner and determine best push direction
+                const topLeft = getTile(player.x + margin, player.y + margin) !== TILE.AIR;
+                const topRight = getTile(player.x + player.width - margin, player.y + margin) !== TILE.AIR;
+                const bottomLeft = getTile(player.x + margin, player.y + player.height - margin) !== TILE.AIR;
+                const bottomRight = getTile(player.x + player.width - margin, player.y + player.height - margin) !== TILE.AIR;
                 
-                for (const corner of corners) {
-                    if (getTile(corner.x, corner.y) !== TILE.AIR) {
-                        stuck = true;
-                        // Push up primarily (most common case is falling into ground)
+                if (topLeft || topRight || bottomLeft || bottomRight) {
+                    stuck = true;
+                    
+                    // Determine best push direction based on which corners are stuck
+                    const stuckTop = topLeft || topRight;
+                    const stuckBottom = bottomLeft || bottomRight;
+                    const stuckLeft = topLeft || bottomLeft;
+                    const stuckRight = topRight || bottomRight;
+                    
+                    // Priority: push up if bottom is stuck, push sideways if only one side stuck
+                    if (stuckBottom && !stuckTop) {
+                        // Most common case: landed on ground, push up
                         player.y -= 1;
-                        break;
+                    } else if (stuckTop && !stuckBottom) {
+                        // Hit ceiling, push down
+                        player.y += 1;
+                    } else if (stuckLeft && !stuckRight) {
+                        // Hit left wall, push right
+                        player.x += 1;
+                    } else if (stuckRight && !stuckLeft) {
+                        // Hit right wall, push left
+                        player.x -= 1;
+                    } else {
+                        // Multiple sides stuck - default to pushing up (falling into ground is most common)
+                        player.y -= 1;
                     }
                 }
             }
@@ -2498,6 +2515,13 @@
             if (direction === 'down') {
                 targetTX = Math.floor((player.x + player.width / 2) / TILE_SIZE);
                 targetAbsTY = Math.floor((player.y + player.height) / TILE_SIZE);
+                
+                // SAFETY: Ensure target is actually BELOW player's center (prevent upward digging bug)
+                const playerCenterTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
+                if (targetAbsTY <= playerCenterTY) {
+                    // Target is at or above player center - invalid for down dig
+                    return false;
+                }
             } else if (direction === 'left') {
                 targetTX = Math.floor(player.x / TILE_SIZE);
                 targetAbsTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
@@ -3100,7 +3124,10 @@
                     const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
                     const absoluteTy = Math.floor((player.y + player.height) / TILE_SIZE);
                     const ty = getWorldRow(absoluteTy);
-                    if (ty >= 0 && ty < world.length && world[ty][tx] !== TILE.AIR) {
+                    
+                    // SAFETY: Ensure target is actually BELOW player's center (prevent upward digging bug)
+                    const playerCenterTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
+                    if (absoluteTy > playerCenterTY && ty >= 0 && ty < world.length && world[ty][tx] !== TILE.AIR) {
                         dig(tx, absoluteTy);
                     }
                 }
