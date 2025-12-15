@@ -5368,6 +5368,24 @@
             pointer-events: none !important;
         }
         
+        /* Prevent iOS gestures when in pseudo-fullscreen */
+        body.pseudo-fullscreen-active {
+            overflow: hidden !important;
+            position: fixed !important;
+            width: 100% !important;
+            height: 100% !important;
+            touch-action: none !important;
+            overscroll-behavior: none !important;
+            -webkit-overflow-scrolling: auto !important;
+        }
+        
+        /* Prevent scroll/gesture on html when pseudo-fullscreen */
+        html:has(body.pseudo-fullscreen-active) {
+            overflow: hidden !important;
+            touch-action: none !important;
+            overscroll-behavior: none !important;
+        }
+        
         /* Mobile pseudo-fullscreen close button positioning */
         @media (max-width: 768px) {
             .game-container.pseudo-fullscreen .game-fullscreen-btn {
@@ -7269,7 +7287,11 @@
         // Detect Safari (iOS and macOS) - improved detection
         const ua = navigator.userAgent;
         const isSafari = /Safari/.test(ua) && !/Chrome/.test(ua) && !/Chromium/.test(ua) && !/Edg/.test(ua);
-        const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+        // iPadOS 13+ reports as Macintosh, so also check for touch + Mac combo
+        const isIPadOS = /iPad/.test(ua) || 
+                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                        (/Macintosh/.test(ua) && 'ontouchend' in document);
+        const isIOS = (/iPhone|iPod/.test(ua) || isIPadOS) && !window.MSStream;
         const isMacSafari = isSafari && /Macintosh/.test(ua) && !isIOS;
         
         // Apply Safari-specific fixes
@@ -7279,6 +7301,28 @@
             document.body.classList.add('is-safari');
             if (isIOS) document.body.classList.add('is-ios');
             if (isMacSafari) document.body.classList.add('is-mac-safari');
+            
+            // DIRECT STYLE APPLICATION FOR iOS
+            // iOS Safari has a GPU compositing bug where text-stroke + animation
+            // only renders on the last character. Force static styles directly.
+            if (isIOS) {
+                document.querySelectorAll('h1').forEach(el => {
+                    el.style.setProperty('color', '#000000', 'important');
+                    el.style.setProperty('-webkit-text-fill-color', '#000000', 'important');
+                    el.style.setProperty('-webkit-text-stroke', '2px #ffffff', 'important');
+                    el.style.setProperty('-webkit-animation', 'none', 'important');
+                    el.style.setProperty('animation', 'none', 'important');
+                    el.style.setProperty('text-shadow', '0 0 10px rgba(0, 255, 255, 0.9), 0 0 20px rgba(0, 255, 255, 0.7), 0 0 40px rgba(255, 0, 255, 0.5), 0 0 60px rgba(255, 0, 255, 0.3)', 'important');
+                });
+                document.querySelectorAll('h2').forEach(el => {
+                    el.style.setProperty('color', '#000000', 'important');
+                    el.style.setProperty('-webkit-text-fill-color', '#000000', 'important');
+                    el.style.setProperty('-webkit-text-stroke', '2px #ffffff', 'important');
+                    el.style.setProperty('-webkit-animation', 'none', 'important');
+                    el.style.setProperty('animation', 'none', 'important');
+                    el.style.setProperty('text-shadow', '0 0 8px rgba(0, 255, 255, 0.8), 0 0 15px rgba(255, 0, 255, 0.5), 0 0 30px rgba(255, 0, 255, 0.3)', 'important');
+                });
+            }
             
             // DIRECT STYLE APPLICATION FOR DESKTOP SAFARI
             // Apply styles directly to elements to bypass any specificity issues
@@ -8592,8 +8636,9 @@
             const isIPad = /iPad/.test(navigator.userAgent) || 
                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
                           (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
-            // Only iPhone needs pseudo-fullscreen; iPadOS 16.4+ supports native fullscreen
-            const isIOS = isIPhone;
+            // Both iPhone AND iPad use pseudo-fullscreen to prevent swipe-down exit gesture
+            // Native fullscreen on iOS has an unblockable swipe-down-to-exit system gesture
+            const isIOS = isIPhone || isIPad;
             let pseudoFullscreen = false;
             
             function enterPseudoFullscreen() {
@@ -8601,6 +8646,9 @@
                 arcadeGameContainerFS.classList.add('pseudo-fullscreen');
                 document.body.classList.add('pseudo-fullscreen-active');
                 document.body.style.overflow = 'hidden';
+                document.body.style.touchAction = 'none';
+                document.documentElement.style.overflow = 'hidden';
+                document.documentElement.style.touchAction = 'none';
                 fullscreenBtn.textContent = '✕';
                 
                 // Hide music player
@@ -8685,6 +8733,9 @@
                 arcadeGameContainerFS.classList.remove('pseudo-fullscreen');
                 document.body.classList.remove('pseudo-fullscreen-active');
                 document.body.style.overflow = '';
+                document.body.style.touchAction = '';
+                document.documentElement.style.overflow = '';
+                document.documentElement.style.touchAction = '';
                 fullscreenBtn.textContent = '⛶';
                 
                 // Show music player
