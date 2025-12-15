@@ -2508,20 +2508,92 @@
             }
         }
         
+        // Find the best block to dig when pressing down
+        // Checks center first, then looks left/right within 1 tile for closest diggable block
+        function findDownDigTarget() {
+            const playerCenterX = player.x + player.width / 2;
+            const playerBottomY = player.y + player.height;
+            const absoluteTy = Math.floor(playerBottomY / TILE_SIZE);
+            
+            // SAFETY: Ensure target row is actually BELOW player's center
+            const playerCenterTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
+            if (absoluteTy <= playerCenterTY) {
+                return null;
+            }
+            
+            const ty = getWorldRow(absoluteTy);
+            if (ty < 0 || ty >= world.length) return null;
+            
+            // Calculate center tile
+            const centerTX = Math.floor(playerCenterX / TILE_SIZE);
+            
+            // Check center tile first
+            if (centerTX >= 0 && centerTX < WORLD_WIDTH) {
+                const centerTile = world[ty][centerTX];
+                if (centerTile !== TILE.AIR && centerTile !== TILE.BEDROCK) {
+                    return { tx: centerTX, absoluteTy: absoluteTy };
+                }
+            }
+            
+            // Center is air/bedrock - check left and right neighbors within reach
+            // Calculate how far left/right the player extends
+            const playerLeftX = player.x;
+            const playerRightX = player.x + player.width;
+            
+            // Check tiles that the player is overlapping or nearly overlapping
+            const leftTX = centerTX - 1;
+            const rightTX = centerTX + 1;
+            
+            // Calculate distance from player center to each neighboring tile's center
+            const leftTileCenterX = leftTX * TILE_SIZE + TILE_SIZE / 2;
+            const rightTileCenterX = rightTX * TILE_SIZE + TILE_SIZE / 2;
+            const distToLeft = Math.abs(playerCenterX - leftTileCenterX);
+            const distToRight = Math.abs(playerCenterX - rightTileCenterX);
+            
+            // Only consider tiles within 1 tile width of player center
+            const maxReach = TILE_SIZE * 1.2; // Slightly generous reach
+            
+            let leftValid = false;
+            let rightValid = false;
+            
+            if (leftTX >= 0 && distToLeft <= maxReach) {
+                const leftTile = world[ty][leftTX];
+                if (leftTile !== TILE.AIR && leftTile !== TILE.BEDROCK) {
+                    leftValid = true;
+                }
+            }
+            
+            if (rightTX < WORLD_WIDTH && distToRight <= maxReach) {
+                const rightTile = world[ty][rightTX];
+                if (rightTile !== TILE.AIR && rightTile !== TILE.BEDROCK) {
+                    rightValid = true;
+                }
+            }
+            
+            // Return closest valid target
+            if (leftValid && rightValid) {
+                return distToLeft <= distToRight 
+                    ? { tx: leftTX, absoluteTy: absoluteTy }
+                    : { tx: rightTX, absoluteTy: absoluteTy };
+            } else if (leftValid) {
+                return { tx: leftTX, absoluteTy: absoluteTy };
+            } else if (rightValid) {
+                return { tx: rightTX, absoluteTy: absoluteTy };
+            }
+            
+            return null;
+        }
+        
         // Attempt to dig in a specific direction
         function tryDigInDirection(direction) {
             let targetTX, targetAbsTY;
             
             if (direction === 'down') {
-                targetTX = Math.floor((player.x + player.width / 2) / TILE_SIZE);
-                targetAbsTY = Math.floor((player.y + player.height) / TILE_SIZE);
-                
-                // SAFETY: Ensure target is actually BELOW player's center (prevent upward digging bug)
-                const playerCenterTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
-                if (targetAbsTY <= playerCenterTY) {
-                    // Target is at or above player center - invalid for down dig
-                    return false;
-                }
+                // Use smart targeting for down-dig
+                const result = findDownDigTarget();
+                if (!result) return false;
+                targetTX = result.tx;
+                targetAbsTY = result.absoluteTy;
             } else if (direction === 'left') {
                 targetTX = Math.floor(player.x / TILE_SIZE);
                 targetAbsTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
@@ -3121,14 +3193,9 @@
                 
                 if (keys.down && !player.digging) {
                     lastDigDirection = 'down';
-                    const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
-                    const absoluteTy = Math.floor((player.y + player.height) / TILE_SIZE);
-                    const ty = getWorldRow(absoluteTy);
-                    
-                    // SAFETY: Ensure target is actually BELOW player's center (prevent upward digging bug)
-                    const playerCenterTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
-                    if (absoluteTy > playerCenterTY && ty >= 0 && ty < world.length && world[ty][tx] !== TILE.AIR) {
-                        dig(tx, absoluteTy);
+                    const target = findDownDigTarget();
+                    if (target) {
+                        dig(target.tx, target.absoluteTy);
                     }
                 }
                 
