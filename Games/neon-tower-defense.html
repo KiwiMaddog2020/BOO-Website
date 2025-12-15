@@ -1981,11 +1981,11 @@
             <div class="mode-title">SELECT MODE</div>
             <button class="mode-btn endless" id="endlessModeBtn">
                 CAMPAIGN
-                <div class="mode-desc">A new stage every 10 levels</div>
+                <div class="mode-desc">New stage every 10 levels</div>
             </button>
             <button class="mode-btn" id="classicModeBtn">
                 CLASSIC
-                <div class="mode-desc">One stage, increasing difficulty</div>
+                <div class="mode-desc">Single stage</div>
             </button>
             <button class="back-btn" id="modeBackBtn">← BACK</button>
         </div>
@@ -3221,6 +3221,10 @@
         let isInfiniteMode = false; // True when wave 50+ reached
         let infiniteSpawnRate = 1; // Accelerates during infinite mode
         
+        // Leprechaun system - spawns once per 10-wave cycle on waves 7-10
+        let leprechaunSpawnedThisCycle = false;
+        let leprechaunAlive = false; // Track if leprechaun is currently on field
+        
         // Endless mode tower limit bonus (increases each stage)
         let endlessTowerLimitBonus = 0;
         
@@ -3573,6 +3577,10 @@
             infiniteSpawnRate = 1;
             endlessTowerLimitBonus = 0;
             
+            // Reset leprechaun state
+            leprechaunSpawnedThisCycle = false;
+            leprechaunAlive = false;
+            
             // Set starting map based on mode
             if (gameMode === 'endless') {
                 // Endless mode starts with MAP_LAYOUTS[0] (Spiral inward - different from classic)
@@ -3767,39 +3775,39 @@
             if (gameMode === 'endless') {
                 // Endless mode: compressed 10-wave difficulty curve per stage
                 const effectiveWave = stageWave; // 1-10 within stage
-                const stageMult = Math.pow(1.2, endlessStage - 1); // Each stage 20% harder (was 50%)
+                const stageMult = Math.pow(1.5, endlessStage - 1); // Each stage 50% harder
                 
-                // Gentler within-stage progression
+                // Within-stage progression
                 if (effectiveWave <= 3) {
-                    healthMult = 1 + (effectiveWave * 0.1);
+                    healthMult = 1 + (effectiveWave * 0.15);
                     speedMult = 1;
-                    dangerMult = effectiveWave * 0.08;
+                    dangerMult = effectiveWave * 0.12;
                 } else if (effectiveWave <= 6) {
-                    healthMult = 1.3 + ((effectiveWave - 3) * 0.2);
-                    speedMult = 1 + ((effectiveWave - 3) * 0.03);
-                    dangerMult = 0.25 + ((effectiveWave - 3) * 0.1);
+                    healthMult = 1.45 + ((effectiveWave - 3) * 0.35);
+                    speedMult = 1 + ((effectiveWave - 3) * 0.05);
+                    dangerMult = 0.35 + ((effectiveWave - 3) * 0.15);
                 } else if (effectiveWave <= 9) {
-                    healthMult = 1.9 + ((effectiveWave - 6) * 0.3);
-                    speedMult = 1.09 + ((effectiveWave - 6) * 0.03);
-                    dangerMult = 0.55 + ((effectiveWave - 6) * 0.12);
+                    healthMult = 2.5 + ((effectiveWave - 6) * 0.5);
+                    speedMult = 1.15 + ((effectiveWave - 6) * 0.05);
+                    dangerMult = 0.8 + ((effectiveWave - 6) * 0.18);
                 } else {
                     // Wave 10: Boss wave
-                    healthMult = 3.0;
-                    speedMult = 1.2;
-                    dangerMult = 1.0;
+                    healthMult = 4.0;
+                    speedMult = 1.3;
+                    dangerMult = 1.4;
                 }
                 
                 // Apply stage multiplier
                 healthMult *= stageMult;
-                speedMult *= (1 + (endlessStage - 1) * 0.04); // 4% faster each stage (was 10%)
-                dangerMult *= (1 + (endlessStage - 1) * 0.1); // 10% more dangerous (was 20%)
+                speedMult *= (1 + (endlessStage - 1) * 0.08); // 8% faster each stage
+                dangerMult *= (1 + (endlessStage - 1) * 0.15); // 15% more dangerous
                 
-                // Infinite mode: gentler exponential scaling
+                // Infinite mode: steep exponential scaling
                 if (isInfiniteMode) {
                     const infiniteWaves = totalEndlessWaves - 49;
-                    healthMult *= Math.pow(1.05, infiniteWaves); // Was 1.12
-                    speedMult *= Math.pow(1.01, infiniteWaves); // Was 1.03
-                    infiniteSpawnRate = 1 + (infiniteWaves * 0.06); // Was 0.15
+                    healthMult *= Math.pow(1.12, infiniteWaves);
+                    speedMult *= Math.pow(1.025, infiniteWaves);
+                    infiniteSpawnRate = 1 + (infiniteWaves * 0.12);
                 }
             } else {
                 // Classic mode scaling (unchanged)
@@ -3861,12 +3869,27 @@
                 type = 'fast';
             }
             
+            // Leprechaun spawn check - waves 7-10 of each 10-wave cycle
+            const cycleWave = ((wave - 1) % 10) + 1; // 1-10 within cycle
+            if (!leprechaunSpawnedThisCycle && !leprechaunAlive && cycleWave >= 7) {
+                // Increasing chance: 15% at wave 7, 25% at 8, 40% at 9, 100% at 10
+                const leprechaunChance = cycleWave === 7 ? 0.15 : 
+                                         cycleWave === 8 ? 0.25 : 
+                                         cycleWave === 9 ? 0.40 : 1.0;
+                if (Math.random() < leprechaunChance) {
+                    type = 'leprechaun';
+                    leprechaunSpawnedThisCycle = true;
+                    leprechaunAlive = true;
+                }
+            }
+            
             const enemyTypes = {
                 normal: { healthMult: 1, speedMult: 1, size: 9, color: '#ff3366', gold: 5 },
                 fast: { healthMult: 0.6, speedMult: 1.5, size: 7, color: '#ffcc00', gold: 7 },
                 tank: { healthMult: 3, speedMult: 0.6, size: 14, color: '#9933ff', gold: 15 },
                 boss: { healthMult: 8, speedMult: 0.4, size: 20, color: '#ff0000', gold: 50 },
-                megaboss: { healthMult: 25, speedMult: 0.25, size: 28, color: '#ff00ff', gold: 200 }
+                megaboss: { healthMult: 25, speedMult: 0.25, size: 28, color: '#ff00ff', gold: 200 },
+                leprechaun: { healthMult: 2, speedMult: 1.8, size: 11, color: '#00ff66', gold: 100 }
             };
             
             const config = enemyTypes[type];
@@ -3918,6 +3941,15 @@
             
             if (!nextPoint) {
                 enemy.escaped = true;
+                
+                // Leprechaun escape: no penalty, just missed bonus
+                if (enemy.type === 'leprechaun') {
+                    leprechaunAlive = false;
+                    createParticles(enemy.x, enemy.y, '#00ff66', 15);
+                    createParticles(enemy.x, enemy.y, '#ffd700', 10);
+                    return;
+                }
+                
                 // Megaboss: 5 lives, Boss/Tank: 3 lives, Others: 1 life
                 let livesLost = 1;
                 if (enemy.type === 'megaboss') {
@@ -3974,8 +4006,20 @@
                 updateHUD();
                 updateTowerButtons();
                 
+                // Leprechaun death: special reward!
+                if (enemy.type === 'leprechaun') {
+                    leprechaunAlive = false;
+                    createParticles(enemy.x, enemy.y, '#00ff66', 30);
+                    createParticles(enemy.x, enemy.y, '#ffd700', 25);
+                    createParticles(enemy.x, enemy.y, '#ffffff', 15);
+                    createSplashRing(enemy.x, enemy.y, '#00ff66', 100);
+                    createSplashRing(enemy.x, enemy.y, '#ffd700', 70);
+                    // Delay upgrade selector slightly for visual effect
+                    setTimeout(() => {
+                        showUpgradeSelector();
+                    }, 300);
                 // Megaboss death: massive explosion effect
-                if (enemy.type === 'megaboss') {
+                } else if (enemy.type === 'megaboss') {
                     createParticles(enemy.x, enemy.y, '#ff00ff', 40);
                     createParticles(enemy.x, enemy.y, '#ff6600', 25);
                     createParticles(enemy.x, enemy.y, '#ffffff', 15);
@@ -4551,6 +4595,12 @@
             
             wave++;
             
+            // Reset leprechaun spawn tracker at start of each 10-wave cycle
+            const cycleWave = ((wave - 1) % 10) + 1;
+            if (cycleWave === 1) {
+                leprechaunSpawnedThisCycle = false;
+            }
+            
             // Endless mode tracking
             if (gameMode === 'endless') {
                 totalEndlessWaves++;
@@ -4606,25 +4656,25 @@
         
         // Calculate enemy count for endless mode (compressed 10-wave stages)
         function calculateEndlessEnemyCount() {
-            const stageMultiplier = Math.pow(1.15, endlessStage - 1); // Was 1.4, now 15% more per stage
+            const stageMultiplier = Math.pow(1.35, endlessStage - 1); // 35% more per stage
             
             // Compressed progression: waves 1-10 represent full difficulty curve
             let baseCount;
             if (stageWave <= 3) {
-                baseCount = 6 + stageWave * 2; // Gentler start
+                baseCount = 8 + stageWave * 3;
             } else if (stageWave <= 6) {
-                baseCount = 12 + (stageWave - 3) * 4;
+                baseCount = 17 + (stageWave - 3) * 6;
             } else if (stageWave <= 9) {
-                baseCount = 24 + (stageWave - 6) * 6;
+                baseCount = 35 + (stageWave - 6) * 10;
             } else {
                 // Wave 10: Boss wave with many enemies
-                baseCount = 45;
+                baseCount = 65;
             }
             
-            // Infinite mode: gentler exponentially increasing spawn
+            // Infinite mode: steep exponentially increasing spawn
             if (isInfiniteMode) {
                 const infiniteWaves = totalEndlessWaves - 49;
-                baseCount = Math.floor(baseCount * Math.pow(1.08, infiniteWaves)); // Was 1.15
+                baseCount = Math.floor(baseCount * Math.pow(1.15, infiniteWaves));
             }
             
             return Math.floor(baseCount * stageMultiplier * endlessDifficultyMult);
@@ -4704,7 +4754,7 @@
             stageWave = 0;
             
             // Increase difficulty multiplier (gentler growth)
-            endlessDifficultyMult *= 1.08; // Was 1.25
+            endlessDifficultyMult *= 1.20;
             
             // Switch to new map layout - semi-random selection
             // Allow occasional repeats (20% chance) but mostly pick new maps
@@ -6089,12 +6139,15 @@
                 const isBoss = enemy.type === 'boss';
                 const isTank = enemy.type === 'tank';
                 const isFast = enemy.type === 'fast';
+                const isLeprechaun = enemy.type === 'leprechaun';
                 
                 // Determine color based on status
                 let color = enemy.color;
                 if (isSlowed) color = '#00ccff';
                 if (isPoisoned) color = '#44ff44';
                 if (isSlowed && isPoisoned) color = '#00ffaa';
+                // Leprechaun keeps its color unless status effect
+                if (isLeprechaun && !isSlowed && !isPoisoned) color = enemy.color;
                 
                 const s = enemy.size; // shorthand for size
                 const x = enemy.x;
@@ -6128,6 +6181,47 @@
                     ctx.shadowBlur = 0;
                 }
                 
+                // LEPRECHAUN special outer effects - gold shimmer
+                if (isLeprechaun) {
+                    const shimmer = 0.5 + Math.sin(now / 120) * 0.5;
+                    const shimmer2 = 0.5 + Math.sin(now / 80 + 2) * 0.5;
+                    
+                    // Gold sparkle ring
+                    ctx.strokeStyle = '#ffd700';
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.6 * shimmer;
+                    ctx.shadowColor = '#ffd700';
+                    ctx.shadowBlur = 15;
+                    ctx.beginPath();
+                    ctx.arc(x, ghostY, s * 1.4, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Inner green glow
+                    ctx.strokeStyle = '#00ff66';
+                    ctx.globalAlpha = 0.4 * shimmer2;
+                    ctx.shadowColor = '#00ff66';
+                    ctx.beginPath();
+                    ctx.arc(x, ghostY, s * 1.2, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Floating gold particles around leprechaun
+                    ctx.fillStyle = '#ffd700';
+                    ctx.shadowBlur = 8;
+                    for (let i = 0; i < 4; i++) {
+                        const angle = (now / 500) + (i * Math.PI / 2);
+                        const dist = s * 1.3 + Math.sin(now / 200 + i) * s * 0.2;
+                        const px = x + Math.cos(angle) * dist;
+                        const py = ghostY + Math.sin(angle) * dist * 0.6;
+                        ctx.globalAlpha = 0.7 * (0.5 + Math.sin(now / 150 + i) * 0.5);
+                        ctx.beginPath();
+                        ctx.arc(px, py, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.globalAlpha = 1;
+                    ctx.shadowBlur = 0;
+                }
+                
                 // Status effect outer glow
                 if (isSlowed || isPoisoned) {
                     const pulse = 0.5 + Math.sin(now / 100) * 0.3;
@@ -6142,7 +6236,7 @@
                 // ===== GHOST BODY SHAPE =====
                 ctx.fillStyle = color;
                 ctx.shadowColor = enemy.color;
-                ctx.shadowBlur = isMegaboss ? 25 : 12;
+                ctx.shadowBlur = isMegaboss ? 25 : isLeprechaun ? 18 : 12;
                 
                 ctx.beginPath();
                 // Dome top (semicircle from left to right)
@@ -6168,8 +6262,8 @@
                 ctx.fill();
                 
                 // Ghost outline for definition
-                ctx.strokeStyle = isMegaboss ? '#ff00ff' : isBoss ? '#ff3333' : 'rgba(255,255,255,0.4)';
-                ctx.lineWidth = isMegaboss ? 2.5 : isBoss ? 2 : 1.5;
+                ctx.strokeStyle = isMegaboss ? '#ff00ff' : isBoss ? '#ff3333' : isLeprechaun ? '#ffd700' : 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = isMegaboss ? 2.5 : isBoss ? 2 : isLeprechaun ? 2 : 1.5;
                 ctx.shadowBlur = 0;
                 ctx.stroke();
                 
@@ -6259,6 +6353,34 @@
                     ctx.beginPath();
                     ctx.ellipse(x, mouthY, s * 0.15, s * 0.12, 0, 0, Math.PI * 2);
                     ctx.fill();
+                } else if (isLeprechaun) {
+                    // Leprechaun: Mischievous winking face with gold sparkle
+                    ctx.fillStyle = '#0a3d0a';
+                    // Left eye (winking - closed arc)
+                    ctx.lineWidth = s * 0.08;
+                    ctx.strokeStyle = '#0a3d0a';
+                    ctx.beginPath();
+                    ctx.arc(x - eyeSpacing, eyeY, eyeSize * 0.6, 0.2, Math.PI - 0.2);
+                    ctx.stroke();
+                    // Right eye (open, sparkling)
+                    ctx.beginPath();
+                    ctx.ellipse(x + eyeSpacing, eyeY, eyeSize * 0.7, eyeSize * 0.85, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Gold sparkle in eye
+                    ctx.fillStyle = '#ffd700';
+                    ctx.shadowColor = '#ffd700';
+                    ctx.shadowBlur = 6;
+                    ctx.beginPath();
+                    ctx.arc(x + eyeSpacing + eyeSize * 0.15, eyeY - eyeSize * 0.2, eyeSize * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                    // Cheeky smirk
+                    ctx.strokeStyle = '#0a3d0a';
+                    ctx.lineWidth = s * 0.1;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.arc(x + s * 0.05, mouthY, s * 0.18, 0.3, Math.PI - 0.1);
+                    ctx.stroke();
                 } else {
                     // Normal: Classic cute ghost face (like favicon)
                     ctx.fillStyle = '#1a1a1a';
