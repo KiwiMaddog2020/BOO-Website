@@ -3739,18 +3739,31 @@
                 const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 10 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
+                // Account for trackpad zone below canvas
+                // Trackpad base height is 360px, scales proportionally with canvas
+                const TRACKPAD_BASE_HEIGHT = 360;
+                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 626 + 360 = 986
+                const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.635
+                
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
+                // Use combined aspect ratio (canvas + trackpad) for fitting
+                const combinedAspect = BASE_WIDTH / totalGameHeight;
                 const screenAspect = availWidth / availHeight;
                 
-                // Fit game to available space, preserving aspect ratio
-                if (screenAspect > gameAspect) {
-                    cssHeight = Math.floor(availHeight);
-                    cssWidth = Math.floor(cssHeight * gameAspect);
+                // Fit game (canvas + trackpad) to available space, preserving aspect ratio
+                let totalCssHeight;
+                if (screenAspect > combinedAspect) {
+                    // Height-limited: total height fills available, width calculated from it
+                    totalCssHeight = Math.floor(availHeight);
+                    cssWidth = Math.floor(totalCssHeight * combinedAspect);
                 } else {
+                    // Width-limited: width fills available, total height calculated from it
                     cssWidth = Math.floor(availWidth);
-                    cssHeight = Math.floor(cssWidth / gameAspect);
+                    totalCssHeight = Math.floor(cssWidth / combinedAspect);
                 }
+                // Canvas gets its proportional share of the total height
+                cssHeight = Math.floor(totalCssHeight * canvasHeightRatio);
                 
                 // Determine optimal buffer scale based on device
                 let bufferScale;
@@ -3791,6 +3804,7 @@
                     viewport: `${viewW}×${viewH}`,
                     avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
                     css: `${cssWidth}×${cssHeight}`,
+                    total: `${cssWidth}×${totalCssHeight}`,
                     buffer: `${bufferWidth}×${bufferHeight}`,
                     iframe: isInIframe ? 'YES' : 'NO',
                     device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
