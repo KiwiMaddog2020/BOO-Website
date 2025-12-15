@@ -10958,7 +10958,7 @@
                 this.hitEnemies = new Set();
                 this.spinAngle = 0;
                 this.spawnTime = Date.now();
-                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 2000;
+                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 3500;
                 this.alpha = 1;
                 this.hasTarget = true;
                 this.noTargetTime = 0;
@@ -11103,12 +11103,12 @@
                             }
                         }
                         
-                        // Fade out after reaching last target or if no last target
+                        // Fade out after reaching last target or if no last target (more forgiving timing)
                         if (this.reachedLastTarget || this.lastTargetX === null) {
                             this.hasTarget = false;
                             this.noTargetTime += dt;
-                            if (this.noTargetTime > 50) {
-                                this.alpha = Math.max(0, 1 - (this.noTargetTime - 50) / 200);
+                            if (this.noTargetTime > 400) {
+                                this.alpha = Math.max(0, 1 - (this.noTargetTime - 400) / 400);
                                 if (this.alpha <= 0) {
                                     this.dead = true;
                                     return;
@@ -11162,7 +11162,7 @@
                         }
                     }
                     
-                    // Apply gradual homing - turn rate scales with distance (gentler when far, stronger when close)
+                    // Apply gradual homing only if target in range
                     if (nearestEnemy) {
                         const targetAngle = Math.atan2(nearestEnemy.y - this.y, nearestEnemy.x - this.x);
                         const currentAngle = Math.atan2(this.vy, this.vx);
@@ -11181,47 +11181,8 @@
                         
                         this.vx = Math.cos(newAngle) * this.speed;
                         this.vy = Math.sin(newAngle) * this.speed;
-                        this.hasTarget = true;
-                        this.noTargetTime = 0;
-                        this.lastTargetX = nearestEnemy.x;
-                        this.lastTargetY = nearestEnemy.y;
-                        this.reachedLastTarget = false;
-                    } else {
-                        // No living target - travel to last known position
-                        if (this.lastTargetX !== null && !this.reachedLastTarget) {
-                            const toLastTarget = Math.atan2(this.lastTargetY - this.y, this.lastTargetX - this.x);
-                            const distToLast = Math.hypot(this.lastTargetX - this.x, this.lastTargetY - this.y);
-                            
-                            // Reached last target position
-                            if (distToLast < 15) {
-                                this.reachedLastTarget = true;
-                                spawnParticles(this.x, this.y, this.color, 3);
-                            } else {
-                                // Continue toward last known position with gradual turn
-                                const currentAngle = Math.atan2(this.vy, this.vx);
-                                let angleDiff = toLastTarget - currentAngle;
-                                if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                                else if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                                const turn = Math.max(-0.1, Math.min(0.1, angleDiff));
-                                const newAngle = currentAngle + turn;
-                                this.vx = Math.cos(newAngle) * this.speed;
-                                this.vy = Math.sin(newAngle) * this.speed;
-                            }
-                        }
-                        
-                        // Fade out after reaching last target or if no last target
-                        if (this.reachedLastTarget || this.lastTargetX === null) {
-                            this.hasTarget = false;
-                            this.noTargetTime += dt;
-                            if (this.noTargetTime > 50) {
-                                this.alpha = Math.max(0, 1 - (this.noTargetTime - 50) / 200);
-                                if (this.alpha <= 0) {
-                                    this.dead = true;
-                                    return;
-                                }
-                            }
-                        }
                     }
+                    // No target in range - projectile continues straight (no fadeout)
                 }
                 
                 // Frame-rate independent movement
