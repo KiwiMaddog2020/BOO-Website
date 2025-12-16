@@ -2509,8 +2509,10 @@
         }
         
         // Find the block to dig when pressing down
-        // Only targets the tile directly below player center
+        // Targets tiles the player overlaps by more than 30%
         function findDownDigTarget() {
+            const playerLeftX = player.x;
+            const playerRightX = player.x + player.width;
             const playerCenterX = player.x + player.width / 2;
             const playerBottomY = player.y + player.height;
             const absoluteTy = Math.floor(playerBottomY / TILE_SIZE);
@@ -2524,17 +2526,37 @@
             const ty = getWorldRow(absoluteTy);
             if (ty < 0 || ty >= world.length) return null;
             
-            // Only dig the center tile directly below player
-            const centerTX = Math.floor(playerCenterX / TILE_SIZE);
+            // Find tiles the player overlaps horizontally
+            const leftTX = Math.floor(playerLeftX / TILE_SIZE);
+            const rightTX = Math.floor((playerRightX - 1) / TILE_SIZE);
             
-            if (centerTX >= 0 && centerTX < WORLD_WIDTH) {
-                const centerTile = world[ty][centerTX];
-                if (centerTile !== TILE.AIR && centerTile !== TILE.BEDROCK) {
-                    return { tx: centerTX, absoluteTy: absoluteTy };
+            // Threshold: 30% of player width
+            const overlapThreshold = player.width * 0.3;
+            
+            let bestTarget = null;
+            let bestOverlap = 0;
+            
+            for (let tx = leftTX; tx <= rightTX; tx++) {
+                if (tx < 0 || tx >= WORLD_WIDTH) continue;
+                
+                const tile = world[ty][tx];
+                if (tile === TILE.AIR || tile === TILE.BEDROCK) continue;
+                
+                // Calculate overlap with this tile
+                const tileLeftX = tx * TILE_SIZE;
+                const tileRightX = tileLeftX + TILE_SIZE;
+                
+                const overlapLeft = Math.max(playerLeftX, tileLeftX);
+                const overlapRight = Math.min(playerRightX, tileRightX);
+                const overlap = overlapRight - overlapLeft;
+                
+                if (overlap > overlapThreshold && overlap > bestOverlap) {
+                    bestOverlap = overlap;
+                    bestTarget = { tx, absoluteTy };
                 }
             }
             
-            return null;
+            return bestTarget;
         }
         
         // Attempt to dig in a specific direction
@@ -2690,7 +2712,7 @@
                 const t = floatingTexts[i];
                 t.y -= 1.5 * deltaMultiplier;
                 t.vy *= 0.94;
-                t.life -= 0.018 * deltaMultiplier;
+                t.life -= 0.012 * deltaMultiplier;
                 t.scale = 0.8 + t.life * 0.5;
                 if (t.life > 0) {
                     floatingTexts[writeIndex++] = t;
