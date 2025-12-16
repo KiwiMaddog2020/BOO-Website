@@ -8040,6 +8040,7 @@
         // ========== SCROLL TRANSITION SYSTEM ==========
         // Intercept scroll/wheel/touch to trigger same fade transition as nav clicks
         let scrollTransitionCooldown = false;
+        let isResizing = false; // Block transitions during window resize
         const scrollCooldownTime = 690; // Prevent rapid-fire transitions
         
         // Get ordered section list
@@ -8058,7 +8059,7 @@
         }
         
         function triggerScrollTransition(direction) {
-            if (scrollTransitionCooldown || isTransitioning) return;
+            if (scrollTransitionCooldown || isTransitioning || isResizing) return;
             
             const nextSectionId = getNextSection(direction);
             if (!nextSectionId) return;
@@ -8139,6 +8140,33 @@
                 triggerScrollTransition(direction);
             }
         }, { passive: true });
+        
+        // ========== RESIZE SCROLL LOCK ==========
+        // Maintain current section position when window is resized
+        let resizeScrollTimeout;
+        let currentSectionBeforeResize = null;
+        
+        window.addEventListener('resize', function() {
+            // Capture current section at start of resize
+            if (!currentSectionBeforeResize) {
+                currentSectionBeforeResize = getCurrentSection();
+            }
+            isResizing = true;
+            
+            // Debounce - wait for resize to settle
+            clearTimeout(resizeScrollTimeout);
+            resizeScrollTimeout = setTimeout(function() {
+                if (currentSectionBeforeResize && scrollContainer) {
+                    const targetSection = document.getElementById(currentSectionBeforeResize);
+                    if (targetSection) {
+                        // Instantly scroll to maintain section position
+                        scrollContainer.scrollTop = targetSection.offsetTop;
+                    }
+                }
+                currentSectionBeforeResize = null;
+                isResizing = false;
+            }, 150);
+        });
         
         // Update URL hash without adding to browser history (cleaner UX)
         var lastUrlSection = '';
