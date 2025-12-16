@@ -74,16 +74,15 @@
 
         /* Fullscreen/iframe mode: fill entire viewport */
         .game-container.fullscreen-mode {
-            width: 100%;
-            height: 100%;
-            max-width: 100%;
-            max-height: 100%;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
             padding: 0;
             gap: 0;
+            border: none;
             border-radius: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            box-shadow: none;
         }
         
         /* Fullscreen body centering - JS adds this class */
@@ -105,23 +104,55 @@
         }
         
         /* Force fullscreen layout when in iframe (CSS kicks in immediately) */
+        html.in-iframe,
         html.in-iframe body {
-            align-items: flex-start;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
         }
         
-        /* Tablet in iframe - center vertically */
-        @media (min-width: 769px) and (pointer: coarse) {
-            html.in-iframe body {
-                align-items: center;
-            }
+        html.in-iframe body {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
         }
         
         html.in-iframe .game-container {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            gap: 0 !important;
+        }
+        
+        /* In iframe: canvas should flex to fill available space */
+        html.in-iframe #gameCanvas {
+            flex: 1 1 auto;
+            min-height: 0;
             width: 100%;
-            height: 100%;
-            max-width: 100%;
-            max-height: 100%;
-            border-radius: 0;
+            object-fit: contain;
+        }
+        
+        /* In iframe: reduce trackpad zone height to give more space to canvas */
+        html.in-iframe .trackpad-zone {
+            height: auto;
+            min-height: 100px;
+            max-height: 150px;
+            flex-shrink: 0;
+            border-top: none;
+            background: transparent;
+        }
+        
+        /* In iframe: compact HUD */
+        html.in-iframe .hud {
+            padding: 4px 0;
+            flex-shrink: 0;
         }
 
         /* Main Menu Overlay */
@@ -1744,12 +1775,17 @@
                 
                 // Universal margin system: border + safety padding
                 // iPad needs extra margin for status bar, home indicator, and close buttons
-                const borderWidth = 3;
-                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 10 : 0);
+                const borderWidth = isInIframe ? 0 : 3; // No border in iframe
+                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 0 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
+                // Account for HUD and trackpad zone heights
+                const hudHeight = 30; // Approximate HUD height
+                const trackpadHeight = isInIframe ? 100 : 120; // Compact in iframe
+                const uiHeight = hudHeight + trackpadHeight;
+                
                 const availWidth = viewW - totalMargin;
-                const availHeight = viewH - totalMargin;
+                const availHeight = viewH - totalMargin - uiHeight;
                 const screenAspect = availWidth / availHeight;
                 
                 // Fit game to available space, preserving aspect ratio
@@ -1873,6 +1909,14 @@
         // Re-check size after delays for iframe loading
         setTimeout(handleResize, 100);
         setTimeout(handleResize, 300);
+        setTimeout(handleResize, 500);
+        setTimeout(handleResize, 1000);
+        
+        // Also recalculate when DOM is fully ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', handleResize);
+        }
+        window.addEventListener('load', handleResize);
         
         // Initial scale calculation
         calculateScale();
