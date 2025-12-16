@@ -8142,30 +8142,45 @@
         }, { passive: true });
         
         // ========== RESIZE SCROLL LOCK ==========
-        // Maintain current section position when window is resized
+        // Maintain current section position when window is resized (including monitor drags)
         let resizeScrollTimeout;
         let currentSectionBeforeResize = null;
+        let lastKnownSectionTop = 0;
         
         window.addEventListener('resize', function() {
-            // Capture current section at start of resize
+            // Capture current section at start of resize sequence
             if (!currentSectionBeforeResize) {
                 currentSectionBeforeResize = getCurrentSection();
+                const targetSection = document.getElementById(currentSectionBeforeResize);
+                if (targetSection) {
+                    lastKnownSectionTop = targetSection.offsetTop;
+                }
             }
             isResizing = true;
             
-            // Debounce - wait for resize to settle
+            // IMMEDIATE correction during resize - keeps section locked in real-time
+            if (currentSectionBeforeResize && scrollContainer) {
+                const targetSection = document.getElementById(currentSectionBeforeResize);
+                if (targetSection) {
+                    // Direct scroll position set (faster than scrollIntoView during rapid events)
+                    scrollContainer.scrollTop = targetSection.offsetTop;
+                }
+            }
+            
+            // Debounce - final cleanup after resize settles
             clearTimeout(resizeScrollTimeout);
             resizeScrollTimeout = setTimeout(function() {
                 if (currentSectionBeforeResize && scrollContainer) {
                     const targetSection = document.getElementById(currentSectionBeforeResize);
                     if (targetSection) {
-                        // Instantly scroll to maintain section position
-                        scrollContainer.scrollTop = targetSection.offsetTop;
+                        // Final position lock with scrollIntoView for reliability
+                        targetSection.scrollIntoView({ behavior: 'instant', block: 'start' });
                     }
                 }
                 currentSectionBeforeResize = null;
+                lastKnownSectionTop = 0;
                 isResizing = false;
-            }, 150);
+            }, 200);
         });
         
         // Update URL hash without adding to browser history (cleaner UX)

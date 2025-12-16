@@ -162,6 +162,17 @@
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             order: 1;
+            position: relative;
+        }
+        
+        .hud-left, .hud-right {
+            display: flex;
+            gap: 12px;
+            min-width: 80px;
+        }
+        
+        .hud-right {
+            justify-content: flex-end;
         }
 
         .hud-item { display: flex; flex-direction: column; gap: 2px; }
@@ -195,7 +206,10 @@
             display: flex; 
             align-items: center; 
             justify-content: center;
-            gap: 36px; 
+            gap: 36px;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
         }
 
         .bar-container { display: flex; flex-direction: column; gap: 4px; align-items: center; }
@@ -1203,9 +1217,11 @@
     <div class="game-wrapper">
         <div class="game-container">
         <div class="hud">
-            <div class="hud-item">
-                <div class="hud-label">Depth</div>
-                <div class="hud-value"><span id="depth">0</span>m</div>
+            <div class="hud-left">
+                <div class="hud-item">
+                    <div class="hud-label">Depth</div>
+                    <div class="hud-value"><span id="depth">0</span>m</div>
+                </div>
             </div>
             <div class="hud-center">
                 <div class="bar-container">
@@ -1227,13 +1243,15 @@
                     </div>
                 </div>
             </div>
-            <div class="hud-item" style="align-items: flex-end;">
-                <div class="hud-label">Points</div>
-                <div class="hud-value points" id="points">0</div>
-            </div>
-            <div class="hud-item" style="align-items: flex-end;">
-                <div class="hud-label">Score</div>
-                <div class="hud-value score" id="score">0</div>
+            <div class="hud-right">
+                <div class="hud-item" style="align-items: flex-end;">
+                    <div class="hud-label">Points</div>
+                    <div class="hud-value points" id="points">0</div>
+                </div>
+                <div class="hud-item" style="align-items: flex-end;">
+                    <div class="hud-label">Score</div>
+                    <div class="hud-value score" id="score">0</div>
+                </div>
             </div>
         </div>
         
@@ -1745,9 +1763,11 @@
         let flightTimer = 0;
         let groundedTimer = 0;
         let blockedTimer = 0; // Track time stuck against ceiling
+        let blockedTimerLeft = 0; // Track time stuck against left wall
+        let blockedTimerRight = 0; // Track time stuck against right wall
         const HOVER_MODE_DELAY = 20; // ~0.33 seconds of unobstructed flight
         const GROUNDED_EXIT_DELAY = 15; // ~0.25 seconds on ground to exit hover
-        const BLOCKED_DRILL_DELAY = 20; // ~0.33 seconds stuck to auto-drill up
+        const BLOCKED_DRILL_DELAY = 20; // ~0.33 seconds stuck to auto-drill
         
         // ==================== VISUAL EFFECTS ====================
         let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
@@ -3517,16 +3537,53 @@
                             player.x = newX;
                             // Speed lines when moving fast in fever mode
                             if (feverMode && Math.random() < 0.2) createSpeedLine();
-                        } else if (!player.digging && !hoverMode) {
-                            // Don't auto-drill horizontally in hover mode
-                            lastDigDirection = dx > 0 ? 'right' : 'left';
-                            const checkX = dx > 0 ? newX + player.width : newX;
-                            const midY = player.y + player.height / 2;
-                            const tx = Math.floor(checkX / TILE_SIZE);
-                            const absoluteTy = Math.floor(midY / TILE_SIZE);
-                            dig(tx, absoluteTy);
+                            // Reset blocked timers when not blocked
+                            if (dx > 0) blockedTimerRight = 0;
+                            else blockedTimerLeft = 0;
+                        } else {
+                            // Blocked horizontally
+                            if (hoverMode) {
+                                // In hover mode, track time blocked before drilling
+                                if (dx > 0) {
+                                    blockedTimerRight += deltaMultiplier;
+                                    blockedTimerLeft = 0;
+                                    if (blockedTimerRight >= BLOCKED_DRILL_DELAY && !player.digging) {
+                                        lastDigDirection = 'right';
+                                        const checkX = newX + player.width;
+                                        const midY = player.y + player.height / 2;
+                                        const tx = Math.floor(checkX / TILE_SIZE);
+                                        const absoluteTy = Math.floor(midY / TILE_SIZE);
+                                        dig(tx, absoluteTy);
+                                        blockedTimerRight = 0;
+                                    }
+                                } else {
+                                    blockedTimerLeft += deltaMultiplier;
+                                    blockedTimerRight = 0;
+                                    if (blockedTimerLeft >= BLOCKED_DRILL_DELAY && !player.digging) {
+                                        lastDigDirection = 'left';
+                                        const checkX = newX;
+                                        const midY = player.y + player.height / 2;
+                                        const tx = Math.floor(checkX / TILE_SIZE);
+                                        const absoluteTy = Math.floor(midY / TILE_SIZE);
+                                        dig(tx, absoluteTy);
+                                        blockedTimerLeft = 0;
+                                    }
+                                }
+                            } else if (!player.digging) {
+                                // Not in hover mode - immediate drill
+                                lastDigDirection = dx > 0 ? 'right' : 'left';
+                                const checkX = dx > 0 ? newX + player.width : newX;
+                                const midY = player.y + player.height / 2;
+                                const tx = Math.floor(checkX / TILE_SIZE);
+                                const absoluteTy = Math.floor(midY / TILE_SIZE);
+                                dig(tx, absoluteTy);
+                            }
                         }
                     }
+                } else {
+                    // Not pressing left or right, reset horizontal blocked timers
+                    blockedTimerLeft = 0;
+                    blockedTimerRight = 0;
                 }
                 
                 if (dy < 0) {
@@ -3618,6 +3675,8 @@
                         if (groundedTimer >= GROUNDED_EXIT_DELAY && hoverMode) {
                             hoverMode = false;
                             groundedTimer = 0;
+                            blockedTimerLeft = 0;
+                            blockedTimerRight = 0;
                         }
                     }
                 }
@@ -4111,17 +4170,18 @@
             if (hullPercent < 0.30 && hullPercent > 0) {
                 const pulseSpeed = hullPercent < 0.15 ? 0.25 : 0.12;
                 const pulse = 0.5 + Math.sin(globalTime * pulseSpeed) * 0.5;
-                const baseAlpha = hullPercent < 0.15 ? 0.25 : 0.10;
+                const baseAlpha = hullPercent < 0.15 ? 0.55 : 0.30; // Much more visible
                 const warningAlpha = baseAlpha * pulse;
                 
                 // Blue/red vignette overlay
                 const gradient = ctx.createRadialGradient(
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.3,
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.8
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.2,
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.7
                 );
                 gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(0.7, `rgba(0, 20, 40, ${warningAlpha * 0.5})`);
-                gradient.addColorStop(1, `rgba(255, 0, 50, ${warningAlpha})`);
+                gradient.addColorStop(0.5, `rgba(100, 0, 30, ${warningAlpha * 0.4})`);
+                gradient.addColorStop(0.8, `rgba(200, 0, 50, ${warningAlpha * 0.7})`);
+                gradient.addColorStop(1, `rgba(255, 0, 60, ${warningAlpha})`);
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             }
@@ -4131,17 +4191,18 @@
             if (fuelPercent < 0.30 && fuelPercent > 0) {
                 const pulseSpeed = fuelPercent < 0.15 ? 0.25 : 0.12;
                 const pulse = 0.5 + Math.sin(globalTime * pulseSpeed + Math.PI) * 0.5; // Offset from hull
-                const baseAlpha = fuelPercent < 0.15 ? 0.30 : 0.12;
+                const baseAlpha = fuelPercent < 0.15 ? 0.60 : 0.35; // Much more visible
                 const warningAlpha = baseAlpha * pulse;
                 
                 // Dark vignette with orange tint
                 const gradient = ctx.createRadialGradient(
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.3,
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.8
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.2,
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.7
                 );
                 gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(0.7, `rgba(20, 10, 0, ${warningAlpha * 0.5})`);
-                gradient.addColorStop(1, `rgba(255, 100, 0, ${warningAlpha})`);
+                gradient.addColorStop(0.5, `rgba(60, 30, 0, ${warningAlpha * 0.4})`);
+                gradient.addColorStop(0.8, `rgba(180, 80, 0, ${warningAlpha * 0.7})`);
+                gradient.addColorStop(1, `rgba(255, 120, 0, ${warningAlpha})`);
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             }
@@ -4216,6 +4277,18 @@
                 ctx.fillText('FEVER 🔥', BASE_WIDTH - 10, feverY + 14);
                 ctx.shadowBlur = 0;
             }
+            
+            // ===== DEPTH DISPLAY (bottom left) =====
+            const depthDisplayY = BASE_HEIGHT - 18;
+            ctx.font = 'bold 14px Oxanium, monospace';
+            ctx.textAlign = 'left';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillText(`${depth}m`, 11, depthDisplayY + 1);
+            ctx.fillStyle = '#00f0ff';
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 6;
+            ctx.fillText(`${depth}m`, 10, depthDisplayY);
+            ctx.shadowBlur = 0;
             
             ctx.restore();
         }
@@ -5762,6 +5835,8 @@
             flightTimer = 0;
             groundedTimer = 0;
             blockedTimer = 0;
+            blockedTimerLeft = 0;
+            blockedTimerRight = 0;
             
             // Reset visual effects
             screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
