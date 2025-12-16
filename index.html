@@ -417,19 +417,18 @@
                 -webkit-tap-highlight-color: transparent;
             }
             
-            /* Scroll-snap fixes for Safari */
+            /* Scroll-snap disabled - manual fade transitions handle all section changes */
             .scroll-container {
-                -webkit-scroll-snap-type: y mandatory;
-                scroll-snap-type: y mandatory;
-                /* Disable smooth scroll for reliable snapping */
+                -webkit-scroll-snap-type: none;
+                scroll-snap-type: none;
                 scroll-behavior: auto !important;
             }
             
             section {
-                -webkit-scroll-snap-align: start;
-                scroll-snap-align: start;
-                -webkit-scroll-snap-stop: always;
-                scroll-snap-stop: always;
+                -webkit-scroll-snap-align: none;
+                scroll-snap-align: none;
+                -webkit-scroll-snap-stop: normal;
+                scroll-snap-stop: normal;
                 box-sizing: border-box;
             }
         }
@@ -2807,9 +2806,10 @@
             height: 100dvh; /* Dynamic viewport for mobile */
             overflow-y: scroll;
             overflow-x: hidden;
-            scroll-snap-type: y mandatory;
-            -webkit-scroll-snap-type: y mandatory;
-            scroll-behavior: auto; /* Use auto for reliable snap, smooth can interfere */
+            /* Scroll-snap disabled - manual fade transitions handle all section changes */
+            scroll-snap-type: none;
+            -webkit-scroll-snap-type: none;
+            scroll-behavior: auto;
             overscroll-behavior-y: contain;
             -webkit-overscroll-behavior-y: contain;
             -webkit-overflow-scrolling: touch; /* iOS momentum */
@@ -6179,12 +6179,11 @@
         }
 
         @media (max-width: 768px) {
-            /* Mobile scroll-snap - ensure proper snapping with dynamic viewport */
+            /* Mobile - scroll-snap disabled, fade transitions handle section changes */
             .scroll-container {
                 height: 100dvh !important;
-                scroll-snap-type: y mandatory !important;
-                -webkit-scroll-snap-type: y mandatory !important;
-                /* Disable smooth scroll on mobile - can interfere with snap */
+                scroll-snap-type: none !important;
+                -webkit-scroll-snap-type: none !important;
                 scroll-behavior: auto !important;
                 /* Hide scrollbar on mobile - prevents accidental taps during arcade gameplay */
                 scrollbar-width: none; /* Firefox */
@@ -7871,10 +7870,6 @@
             // Add page-transitioning class to pause animations
             document.body.classList.add('page-transitioning');
             
-            // SAFARI FIX: Temporarily disable scroll-snap during programmatic scroll
-            scrollContainer.style.scrollSnapType = 'none';
-            scrollContainer.style.webkitScrollSnapType = 'none';
-            
             // Fade in the black overlay
             transitionOverlay.classList.add('active');
             
@@ -7906,10 +7901,8 @@
                     transitionOverlay.classList.remove('active');
                     document.body.classList.remove('page-transitioning');
                     
-                    // Re-enable scroll-snap after transition
+                    // Mark transition complete after brief delay
                     setTimeout(() => {
-                        scrollContainer.style.scrollSnapType = 'y mandatory';
-                        scrollContainer.style.webkitScrollSnapType = 'y mandatory';
                         resetTransitionState();
                     }, snapReenableTime);
                 }, pauseTime);
@@ -8027,16 +8020,6 @@
                     scrollTicking = true;
                 }
             }, { passive: true });
-            
-            // ========== ARCADE FRAME LOCK (DESKTOP) ==========
-            // Block wheel scrolling only when hovering over game container
-            scrollContainer.addEventListener('wheel', function(e) {
-                if (document.body.classList.contains('arcade-game-hover')) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return false;
-                }
-            }, { passive: false });
         }
         
         // Block keyboard scroll keys only when hovering over game container
@@ -8054,67 +8037,109 @@
         // Scroll/wheel uses native scroll-snap behavior
         // No interception needed - CSS scroll-snap-type: y mandatory handles it
         
-        // Mobile scroll-snap helper - ensures proper snap alignment after scroll ends
-        // Particularly helpful for sections with iframes (game section)
-        (function() {
-            const isMobile = window.matchMedia('(max-width: 768px)').matches;
-            if (!isMobile || !scrollContainer) return;
+        // ========== SCROLL TRANSITION SYSTEM ==========
+        // Intercept scroll/wheel/touch to trigger same fade transition as nav clicks
+        let scrollTransitionCooldown = false;
+        const scrollCooldownTime = 600; // Prevent rapid-fire transitions
+        
+        // Get ordered section list
+        const orderedSections = ['home', 'about', 'videos', 'photos', 'game', 'merch', 'events', 'logo-outro'];
+        
+        function getNextSection(direction) {
+            const currentId = getCurrentSection();
+            const currentIndex = orderedSections.indexOf(currentId);
             
-            let scrollEndTimeout;
-            let lastScrollTop = 0;
+            if (direction === 'down' && currentIndex < orderedSections.length - 1) {
+                return orderedSections[currentIndex + 1];
+            } else if (direction === 'up' && currentIndex > 0) {
+                return orderedSections[currentIndex - 1];
+            }
+            return null;
+        }
+        
+        function triggerScrollTransition(direction) {
+            if (scrollTransitionCooldown || isTransitioning) return;
             
-            function snapToNearestSection() {
-                // Skip if scroll is locked (game interaction) or in cooldown period
-                if (isScrollLocked || unlockCooldown) return;
-                
-                const sectionHeight = window.innerHeight;
-                const scrollTop = scrollContainer.scrollTop;
-                const nearestIndex = Math.round(scrollTop / sectionHeight);
-                const targetPosition = nearestIndex * sectionHeight;
-                const diff = Math.abs(scrollTop - targetPosition);
-                
-                // Only snap if we're more than 2px off from a section boundary
-                // and scroll has actually stopped (same position as last check)
-                if (diff > 2 && Math.abs(scrollTop - lastScrollTop) < 5) {
-                    scrollContainer.scrollTo({
-                        top: targetPosition,
-                        behavior: 'auto'
-                    });
-                }
-                lastScrollTop = scrollTop;
+            const nextSectionId = getNextSection(direction);
+            if (!nextSectionId) return;
+            
+            scrollTransitionCooldown = true;
+            menuTransitionToSection(nextSectionId);
+            
+            setTimeout(() => {
+                scrollTransitionCooldown = false;
+            }, scrollCooldownTime);
+        }
+        
+        // WHEEL EVENT - Desktop scroll (replaces arcade frame lock handler)
+        let wheelAccumulator = 0;
+        const wheelThreshold = 50; // Pixels of wheel delta before triggering
+        let wheelResetTimeout;
+        
+        scrollContainer.addEventListener('wheel', function(e) {
+            // Don't intercept if game is active (arcade hover)
+            if (document.body.classList.contains('arcade-game-hover')) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
             }
             
-            // Use scrollend event if supported, otherwise fallback to timeout
-            if ('onscrollend' in window) {
-                scrollContainer.addEventListener('scrollend', snapToNearestSection, { passive: true });
-            } else {
-                // Fallback: check after scroll stops
-                scrollContainer.addEventListener('scroll', function() {
-                    // Skip if scroll is locked (game interaction) or in cooldown period
-                    if (isScrollLocked || unlockCooldown) return;
-                    
-                    lastScrollTop = scrollContainer.scrollTop;
-                    clearTimeout(scrollEndTimeout);
-                    scrollEndTimeout = setTimeout(snapToNearestSection, 100);
-                }, { passive: true });
-            }
+            e.preventDefault();
             
-            // Also check on touchend for more reliable mobile snap
-            scrollContainer.addEventListener('touchend', function() {
-                // Skip if scroll is locked (game interaction) or in cooldown period
-                if (isScrollLocked || unlockCooldown) return;
-                
-                // Skip if we just finished interacting with game (cooldown period)
-                if (isInteractingWithGame) return;
-                
-                clearTimeout(scrollEndTimeout);
-                // Longer delay for iOS to let all momentum settle
-                var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-                scrollEndTimeout = setTimeout(snapToNearestSection, isIOS ? 300 : 200);
-            }, { passive: true });
-        })();
-
+            wheelAccumulator += e.deltaY;
+            
+            clearTimeout(wheelResetTimeout);
+            wheelResetTimeout = setTimeout(() => {
+                wheelAccumulator = 0;
+            }, 150);
+            
+            if (Math.abs(wheelAccumulator) >= wheelThreshold) {
+                const direction = wheelAccumulator > 0 ? 'down' : 'up';
+                triggerScrollTransition(direction);
+                wheelAccumulator = 0;
+            }
+        }, { passive: false });
+        
+        // TOUCH EVENTS - Mobile swipe
+        let swipeTouchStartY = 0;
+        let swipeTouchStartTime = 0;
+        const swipeThreshold = 50; // Minimum swipe distance
+        const swipeTimeLimit = 300; // Max time for swipe gesture
+        
+        scrollContainer.addEventListener('touchstart', function(e) {
+            // Don't intercept if game is active
+            if (isInteractingWithGame || isGameVisible || isScrollLocked) return;
+            
+            swipeTouchStartY = e.touches[0].clientY;
+            swipeTouchStartTime = Date.now();
+        }, { passive: true });
+        
+        scrollContainer.addEventListener('touchmove', function(e) {
+            // Don't intercept if game is active
+            if (isInteractingWithGame || isGameVisible || isScrollLocked) return;
+            
+            // Prevent native scroll when not in cooldown
+            if (!scrollTransitionCooldown && !isTransitioning) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        scrollContainer.addEventListener('touchend', function(e) {
+            // Don't intercept if game is active
+            if (isInteractingWithGame || isGameVisible || isScrollLocked) return;
+            
+            const touchEndY = e.changedTouches[0].clientY;
+            const touchEndTime = Date.now();
+            
+            const deltaY = swipeTouchStartY - touchEndY;
+            const deltaTime = touchEndTime - swipeTouchStartTime;
+            
+            if (Math.abs(deltaY) >= swipeThreshold && deltaTime <= swipeTimeLimit) {
+                const direction = deltaY > 0 ? 'down' : 'up';
+                triggerScrollTransition(direction);
+            }
+        }, { passive: true });
+        
         // Update URL hash without adding to browser history (cleaner UX)
         var lastUrlSection = '';
         function updateUrlHash(sectionId) {
