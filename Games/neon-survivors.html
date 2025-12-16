@@ -1181,6 +1181,59 @@
         #chestModal .btn-leave:hover {
             background: #cc0000;
         }
+        
+        /* Chest Slot Reel */
+        .chest-slot-reel {
+            width: 160px;
+            height: 120px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 3px solid #ffd700;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.4);
+            margin-bottom: 15px;
+            display: none;
+        }
+        
+        .chest-slot-reel.spinning {
+            display: block;
+        }
+        
+        .chest-slot-reel.spinning .slot-content {
+            animation: chestSlotSpin 0.08s linear infinite;
+        }
+        
+        .chest-slot-reel.stopped {
+            display: block;
+        }
+        
+        @keyframes chestSlotSpin {
+            0% { transform: translateY(0); opacity: 0.7; }
+            50% { transform: translateY(-30px); opacity: 0.3; }
+            100% { transform: translateY(-60px); opacity: 0.7; }
+        }
+        
+        .chest-slot-reel .slot-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 10px;
+            gap: 8px;
+        }
+        
+        .chest-slot-reel .slot-icon {
+            font-size: 42px;
+        }
+        
+        .chest-slot-reel .slot-name {
+            font-size: 14px;
+            color: #fff;
+            text-align: center;
+            font-weight: bold;
+        }
 
         /* Tombstone Modal */
         #tombstoneModal {
@@ -3455,6 +3508,12 @@
     <div id="chestModal" ontouchstart="event.stopPropagation();" ontouchmove="event.stopPropagation();" ontouchend="event.stopPropagation();">
         <div class="modal-title" id="modalTitle">📦 TREASURE FOUND! 📦</div>
         <div class="modal-cost" id="modalCost"></div>
+        <div class="chest-slot-reel" id="chestSlotReel">
+            <div class="slot-content">
+                <div class="slot-icon">❓</div>
+                <div class="slot-name">???</div>
+            </div>
+        </div>
         <div class="modal-card" id="modalCard">
             <div class="card-icon" id="modalIcon"></div>
             <div class="card-name" id="modalName"></div>
@@ -5711,7 +5770,7 @@
                     const glintX = sx + Math.cos(this.moveAngle) * r * 0.8 * traversePos;
                     const glintY = sy + Math.sin(this.moveAngle) * r * 0.8 * traversePos;
                     
-                    ctx.globalAlpha = 0.15 * depthPos;
+                    ctx.globalAlpha = 0.2 * depthPos;
                     ctx.fillStyle = '#ffffff';
                     ctx.shadowBlur = 20;
                     ctx.shadowColor = '#ffffff';
@@ -7308,6 +7367,14 @@
             
             const reward = potRewardQueue[potRewardIndex];
             
+            // Hide slot reel, show card directly for pot rewards
+            if (DOM.chestSlotReel) {
+                DOM.chestSlotReel.classList.remove('spinning', 'stopped');
+                DOM.chestSlotReel.style.display = 'none';
+            }
+            DOM.modalCard.style.display = '';
+            DOM.modalTake.parentElement.style.display = '';
+            
             // Use new chest modal
             DOM.modalTitle.textContent = `🍀 POT OF GOLD (${potRewardIndex + 1}/3) 🍀`;
             DOM.modalTitle.style.color = '#00ff00';
@@ -8476,30 +8543,68 @@
                     DOM.modalCost.style.color = '#ffd700';
                 }
                 
-                DOM.modalCard.style.borderColor = this.contents.color || color;
+                // Hide card and buttons initially, show slot reel
+                DOM.modalCard.style.display = 'none';
+                DOM.modalTake.parentElement.style.display = 'none';
                 
-                // Add legendary class and styling for legendary items
-                if (this.contents.type === 'legendary') {
-                    DOM.modalCard.classList.add('legendary');
-                    DOM.modalName.style.color = '#ffa500'; // Orange for legendary
-                } else {
-                    DOM.modalCard.classList.remove('legendary');
-                    DOM.modalName.style.color = this.contents.color || color;
-                }
+                // Set up slot reel with spinning state
+                const slotReel = DOM.chestSlotReel;
+                slotReel.classList.add('spinning');
+                slotReel.classList.remove('stopped');
+                slotReel.querySelector('.slot-icon').textContent = '❓';
+                slotReel.querySelector('.slot-name').textContent = '???';
                 
-                DOM.modalIcon.textContent = this.contents.icon;
-                DOM.modalName.textContent = this.contents.name;
-                DOM.modalDesc.textContent = this.contents.desc;
-                
-                // Update take button
-                const canAfford = this.isFree || playerGold >= this.cost;
-                DOM.modalTake.textContent = this.isFree ? 'TAKE' : (canAfford ? `BUY (${this.cost})` : 'NOT ENOUGH GOLD');
-                DOM.modalTake.classList.toggle('disabled', !canAfford);
-                
-                // Show leave button for regular chests
-                DOM.modalLeave.style.display = '';
-                
+                // Show modal with slot spinning
                 DOM.chestModal.classList.add('visible');
+                
+                // Store contents for reveal
+                const contents = this.contents;
+                const chestColor = color;
+                const canAfford = this.isFree || playerGold >= this.cost;
+                const isFree = this.isFree;
+                const cost = this.cost;
+                
+                // After delay, stop spinning and reveal
+                setTimeout(() => {
+                    slotReel.classList.remove('spinning');
+                    slotReel.classList.add('stopped');
+                    
+                    // Update slot content to show result
+                    slotReel.querySelector('.slot-icon').textContent = contents.icon;
+                    slotReel.querySelector('.slot-name').textContent = contents.name;
+                    slotReel.style.borderColor = contents.color || chestColor;
+                    slotReel.style.boxShadow = `0 0 30px ${contents.color || chestColor}50`;
+                    
+                    // After brief pause, hide slot and show card
+                    setTimeout(() => {
+                        slotReel.classList.remove('stopped');
+                        slotReel.style.display = 'none';
+                        
+                        // Set up card content
+                        DOM.modalCard.style.borderColor = contents.color || chestColor;
+                        
+                        if (contents.type === 'legendary') {
+                            DOM.modalCard.classList.add('legendary');
+                            DOM.modalName.style.color = '#ffa500';
+                        } else {
+                            DOM.modalCard.classList.remove('legendary');
+                            DOM.modalName.style.color = contents.color || chestColor;
+                        }
+                        
+                        DOM.modalIcon.textContent = contents.icon;
+                        DOM.modalName.textContent = contents.name;
+                        DOM.modalDesc.textContent = contents.desc;
+                        
+                        // Update take button
+                        DOM.modalTake.textContent = isFree ? 'TAKE' : (canAfford ? `BUY (${cost})` : 'NOT ENOUGH GOLD');
+                        DOM.modalTake.classList.toggle('disabled', !canAfford);
+                        
+                        // Show card and buttons
+                        DOM.modalCard.style.display = '';
+                        DOM.modalTake.parentElement.style.display = '';
+                        DOM.modalLeave.style.display = '';
+                    }, 400);
+                }, 800);
             }
             
             rollContents() {
@@ -9026,6 +9131,13 @@
             DOM.chestModal.classList.remove('visible');
             DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
             DOM.modalLeave.style.display = ''; // Restore leave button
+            // Reset slot reel for next chest
+            if (DOM.chestSlotReel) {
+                DOM.chestSlotReel.classList.remove('spinning', 'stopped');
+                DOM.chestSlotReel.style.display = '';
+                DOM.chestSlotReel.style.borderColor = '';
+                DOM.chestSlotReel.style.boxShadow = '';
+            }
             gamePaused = false;
         }
         
@@ -13154,6 +13266,7 @@
             chestModal: document.getElementById('chestModal'),
             modalTitle: document.getElementById('modalTitle'),
             modalCost: document.getElementById('modalCost'),
+            chestSlotReel: document.getElementById('chestSlotReel'),
             modalCard: document.getElementById('modalCard'),
             modalIcon: document.getElementById('modalIcon'),
             modalName: document.getElementById('modalName'),
