@@ -4930,7 +4930,7 @@
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
                     projectiles.push(new Projectile(
-                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt', pierce
+                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt', pierce, target
                     ));
                 }
             }
@@ -5059,7 +5059,7 @@
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 projectiles.push(new Projectile(
-                    this.x, this.y, angle, 6, baseDamage, def.color, 'laser', pierce
+                    this.x, this.y, angle, 6, baseDamage, def.color, 'laser', pierce, target
                 ));
             }
 
@@ -5349,7 +5349,7 @@
                 
                 for (let i = 0; i < shardCount; i++) {
                     const a = angle + (i - (shardCount - 1) / 2) * spread;
-                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce);
+                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce, target);
                     proj.slowAmount = def.slowAmount;
                     proj.slowDuration = def.slowDuration;
                     projectiles.push(proj);
@@ -11015,7 +11015,7 @@
 
         // ===== PROJECTILE CLASS =====
         class Projectile {
-            constructor(x, y, angle, speed, damage, color, type, pierce = 1) {
+            constructor(x, y, angle, speed, damage, color, type, pierce = 1, originalTarget = null) {
                 this.x = x;
                 this.y = y;
                 this.vx = Math.cos(angle) * speed;
@@ -11040,6 +11040,7 @@
                 this.lastTargetX = null;
                 this.lastTargetY = null;
                 this.reachedLastTarget = false;
+                this.originalTarget = originalTarget; // Store original target for consistent tracking
             }
 
             update(dt = 16) {
@@ -11123,8 +11124,15 @@
                     let nearestEnemy = null;
                     let nearestDist = 400; // Increased range for smoother tracking
                     
+                    // Helper to check if target is valid
+                    const isValidTarget = (target) => {
+                        if (!target || target.dead) return false;
+                        // Check if target will survive - hp must exceed incoming damage
+                        return target.hp > target.incomingDamage;
+                    };
+                    
                     for (const enemy of enemies) {
-                        if (enemy.dead) continue;
+                        if (!isValidTarget(enemy)) continue;
                         const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                         if (dist < nearestDist) {
                             nearestDist = dist;
@@ -11133,7 +11141,7 @@
                     }
                     
                     for (const boss of bosses) {
-                        if (boss.dead) continue;
+                        if (!isValidTarget(boss)) continue;
                         const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
                         if (dist < nearestDist) {
                             nearestDist = dist;
@@ -11198,42 +11206,64 @@
                     let nearestDistSq = homingRangeSq;
                     let nearestEnemy = null;
                     
-                    // Only check nearby enemies for homing (use squared distance)
-                    for (let i = 0, len = enemies.length; i < len; i++) {
-                        const enemy = enemies[i];
-                        if (enemy.dead || this.hitEnemies.has(enemy)) continue;
-                        const dx = enemy.x - this.x;
-                        const dy = enemy.y - this.y;
+                    // Helper to check if target is valid (alive and won't die from incoming damage)
+                    const isValidTarget = (target) => {
+                        if (!target || target.dead) return false;
+                        if (this.hitEnemies.has(target)) return false;
+                        // Check if target will survive - hp must exceed incoming damage
+                        return target.hp > target.incomingDamage;
+                    };
+                    
+                    // Prioritize original target if still valid
+                    if (this.originalTarget && isValidTarget(this.originalTarget)) {
+                        const dx = this.originalTarget.x - this.x;
+                        const dy = this.originalTarget.y - this.y;
                         const distSq = dx * dx + dy * dy;
-                        if (distSq < nearestDistSq) {
+                        if (distSq < homingRangeSq) {
+                            nearestEnemy = this.originalTarget;
                             nearestDistSq = distSq;
-                            nearestEnemy = enemy;
                         }
                     }
                     
-                    // Also check bosses
-                    for (let i = 0, len = bosses.length; i < len; i++) {
-                        const boss = bosses[i];
-                        if (boss.dead || this.hitEnemies.has(boss)) continue;
-                        const dx = boss.x - this.x;
-                        const dy = boss.y - this.y;
-                        const distSq = dx * dx + dy * dy;
-                        if (distSq < nearestDistSq) {
-                            nearestDistSq = distSq;
-                            nearestEnemy = boss;
+                    // Only look for new target if original is no longer valid
+                    if (!nearestEnemy) {
+                        // Check nearby enemies for homing (use squared distance)
+                        for (let i = 0, len = enemies.length; i < len; i++) {
+                            const enemy = enemies[i];
+                            if (!isValidTarget(enemy)) continue;
+                            const dx = enemy.x - this.x;
+                            const dy = enemy.y - this.y;
+                            const distSq = dx * dx + dy * dy;
+                            if (distSq < nearestDistSq) {
+                                nearestDistSq = distSq;
+                                nearestEnemy = enemy;
+                            }
                         }
-                    }
-                    
-                    // Also check leprechauns
-                    for (let i = 0, len = leprechauns.length; i < len; i++) {
-                        const lep = leprechauns[i];
-                        if (lep.dead || this.hitEnemies.has(lep)) continue;
-                        const dx = lep.x - this.x;
-                        const dy = lep.y - this.y;
-                        const distSq = dx * dx + dy * dy;
-                        if (distSq < nearestDistSq) {
-                            nearestDistSq = distSq;
-                            nearestEnemy = lep;
+                        
+                        // Also check bosses
+                        for (let i = 0, len = bosses.length; i < len; i++) {
+                            const boss = bosses[i];
+                            if (!isValidTarget(boss)) continue;
+                            const dx = boss.x - this.x;
+                            const dy = boss.y - this.y;
+                            const distSq = dx * dx + dy * dy;
+                            if (distSq < nearestDistSq) {
+                                nearestDistSq = distSq;
+                                nearestEnemy = boss;
+                            }
+                        }
+                        
+                        // Also check leprechauns
+                        for (let i = 0, len = leprechauns.length; i < len; i++) {
+                            const lep = leprechauns[i];
+                            if (!isValidTarget(lep)) continue;
+                            const dx = lep.x - this.x;
+                            const dy = lep.y - this.y;
+                            const distSq = dx * dx + dy * dy;
+                            if (distSq < nearestDistSq) {
+                                nearestDistSq = distSq;
+                                nearestEnemy = lep;
+                            }
                         }
                     }
                     
@@ -12003,10 +12033,11 @@
             let nearest = null;
             let minDist = Infinity;
             
-            // Helper to check if target will survive incoming damage
+            // Helper to check if target will survive incoming damage PLUS the new projectile
             const willSurvive = (target) => {
                 if (!projectileDamage) return true; // No damage check needed
-                return target.hp > target.incomingDamage;
+                // Target must have enough HP to survive all incoming damage + this new projectile
+                return target.hp > target.incomingDamage + projectileDamage;
             };
             
             // Fixed targeting range based on target visible area (consistent across all devices)
