@@ -4295,7 +4295,7 @@
                 desc: 'Poison nearby enemies',
                 baseDamage: 3,
                 baseRadius: 110,
-                tickRate: 350,
+                tickRate: 1400,
                 type: 'aura'
             },
             // MORE WEAPONS
@@ -4326,9 +4326,9 @@
                 icon: '👁️',
                 color: '#aa88ff',
                 desc: 'Homing spirit projectiles',
-                baseDamage: 15,
+                baseDamage: 30,
                 baseFireRate: 900,
-                baseOrbs: 2,
+                baseOrbs: 1,
                 type: 'homing'
             },
             sawBlade: {
@@ -5324,13 +5324,30 @@
                 state.auraRadius = radius;
                 state.auraPulse = now;
                 
+                // Poison regular enemies
                 for (const enemy of enemies) {
                     if (enemy.dead) continue;
                     const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                     if (dist < radius + enemy.radius) {
-                        const { damage, isCrit } = this.calcDamage(baseDamage);
-                        enemy.takeDamage(damage, isCrit);
-                        this.onDealDamage(damage);
+                        enemy.applyPoison(baseDamage);
+                    }
+                }
+                
+                // Poison bosses
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist < radius + boss.radius) {
+                        boss.applyPoison(baseDamage);
+                    }
+                }
+                
+                // Poison leprechauns
+                for (const lep of leprechauns) {
+                    if (lep.dead) continue;
+                    const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                    if (dist < radius + lep.radius) {
+                        lep.applyPoison(baseDamage);
                     }
                 }
             }
@@ -5937,8 +5954,8 @@
                     // Toxic aura visual
                     if (def.type === 'aura' && state.auraRadius) {
                         const auraR = camera.scale(state.auraRadius);
-                        const pulseT = (Date.now() - (state.auraPulse || 0)) / 1200; // Slower pulse (was 600)
-                        const pulseAlpha = Math.max(0, 0.45 - pulseT * 0.25);
+                        const pulseT = (Date.now() - (state.auraPulse || 0)) / 1400; // Match tick rate
+                        const pulseAlpha = Math.max(0, 0.5 - pulseT * 0.5);
                         
                         // Constant outer glow
                         ctx.shadowBlur = 15;
@@ -5951,12 +5968,12 @@
                         ctx.arc(sx, sy, auraR, 0, Math.PI * 2);
                         ctx.fill();
                         
-                        // Pulse ring - slower expansion
+                        // Pulse ring - expands outward over tick duration
                         ctx.strokeStyle = def.color;
                         ctx.lineWidth = 3;
                         ctx.globalAlpha = pulseAlpha;
                         ctx.beginPath();
-                        ctx.arc(sx, sy, auraR * (0.5 + pulseT * 0.5), 0, Math.PI * 2);
+                        ctx.arc(sx, sy, auraR * (0.3 + pulseT * 0.7), 0, Math.PI * 2);
                         ctx.stroke();
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
@@ -6132,6 +6149,9 @@
                 this.freezeTimer = 0;
                 this.freezeSlowAmount = 0;
                 this.shockTimer = 0;
+                this.poisonDamage = 0;
+                this.poisonTicks = 0;
+                this.poisonTickTimer = 0;
                 this.baseSpeed = 0; // Set after switch
                 
                 // Scaling factor based on game time
@@ -6212,6 +6232,14 @@
                 this.takeDamage(damage, false);
                 spawnParticles(this.x, this.y, COLORS.shock, 10);
             }
+            
+            applyPoison(damage) {
+                // Refresh poison - 5 ticks over 4 seconds
+                this.poisonDamage = damage;
+                this.poisonTicks = 5;
+                this.poisonTickTimer = 0;
+                spawnParticles(this.x, this.y, '#32cd32', 4);
+            }
 
             update(dt) {
                 // Status effect updates
@@ -6225,6 +6253,20 @@
                         this.hp -= tickDamage;
                         spawnDamageNumber(this.x, this.y, Math.round(tickDamage), false);
                         spawnParticles(this.x, this.y, COLORS.burn, 3);
+                        if (this.hp <= 0 && !this.dead) this.die();
+                    }
+                }
+                
+                // Poison ticks
+                if (this.poisonTicks > 0) {
+                    this.poisonTickTimer += dt;
+                    if (this.poisonTickTimer >= 800) { // 5 ticks over 4 seconds
+                        this.poisonTickTimer = 0;
+                        this.poisonTicks--;
+                        const tickDamage = this.poisonDamage;
+                        this.hp -= tickDamage;
+                        spawnDamageNumber(this.x, this.y, Math.round(tickDamage), false);
+                        spawnParticles(this.x, this.y, '#32cd32', 2);
                         if (this.hp <= 0 && !this.dead) this.die();
                     }
                 }
@@ -6416,6 +6458,8 @@
                     mainColor = COLORS.shock;
                 } else if (this.freezeTimer > 0) {
                     mainColor = COLORS.freeze;
+                } else if (this.poisonTicks > 0) {
+                    mainColor = '#32cd32'; // Poison green tint
                 }
                 
                 // Gentle floating animation
@@ -6423,7 +6467,7 @@
                 const ghostY = sy + floatOffset;
                 
                 // Status effect outer glow
-                if (this.freezeTimer > 0 || this.shockTimer > 0) {
+                if (this.freezeTimer > 0 || this.shockTimer > 0 || this.poisonTicks > 0) {
                     const pulse = 0.5 + Math.sin(time / 100) * 0.3;
                     ctx.fillStyle = mainColor;
                     ctx.globalAlpha = 0.3 * pulse;
@@ -6612,6 +6656,27 @@
                     }
                 }
                 
+                // Poison effect - rising bubbles
+                if (this.poisonTicks > 0) {
+                    ctx.fillStyle = '#32cd32';
+                    ctx.shadowColor = '#32cd32';
+                    ctx.shadowBlur = 8;
+                    ctx.globalAlpha = 0.8;
+                    // 4 bubbles at different phases
+                    for (let i = 0; i < 4; i++) {
+                        const bubblePhase = ((time * 0.003 + i * 0.25) % 1);
+                        const bubbleX = sx + Math.sin(time * 0.005 + i * 1.5) * s * 0.5;
+                        const bubbleY = ghostY + s * 0.5 - bubblePhase * s * 1.8;
+                        const bubbleSize = camera.scale(2 + Math.sin(i) * 1) * (1 - bubblePhase * 0.5);
+                        const bubbleAlpha = (1 - bubblePhase) * 0.8;
+                        ctx.globalAlpha = bubbleAlpha;
+                        ctx.beginPath();
+                        ctx.arc(bubbleX, bubbleY, bubbleSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                }
+                
                 // HP bar for tanks
                 if (this.type === 'tank' && this.hp < this.maxHp) {
                     ctx.shadowBlur = 0;
@@ -6648,10 +6713,35 @@
                 this.knockbackCooldown = 0;
                 this.knockbackRange = 80;
                 this.aggroRange = 150; // Distance at which leprechaun reacts
+                
+                // Status effects
+                this.poisonDamage = 0;
+                this.poisonTicks = 0;
+                this.poisonTickTimer = 0;
+            }
+            
+            applyPoison(damage) {
+                this.poisonDamage = damage;
+                this.poisonTicks = 5;
+                this.poisonTickTimer = 0;
+                spawnParticles(this.x, this.y, '#32cd32', 4);
             }
 
             update(dt) {
                 if (this.dead) return;
+                
+                // Poison ticks
+                if (this.poisonTicks > 0) {
+                    this.poisonTickTimer += dt;
+                    if (this.poisonTickTimer >= 800) {
+                        this.poisonTickTimer = 0;
+                        this.poisonTicks--;
+                        this.hp -= this.poisonDamage;
+                        spawnDamageNumber(this.x, this.y, Math.round(this.poisonDamage), false);
+                        spawnParticles(this.x, this.y, '#32cd32', 2);
+                        if (this.hp <= 0 && !this.dead) this.die();
+                    }
+                }
                 
                 // Frame-rate independent movement
                 const dtScale = dt / 16;
@@ -6879,6 +6969,32 @@
                 ctx.quadraticCurveTo(sx, sy + bob + camera.scale(16), sx + camera.scale(8), sy + bob + camera.scale(6));
                 ctx.quadraticCurveTo(sx, sy + bob + camera.scale(10), sx - camera.scale(8), sy + bob + camera.scale(6));
                 ctx.fill();
+                
+                // Poison effect - green tint and bubbles
+                if (this.poisonTicks > 0) {
+                    const time = Date.now();
+                    // Green overlay
+                    ctx.fillStyle = 'rgba(50, 205, 50, 0.3)';
+                    ctx.beginPath();
+                    ctx.arc(sx, sy + bob, r * 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Rising bubbles
+                    ctx.fillStyle = '#32cd32';
+                    ctx.shadowColor = '#32cd32';
+                    ctx.shadowBlur = 6;
+                    for (let i = 0; i < 3; i++) {
+                        const bubblePhase = ((time * 0.003 + i * 0.33) % 1);
+                        const bubbleX = sx + Math.sin(time * 0.005 + i * 2) * r * 0.6;
+                        const bubbleY = sy + bob + r * 0.3 - bubblePhase * r * 2;
+                        const bubbleSize = camera.scale(2) * (1 - bubblePhase * 0.5);
+                        ctx.globalAlpha = (1 - bubblePhase) * 0.8;
+                        ctx.beginPath();
+                        ctx.arc(bubbleX, bubbleY, bubbleSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    ctx.shadowBlur = 0;
+                }
                 
                 // HP bar (positioned above taller hat)
                 if (this.hp < this.maxHp) {
@@ -7346,10 +7462,35 @@
                 this.attackCooldown = 0;
                 this.isBoss = true;
                 this.bossType = 'mini';
+                
+                // Status effects
+                this.poisonDamage = 0;
+                this.poisonTicks = 0;
+                this.poisonTickTimer = 0;
+            }
+            
+            applyPoison(damage) {
+                this.poisonDamage = damage;
+                this.poisonTicks = 5;
+                this.poisonTickTimer = 0;
+                spawnParticles(this.x, this.y, '#32cd32', 4);
             }
             
             update(dt) {
                 if (this.dead) return;
+                
+                // Poison ticks
+                if (this.poisonTicks > 0) {
+                    this.poisonTickTimer += dt;
+                    if (this.poisonTickTimer >= 800) {
+                        this.poisonTickTimer = 0;
+                        this.poisonTicks--;
+                        this.hp -= this.poisonDamage;
+                        spawnDamageNumber(this.x, this.y, Math.round(this.poisonDamage), false);
+                        spawnParticles(this.x, this.y, '#32cd32', 2);
+                        if (this.hp <= 0 && !this.dead) this.die();
+                    }
+                }
                 
                 // Frame-rate independent
                 const dtScale = dt / 16;
@@ -7596,6 +7737,31 @@
                 ctx.ellipse(sx - s * 0.35, ghostY - s * 0.55, s * 0.2, s * 0.15, -0.3, 0, Math.PI * 2);
                 ctx.fill();
                 
+                // Poison effect - green tint and bubbles
+                if (this.poisonTicks > 0) {
+                    // Green overlay
+                    ctx.fillStyle = 'rgba(50, 205, 50, 0.25)';
+                    ctx.beginPath();
+                    ctx.arc(sx, ghostY, s * 1.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Rising bubbles
+                    ctx.fillStyle = '#32cd32';
+                    ctx.shadowColor = '#32cd32';
+                    ctx.shadowBlur = 8;
+                    for (let i = 0; i < 5; i++) {
+                        const bubblePhase = ((time * 0.003 + i * 0.2) % 1);
+                        const bubbleX = sx + Math.sin(time * 0.004 + i * 1.3) * s * 0.7;
+                        const bubbleY = ghostY + s * 0.5 - bubblePhase * s * 2.2;
+                        const bubbleSize = camera.scale(3) * (1 - bubblePhase * 0.4);
+                        ctx.globalAlpha = (1 - bubblePhase) * 0.85;
+                        ctx.beginPath();
+                        ctx.arc(bubbleX, bubbleY, bubbleSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    ctx.shadowBlur = 0;
+                }
+                
                 // HP bar
                 ctx.shadowBlur = 0;
                 const barWidth = r * 2;
@@ -7647,10 +7813,35 @@
                 this.bossType = 'major';
                 this.phase = 1; // Phases at 66% and 33% HP
                 this.speedScale = speedScale; // Store for phase changes
+                
+                // Status effects
+                this.poisonDamage = 0;
+                this.poisonTicks = 0;
+                this.poisonTickTimer = 0;
+            }
+            
+            applyPoison(damage) {
+                this.poisonDamage = damage;
+                this.poisonTicks = 5;
+                this.poisonTickTimer = 0;
+                spawnParticles(this.x, this.y, '#32cd32', 4);
             }
             
             update(dt) {
                 if (this.dead) return;
+                
+                // Poison ticks
+                if (this.poisonTicks > 0) {
+                    this.poisonTickTimer += dt;
+                    if (this.poisonTickTimer >= 800) {
+                        this.poisonTickTimer = 0;
+                        this.poisonTicks--;
+                        this.hp -= this.poisonDamage;
+                        spawnDamageNumber(this.x, this.y, Math.round(this.poisonDamage), false);
+                        spawnParticles(this.x, this.y, '#32cd32', 2);
+                        if (this.hp <= 0 && !this.dead) this.die();
+                    }
+                }
                 
                 // Frame-rate independent
                 const dtScale = dt / 16;
@@ -8054,6 +8245,31 @@
                 ctx.beginPath();
                 ctx.ellipse(sx - s * 0.4, ghostY - s * 0.5, s * 0.2, s * 0.15, -0.3, 0, Math.PI * 2);
                 ctx.fill();
+                
+                // Poison effect - green tint and bubbles
+                if (this.poisonTicks > 0) {
+                    // Green overlay
+                    ctx.fillStyle = 'rgba(50, 205, 50, 0.2)';
+                    ctx.beginPath();
+                    ctx.arc(sx, ghostY, s * 1.4, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Rising bubbles (more for big boss)
+                    ctx.fillStyle = '#32cd32';
+                    ctx.shadowColor = '#32cd32';
+                    ctx.shadowBlur = 10;
+                    for (let i = 0; i < 7; i++) {
+                        const bubblePhase = ((time * 0.003 + i * 0.14) % 1);
+                        const bubbleX = sx + Math.sin(time * 0.004 + i * 0.9) * s * 0.8;
+                        const bubbleY = ghostY + s * 0.6 - bubblePhase * s * 2.5;
+                        const bubbleSize = camera.scale(4) * (1 - bubblePhase * 0.3);
+                        ctx.globalAlpha = (1 - bubblePhase) * 0.85;
+                        ctx.beginPath();
+                        ctx.arc(bubbleX, bubbleY, bubbleSize, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    ctx.shadowBlur = 0;
+                }
                 
                 // HP bar
                 ctx.shadowBlur = 0;
