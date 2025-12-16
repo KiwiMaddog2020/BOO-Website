@@ -1440,6 +1440,10 @@
         let lastFrameTime = 0;
         let deltaMultiplier = 1;
         let screenShake = 0;
+        let deathAnimationActive = false;
+        let deathAnimationTimer = 0;
+        const DEATH_ANIMATION_DURATION = 60; // 1 second at 60fps
+        let deathReason = '';
         let depthColorShift = 0;
         let globalTime = 0;
         let worldRowOffset = 0;
@@ -1447,7 +1451,7 @@
         // ==================== COMBO & FEVER SYSTEM ====================
         let comboCount = 0;
         let comboTimer = 0;
-        const COMBO_DECAY_TIME = 270; // frames (~4.5 sec at 60fps)
+        const COMBO_DECAY_TIME = 210; // frames (~3.5 sec at 60fps)
         let feverMode = false;
         let feverTimer = 0;
         const FEVER_DURATION = 480; // frames (~8 sec)
@@ -3117,8 +3121,15 @@
             
             player.thrusterFlicker = Math.sin(globalTime * 0.3) * 0.3 + 0.7;
             
+            // Skip player input during death animation
+            if (deathAnimationActive) {
+                // Just let player fall/drift during death
+                player.y += 1 * deltaMultiplier;
+                player.digging = false;
+                player.digTarget = null;
+            }
             // ===== DIG CANCELLATION WHEN KEY RELEASED =====
-            if (player.digging && player.digTarget) {
+            else if (player.digging && player.digTarget) {
                 // Check if the direction key for current dig is still held
                 let keyStillHeld = false;
                 if (lastDigDirection === 'down' && keys.down) keyStillHeld = true;
@@ -3336,8 +3347,20 @@
             
             updateParticles();
             
-            if (fuel <= 0 || hull <= 0) {
-                gameOver();
+            if ((fuel <= 0 || hull <= 0) && !deathAnimationActive) {
+                deathAnimationActive = true;
+                deathAnimationTimer = DEATH_ANIMATION_DURATION;
+                deathReason = hull <= 0 ? 'hull' : 'fuel';
+                screenShake = 15;
+                triggerScreenFlash(hull <= 0 ? '#ff0000' : '#ff6600', 0.6, 30);
+            }
+            
+            // Death animation update
+            if (deathAnimationActive) {
+                deathAnimationTimer -= deltaMultiplier;
+                if (deathAnimationTimer <= 0) {
+                    gameOver();
+                }
             }
         }
         
@@ -3776,27 +3799,36 @@
                 ctx.shadowBlur = 0;
             }
             
-            // ===== FEVER MODE INDICATOR =====
+            // ===== FEVER MODE INDICATOR (mirrors combo meter on right side) =====
             if (feverMode) {
-                const feverProgress = feverTimer / FEVER_DURATION;
                 const feverX = BASE_WIDTH - 110;
-                const feverY = BASE_HEIGHT - 35;
+                const feverY = BASE_HEIGHT - 50;
+                const meterWidth = 100;
+                const meterHeight = 8;
+                const feverProgress = feverTimer / FEVER_DURATION;
                 
-                // Pulsing "FEVER" text
+                // Meter background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(feverX, feverY + 20, meterWidth, meterHeight);
+                
+                // Meter fill (fills from right to left)
+                ctx.fillStyle = '#ff00ff';
+                ctx.fillRect(feverX + meterWidth * (1 - feverProgress), feverY + 20, meterWidth * feverProgress, meterHeight);
+                
+                // Meter border
+                ctx.strokeStyle = '#ff00ff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(feverX, feverY + 20, meterWidth, meterHeight);
+                
+                // Fever text
                 const feverPulse = 1 + Math.sin(globalTime * 0.2) * 0.1;
-                ctx.font = `bold ${Math.floor(18 * feverPulse)}px Oxanium, monospace`;
+                ctx.font = `bold ${Math.floor(16 * feverPulse)}px Oxanium, monospace`;
                 ctx.fillStyle = '#ff00ff';
                 ctx.textAlign = 'right';
                 ctx.shadowColor = '#ff00ff';
-                ctx.shadowBlur = 15;
-                ctx.fillText('🔥 FEVER!', BASE_WIDTH - 10, feverY);
+                ctx.shadowBlur = 10;
+                ctx.fillText('FEVER 🔥', BASE_WIDTH - 10, feverY + 14);
                 ctx.shadowBlur = 0;
-                
-                // Timer bar
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                ctx.fillRect(feverX, feverY + 5, 100, 6);
-                ctx.fillStyle = '#ff00ff';
-                ctx.fillRect(feverX, feverY + 5, 100 * feverProgress, 6);
             }
             
             ctx.restore();
@@ -4134,6 +4166,39 @@
             const cx = player.x + player.width / 2;
             const heatPercent = drillHeat / maxDrillHeat;
             
+            // Death animation effects
+            if (deathAnimationActive) {
+                const progress = 1 - (deathAnimationTimer / DEATH_ANIMATION_DURATION);
+                
+                // Spawn explosion particles
+                if (Math.random() < 0.4) {
+                    const color = deathReason === 'hull' ? '#ff3333' : '#ff9500';
+                    particles.push({
+                        x: cx + (Math.random() - 0.5) * 30,
+                        y: player.y + player.height / 2 + (Math.random() - 0.5) * 30,
+                        vx: (Math.random() - 0.5) * 8,
+                        vy: (Math.random() - 0.5) * 8,
+                        size: 4 + Math.random() * 6,
+                        color: color,
+                        life: 0.8,
+                        type: 'explosion'
+                    });
+                }
+                
+                // Flash and spin effect
+                ctx.save();
+                ctx.translate(cx, screenY + player.height / 2);
+                ctx.rotate(progress * Math.PI * 4); // Spin
+                ctx.scale(1 - progress * 0.5, 1 - progress * 0.5); // Shrink
+                ctx.globalAlpha = 1 - progress * 0.7; // Fade
+                ctx.translate(-cx, -(screenY + player.height / 2));
+                
+                // Flash between normal and damage color
+                if (Math.floor(globalTime * 0.5) % 2 === 0) {
+                    ctx.filter = deathReason === 'hull' ? 'brightness(2) saturate(0.5) hue-rotate(-30deg)' : 'brightness(2) sepia(1)';
+                }
+            }
+            
             // Calculate drill position early so all effects can use it
             let drillAngle = 0; // 0 = down, -90 = left, 90 = right
             let drillOffsetX = 0;
@@ -4387,6 +4452,12 @@
                     ctx.textAlign = 'center';
                     ctx.fillText('🔥', player.x + player.width/2, heatBarY - 3);
                 }
+            }
+            
+            // Close death animation transforms
+            if (deathAnimationActive) {
+                ctx.filter = 'none';
+                ctx.restore();
             }
         }
         
@@ -4861,6 +4932,7 @@
         // ==================== GAME OVER ====================
         function gameOver() {
             gameRunning = false;
+            deathAnimationActive = false;
             clearRollTimers();
             
             ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
@@ -4869,8 +4941,8 @@
             ctx.font = '800 36px Oxanium, monospace';
             ctx.fillStyle = '#ff00ff';
             ctx.textAlign = 'center';
-            const deathReason = hull <= 0 ? 'HULL DESTROYED' : 'OUT OF FUEL';
-            ctx.fillText(deathReason, BASE_WIDTH / 2, BASE_HEIGHT / 2 - 45);
+            const deathText = deathReason === 'hull' ? 'HULL DESTROYED' : 'OUT OF FUEL';
+            ctx.fillText(deathText, BASE_WIDTH / 2, BASE_HEIGHT / 2 - 45);
             
             ctx.font = '600 20px "Exo 2", sans-serif';
             ctx.fillStyle = '#00f0ff';
@@ -5231,6 +5303,9 @@
             cameraY = -30;
             upgradeOfferHistory = {};
             screenShake = 0;
+            deathAnimationActive = false;
+            deathAnimationTimer = 0;
+            deathReason = '';
             depthColorShift = 0;
             globalTime = 0;
             
