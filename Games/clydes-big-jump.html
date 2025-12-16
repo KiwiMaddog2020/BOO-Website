@@ -527,6 +527,92 @@
             backface-visibility: hidden;
         }
         
+        /* ========== LOADING SCREEN ========== */
+        #loadingScreen {
+            position: absolute;
+            z-index: 100;
+        }
+        
+        .loading-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 30px;
+        }
+        
+        .loading-title {
+            font-family: 'Tilt Neon', cursive;
+            font-size: 28px;
+            color: #ffaa00;
+            text-shadow: 0 0 15px #ffaa00, 0 0 30px #ff6600;
+            letter-spacing: 3px;
+        }
+        
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            position: relative;
+        }
+        
+        .spinner-ring {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            animation: spinRing 1.2s linear infinite;
+        }
+        
+        .spinner-ring:nth-child(1) {
+            border-top-color: #0ff;
+            animation-delay: 0s;
+        }
+        
+        .spinner-ring:nth-child(2) {
+            width: 80%;
+            height: 80%;
+            top: 10%;
+            left: 10%;
+            border-right-color: #f0f;
+            animation-delay: -0.4s;
+            animation-direction: reverse;
+        }
+        
+        .spinner-ring:nth-child(3) {
+            width: 60%;
+            height: 60%;
+            top: 20%;
+            left: 20%;
+            border-bottom-color: #ff6600;
+            animation-delay: -0.8s;
+        }
+        
+        @keyframes spinRing {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-size: 14px;
+            color: #888;
+            letter-spacing: 2px;
+            animation: loadingPulse 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes loadingPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+        
+        .loading-tip {
+            font-size: 12px;
+            color: #0ff;
+            text-shadow: 0 0 8px #0ff;
+            max-width: 250px;
+            text-align: center;
+            line-height: 1.4;
+        }
+        
         /* ========== SCORE MODAL ========== */
         .score-modal {
             display: none;
@@ -884,6 +970,20 @@
         <!-- HUD -->
         <div class="hud" id="hud">0</div>
         
+        <!-- Loading Screen -->
+        <div class="overlay hidden" id="loadingScreen">
+            <div class="loading-content">
+                <div class="loading-title">GET READY!</div>
+                <div class="loading-spinner">
+                    <div class="spinner-ring"></div>
+                    <div class="spinner-ring"></div>
+                    <div class="spinner-ring"></div>
+                </div>
+                <div class="loading-text">LOADING...</div>
+                <div class="loading-tip">🐕 Tap or click to make Clyde jump!</div>
+            </div>
+        </div>
+        
         <!-- Start Screen -->
         <div class="overlay hidden" id="startScreen">
             <div class="title">CLYDE'S BIG JUMP</div>
@@ -910,11 +1010,11 @@
     
     <!-- Score Modal -->
     <div class="score-modal" id="scoreModal">
-        <div class="score-modal-title" id="scoreModalTitle">HIGH SCORE</div>
-        <div class="score-modal-score">Jumps: <span id="finalScoreDisplay">0</span></div>
+        <div class="score-modal-title" id="scoreModalTitle">GOOD BOY!</div>
+        <div class="score-modal-score" id="finalScoreDisplay">Score: 0</div>
         <div class="score-input-container">
-            <label class="score-input-label">Enter your name for the leaderboard:</label>
-            <input type="text" class="score-input" id="usernameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off" spellcheck="false">
+            <div class="score-input-label">Enter your name for the leaderboard:</div>
+            <input type="text" class="score-input" id="usernameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
             <div class="score-error-msg" id="scoreErrorMsg"></div>
         </div>
         <div class="score-buttons">
@@ -927,174 +1027,100 @@
     <div class="leaderboard-overlay" id="leaderboardOverlay">
         <div class="leaderboard-container">
             <div class="leaderboard-header">
-                <div class="leaderboard-title">🐕 TOP 100</div>
+                <div class="leaderboard-title">🏆 TOP DOGS 🏆</div>
                 <button class="leaderboard-close" id="leaderboardClose">✕</button>
             </div>
             <div class="leaderboard-list" id="leaderboardList">
-                <div class="leaderboard-loading">Loading scores...</div>
+                <!-- Populated by JS -->
             </div>
         </div>
     </div>
 
     <script>
-        // ===== BROWSER COMPATIBILITY =====
-        window.requestAnimationFrame = window.requestAnimationFrame 
-            || window.webkitRequestAnimationFrame 
-            || window.mozRequestAnimationFrame 
-            || window.msRequestAnimationFrame 
-            || function(callback) { return setTimeout(callback, 16); };
+        // ===== PERFORMANCE DETECTION =====
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const isLowPerf = isMobile;
+        const isVeryLowPerf = isIOS && (window.screen.width < 380 || window.screen.height < 700);
         
-        window.cancelAnimationFrame = window.cancelAnimationFrame
-            || window.webkitCancelAnimationFrame
-            || window.mozCancelAnimationFrame
-            || window.msCancelAnimationFrame
-            || function(id) { clearTimeout(id); };
-        
-        if (!window.performance) window.performance = {};
-        if (!window.performance.now) {
-            window.performance.now = function() { return Date.now(); };
-        }
-        
-        // ===== PERFORMANCE DETECTION (more aggressive) =====
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
-                      || window.matchMedia('(hover: none)').matches
-                      || window.matchMedia('(pointer: coarse)').matches
-                      || ('ontouchstart' in window);
-        const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        const isOldDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4;
-        const isVeryOldDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2;
-        const hasSlowConnection = navigator.connection && (navigator.connection.saveData || navigator.connection.effectiveType === '2g' || navigator.connection.effectiveType === 'slow-2g');
-        const isLowPerf = isMobile || isSafari || isIOS || isOldDevice || hasSlowConnection;
-        const isVeryLowPerf = isVeryOldDevice || hasSlowConnection;
-        
+        // Performance settings
         const PERF = {
-            particleMultiplier: 1.0,
-            maxParticles: 15  // Unified for 30fps
+            maxParticles: isVeryLowPerf ? 0 : (isLowPerf ? 15 : 50),
+            particleMultiplier: isVeryLowPerf ? 0 : (isLowPerf ? 0.5 : 1)
         };
 
-        // Pre-calculated constants
+        // ===== DEBUG OVERLAY (hidden by default) =====
+        const GameDebug = {
+            el: null,
+            enabled: false,
+            init() {
+                this.el = document.createElement('div');
+                this.el.style.cssText = 'position:fixed;top:5px;left:5px;background:rgba(0,0,0,0.85);color:#0f0;font:11px monospace;padding:8px 10px;z-index:99999;border-radius:6px;pointer-events:none;line-height:1.5;display:none;';
+                document.body.appendChild(this.el);
+            },
+            show(data) {
+                if (!this.enabled) return;
+                if (!this.el) this.init();
+                this.el.style.display = 'block';
+                this.el.innerHTML = Object.entries(data).map(([k,v]) => `<div><span style="color:#0ff">${k}:</span> ${v}</div>`).join('');
+            },
+            hide() {
+                if (this.el) this.el.style.display = 'none';
+            }
+        };
+
+        // ===== CANVAS & SCALING =====
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.querySelector('.game-container');
+
+        // Base game dimensions (fixed aspect ratio)
+        const baseWidth = 400;
+        const baseHeight = 600;
+        const ratio = baseWidth / baseHeight;
+
+        // iOS canvas size limit (16M pixels total is safe)
+        const MAX_CANVAS_PIXELS = 16 * 1024 * 1024;
+
+        let dprScale = 1;
+
+        // Math constants (cached)
         const PI = Math.PI;
         const PI2 = PI * 2;
         const DEG_TO_RAD = PI / 180;
+        
+        // Cached font strings
+        const FONT_BEBAS_24 = '24px "Bebas Neue", sans-serif';
+        const FONT_BEBAS_18 = '18px "Bebas Neue", sans-serif';
+        const FONT_BEBAS_14 = '14px "Bebas Neue", sans-serif';
 
-        // Canvas setup with Safari optimizations
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d', { 
-            alpha: false,  // Opaque canvas is faster
-            desynchronized: true  // Reduce latency on supported browsers
-        });
-        
-        // Enable image smoothing for all devices
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        
-        // ========== DEBUG UTILITY ==========
-        const GameDebug = {
-            enabled: false, // Toggle for debugging
-            el: null,
-            show(data) {
-                if (!this.enabled) return this.hide();
-                if (!this.el) {
-                    this.el = document.createElement('div');
-                    this.el.id = 'game-debug';
-                    this.el.style.cssText = `
-                        position: fixed; top: 60px; left: 10px;
-                        background: rgba(255,0,0,0.9); color: #fff;
-                        padding: 8px; font: 12px monospace;
-                        z-index: 99999; border-radius: 4px;
-                        max-width: 300px; pointer-events: none;
-                    `;
-                    document.body.appendChild(this.el);
-                }
-                this.el.innerHTML = Object.entries(data)
-                    .map(([k, v]) => `${k}: ${v}`)
-                    .join('<br>');
-            },
-            hide() {
-                if (this.el) {
-                    this.el.remove();
-                    this.el = null;
-                }
-            }
-        };
-        
-        // ========== iOS GESTURE PREVENTION ==========
-        // Prevent iOS "swipe down to exit fullscreen" gesture
-        (function() {
-            if (!('ontouchstart' in window)) return;
-            
-            let touchStartY = 0;
-            const EDGE_THRESHOLD = 50; // Pixels from top edge
-            
-            document.addEventListener('touchstart', (e) => {
-                touchStartY = e.touches[0].clientY;
-            }, { passive: true });
-            
-            document.addEventListener('touchmove', (e) => {
-                // If touch started near top edge and is moving down, block it
-                if (touchStartY < EDGE_THRESHOLD) {
-                    const currentY = e.touches[0].clientY;
-                    if (currentY > touchStartY + 10) {
-                        e.preventDefault();
-                    }
-                }
-            }, { passive: false });
-        })();
-        
-        // ========== COMPREHENSIVE PIXEL DENSITY SCALING ==========
-        const baseWidth = 520;
-        const baseHeight = 580;
-        let displayWidth = baseWidth;
-        let displayHeight = baseHeight;
-        let dprScale = 1;
-        
-        // Device detection - improved for iPadOS 13+ which reports as Macintosh
-        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        const isIPad = /iPad/.test(navigator.userAgent) || 
-                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
-                      (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
-        const isTablet = isTouchDevice && (isIPad || Math.min(window.screen.width, window.screen.height) >= 600);
-        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
-        const rawDPR = window.devicePixelRatio || 1;
-        
-        // iOS canvas memory limit: 16,777,216 pixels max (approx 4096x4096)
-        const MAX_CANVAS_PIXELS = 16777216;
-        
-        // Performance-based DPR limits
-        const maxNormalDPR = isLowPerf ? 1.5 : 2;
-        const maxFullscreenDPR = isLowPerf ? 2 : 3;
-        
-        // Get accurate viewport size (works better in iframes)
-        function getViewportSize() {
-            if (window.visualViewport) {
-                return {
-                    width: window.visualViewport.width,
-                    height: window.visualViewport.height
-                };
-            }
-            return {
-                width: window.innerWidth,
-                height: window.innerHeight
-            };
-        }
-        
         function resizeCanvas() {
-            const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             const isInIframe = window.self !== window.top;
+            const isFullscreenAPI = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            const isFullscreen = isInIframe || isFullscreenAPI;
             
-            const viewport = getViewportSize();
-            const viewW = viewport.width;
-            const viewH = viewport.height;
+            // Detect iPad specifically
+            const isIPad = /iPad/i.test(navigator.userAgent) || 
+                          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            const isTablet = isIPad || (window.innerWidth >= 768 && window.innerWidth <= 1366 && 'ontouchstart' in window);
+            const isLaptopOrDesktop = !isMobile && !isTablet;
             
-            const isPseudoFullscreen = !isNativeFullscreen && 
-                                       (isInIframe || viewW > baseWidth * 1.15 || viewH > baseHeight * 1.15);
+            const rawDPR = window.devicePixelRatio || 1;
+            const maxNormalDPR = isLaptopOrDesktop ? 2 : 1.5;
+            const maxFullscreenDPR = isLaptopOrDesktop ? Math.min(rawDPR, 2) : 2;
             
-            const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
-            const isMobile = viewW <= 768;
-            const ratio = baseWidth / baseHeight;
-            const gameContainer = document.querySelector('.game-container');
+            // Get actual viewport size
+            let viewW, viewH;
+            if (window.visualViewport) {
+                viewW = window.visualViewport.width;
+                viewH = window.visualViewport.height;
+            } else {
+                viewW = window.innerWidth;
+                viewH = window.innerHeight;
+            }
             
+            let displayWidth, displayHeight;
+
             if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
@@ -1229,9 +1255,13 @@
         setTimeout(resizeCanvas, 300);
 
         // Game state
-        let gameState = 'intro'; // 'intro', 'loading', 'start', 'playing', 'gameover'
+        let gameState = 'intro'; // 'intro', 'start', 'loading', 'countdown', 'playing', 'gameover'
         let score = 0;
         let highScore = parseInt(localStorage.getItem('clydesBigJumpHigh') || '0');
+        
+        // Loading screen state
+        let loadingStartTime = 0;
+        const MIN_LOADING_TIME = 1500; // 1.5 seconds minimum
         
         // Scale factor for responsive game (canvas pixels to game coords, includes DPR)
         const getScale = () => canvas.width / baseWidth;
@@ -1258,8 +1288,65 @@
         let pipeSpawnTimer = 0;
         const pipeSpawnInterval = 100;
 
-        // Particles for trail effect
+        // ===== PARTICLE OBJECT POOL =====
+        const particlePool = [];
+        const MAX_POOL_SIZE = 100;
         let particles = [];
+        
+        function getParticle() {
+            if (particlePool.length > 0) {
+                return particlePool.pop();
+            }
+            return { x: 0, y: 0, vx: 0, vy: 0, life: 0, color: '', size: 0 };
+        }
+        
+        function releaseParticle(p) {
+            if (particlePool.length < MAX_POOL_SIZE) {
+                particlePool.push(p);
+            }
+        }
+        
+        function spawnParticle(x, y, vx, vy, life, color, size) {
+            if (particles.length >= PERF.maxParticles) return;
+            const p = getParticle();
+            p.x = x;
+            p.y = y;
+            p.vx = vx;
+            p.vy = vy;
+            p.life = life;
+            p.color = color;
+            p.size = size;
+            particles.push(p);
+        }
+
+        // ===== MUSHROOM CANVAS POOL =====
+        const capCanvasPool = [];
+        const MAX_CAP_POOL_SIZE = 20;
+        
+        function getCapCanvas(width, height) {
+            // Try to find a canvas of matching size
+            for (let i = 0; i < capCanvasPool.length; i++) {
+                const c = capCanvasPool[i];
+                if (c.width === width && c.height === height) {
+                    capCanvasPool.splice(i, 1);
+                    return c;
+                }
+            }
+            // Create new if none available
+            const newCanvas = document.createElement('canvas');
+            newCanvas.width = width;
+            newCanvas.height = height;
+            return newCanvas;
+        }
+        
+        function releaseCapCanvas(canvas) {
+            if (canvas && capCanvasPool.length < MAX_CAP_POOL_SIZE) {
+                // Clear the canvas before returning to pool
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                capCanvasPool.push(canvas);
+            }
+        }
 
         // Animation timing
         let animTime = 0;
@@ -1295,112 +1382,30 @@
             }
             
             bgCtx.globalAlpha = 1;
-            
-            // Skip clouds on very low perf
-            // Note: positions offset by gridBuffer to account for larger canvas
-            if (!isVeryLowPerf) {
-                bgCtx.globalAlpha = 0.06;
-                bgCtx.fillStyle = '#0ff';
-                
-                // Cloud 1
-                bgCtx.beginPath();
-                bgCtx.arc(70 + gridBuffer, 80, 25, 0, PI2);
-                bgCtx.arc(95 + gridBuffer, 75, 30, 0, PI2);
-                bgCtx.arc(125 + gridBuffer, 80, 22, 0, PI2);
-                bgCtx.fill();
-                
-                // Cloud 2
-                bgCtx.beginPath();
-                bgCtx.arc(300 + gridBuffer, 120, 20, 0, PI2);
-                bgCtx.arc(322 + gridBuffer, 115, 25, 0, PI2);
-                bgCtx.arc(348 + gridBuffer, 118, 18, 0, PI2);
-                bgCtx.fill();
-                
-                // Cloud 3
-                bgCtx.beginPath();
-                bgCtx.arc(200 + gridBuffer, 50, 18, 0, PI2);
-                bgCtx.arc(220 + gridBuffer, 45, 22, 0, PI2);
-                bgCtx.arc(242 + gridBuffer, 50, 16, 0, PI2);
-                bgCtx.fill();
-                
-                bgCtx.globalAlpha = 1;
-            }
-            
-            // Bake static colorful stars into background (grid-based with jitter)
-            // Skip stars on very low perf
-            if (!isVeryLowPerf) {
-                const starColors = ['#0ff', '#ff00ff', '#ff6600', '#00ffcc', '#ff3366', '#9b30ff', '#00ff88'];
-                
-                // Seeded random for consistent star placement
-                let seed = 12345;
-                function seededRandom() {
-                    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-                    return seed / 0x7fffffff;
-                }
-                
-                // Cloud exclusion zones (x, y, width, height) - offset for gridBuffer
-                const cloudZones = [
-                    { x: 40 + gridBuffer, y: 45, w: 115, h: 70 },   // Cloud 1
-                    { x: 275 + gridBuffer, y: 85, w: 95, h: 60 },   // Cloud 2
-                    { x: 175 + gridBuffer, y: 20, w: 90, h: 55 }    // Cloud 3
-                ];
-                
-                function inCloudZone(x, y) {
-                    for (const zone of cloudZones) {
-                        if (x >= zone.x && x <= zone.x + zone.w && 
-                            y >= zone.y && y <= zone.y + zone.h) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-                
-                // Create a grid and place stars (fewer on mobile)
-                const cols = isLowPerf ? 4 : 5;
-                const rows = isLowPerf ? 4 : 5;
-                const cellW = baseWidth / cols;
-                const cellH = baseHeight / rows;
-                const jitter = 0.85;
-                
-                bgCtx.globalAlpha = 0.6;
-                for (let row = 0; row < rows; row++) {
-                    for (let col = 0; col < cols; col++) {
-                        if (seededRandom() < 0.18) continue;
-                        
-                        const baseX = col * cellW + cellW / 2;
-                        const baseY = row * cellH + cellH / 2;
-                        const x = baseX + (seededRandom() - 0.5) * cellW * jitter;
-                        const y = baseY + (seededRandom() - 0.5) * cellH * jitter;
-                        
-                        // Offset for cloud zone check (cloud zones are already offset)
-                        if (inCloudZone(x + gridBuffer, y)) continue;
-                        
-                        bgCtx.fillStyle = starColors[Math.floor(seededRandom() * starColors.length)];
-                        bgCtx.beginPath();
-                        bgCtx.arc(x + gridBuffer, y, seededRandom() * 1.5 + 0.5, 0, PI2);
-                        bgCtx.fill();
-                    }
-                }
-                bgCtx.globalAlpha = 1;
-            }
         }
         createBgGridCache();
         
-        // Cache entire Clyde for mobile (no animations)
-        let clydeCache;
-        const CLYDE_CACHE_SIZE = 140; // Size of cached canvas
-        const CLYDE_CENTER = 70; // Center point
+        // ===== CACHED CLYDE SPRITE =====
+        const CLYDE_SIZE = 100;
+        const CLYDE_CENTER = CLYDE_SIZE / 2;
+        let clydeCache = null;
+        
+        // Spot variations for mushroom tops
+        const topSpotColors = [
+            { fill: 'rgba(255,255,255,0.6)', glow: 'rgba(255,255,255,0.3)' },
+            { fill: 'rgba(0,255,255,0.5)', glow: 'rgba(0,255,255,0.2)' },
+            { fill: 'rgba(255,0,255,0.4)', glow: 'rgba(255,0,255,0.2)' },
+            { fill: 'rgba(255,170,0,0.5)', glow: 'rgba(255,170,0,0.2)' },
+            { fill: 'rgba(0,255,136,0.5)', glow: 'rgba(0,255,136,0.2)' }
+        ];
         
         function createClydeCache() {
             clydeCache = document.createElement('canvas');
-            clydeCache.width = CLYDE_CACHE_SIZE;
-            clydeCache.height = CLYDE_CACHE_SIZE;
+            clydeCache.width = CLYDE_SIZE;
+            clydeCache.height = CLYDE_SIZE;
             const c = clydeCache.getContext('2d');
-            
             c.translate(CLYDE_CENTER - 5, CLYDE_CENTER);
             c.scale(1.4, 1.4);
-            
-            // Tail drawn separately for animation
             
             // Back legs
             c.fillStyle = '#e8b84a';
@@ -1522,6 +1527,7 @@
         const startScreen = document.getElementById('startScreen');
         const gameOverScreen = document.getElementById('gameOverScreen');
         const introScreen = document.getElementById('introScreen');
+        const loadingScreen = document.getElementById('loadingScreen');
         const finalScoreEl = document.getElementById('finalScore');
         const highScoreEl = document.getElementById('highScore');
         const startBtn = document.getElementById('startBtn');
@@ -1539,8 +1545,20 @@
             bird.velocity = 0;
             bird.rotation = 0;
             bird.wingAngle = 0;
+            
+            // Return pipe canvases to pool before clearing
+            for (const pipe of pipes) {
+                releaseCapCanvas(pipe.cachedCapTop);
+                releaseCapCanvas(pipe.cachedCapBottom);
+            }
             pipes = [];
+            
+            // Return particles to pool
+            for (const p of particles) {
+                releaseParticle(p);
+            }
             particles = [];
+            
             score = 0;
             scorePop = 0;
             pipeSpawnTimer = 0;
@@ -1554,16 +1572,41 @@
             hud.textContent = '0';
         }
 
-        // Start game
+        // Start game - now shows loading screen first
         // Countdown state
         let countdownTime = 0;
         let isCountingDown = false;
+        
+        function showLoadingScreen() {
+            gameState = 'loading';
+            loadingStartTime = performance.now();
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            loadingScreen.classList.remove('hidden');
+            
+            // Check when to transition
+            checkLoadingComplete();
+        }
+        
+        function checkLoadingComplete() {
+            const elapsed = performance.now() - loadingStartTime;
+            
+            if (elapsed >= MIN_LOADING_TIME) {
+                // Loading complete, start game
+                loadingScreen.classList.add('hidden');
+                startGame();
+            } else {
+                // Keep checking
+                requestAnimationFrame(checkLoadingComplete);
+            }
+        }
         
         function startGame() {
             resetGame();
             gameState = 'countdown';
             isCountingDown = true;
             countdownTime = 0;
+            loadingScreen.classList.add('hidden');
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
             hud.classList.add('hidden');
@@ -1595,22 +1638,21 @@
             if (gameState === 'playing') {
                 bird.velocity = bird.jumpStrength;
                 bird.wingAngle = -25; // Trigger ear flap
-                // Dust puff effect - skip on mobile
+                // Dust puff effect - skip on mobile, use pooled particles
                 if (!isLowPerf) {
                     const dustColors = ['#e8e8e8', '#d0d0d0', '#f0f0f0'];
                     const dustCount = Math.floor(3 * PERF.particleMultiplier);
                     for (let i = 0; i < dustCount; i++) {
-                        if (particles.length >= PERF.maxParticles) break;
                         const angle = Math.PI + (i - 1) * 0.4;
-                        particles.push({
-                            x: bird.x - 5,
-                            y: bird.y + bird.height / 2 + (i - 1) * 6,
-                            vx: Math.cos(angle) * (1 + i * 0.3),
-                            vy: Math.sin(angle) * 0.8 + (i - 1) * 0.5,
-                            life: 0.8,
-                            color: dustColors[i % dustColors.length],
-                            size: 8 - i
-                        });
+                        spawnParticle(
+                            bird.x - 5,
+                            bird.y + bird.height / 2 + (i - 1) * 6,
+                            Math.cos(angle) * (1 + i * 0.3),
+                            Math.sin(angle) * 0.8 + (i - 1) * 0.5,
+                            0.8,
+                            dustColors[i % dustColors.length],
+                            8 - i
+                        );
                     }
                 }
             }
@@ -1666,7 +1708,7 @@
             pipes.push(pipeObj);
         }
         
-        // Create cached mushroom cap canvas
+        // Create cached mushroom cap canvas - now uses pool
         function createCachedCap(pipe, isTop) {
             const scale = pipe.capScale || 1.0;
             const capWidth = Math.round(102 * scale);
@@ -1675,9 +1717,8 @@
             const canvasWidth = capWidth + padding * 2;
             const canvasHeight = capHeight + padding * 2;
             
-            const capCanvas = document.createElement('canvas');
-            capCanvas.width = canvasWidth;
-            capCanvas.height = canvasHeight;
+            // Get canvas from pool
+            const capCanvas = getCapCanvas(canvasWidth, canvasHeight);
             const capCtx = capCanvas.getContext('2d');
             
             const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
@@ -1827,11 +1868,11 @@
                     hud.textContent = score;
                 }
 
-                // Remove off-screen pipes (swap-and-pop, clean up canvases)
+                // Remove off-screen pipes (swap-and-pop, return canvases to pool)
                 if (pipe.x + pipeWidth < 0) {
-                    // Clean up canvas references to help garbage collection
-                    pipe.cachedCapTop = null;
-                    pipe.cachedCapBottom = null;
+                    // Return canvas references to pool
+                    releaseCapCanvas(pipe.cachedCapTop);
+                    releaseCapCanvas(pipe.cachedCapBottom);
                     // Swap with last element and pop (faster than splice)
                     pipes[i] = pipes[pipes.length - 1];
                     pipes.pop();
@@ -1848,9 +1889,8 @@
                 }
             }
 
-            // Update particles - skip on mobile
+            // Update particles - skip on mobile, use pooling
             if (!isLowPerf) {
-                // Update particles (swap-and-pop for efficient removal)
                 let i = particles.length;
                 while (i--) {
                     const p = particles[i];
@@ -1860,6 +1900,8 @@
                     p.vx *= 0.96;
                     p.life -= 0.035 * fps60;
                     if (p.life <= 0) {
+                        // Return to pool instead of discarding
+                        releaseParticle(p);
                         particles[i] = particles[particles.length - 1];
                         particles.pop();
                     }
@@ -1867,7 +1909,10 @@
                 
                 // Enforce particle limit
                 if (particles.length > PERF.maxParticles) {
-                    particles.length = PERF.maxParticles;
+                    // Return excess to pool
+                    while (particles.length > PERF.maxParticles) {
+                        releaseParticle(particles.pop());
+                    }
                 }
             }
         }
@@ -1968,155 +2013,188 @@
                     // 3 medium spores instead of 1 giant
                     ctx.beginPath(); ctx.arc(x - width * 0.18, baseY, 9, 0, Math.PI * 2); ctx.fill();
                     ctx.beginPath(); ctx.arc(x + width * 0.02, baseY - height * 0.02 * flip, 9, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.22, baseY + height * 0.02 * flip, 9, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.22, baseY + height * 0.04 * flip, 8, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'asymmetric':
-                    ctx.beginPath(); ctx.ellipse(x - width * 0.2, baseY - height * 0.04 * flip, 10, 7, 0.3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.ellipse(x + width * 0.15, baseY + height * 0.02 * flip, 7, 9, -0.2, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x - width * 0.32, baseY - height * 0.06 * flip, 6, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.08, baseY + height * 0.02 * flip, 10, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x + width * 0.28, baseY - height * 0.08 * flip, 5, 0, Math.PI * 2); ctx.fill();
                     break;
                 case 'minimal':
-                    ctx.beginPath(); ctx.arc(x, baseY, 6, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(x, baseY, 10, 0, Math.PI * 2); ctx.fill();
                     break;
             }
-        }
-
-        // Top spot colors
-        const topSpotColors = ['#fff', '#9b30ff', '#ff3366', '#fff', '#ff00ff', '#fff'];
-        
-        // Draw cap highlights (shiny spots)
-        function drawCapHighlights(ctx, centerX, capY, capWidth, capHeight, highlightCount, color, isTop) {
-            ctx.fillStyle = color;
-            ctx.globalAlpha = 0.5;
-            
-            // Put highlights on visible dome side
-            const yOffset = isTop ? capHeight * 0.72 : capHeight * 0.28;
-            
-            switch(highlightCount) {
-                case 1:
-                    // Single highlight (original)
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.15, capY + yOffset, capWidth * 0.18, capHeight * 0.12, -0.3, 0, Math.PI * 2);
-                    ctx.fill();
-                    break;
-                case 2:
-                    // Two highlights
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.22, capY + yOffset, capWidth * 0.12, capHeight * 0.09, -0.2, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX + capWidth * 0.08, capY + yOffset - 2, capWidth * 0.1, capHeight * 0.08, 0.1, 0, Math.PI * 2);
-                    ctx.fill();
-                    break;
-                case 3:
-                    // Three highlights
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.25, capY + yOffset, capWidth * 0.1, capHeight * 0.08, -0.3, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.05, capY + yOffset - 3, capWidth * 0.12, capHeight * 0.09, 0, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX + capWidth * 0.18, capY + yOffset + 2, capWidth * 0.08, capHeight * 0.06, 0.2, 0, Math.PI * 2);
-                    ctx.fill();
-                    break;
-                case 5:
-                    // Five highlights scattered
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.28, capY + yOffset + 2, capWidth * 0.08, capHeight * 0.06, -0.2, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.12, capY + yOffset - 2, capWidth * 0.1, capHeight * 0.08, -0.1, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX + capWidth * 0.02, capY + yOffset, capWidth * 0.07, capHeight * 0.05, 0, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX + capWidth * 0.15, capY + yOffset - 1, capWidth * 0.09, capHeight * 0.07, 0.15, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.beginPath();
-                    ctx.ellipse(centerX + capWidth * 0.28, capY + yOffset + 3, capWidth * 0.06, capHeight * 0.05, 0.3, 0, Math.PI * 2);
-                    ctx.fill();
-                    break;
-                default:
-                    // Fallback single
-                    ctx.beginPath();
-                    ctx.ellipse(centerX - capWidth * 0.15, capY + yOffset, capWidth * 0.18, capHeight * 0.12, -0.3, 0, Math.PI * 2);
-                    ctx.fill();
-            }
-            
-            ctx.globalAlpha = 1;
         }
         
-        function drawTopSpots(ctx, variant, x, capY, width, height, isTop, colorIndex) {
-            if (variant === 0) return;
-            ctx.fillStyle = topSpotColors[colorIndex] || '#fff';
-            // Put spots on underside (stalk side): Top mushroom = near top edge, Bottom mushroom = near bottom edge
-            const spotY = isTop ? capY + 8 : capY + height - 8;
-            switch(variant) {
-                case 1: // 2 spots
-                    ctx.beginPath(); ctx.arc(x - width * 0.1, spotY, 4, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.15, spotY + 3, 3, 0, Math.PI * 2); ctx.fill();
-                    break;
-                case 2: // 3 spots
-                    ctx.beginPath(); ctx.arc(x - width * 0.18, spotY + 4, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.05, spotY, 4, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.22, spotY + 5, 3, 0, Math.PI * 2); ctx.fill();
-                    break;
-                case 3: // 1 big + 1 small
-                    ctx.beginPath(); ctx.arc(x - width * 0.05, spotY + 2, 6, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.18, spotY + 5, 3, 0, Math.PI * 2); ctx.fill();
-                    break;
-                case 4: // 4 spots
-                    ctx.beginPath(); ctx.arc(x - width * 0.2, spotY + 5, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.05, spotY, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.1, spotY + 6, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.22, spotY + 3, 3, 0, Math.PI * 2); ctx.fill();
-                    break;
-                case 5: // 5 spots scattered
-                    ctx.beginPath(); ctx.arc(x - width * 0.25, spotY + 2, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.1, spotY + 5, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.02, spotY + 1, 4, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.15, spotY + 6, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.28, spotY + 3, 3, 0, Math.PI * 2); ctx.fill();
-                    break;
-                case 6: // 6 spots dense
-                    ctx.beginPath(); ctx.arc(x - width * 0.22, spotY + 3, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.08, spotY, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.06, spotY + 5, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.18, spotY + 2, 3, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x - width * 0.15, spotY + 7, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.28, spotY + 6, 2, 0, Math.PI * 2); ctx.fill();
-                    break;
-                case 7: // many tiny spots
-                    for (let i = 0; i < 8; i++) {
-                        const ox = (i - 3.5) * width * 0.08;
-                        const oy = (i % 2) * 4 + 2;
-                        ctx.beginPath(); ctx.arc(x + ox, spotY + oy, 2, 0, Math.PI * 2); ctx.fill();
-                    }
-                    break;
-                case 8: // 3 big spots
-                    ctx.beginPath(); ctx.arc(x - width * 0.15, spotY + 3, 5, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.05, spotY + 1, 6, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(x + width * 0.22, spotY + 5, 4, 0, Math.PI * 2); ctx.fill();
-                    break;
+        function drawCapHighlights(ctx, x, y, width, height, count, highlightColor, isTop) {
+            ctx.fillStyle = highlightColor;
+            const baseY = isTop ? y + height * 0.68 : y + height * 0.32;
+            const positions = [
+                [-0.25, 6], [0.15, 5], [0.35, 4], [-0.05, 6], [0.28, 5]
+            ];
+            for (let i = 0; i < Math.min(count, positions.length); i++) {
+                const [ox, r] = positions[i];
+                ctx.beginPath();
+                ctx.arc(x + width * ox, baseY, r, 0, PI2);
+                ctx.fill();
             }
         }
-
-        function drawStalk(ctx, centerX, startY, endY, baseWidth, colors, stalkType, stalkPattern, isTop) {
-            const w = baseWidth;
-            const h = Math.abs(endY - startY);
+        
+        function drawTopSpots(ctx, count, x, y, width, height, isTop, colorIndex) {
+            const spotStyle = topSpotColors[colorIndex] || topSpotColors[0];
+            const baseY = isTop ? y + height * 0.55 : y + height * 0.45;
+            const spotPositions = [
+                [-0.30, 0.00, 3], [0.00, -0.08, 4], [0.28, 0.02, 3],
+                [-0.15, 0.06, 2], [0.12, 0.04, 3], [-0.05, 0.02, 2],
+                [0.22, -0.04, 2], [-0.22, 0.08, 2]
+            ];
+            
+            ctx.fillStyle = spotStyle.fill;
+            for (let i = 0; i < Math.min(count, spotPositions.length); i++) {
+                const [ox, oy, r] = spotPositions[i];
+                const flip = isTop ? -1 : 1;
+                ctx.beginPath();
+                ctx.arc(x + width * ox, baseY + height * oy * flip, r, 0, PI2);
+                ctx.fill();
+            }
+        }
+        
+        function drawStalk(ctx, centerX, topY, bottomY, stemWidth, colors, stalkType, stalkPattern) {
+            const height = bottomY - topY;
             ctx.fillStyle = colors.stem;
             
-            // Simple rectangle stalk on all devices for performance
-            ctx.fillRect(centerX - w/2, Math.min(startY, endY), w, h);
+            ctx.beginPath();
+            switch(stalkType) {
+                case 'straight':
+                    ctx.rect(centerX - stemWidth/2, topY, stemWidth, height);
+                    break;
+                case 'stocky':
+                    ctx.moveTo(centerX - stemWidth/2 - 4, bottomY);
+                    ctx.lineTo(centerX - stemWidth/2, topY);
+                    ctx.lineTo(centerX + stemWidth/2, topY);
+                    ctx.lineTo(centerX + stemWidth/2 + 4, bottomY);
+                    ctx.closePath();
+                    break;
+                case 'tapered':
+                    ctx.moveTo(centerX - stemWidth/2 + 4, bottomY);
+                    ctx.lineTo(centerX - stemWidth/2 - 3, topY);
+                    ctx.lineTo(centerX + stemWidth/2 + 3, topY);
+                    ctx.lineTo(centerX + stemWidth/2 - 4, bottomY);
+                    ctx.closePath();
+                    break;
+                case 'bulge':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.quadraticCurveTo(centerX - stemWidth/2 - 8, topY + height * 0.5, centerX - stemWidth/2, topY);
+                    ctx.lineTo(centerX + stemWidth/2, topY);
+                    ctx.quadraticCurveTo(centerX + stemWidth/2 + 8, topY + height * 0.5, centerX + stemWidth/2, bottomY);
+                    ctx.closePath();
+                    break;
+                case 'lean-left':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.lineTo(centerX - stemWidth/2 - 6, topY);
+                    ctx.lineTo(centerX + stemWidth/2 - 6, topY);
+                    ctx.lineTo(centerX + stemWidth/2, bottomY);
+                    ctx.closePath();
+                    break;
+                case 'lean-right':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.lineTo(centerX - stemWidth/2 + 6, topY);
+                    ctx.lineTo(centerX + stemWidth/2 + 6, topY);
+                    ctx.lineTo(centerX + stemWidth/2, bottomY);
+                    ctx.closePath();
+                    break;
+                case 'banana-left':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.quadraticCurveTo(centerX - stemWidth/2 - 12, topY + height * 0.4, centerX - stemWidth/2 - 4, topY);
+                    ctx.lineTo(centerX + stemWidth/2 - 4, topY);
+                    ctx.quadraticCurveTo(centerX + stemWidth/2 - 8, topY + height * 0.4, centerX + stemWidth/2, bottomY);
+                    ctx.closePath();
+                    break;
+                case 'banana-right':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.quadraticCurveTo(centerX - stemWidth/2 + 8, topY + height * 0.4, centerX - stemWidth/2 + 4, topY);
+                    ctx.lineTo(centerX + stemWidth/2 + 4, topY);
+                    ctx.quadraticCurveTo(centerX + stemWidth/2 + 12, topY + height * 0.4, centerX + stemWidth/2, bottomY);
+                    ctx.closePath();
+                    break;
+                case 's-curve':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.bezierCurveTo(
+                        centerX - stemWidth/2 - 8, topY + height * 0.7,
+                        centerX - stemWidth/2 + 8, topY + height * 0.3,
+                        centerX - stemWidth/2, topY
+                    );
+                    ctx.lineTo(centerX + stemWidth/2, topY);
+                    ctx.bezierCurveTo(
+                        centerX + stemWidth/2 + 8, topY + height * 0.3,
+                        centerX + stemWidth/2 - 8, topY + height * 0.7,
+                        centerX + stemWidth/2, bottomY
+                    );
+                    ctx.closePath();
+                    break;
+                case 'wave':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.bezierCurveTo(
+                        centerX - stemWidth/2 - 6, topY + height * 0.75,
+                        centerX - stemWidth/2 + 6, topY + height * 0.5,
+                        centerX - stemWidth/2 - 4, topY + height * 0.25
+                    );
+                    ctx.lineTo(centerX - stemWidth/2, topY);
+                    ctx.lineTo(centerX + stemWidth/2, topY);
+                    ctx.lineTo(centerX + stemWidth/2 + 4, topY + height * 0.25);
+                    ctx.bezierCurveTo(
+                        centerX + stemWidth/2 - 6, topY + height * 0.5,
+                        centerX + stemWidth/2 + 6, topY + height * 0.75,
+                        centerX + stemWidth/2, bottomY
+                    );
+                    ctx.closePath();
+                    break;
+                case 'snake':
+                    ctx.moveTo(centerX - stemWidth/2, bottomY);
+                    ctx.bezierCurveTo(
+                        centerX - stemWidth/2 - 10, topY + height * 0.6,
+                        centerX - stemWidth/2 + 10, topY + height * 0.3,
+                        centerX - stemWidth/2 - 5, topY
+                    );
+                    ctx.lineTo(centerX + stemWidth/2 - 5, topY);
+                    ctx.bezierCurveTo(
+                        centerX + stemWidth/2 + 10, topY + height * 0.3,
+                        centerX + stemWidth/2 - 10, topY + height * 0.6,
+                        centerX + stemWidth/2, bottomY
+                    );
+                    ctx.closePath();
+                    break;
+                default:
+                    ctx.rect(centerX - stemWidth/2, topY, stemWidth, height);
+            }
+            ctx.fill();
+            
+            // Draw stalk spots if pattern calls for it
+            if (stalkPattern && stalkPattern !== 'plain') {
+                const spotColor = colors.stemDark;
+                ctx.fillStyle = spotColor;
+                const spotCount = stalkPattern === 'dense-specks' ? 8 : (stalkPattern === 'small-spots' ? 4 : 3);
+                const spotSize = stalkPattern === 'large-spots' ? 5 : (stalkPattern === 'dense-specks' ? 2 : 3);
+                
+                for (let i = 0; i < spotCount; i++) {
+                    const spotX = centerX + (Math.random() - 0.5) * (stemWidth - 6);
+                    const spotY = topY + Math.random() * height * 0.8 + height * 0.1;
+                    ctx.beginPath();
+                    ctx.arc(spotX, spotY, spotSize, 0, PI2);
+                    ctx.fill();
+                }
+            }
         }
-        function drawPixelMushroom(ctx, x, gapY, pipe, isTop) {
+        
+        // Draw a complete mushroom pipe
+        function drawMushroom(pipe, isTop) {
             const scale = pipe.capScale || 1.0;
-            const capWidth = Math.round(102 * scale);
-            const capHeight = Math.round(51 * scale);
-            const stemWidth = Math.round(28 * scale);
+            const capWidth = 102 * scale;
+            const capHeight = 51 * scale;
+            const stemWidth = 40;
+            const gapY = pipe.gapY;
+            const centerX = pipe.x + pipeWidth / 2;
             const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
-            const centerX = x + pipeWidth / 2;
             
             if (isTop) {
                 const capY = gapY - capHeight;
@@ -2309,74 +2387,71 @@
                 ctx.fill();
                 ctx.restore();
             }
-
             ctx.restore();
 
-            // Mushrooms (batched: all stalks first, then all caps)
-            // Pass 1: Draw all stalks (fillRects batched by similar operations)
+            // Draw mushrooms (pipes)
             for (let i = 0; i < pipes.length; i++) {
                 const pipe = pipes[i];
-                const pScale = pipe.capScale || 1.0;
-                const capHeight = Math.round(51 * pScale);
-                const stemWidth = Math.round(28 * pScale);
-                const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
-                const centerX = pipe.x + pipeWidth / 2;
-                
-                ctx.fillStyle = colors.stem;
-                // Top stalk (use integers for faster rendering)
-                const topCapY = (pipe.gapY - capHeight) | 0;
-                const stalkX = (centerX - stemWidth/2) | 0;
-                ctx.fillRect(stalkX, 0, stemWidth, topCapY + 12);
-                // Bottom stalk
-                const bottomCapY = (pipe.gapY + pipeGap) | 0;
-                ctx.fillRect(stalkX, bottomCapY + capHeight - 12, stemWidth, baseHeight - bottomCapY - capHeight + 12);
-            }
-            
-            // Pass 2: Draw all caps (drawImage calls)
-            for (let i = 0; i < pipes.length; i++) {
-                const pipe = pipes[i];
-                const pScale = pipe.capScale || 1.0;
-                const capWidth = Math.round(102 * pScale);
-                const capHeight = Math.round(51 * pScale);
-                const centerX = (pipe.x + pipeWidth / 2) | 0;
-                
-                // Top cap (integer coords)
-                if (pipe.cachedCapTop) {
-                    const topCapY = (pipe.gapY - capHeight) | 0;
-                    ctx.drawImage(pipe.cachedCapTop, (centerX - capWidth/2 - 12) | 0, topCapY - 12);
-                }
-                // Bottom cap
-                if (pipe.cachedCapBottom) {
-                    const bottomCapY = (pipe.gapY + pipeGap) | 0;
-                    ctx.drawImage(pipe.cachedCapBottom, (centerX - capWidth/2 - 12) | 0, bottomCapY - 12);
-                }
+                drawMushroom(pipe, true);  // Top mushroom
+                drawMushroom(pipe, false); // Bottom mushroom
             }
 
-            // Thought bubble (skip on very low perf)
-            if (currentThought && gameState === 'playing' && !isVeryLowPerf) {
-                // Fade in/out within 3.5 second total
-                let bubbleAlpha = 1;
-                if (thoughtDisplayTime < 0.4) {
-                    bubbleAlpha = thoughtDisplayTime / 0.4; // fade in
-                } else if (thoughtDisplayTime > THOUGHT_DISPLAY_DURATION - 0.6) {
-                    bubbleAlpha = (THOUGHT_DISPLAY_DURATION - thoughtDisplayTime) / 0.6; // fade out
+            // Thought bubble
+            if (currentThought && thoughtDisplayTime < THOUGHT_DISPLAY_DURATION) {
+                const fadeInDuration = 0.3;
+                const fadeOutStart = THOUGHT_DISPLAY_DURATION - 0.5;
+                let alpha = 1;
+                
+                if (thoughtDisplayTime < fadeInDuration) {
+                    alpha = thoughtDisplayTime / fadeInDuration;
+                } else if (thoughtDisplayTime > fadeOutStart) {
+                    alpha = 1 - (thoughtDisplayTime - fadeOutStart) / 0.5;
                 }
                 
-                // Float slowly upward and slightly right from initial position
-                const floatX = thoughtBubbleX + thoughtDisplayTime * 8;
-                const floatY = thoughtBubbleY - thoughtDisplayTime * 15;
+                // Float upward from starting position
+                const floatOffset = thoughtDisplayTime * 8;
+                const bubbleX = Math.min(thoughtBubbleX, baseWidth - 140);
+                const bubbleY = Math.max(thoughtBubbleY - floatOffset, 40);
                 
-                // Clamp to stay on screen (use integers on mobile)
-                ctx.font = '24px "Bebas Neue", sans-serif';
-                const textWidth = ctx.measureText(currentThought).width;
-                const clampedX = Math.min(Math.max(floatX, textWidth / 2 + 8), baseWidth - textWidth / 2 - 8) | 0;
-                const clampedY = Math.max(floatY, 20) | 0;
+                ctx.globalAlpha = alpha * 0.95;
                 
-                // Draw text (same style as KEEP JUMPING)
-                ctx.globalAlpha = bubbleAlpha;
-                ctx.fillStyle = '#fff';
-                ctx.textAlign = 'center';
-                ctx.fillText(currentThought, clampedX, clampedY);
+                // Bubble background
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+                ctx.beginPath();
+                ctx.roundRect(bubbleX, bubbleY, 130, 45, 12);
+                ctx.fill();
+                
+                // Bubble tail
+                ctx.beginPath();
+                ctx.moveTo(bubbleX + 10, bubbleY + 45);
+                ctx.lineTo(bubbleX - 5, bubbleY + 55);
+                ctx.lineTo(bubbleX + 25, bubbleY + 45);
+                ctx.fill();
+                
+                // Thought text - using cached font
+                ctx.fillStyle = '#333';
+                ctx.font = FONT_BEBAS_14;
+                ctx.textAlign = 'left';
+                
+                // Word wrap
+                const words = currentThought.split(' ');
+                let line = '';
+                let y = bubbleY + 18;
+                const maxWidth = 120;
+                
+                for (const word of words) {
+                    const testLine = line + word + ' ';
+                    const metrics = ctx.measureText(testLine);
+                    if (metrics.width > maxWidth && line !== '') {
+                        ctx.fillText(line.trim(), bubbleX + 8, y);
+                        line = word + ' ';
+                        y += 14;
+                    } else {
+                        line = testLine;
+                    }
+                }
+                ctx.fillText(line.trim(), bubbleX + 8, y);
+                
                 ctx.globalAlpha = 1;
             }
 
@@ -2384,23 +2459,23 @@
             ctx.strokeStyle = '#ff00ff'; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.moveTo(-10, baseHeight); ctx.lineTo(baseWidth + 10, baseHeight); ctx.stroke();
             
-            // Instructions during countdown
+            // Instructions during countdown - using cached font
             if (gameState === 'countdown') {
                 ctx.globalAlpha = 1;
                 ctx.fillStyle = '#fff';
-                ctx.font = '24px "Bebas Neue", sans-serif';
+                ctx.font = FONT_BEBAS_24;
                 ctx.textAlign = 'center';
                 const instructionText = isMobile ? 'TAP TO JUMP' : 'CLICK OR SPACEBAR TO JUMP';
                 ctx.fillText(instructionText, 200, 180);
                 ctx.globalAlpha = 1;
             }
             
-            // Instructions during play
+            // Instructions during play - using cached font
             if (gameState === 'playing' && playTime < 5) {
                 const fadeOpacity = playTime < 3 ? 1 : 1 - (playTime - 3) / 2;
                 ctx.globalAlpha = fadeOpacity;
                 ctx.fillStyle = '#fff';
-                ctx.font = '24px "Bebas Neue", sans-serif';
+                ctx.font = FONT_BEBAS_24;
                 ctx.textAlign = 'center';
                 ctx.fillText('KEEP JUMPING...', bird.x + bird.width / 2, bird.y - 35);
                 ctx.globalAlpha = 1;
@@ -2414,7 +2489,7 @@
         function gameLoop(currentTime) {
             requestAnimationFrame(gameLoop);
             
-            // Skip during loading
+            // Skip during loading (loading screen handles its own display)
             if (gameState === 'loading') return;
             
             // Calculate delta time (capped to prevent huge jumps)
@@ -2441,9 +2516,9 @@
             ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
 
-        // Event listeners
-        startBtn.addEventListener('click', startGame);
-        restartBtn.addEventListener('click', startGame);
+        // Event listeners - START GAME now shows loading screen first
+        startBtn.addEventListener('click', showLoadingScreen);
+        restartBtn.addEventListener('click', showLoadingScreen);
         
         introBtn.addEventListener('click', () => {
             introScreen.classList.add('hidden');
@@ -2483,11 +2558,11 @@
                     startScreen.classList.remove('hidden');
                     gameState = 'start';
                 } else if (gameState === 'start') {
-                    startGame();
+                    showLoadingScreen();
                 } else if (gameState === 'playing') {
                     flap();
                 } else if (gameState === 'gameover') {
-                    startGame();
+                    showLoadingScreen();
                 }
             }
         });
@@ -2535,7 +2610,7 @@
             return false;
         }
         
-        // Load Firebase SDK dynamically
+        // Load Firebase SDK dynamically - IMMEDIATELY on page load
         function loadFirebaseSDK() {
             if (firebaseConfig.apiKey === "YOUR_API_KEY") return;
             
@@ -2599,15 +2674,12 @@
         
         async function showScoreModal(finalScore) {
             pendingScore = finalScore;
-            finalScoreDisplay.textContent = finalScore;
+            finalScoreDisplay.textContent = `Score: ${finalScore}`;
             usernameInput.value = '';
             scoreErrorMsg.textContent = '';
-            usernameInput.classList.remove('error');
-            submitScoreBtn.disabled = false;
-            submitScoreBtn.textContent = 'Submit';
+            gameOverScreen.classList.add('hidden');
             
-            // Check rank
-            let rank = await getScoreRank(finalScore);
+            const rank = await getScoreRank(finalScore);
             
             if (rank === 1) {
                 scoreModalTitle.textContent = "🐕 TOP DOG! 🐕";
