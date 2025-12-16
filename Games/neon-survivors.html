@@ -336,7 +336,7 @@
             display: flex;
             flex-direction: column;
             gap: calc(4px * var(--scale, 1));
-            padding: calc(7px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(10px * var(--scale, 1));
+            padding: calc(4px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(10px * var(--scale, 1));
             background: rgba(0, 0, 0, 0.7);
             border: calc(2px * var(--scale, 1)) solid rgba(0, 255, 255, 0.3);
             border-radius: calc(8px * var(--scale, 1));
@@ -1920,11 +1920,11 @@
             justify-content: flex-start;
             align-items: center;
             width: 100%;
-            /* Responsive height - use flex-grow to fill available space */
+            /* Tight fit - only UI elements + 4px bottom gap */
             height: auto;
-            min-height: calc(195px * var(--scale, 1));
-            flex: 1 1 auto;
-            padding: 0px calc(12px * var(--scale, 1)) calc(2px * var(--scale, 1)) calc(12px * var(--scale, 1));
+            min-height: calc(140px * var(--scale, 1));
+            flex: 0 0 auto;
+            padding: 0px calc(12px * var(--scale, 1)) calc(4px * var(--scale, 1)) calc(12px * var(--scale, 1));
             box-sizing: border-box;
             /* Touch control */
             touch-action: none;
@@ -3363,7 +3363,7 @@
         <!-- Trackpad Zone -->
         <div class="trackpad-zone" id="trackpadZone">
             <div class="stats-display" id="statsDisplay">
-                <div class="xp-bar-container" style="width: calc(100% + 24px); margin: 0 -12px 4px -12px; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; background: transparent;">
+                <div class="xp-bar-container" style="width: calc(100% + 24px); margin: 0 -12px 2px -12px; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; background: transparent;">
                     <div class="xp-bar-fill" style="height: 100%; width: 0%; background: #a8b8c8; box-shadow: 0 0 4px rgba(168, 184, 200, 0.5); transition: width 0.25s ease-out;"></div>
                 </div>
                 <div class="stats-row-container" style="display: flex; align-items: center; justify-content: space-evenly; width: calc(100% + 24px); margin: 0 -12px;">
@@ -3752,9 +3752,9 @@
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
                 // Account for trackpad zone below canvas
-                // Trackpad base height is 360px, scales proportionally with canvas
-                const TRACKPAD_BASE_HEIGHT = 195;
-                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 195 = 715
+                // Trackpad base height is compact to maximize game view
+                const TRACKPAD_BASE_HEIGHT = 140;
+                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 140 = 660
                 const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.73
                 
                 const availWidth = viewW - totalMargin;
@@ -13032,19 +13032,49 @@
             // Border color changes when shield is present
             const borderColor = player.maxShieldHp > 0 ? '#66aaff' : '#39ff9f';
             
-            // Update stats row (time, kills, HP bar, gold, level)
+            // Calculate HP bar position to align with weapons/tomes bar centers
+            const weaponsBar = document.getElementById('weaponsDisplay');
+            const tomesBar = document.getElementById('tomesDisplay');
             const statsRowContainer = statsDisplay.querySelector('.stats-row-container');
-            if (statsRowContainer) {
+            
+            if (statsRowContainer && weaponsBar && tomesBar) {
+                const statsRect = statsRowContainer.getBoundingClientRect();
+                const weaponsRect = weaponsBar.getBoundingClientRect();
+                const tomesRect = tomesBar.getBoundingClientRect();
+                
+                // Get center X positions relative to stats container
+                const weaponsCenterX = (weaponsRect.left + weaponsRect.width / 2) - statsRect.left;
+                const tomesCenterX = (tomesRect.left + tomesRect.width / 2) - statsRect.left;
+                
+                // HP bar spans from weapons center to tomes center
+                const hpBarLeft = weaponsCenterX;
+                const hpBarWidth = tomesCenterX - weaponsCenterX;
+                
                 statsRowContainer.style.fontSize = fontSize;
+                statsRowContainer.style.position = 'relative';
                 statsRowContainer.innerHTML = `
                     <span style="color: #fff; text-shadow: 0 0 4px #0ff;">${timeStr}</span>
                     <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">${kills} Kills</span>
-                    <div style="width: ${hpWidth}px; height: ${hpHeight}; border: 1px solid ${borderColor}; border-radius: 3px; overflow: hidden; background: transparent; white-space: nowrap; font-size: 0;">
+                    <div id="hpBarAligned" style="position: absolute; left: ${hpBarLeft}px; width: ${hpBarWidth}px; height: ${hpHeight}; border: 1px solid ${borderColor}; border-radius: 3px; overflow: hidden; background: transparent; white-space: nowrap; font-size: 0; top: 50%; transform: translateY(-50%);">
                         ${hpBarContent}
                     </div>
                     <span style="color: #ffd700; text-shadow: 0 0 4px #ffd700;">🪙${playerGold}</span>
                     <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">Level ${player.level}</span>
                 `;
+            } else {
+                // Fallback if elements not found
+                if (statsRowContainer) {
+                    statsRowContainer.style.fontSize = fontSize;
+                    statsRowContainer.innerHTML = `
+                        <span style="color: #fff; text-shadow: 0 0 4px #0ff;">${timeStr}</span>
+                        <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">${kills} Kills</span>
+                        <div style="width: ${hpWidth}px; height: ${hpHeight}; border: 1px solid ${borderColor}; border-radius: 3px; overflow: hidden; background: transparent; white-space: nowrap; font-size: 0;">
+                            ${hpBarContent}
+                        </div>
+                        <span style="color: #ffd700; text-shadow: 0 0 4px #ffd700;">🪙${playerGold}</span>
+                        <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">Level ${player.level}</span>
+                    `;
+                }
             }
             
             // Update stat panels
