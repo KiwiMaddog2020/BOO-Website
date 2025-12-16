@@ -80,8 +80,23 @@
             border: none;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
             align-items: center;
+        }
+        
+        /* Subtle cyan border around canvas in fullscreen */
+        .game-container.fullscreen-mode #gameCanvas {
+            border: 2px solid rgba(0, 255, 255, 0.15);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
+            border-radius: 0;
+            border-bottom: none;
+        }
+        
+        /* Subtle cyan border around trackpad in fullscreen */
+        .game-container.fullscreen-mode .trackpad-zone {
+            border: 2px solid rgba(0, 255, 255, 0.15);
+            border-top: none;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
         }
         
         /* Fullscreen body centering - JS adds this class */
@@ -98,14 +113,14 @@
             padding: 0 !important;
             display: flex !important;
             justify-content: center !important;
-            align-items: center !important;
+            align-items: flex-start !important;
             overflow: hidden !important;
         }
         
         /* Force fullscreen layout when in iframe (CSS kicks in immediately) */
-        /* Center vertically to ensure border is fully visible */
+        /* Align to top, letterbox only at bottom */
         html.in-iframe body {
-            align-items: center;
+            align-items: flex-start;
         }
         
         html.in-iframe .game-container {
@@ -3819,38 +3834,50 @@
                 
                 // Universal margin system: border + safety padding
                 // iPad needs extra margin for status bar, home indicator, and close buttons
-                // Iframe no longer has border, so less padding needed
                 const borderWidth = isInIframe ? 0 : 3;
                 const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 0 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Account for trackpad zone below canvas
-                // Content: stats row ~25 + main row 158 + spacer 2 + instructions 18 ≈ 203
-                const TRACKPAD_BASE_HEIGHT = 205;
-                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 205 = 725
-                const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.73
+                // Trackpad height scales with width
+                const TRACKPAD_MIN_HEIGHT = 175;
+                const TRACKPAD_RATIO = 0.22;
                 
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
                 
-                let totalCssHeight;
+                // Canvas aspect ratio (game logic coordinates)
+                const canvasAspect = BASE_WIDTH / BASE_HEIGHT; // 800/520 = 1.538
                 
-                // Use consistent aspect-ratio-preserving approach for all modes
-                const combinedAspect = BASE_WIDTH / totalGameHeight;
-                const screenAspect = availWidth / availHeight;
+                // Calculate canvas and trackpad together to maximize vertical fill
+                // trackpad = max(175, cssWidth * 0.22) = max(175, cssHeight * aspect * 0.22)
+                // cssHeight + trackpad = availHeight
                 
-                // Fit game (canvas + trackpad) to available space, preserving aspect ratio
-                if (screenAspect > combinedAspect) {
-                    // Height-limited: total height fills available, width calculated from it
-                    totalCssHeight = Math.floor(availHeight);
-                    cssWidth = Math.floor(totalCssHeight * combinedAspect);
-                } else {
-                    // Width-limited: width fills available, total height calculated from it
-                    cssWidth = Math.floor(availWidth);
-                    totalCssHeight = Math.floor(cssWidth / combinedAspect);
+                // First try: trackpad scales with canvas
+                // cssHeight + cssHeight * aspect * RATIO = availHeight
+                // cssHeight * (1 + aspect * RATIO) = availHeight
+                const scaledTrackpadRatio = canvasAspect * TRACKPAD_RATIO; // 1.538 * 0.22 = 0.338
+                let cssHeightCalc = Math.floor(availHeight / (1 + scaledTrackpadRatio));
+                let cssWidthCalc = Math.floor(cssHeightCalc * canvasAspect);
+                let trackpadCalc = Math.floor(cssWidthCalc * TRACKPAD_RATIO);
+                
+                // If trackpad would be smaller than minimum, use minimum
+                if (trackpadCalc < TRACKPAD_MIN_HEIGHT) {
+                    trackpadCalc = TRACKPAD_MIN_HEIGHT;
+                    cssHeightCalc = Math.floor(availHeight - TRACKPAD_MIN_HEIGHT);
+                    cssWidthCalc = Math.floor(cssHeightCalc * canvasAspect);
                 }
-                // Canvas gets its proportional share of the total height
-                cssHeight = Math.floor(totalCssHeight * canvasHeightRatio);
+                
+                cssHeight = cssHeightCalc;
+                cssWidth = cssWidthCalc;
+                
+                // Only scale down if width exceeds available (very narrow/tall screens)
+                if (cssWidth > availWidth) {
+                    cssWidth = Math.floor(availWidth);
+                    cssHeight = Math.floor(cssWidth / canvasAspect);
+                }
+                
+                // Final trackpad height based on actual canvas width
+                const finalTrackpadHeight = Math.max(TRACKPAD_MIN_HEIGHT, Math.floor(cssWidth * TRACKPAD_RATIO));
                 
                 // Determine optimal buffer scale based on device
                 let bufferScale;
@@ -3867,8 +3894,8 @@
                 const totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
-                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
-                    bufferScale *= scaleFactor;
+                    const scaleFactorMem = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    bufferScale *= scaleFactorMem;
                     bufferWidth = Math.round(BASE_WIDTH * bufferScale);
                     bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
                 }
@@ -3879,12 +3906,11 @@
                 canvas.style.height = cssHeight + 'px';
                 
                 // Set trackpad zone dimensions to match calculated layout
-                const trackpadCssHeight = totalCssHeight - cssHeight;
                 const trackpadEl = document.getElementById('trackpadZone');
                 if (trackpadEl) {
                     trackpadEl.style.width = cssWidth + 'px';
-                    trackpadEl.style.height = trackpadCssHeight + 'px';
-                    trackpadEl.style.minHeight = trackpadCssHeight + 'px';
+                    trackpadEl.style.height = finalTrackpadHeight + 'px';
+                    trackpadEl.style.minHeight = finalTrackpadHeight + 'px';
                 }
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -3892,8 +3918,7 @@
                 dprScale = bufferScale;
                 
                 // Update CSS scale variable for UI elements
-                // Multiply by 1.2 to fill more vertical space in trackpad
-                const uiScale = (cssWidth / BASE_WIDTH) * 1.2;
+                const uiScale = cssWidth / BASE_WIDTH;
                 document.documentElement.style.setProperty('--scale', uiScale);
                 
                 // Debug overlay
@@ -3901,7 +3926,7 @@
                     viewport: `${viewW}×${viewH}`,
                     avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
                     css: `${cssWidth}×${cssHeight}`,
-                    total: `${cssWidth}×${totalCssHeight}`,
+                    total: `${cssWidth}×${cssHeight + finalTrackpadHeight}`,
                     buffer: `${bufferWidth}×${bufferHeight}`,
                     iframe: isInIframe ? 'YES' : 'NO',
                     device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
