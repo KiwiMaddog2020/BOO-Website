@@ -167,8 +167,8 @@
         
         .hud-left, .hud-right {
             display: flex;
-            gap: 20px;
-            min-width: 80px;
+            gap: 56px;
+            min-width: 100px;
         }
         
         .hud-right {
@@ -179,7 +179,7 @@
 
         .hud-label {
             color: rgba(255, 255, 255, 0.5);
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 1.5px;
@@ -188,7 +188,7 @@
         .hud-value {
             color: var(--cyan);
             font-family: 'Oxanium', monospace;
-            font-size: 20px;
+            font-size: 26px;
             font-weight: 400;
             text-shadow: 0 0 20px var(--cyan);
             letter-spacing: -0.5px;
@@ -197,9 +197,16 @@
         .hud-value.score { 
             color: var(--magenta); 
             text-shadow: 0 0 20px var(--magenta);
-            font-family: 'Oxanium', monospace;
-            font-size: 20px;
-            font-weight: 400;
+        }
+        
+        .hud-value.max-depth {
+            color: var(--magenta);
+            text-shadow: 0 0 20px var(--magenta);
+        }
+        
+        .hud-value.depth {
+            color: #ffffff;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.7);
         }
 
         .hud-center { 
@@ -471,34 +478,6 @@
             line-height: 1;
         }
 
-        .depth-display {
-            position: absolute;
-            bottom: 10px;
-            left: 16px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            z-index: 10;
-            pointer-events: none;
-        }
-        
-        .depth-label {
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-        }
-        
-        .depth-value {
-            color: var(--cyan);
-            font-family: 'Oxanium', monospace;
-            font-size: 20px;
-            font-weight: 400;
-            text-shadow: 0 0 20px var(--cyan);
-            letter-spacing: -0.5px;
-        }
-
         .upgrade-overlay {
             position: absolute;
             top: 0; left: 0;
@@ -629,12 +608,13 @@
             .upgrade-title { font-size: 20px; letter-spacing: 4px; }
             .upgrade-slots { gap: 8px; }
             .hud { padding: 12px 14px; }
-            .hud-value { font-size: 18px; }
+            .hud-value { font-size: 22px; }
             /* Mobile HUD bar scaling */
             .hud-center { gap: 12px; }
+            .hud-left, .hud-right { gap: 36px; }
             .fuel-bar-wrapper, .hull-bar-wrapper { width: 100px; height: 24px; }
             .fuel-percent, .hull-percent { font-size: 12px; }
-            .hud-label { font-size: 9px; letter-spacing: 1px; }
+            .hud-label { font-size: 10px; letter-spacing: 1px; }
             .control-zone { height: 95px; min-height: 95px; }
             .menu-btn, .game-btn { padding: 8px 16px; font-size: 12px; width: 140px; }
             .game-title { font-size: 32px; letter-spacing: 2px; }
@@ -1228,8 +1208,8 @@
         }
         
         .hud-value.points {
-            color: var(--orange);
-            font-size: 18px;
+            color: #ffffff;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.7);
         }
     </style>
 </head>
@@ -1247,6 +1227,14 @@
         <div class="game-container">
         <div class="hud">
             <div class="hud-left">
+                <div class="hud-item">
+                    <div class="hud-label">Max</div>
+                    <div class="hud-value max-depth"><span id="maxDepth">0</span>m</div>
+                </div>
+                <div class="hud-item">
+                    <div class="hud-label">Depth</div>
+                    <div class="hud-value depth"><span id="depth">0</span>m</div>
+                </div>
             </div>
             <div class="hud-center">
                 <div class="bar-container">
@@ -1287,10 +1275,6 @@
         <div class="control-zone" id="controlZone">
             <div class="control-instructions" id="controlInstructions">Arrow Keys / WASD • Swipe on mobile</div>
             <div class="permanent-upgrades" id="permUpgrades"></div>
-            <div class="depth-display" id="depthDisplay">
-                <span class="depth-label">Depth</span>
-                <span class="depth-value"><span id="depth">0</span>m</span>
-            </div>
         </div>
 
         <div class="upgrade-overlay" id="upgradeOverlay">
@@ -1603,6 +1587,7 @@
         const rawDPR = window.devicePixelRatio || 1;
         
         const depthEl = document.getElementById('depth');
+        const maxDepthEl = document.getElementById('maxDepth');
         const scoreEl = document.getElementById('score');
         const fuelBar = document.getElementById('fuelBar');
         const fuelBarContainer = document.getElementById('fuelBarContainer');
@@ -3789,6 +3774,7 @@
                 depth = newDepth;
                 if (depth > maxDepthThisRun) {
                     maxDepthThisRun = depth;
+                    maxDepthEl.textContent = maxDepthThisRun;
                 }
                 depthEl.textContent = depth;
                 depthColorShift = Math.min(depth / 200, 1);
@@ -4215,44 +4201,52 @@
                 ctx.globalAlpha = 1;
             }
             
-            // ===== LOW HULL WARNING (blue/red pulse) =====
+            // ===== LOW HULL WARNING (red pulse + screen flash) =====
             const hullPercent = hull / maxHull;
             if (hullPercent < 0.30 && hullPercent > 0) {
-                const pulseSpeed = hullPercent < 0.15 ? 0.25 : 0.12;
+                const pulseSpeed = hullPercent < 0.15 ? 0.3 : 0.15;
                 const pulse = 0.5 + Math.sin(globalTime * pulseSpeed) * 0.5;
-                const baseAlpha = hullPercent < 0.15 ? 0.55 : 0.30; // Much more visible
+                const baseAlpha = hullPercent < 0.15 ? 0.75 : 0.45;
                 const warningAlpha = baseAlpha * pulse;
                 
-                // Blue/red vignette overlay
+                // Full screen red flash overlay
+                ctx.fillStyle = `rgba(255, 0, 0, ${warningAlpha * 0.3})`;
+                ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+                
+                // Red vignette from edges
                 const gradient = ctx.createRadialGradient(
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.2,
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.7
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.1,
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.6
                 );
                 gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(0.5, `rgba(100, 0, 30, ${warningAlpha * 0.4})`);
-                gradient.addColorStop(0.8, `rgba(200, 0, 50, ${warningAlpha * 0.7})`);
-                gradient.addColorStop(1, `rgba(255, 0, 60, ${warningAlpha})`);
+                gradient.addColorStop(0.4, `rgba(150, 0, 0, ${warningAlpha * 0.3})`);
+                gradient.addColorStop(0.7, `rgba(220, 0, 30, ${warningAlpha * 0.6})`);
+                gradient.addColorStop(1, `rgba(255, 0, 50, ${warningAlpha})`);
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             }
             
-            // ===== LOW FUEL WARNING (black/orange pulse) =====
+            // ===== LOW FUEL WARNING (orange pulse + screen flash) =====
             const fuelPercent = fuel / maxFuel;
             if (fuelPercent < 0.30 && fuelPercent > 0) {
-                const pulseSpeed = fuelPercent < 0.15 ? 0.25 : 0.12;
-                const pulse = 0.5 + Math.sin(globalTime * pulseSpeed + Math.PI) * 0.5; // Offset from hull
-                const baseAlpha = fuelPercent < 0.15 ? 0.60 : 0.35; // Much more visible
+                const pulseSpeed = fuelPercent < 0.15 ? 0.3 : 0.15;
+                const pulse = 0.5 + Math.sin(globalTime * pulseSpeed + Math.PI) * 0.5;
+                const baseAlpha = fuelPercent < 0.15 ? 0.75 : 0.45;
                 const warningAlpha = baseAlpha * pulse;
                 
-                // Dark vignette with orange tint
+                // Full screen orange flash overlay
+                ctx.fillStyle = `rgba(255, 100, 0, ${warningAlpha * 0.25})`;
+                ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+                
+                // Orange vignette from edges
                 const gradient = ctx.createRadialGradient(
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.2,
-                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.7
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.1,
+                    BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.6
                 );
                 gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(0.5, `rgba(60, 30, 0, ${warningAlpha * 0.4})`);
-                gradient.addColorStop(0.8, `rgba(180, 80, 0, ${warningAlpha * 0.7})`);
-                gradient.addColorStop(1, `rgba(255, 120, 0, ${warningAlpha})`);
+                gradient.addColorStop(0.4, `rgba(100, 50, 0, ${warningAlpha * 0.3})`);
+                gradient.addColorStop(0.7, `rgba(200, 100, 0, ${warningAlpha * 0.6})`);
+                gradient.addColorStop(1, `rgba(255, 140, 0, ${warningAlpha})`);
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             }
@@ -5930,6 +5924,7 @@
             initBgStars();
             
             depthEl.textContent = '0';
+            maxDepthEl.textContent = '0';
             scoreEl.textContent = '0';
             updateFuelBar();
             updateHullBar();
