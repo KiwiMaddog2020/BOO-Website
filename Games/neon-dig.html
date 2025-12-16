@@ -2064,7 +2064,7 @@
         }
         
         // Track last dig direction for continuous digging
-        let lastDigDirection = null; // 'down', 'left', 'right'
+        let lastDigDirection = null; // 'down', 'up', 'left', 'right'
         
         // ==================== COMBO & EFFECTS FUNCTIONS ====================
         function addCombo() {
@@ -2569,6 +2569,9 @@
                 if (!result) return false;
                 targetTX = result.tx;
                 targetAbsTY = result.absoluteTy;
+            } else if (direction === 'up') {
+                targetTX = Math.floor((player.x + player.width / 2) / TILE_SIZE);
+                targetAbsTY = Math.floor((player.y - 1) / TILE_SIZE);
             } else if (direction === 'left') {
                 targetTX = Math.floor(player.x / TILE_SIZE);
                 targetAbsTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
@@ -2963,31 +2966,43 @@
             // Determine drill direction
             let particleDrillDirection = 'down';
             
-            // Check if actively digging sideways
+            // Check if actively digging sideways or up
             if (player.digging && player.digTarget) {
                 const targetWorldX = player.digTarget.x * TILE_SIZE + TILE_SIZE / 2;
+                const targetWorldY = player.digTarget.y * TILE_SIZE + TILE_SIZE / 2;
                 const playerCenterX = player.x + player.width / 2;
+                const playerCenterY = player.y + player.height / 2;
                 const dx = targetWorldX - playerCenterX;
+                const dy = targetWorldY - playerCenterY;
                 
-                if (Math.abs(dx) > TILE_SIZE / 2) {
+                if (dy < -TILE_SIZE / 2) {
+                    particleDrillDirection = 'up';
+                } else if (Math.abs(dx) > TILE_SIZE / 2) {
                     particleDrillDirection = dx < 0 ? 'left' : 'right';
                 }
             }
-            // If not digging but holding left/right keys
-            else if (keys.left && !keys.right) {
+            // If not digging but holding direction keys
+            else if (keys.up && !keys.down) {
+                particleDrillDirection = 'up';
+            } else if (keys.left && !keys.right) {
                 particleDrillDirection = 'left';
             } else if (keys.right && !keys.left) {
                 particleDrillDirection = 'right';
             }
             // When overheated, remember last dig direction
-            else if (drillOverheated && lastDigDirection === 'left') {
+            else if (drillOverheated && lastDigDirection === 'up') {
+                particleDrillDirection = 'up';
+            } else if (drillOverheated && lastDigDirection === 'left') {
                 particleDrillDirection = 'left';
             } else if (drillOverheated && lastDigDirection === 'right') {
                 particleDrillDirection = 'right';
             }
             
             // Apply direction offsets
-            if (particleDrillDirection === 'left') {
+            if (particleDrillDirection === 'up') {
+                particleDrillX = player.x + player.width / 2;
+                particleDrillY = player.y - 3;
+            } else if (particleDrillDirection === 'left') {
                 particleDrillX = player.x - 3;
                 particleDrillY = player.y + player.height / 2 + 1;
             } else if (particleDrillDirection === 'right') {
@@ -3107,6 +3122,7 @@
                 // Check if the direction key for current dig is still held
                 let keyStillHeld = false;
                 if (lastDigDirection === 'down' && keys.down) keyStillHeld = true;
+                if (lastDigDirection === 'up' && keys.up) keyStillHeld = true;
                 if (lastDigDirection === 'left' && keys.left) keyStillHeld = true;
                 if (lastDigDirection === 'right' && keys.right) keyStillHeld = true;
                 
@@ -3206,6 +3222,13 @@
                         const nextY = Math.max(targetY, newY - step);
                         if (checkCollision(player.x, nextY, player.width, player.height)) {
                             blocked = true;
+                            // Try to drill upward when blocked
+                            if (!player.digging) {
+                                lastDigDirection = 'up';
+                                const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
+                                const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
+                                dig(tx, absoluteTy);
+                            }
                         } else {
                             newY = nextY;
                         }
@@ -3250,6 +3273,7 @@
             // Clear dig direction when keys released (but keep direction during overheat for visual feedback)
             if (!drillOverheated) {
                 if (!keys.down && lastDigDirection === 'down') lastDigDirection = null;
+                if (!keys.up && lastDigDirection === 'up') lastDigDirection = null;
                 if (!keys.left && lastDigDirection === 'left') lastDigDirection = null;
                 if (!keys.right && lastDigDirection === 'right') lastDigDirection = null;
             }
@@ -4118,13 +4142,18 @@
             // Determine drill direction
             let drillDirection = 'down'; // Track current direction
             
-            // Check if actively digging sideways
+            // Check if actively digging sideways or up
             if (player.digging && player.digTarget) {
                 const targetWorldX = player.digTarget.x * TILE_SIZE + TILE_SIZE / 2;
+                const targetWorldY = player.digTarget.y * TILE_SIZE + TILE_SIZE / 2;
                 const playerCenterX = player.x + player.width / 2;
+                const playerCenterY = player.y + player.height / 2;
                 const dx = targetWorldX - playerCenterX;
+                const dy = targetWorldY - playerCenterY;
                 
-                if (Math.abs(dx) > TILE_SIZE / 2) {
+                if (dy < -TILE_SIZE / 2) {
+                    drillDirection = 'up';
+                } else if (Math.abs(dx) > TILE_SIZE / 2) {
                     // Drilling left or right
                     if (dx < 0) {
                         drillDirection = 'left';
@@ -4133,8 +4162,10 @@
                     }
                 }
             } 
-            // If not digging but holding left/right keys, point drill that direction
-            else if (keys.left && !keys.right) {
+            // If not digging but holding direction keys, point drill that direction
+            else if (keys.up && !keys.down) {
+                drillDirection = 'up';
+            } else if (keys.left && !keys.right) {
                 drillDirection = 'left';
             } else if (keys.right && !keys.left) {
                 drillDirection = 'right';
@@ -4144,10 +4175,16 @@
                 drillDirection = 'left';
             } else if (drillOverheated && lastDigDirection === 'right') {
                 drillDirection = 'right';
+            } else if (drillOverheated && lastDigDirection === 'up') {
+                drillDirection = 'up';
             }
             
             // Apply direction offsets
-            if (drillDirection === 'left') {
+            if (drillDirection === 'up') {
+                drillAngle = Math.PI;
+                drillOffsetX = 0;
+                drillOffsetY = -3;
+            } else if (drillDirection === 'left') {
                 drillAngle = Math.PI / 2;
                 drillOffsetX = -player.width / 2 - 3;
                 drillOffsetY = player.height / 2 + 1;
