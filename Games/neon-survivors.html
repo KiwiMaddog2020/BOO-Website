@@ -3824,7 +3824,8 @@
                 dprScale = bufferScale;
                 
                 // Update CSS scale variable for UI elements
-                const uiScale = cssWidth / BASE_WIDTH;
+                // Multiply by 1.2 to fill more vertical space in trackpad
+                const uiScale = (cssWidth / BASE_WIDTH) * 1.2;
                 document.documentElement.style.setProperty('--scale', uiScale);
                 
                 // Debug overlay
@@ -4923,11 +4924,8 @@
                 const projectileCount = def.baseProjectiles + Math.floor(level / 4);
                 const totalDamage = baseDamage * projectileCount;
                 
-                const target = findNearestEnemy(this.x, this.y, totalDamage);
+                const target = findNearestEnemy(this.x, this.y);
                 if (!target) return;
-                
-                // Track incoming damage on target
-                target.incomingDamage += totalDamage;
                 
                 state.lastFire = now;
                 const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
@@ -4938,7 +4936,7 @@
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
                     projectiles.push(new Projectile(
-                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt', pierce, target
+                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt', pierce
                     ));
                 }
             }
@@ -5057,17 +5055,14 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.08);
                 const pierce = def.pierce + Math.floor(level / 4);
                 
-                const target = findNearestEnemy(this.x, this.y, baseDamage);
+                const target = findNearestEnemy(this.x, this.y);
                 if (!target) return;
-                
-                // Track incoming damage on target
-                target.incomingDamage += baseDamage;
                 
                 state.lastFire = now;
                 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 projectiles.push(new Projectile(
-                    this.x, this.y, angle, 6, baseDamage, def.color, 'laser', pierce, target
+                    this.x, this.y, angle, 6, baseDamage, def.color, 'laser', pierce
                 ));
             }
 
@@ -5341,13 +5336,9 @@
                 
                 const shardCount = def.baseProjectiles + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.06);
-                const totalDamage = baseDamage * shardCount;
                 
-                const target = findNearestEnemy(this.x, this.y, totalDamage);
+                const target = findNearestEnemy(this.x, this.y);
                 if (!target) return;
-                
-                // Track incoming damage on target
-                target.incomingDamage += totalDamage;
                 
                 state.lastFire = now;
                 const pierce = 1 + Math.floor(level / 4); // +1 pierce per 4 levels
@@ -5357,7 +5348,7 @@
                 
                 for (let i = 0; i < shardCount; i++) {
                     const a = angle + (i - (shardCount - 1) / 2) * spread;
-                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce, target);
+                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce);
                     proj.slowAmount = def.slowAmount;
                     proj.slowDuration = def.slowDuration;
                     projectiles.push(proj);
@@ -11022,14 +11013,15 @@
         }
 
         // ===== PROJECTILE CLASS =====
+        // Clean system: projectiles fly STRAIGHT, only Spirit Orbs home
         class Projectile {
-            constructor(x, y, angle, speed, damage, color, type, pierce = 1, originalTarget = null) {
+            constructor(x, y, angle, speed, damage, color, type, pierce = 1) {
                 this.x = x;
                 this.y = y;
-                this.vx = Math.cos(angle) * speed;
-                this.vy = Math.sin(angle) * speed;
                 this.angle = angle;
                 this.speed = speed;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
                 this.damage = damage;
                 this.color = color;
                 this.type = type;
@@ -11041,54 +11033,43 @@
                 this.hitEnemies = new Set();
                 this.spinAngle = 0;
                 this.spawnTime = Date.now();
-                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 3500;
+                this.maxLifetime = type === 'boomerang' || type === 'sawblade' ? 5000 : 2500;
                 this.alpha = 1;
-                this.hasTarget = true;
-                this.noTargetTime = 0;
-                this.lastTargetX = null;
-                this.lastTargetY = null;
-                this.reachedLastTarget = false;
-                this.originalTarget = originalTarget; // Store original target for consistent tracking
+                this.dead = false;
             }
 
             update(dt = 16) {
-                // Frame-rate independent
                 const dtScale = dt / 16;
                 
-                // Lifetime check - fade out near end of life
+                // Lifetime check
                 const age = Date.now() - this.spawnTime;
                 if (age > this.maxLifetime) {
                     this.dead = true;
                     return;
                 }
-                // Start fading in last 300ms of life
-                const fadeStart = this.maxLifetime - 300;
+                
+                // Fade in last 200ms
+                const fadeStart = this.maxLifetime - 200;
                 if (age > fadeStart) {
-                    this.alpha = 1 - (age - fadeStart) / 300;
+                    this.alpha = 1 - (age - fadeStart) / 200;
                 }
                 
-                // Store trail (shorter for daggers)
+                // Trail
                 this.trail.push({ x: this.x, y: this.y });
-                const maxTrail = this.type === 'dagger' ? 5 : this.type === 'boomerang' ? 0 : 
-                                 this.type === 'sawblade' ? 6 : this.type === 'homing' ? 12 : 8;
+                const maxTrail = this.type === 'dagger' ? 4 : this.type === 'boomerang' ? 0 : 
+                                 this.type === 'sawblade' ? 5 : this.type === 'homing' ? 10 : 6;
                 if (this.trail.length > maxTrail) this.trail.shift();
                 
-                // Lifetime check for homing projectiles
-                if (this.isHoming && this.lifetime) {
-                    if (Date.now() - this.spawnTime > this.lifetime) {
-                        this.dead = true;
-                        return;
-                    }
-                }
+                // === SPECIAL WEAPONS ONLY ===
                 
-                // Sawblade special behavior
+                // Sawblade: outward then return to player
                 if (this.isSawblade) {
                     this.spinAngle += 0.4 * dtScale;
                     const distFromStart = Math.hypot(this.x - this.startX, this.y - this.startY);
                     
                     if (!this.returning && distFromStart >= this.maxDist) {
                         this.returning = true;
-                        this.hitEnemies.clear(); // Can hit again on return
+                        this.hitEnemies.clear();
                     }
                     
                     if (this.returning) {
@@ -11103,23 +11084,21 @@
                     }
                 }
                 
-                // Boomerang special behavior
-                if (this.type === 'boomerang') {
+                // Boomerang: outward then return to player
+                else if (this.type === 'boomerang') {
                     this.spinAngle += 0.3 * dtScale;
                     const distFromStart = Math.hypot(this.x - this.startX, this.y - this.startY);
                     
                     if (!this.returning && distFromStart >= this.maxDist) {
                         this.returning = true;
-                        this.hitEnemies.clear(); // Can hit again on return
+                        this.hitEnemies.clear();
                     }
                     
                     if (this.returning) {
-                        // Return to player
                         const toPlayer = Math.atan2(player.y - this.y, player.x - this.x);
                         this.vx = Math.cos(toPlayer) * this.speed * 1.3;
                         this.vy = Math.sin(toPlayer) * this.speed * 1.3;
                         
-                        // Despawn when reaching player
                         if (Math.hypot(player.x - this.x, player.y - this.y) < 30) {
                             this.dead = true;
                             return;
@@ -11127,20 +11106,13 @@
                     }
                 }
                 
-                // Strong homing for spirit orbs
-                if (this.isHoming) {
+                // Spirit Orbs: smooth homing (the ONLY homing projectile)
+                else if (this.isHoming) {
                     let nearestEnemy = null;
-                    let nearestDist = 400; // Increased range for smoother tracking
-                    
-                    // Helper to check if target is valid
-                    const isValidTarget = (target) => {
-                        if (!target || target.dead) return false;
-                        // Check if target will survive - hp must exceed incoming damage
-                        return target.hp > target.incomingDamage;
-                    };
+                    let nearestDist = 300;
                     
                     for (const enemy of enemies) {
-                        if (!isValidTarget(enemy)) continue;
+                        if (enemy.dead) continue;
                         const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                         if (dist < nearestDist) {
                             nearestDist = dist;
@@ -11149,7 +11121,7 @@
                     }
                     
                     for (const boss of bosses) {
-                        if (!isValidTarget(boss)) continue;
+                        if (boss.dead) continue;
                         const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
                         if (dist < nearestDist) {
                             nearestDist = dist;
@@ -11162,143 +11134,23 @@
                         const currentAngle = Math.atan2(this.vy, this.vx);
                         let angleDiff = targetAngle - currentAngle;
                         
-                        if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                        else if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
                         
-                        // Distance-based turn rate for smoother curves
-                        const turnRate = 0.04 + (1 - nearestDist / 400) * 0.06; // 0.04 at max range, 0.10 up close
+                        // Smooth, consistent turn rate
+                        const turnRate = 0.08;
                         const turn = Math.max(-turnRate, Math.min(turnRate, angleDiff));
                         const newAngle = currentAngle + turn;
                         
                         this.vx = Math.cos(newAngle) * this.speed;
                         this.vy = Math.sin(newAngle) * this.speed;
-                        this.hasTarget = true;
-                        this.noTargetTime = 0;
-                        this.lastTargetX = nearestEnemy.x;
-                        this.lastTargetY = nearestEnemy.y;
-                        this.reachedLastTarget = false;
-                    } else {
-                        // No living target - travel to last known position
-                        if (this.lastTargetX !== null && !this.reachedLastTarget) {
-                            const toLastTarget = Math.atan2(this.lastTargetY - this.y, this.lastTargetX - this.x);
-                            const distToLast = Math.hypot(this.lastTargetX - this.x, this.lastTargetY - this.y);
-                            
-                            // Reached last target position
-                            if (distToLast < 15) {
-                                this.reachedLastTarget = true;
-                                spawnParticles(this.x, this.y, this.color, 3);
-                            } else {
-                                // Continue toward last known position
-                                this.vx = Math.cos(toLastTarget) * this.speed;
-                                this.vy = Math.sin(toLastTarget) * this.speed;
-                            }
-                        }
-                        
-                        // Fade out after reaching last target or if no last target (more forgiving timing)
-                        if (this.reachedLastTarget || this.lastTargetX === null) {
-                            this.hasTarget = false;
-                            this.noTargetTime += dt;
-                            if (this.noTargetTime > 400) {
-                                this.alpha = Math.max(0, 1 - (this.noTargetTime - 400) / 400);
-                                if (this.alpha <= 0) {
-                                    this.dead = true;
-                                    return;
-                                }
-                            }
-                        }
                     }
-                }
-                // Light homing for non-boomerang, non-sawblade, non-strong-homing projectiles
-                else if (this.type !== 'boomerang' && !this.isSawblade) {
-                    const homingRangeSq = 90000; // 300^2 - start homing earlier for smoother curves
-                    let nearestDistSq = homingRangeSq;
-                    let nearestEnemy = null;
-                    
-                    // Helper to check if target is valid (alive and won't die from incoming damage)
-                    const isValidTarget = (target) => {
-                        if (!target || target.dead) return false;
-                        if (this.hitEnemies.has(target)) return false;
-                        // Check if target will survive - hp must exceed incoming damage
-                        return target.hp > target.incomingDamage;
-                    };
-                    
-                    // Prioritize original target if still valid
-                    if (this.originalTarget && isValidTarget(this.originalTarget)) {
-                        const dx = this.originalTarget.x - this.x;
-                        const dy = this.originalTarget.y - this.y;
-                        const distSq = dx * dx + dy * dy;
-                        if (distSq < homingRangeSq) {
-                            nearestEnemy = this.originalTarget;
-                            nearestDistSq = distSq;
-                        }
-                    }
-                    
-                    // Only look for new target if original is no longer valid
-                    if (!nearestEnemy) {
-                        // Check nearby enemies for homing (use squared distance)
-                        for (let i = 0, len = enemies.length; i < len; i++) {
-                            const enemy = enemies[i];
-                            if (!isValidTarget(enemy)) continue;
-                            const dx = enemy.x - this.x;
-                            const dy = enemy.y - this.y;
-                            const distSq = dx * dx + dy * dy;
-                            if (distSq < nearestDistSq) {
-                                nearestDistSq = distSq;
-                                nearestEnemy = enemy;
-                            }
-                        }
-                        
-                        // Also check bosses
-                        for (let i = 0, len = bosses.length; i < len; i++) {
-                            const boss = bosses[i];
-                            if (!isValidTarget(boss)) continue;
-                            const dx = boss.x - this.x;
-                            const dy = boss.y - this.y;
-                            const distSq = dx * dx + dy * dy;
-                            if (distSq < nearestDistSq) {
-                                nearestDistSq = distSq;
-                                nearestEnemy = boss;
-                            }
-                        }
-                        
-                        // Also check leprechauns
-                        for (let i = 0, len = leprechauns.length; i < len; i++) {
-                            const lep = leprechauns[i];
-                            if (!isValidTarget(lep)) continue;
-                            const dx = lep.x - this.x;
-                            const dy = lep.y - this.y;
-                            const distSq = dx * dx + dy * dy;
-                            if (distSq < nearestDistSq) {
-                                nearestDistSq = distSq;
-                                nearestEnemy = lep;
-                            }
-                        }
-                    }
-                    
-                    // Apply gradual homing only if target in range
-                    if (nearestEnemy) {
-                        const targetAngle = Math.atan2(nearestEnemy.y - this.y, nearestEnemy.x - this.x);
-                        const currentAngle = Math.atan2(this.vy, this.vx);
-                        let angleDiff = targetAngle - currentAngle;
-                        
-                        // Normalize angle difference
-                        if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                        else if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                        
-                        // Distance-based turn rate: gentler at range, stronger up close
-                        const dist = Math.sqrt(nearestDistSq);
-                        const turnRate = 0.03 + (1 - dist / 300) * 0.04; // 0.03 at max range, 0.07 up close
-                        
-                        const turn = angleDiff > turnRate ? turnRate : angleDiff < -turnRate ? -turnRate : angleDiff;
-                        const newAngle = currentAngle + turn;
-                        
-                        this.vx = Math.cos(newAngle) * this.speed;
-                        this.vy = Math.sin(newAngle) * this.speed;
-                    }
-                    // No target in range - projectile continues straight (no fadeout)
                 }
                 
-                // Frame-rate independent movement
+                // ALL OTHER PROJECTILES: fly straight (no homing!)
+                // This is intentional - clean, predictable trajectories
+                
+                // Movement
                 this.x += this.vx * dtScale;
                 this.y += this.vy * dtScale;
                 
@@ -12037,42 +11889,31 @@
         // Shot counter for alternating leprechaun targeting
         let shotCounter = 0;
         
-        function findNearestEnemy(x, y, projectileDamage = 0) {
+        // Simple targeting - finds nearest living enemy within range
+        function findNearestEnemy(x, y) {
             let nearest = null;
             let minDist = Infinity;
             
-            // Helper to check if target will survive incoming damage PLUS the new projectile
-            const willSurvive = (target) => {
-                if (!projectileDamage) return true; // No damage check needed
-                // Target must have enough HP to survive all incoming damage + this new projectile
-                return target.hp > target.incomingDamage + projectileDamage;
-            };
+            // Fixed targeting range based on visible area
+            const maxRange = Math.hypot(TARGET_VISIBLE_WIDTH, TARGET_VISIBLE_HEIGHT) / 2 * 0.7;
             
-            // Fixed targeting range based on target visible area (consistent across all devices)
-            // Reduced by 10% from 0.75 to 0.675
-            const maxRange = Math.hypot(TARGET_VISIBLE_WIDTH, TARGET_VISIBLE_HEIGHT) / 2 * 0.675;
-            
-            // Every 3rd shot, check for leprechaun first
+            // Every 3rd shot, prioritize leprechaun
             shotCounter++;
-            const preferLeprechaun = (shotCounter % 3 === 0);
-            
-            if (preferLeprechaun) {
-                // Check for nearby leprechaun (within screen range)
+            if (shotCounter % 3 === 0) {
                 for (const lep of leprechauns) {
-                    if (lep.dead || !willSurvive(lep)) continue;
+                    if (lep.dead) continue;
                     const dist = Math.hypot(lep.x - x, lep.y - y);
                     if (dist < maxRange && dist < minDist) {
                         minDist = dist;
                         nearest = lep;
                     }
                 }
-                // If found a leprechaun, return it
                 if (nearest) return nearest;
             }
             
-            // Normal enemy targeting (within screen range)
+            // Check regular enemies
             for (const enemy of enemies) {
-                if (enemy.dead || !willSurvive(enemy)) continue;
+                if (enemy.dead) continue;
                 const dist = Math.hypot(enemy.x - x, enemy.y - y);
                 if (dist < maxRange && dist < minDist) {
                     minDist = dist;
@@ -12080,9 +11921,9 @@
                 }
             }
             
-            // Also check leprechauns if no enemy found or leprechaun is closer
+            // Check leprechauns
             for (const lep of leprechauns) {
-                if (lep.dead || !willSurvive(lep)) continue;
+                if (lep.dead) continue;
                 const dist = Math.hypot(lep.x - x, lep.y - y);
                 if (dist < maxRange && dist < minDist) {
                     minDist = dist;
@@ -12090,9 +11931,9 @@
                 }
             }
             
-            // Check bosses within range
+            // Check bosses
             for (const boss of bosses) {
-                if (boss.dead || !willSurvive(boss)) continue;
+                if (boss.dead) continue;
                 const dist = Math.hypot(boss.x - x, boss.y - y);
                 if (dist < maxRange && dist < minDist) {
                     minDist = dist;
