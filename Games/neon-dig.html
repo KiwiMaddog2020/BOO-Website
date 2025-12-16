@@ -1172,11 +1172,11 @@
         /* Surface upgrade button */
         .surface-upgrade-btn {
             position: absolute;
-            top: 50px;
+            top: 42px;
             left: 50%;
             transform: translateX(-50%);
-            background: linear-gradient(180deg, var(--orange), #cc7700);
-            color: #000;
+            background: linear-gradient(180deg, #cc00ff, #9900cc);
+            color: #fff;
             font-family: 'Oxanium', monospace;
             font-size: 14px;
             font-weight: 700;
@@ -1186,12 +1186,13 @@
             cursor: pointer;
             z-index: 100;
             display: none;
-            box-shadow: 0 0 15px rgba(255, 149, 0, 0.4);
+            box-shadow: 0 0 15px rgba(200, 0, 255, 0.5);
             transition: all 0.2s;
+            text-shadow: 0 0 8px rgba(255, 100, 255, 0.8);
         }
         .surface-upgrade-btn:hover {
-            background: linear-gradient(180deg, #ffaa33, var(--orange));
-            box-shadow: 0 0 25px rgba(255, 149, 0, 0.6);
+            background: linear-gradient(180deg, #dd44ff, #bb00dd);
+            box-shadow: 0 0 25px rgba(200, 0, 255, 0.7);
             transform: translateX(-50%) scale(1.05);
         }
         .surface-upgrade-btn.visible {
@@ -1255,7 +1256,7 @@
             </div>
         </div>
         
-        <button class="surface-upgrade-btn" id="surfaceUpgradeBtn">⚙️ UPGRADES</button>
+        <button class="surface-upgrade-btn" id="surfaceUpgradeBtn">UPGRADES</button>
 
         <canvas id="gameCanvas" width="448" height="480"></canvas>
 
@@ -1649,11 +1650,13 @@
         // ==================== META UPGRADES (Persistent) ====================
         const META_UPGRADE_KEY = 'goldmine_meta_upgrades';
         
-        // Define the 8 meta upgrades
+        // Define the 10 meta upgrades
         const metaUpgradesDef = [
             { id: 'digSpeed', name: 'Drill Efficiency', icon: '⚡', desc: '+4% dig speed', bonus: 4, max: 25 },
             { id: 'fuelCap', name: 'Fuel Tank', icon: '⛽', desc: '+5% max fuel', bonus: 5, max: 25 },
+            { id: 'fuelEff', name: 'Fuel Saver', icon: '🌿', desc: '+3% fuel efficiency', bonus: 3, max: 30 },
             { id: 'hullCap', name: 'Hull Plating', icon: '🛡️', desc: '+5% max hull', bonus: 5, max: 25 },
+            { id: 'armor', name: 'Hazard Resist', icon: '🔰', desc: '+3% damage reduction', bonus: 3, max: 25 },
             { id: 'cooling', name: 'Heat Sink', icon: '❄️', desc: '+4% cooling', bonus: 4, max: 25 },
             { id: 'feverLen', name: 'Fever Boost', icon: '🔥', desc: '+5% fever duration', bonus: 5, max: 20 },
             { id: 'comboTime', name: 'Combo Window', icon: '⏱️', desc: '+4% combo time', bonus: 4, max: 25 },
@@ -1784,19 +1787,20 @@
         const ENEMY_MIN_DEPTH = 50; // No worms/lava slugs until 50m
         let enemies = [];
         let firstEnemySpawned = false; // Track if player has encountered first enemy
+        let secondEnemySpawned = false; // Track if player has encountered second enemy
         
         // Spawn rates per 100 tiles generated (very low, scales with depth)
         function getEnemySpawnChance(depth, biome) {
             // Beetles can spawn early (easiest enemy - predictable patrol)
             let beetleChance = 0;
-            if (depth >= 10) {
+            if (depth >= 8) {
                 if (depth < ENEMY_MIN_DEPTH) {
-                    // Early game: low chance, guarantees encounter within first 50m
-                    beetleChance = 0.012; // ~1.2% per tile dug
+                    // Early game: higher chance for earlier encounters
+                    beetleChance = 0.018; // ~1.8% per tile dug
                 } else {
                     // Normal scaling after 50m
                     const depthFactor = Math.min(1, (depth - ENEMY_MIN_DEPTH) / 400);
-                    beetleChance = 0.003 + depthFactor * 0.009;
+                    beetleChance = 0.004 + depthFactor * 0.010;
                 }
             }
             
@@ -1833,7 +1837,6 @@
                 animFrame: 0
             };
             enemies.push(enemy);
-            firstEnemySpawned = true;
         }
         
         // Upgrade intervals for cleanup
@@ -2214,6 +2217,8 @@
                     // Worms spawn in dirt/rock
                     if ((tile === TILE.DIRT || tile === TILE.ROCK) && Math.random() < spawnChances.worm) {
                         spawnEnemy(ENEMY_TYPE.WORM, x, localY);
+                        if (!firstEnemySpawned) firstEnemySpawned = true;
+                        else if (!secondEnemySpawned) secondEnemySpawned = true;
                     }
                     // Beetles spawn in air (tunnels) - but we don't have tunnels yet at generation
                     // They'll spawn when tiles are dug
@@ -2221,6 +2226,8 @@
                     // Lava slugs spawn on lava tiles
                     if (tile === TILE.LAVA && Math.random() < spawnChances.lava_slug) {
                         spawnEnemy(ENEMY_TYPE.LAVA_SLUG, x, localY);
+                        if (!firstEnemySpawned) firstEnemySpawned = true;
+                        else if (!secondEnemySpawned) secondEnemySpawned = true;
                     }
                 }
             }
@@ -2761,7 +2768,8 @@
             // ===== HAZARDS =====
             if (tile === TILE.LAVA || tile === TILE.GAS) {
                 const baseDamage = tile === TILE.LAVA ? 40 : 20; // Doubled damage
-                const damage = baseDamage * (1 - getEffectiveUpgrade('armor', 90) / 100);
+                const metaArmor = getMetaBonus('armor');
+                const damage = baseDamage * (1 - (getEffectiveUpgrade('armor', 90) + metaArmor) / 100);
                 hull -= damage;
                 comboCount = 0; // Break combo on damage
                 comboTimer = 0;
@@ -2774,8 +2782,10 @@
             
             // Don't charge fuel for magnet-collected gems
             if (!fromMagnet) {
-                let fuelCost = 0.5 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
+                const metaFuelEff = getMetaBonus('fuelEff');
+                let fuelCost = 1.0 * (1 - (getEffectiveUpgrade('fuelEfficiency', 90) + metaFuelEff) / 100);
                 if (feverMode) fuelCost *= 0.5; // Half fuel cost in fever mode
+                if (hoverMode) fuelCost *= 0.2; // 80% reduction in hover mode
                 fuel -= fuelCost;
             }
             
@@ -2785,13 +2795,19 @@
             const depthM = absoluteTy * TILE_SIZE / 16;
             const spawnChances = getEnemySpawnChance(depthM, currentBiome);
             
-            // Guaranteed first enemy encounter between 40-50m depth
+            // Guaranteed first enemy encounter between 25-35m depth
             let shouldSpawnBeetle = false;
-            if (!firstEnemySpawned && depthM >= 40 && depthM < 50) {
-                // High chance that increases as we approach 50m (guaranteed by 48m)
-                const urgency = (depthM - 40) / 8; // 0 at 40m, 1 at 48m
+            if (!firstEnemySpawned && depthM >= 25 && depthM < 35) {
+                // High chance that increases as we approach 35m (guaranteed by 33m)
+                const urgency = (depthM - 25) / 8; // 0 at 25m, 1 at 33m
                 shouldSpawnBeetle = Math.random() < (0.15 + urgency * 0.85);
-            } else if (spawnChances.beetle > 0) {
+            } 
+            // Guaranteed second enemy encounter between 45-55m depth
+            else if (firstEnemySpawned && !secondEnemySpawned && depthM >= 45 && depthM < 55) {
+                const urgency = (depthM - 45) / 8; // 0 at 45m, 1 at 53m
+                shouldSpawnBeetle = Math.random() < (0.15 + urgency * 0.85);
+            }
+            else if (spawnChances.beetle > 0) {
                 shouldSpawnBeetle = Math.random() < spawnChances.beetle * 0.3;
             }
             
@@ -2804,6 +2820,8 @@
                     // Check if spawn location is valid (air tile)
                     if (world[spawnTy] && world[spawnTy][spawnTx] === TILE.AIR) {
                         spawnEnemy(ENEMY_TYPE.BEETLE, spawnTx, spawnTy);
+                        if (!firstEnemySpawned) firstEnemySpawned = true;
+                        else if (!secondEnemySpawned) secondEnemySpawned = true;
                     }
                 }
             }
@@ -3140,7 +3158,8 @@
                     }
                     
                     // Take damage from enemy
-                    const damage = enemy.damage * (1 - getEffectiveUpgrade('armor', 90) / 100);
+                    const metaArmor = getMetaBonus('armor');
+                    const damage = enemy.damage * (1 - (getEffectiveUpgrade('armor', 90) + metaArmor) / 100);
                     hull -= damage;
                     comboCount = 0;
                     comboTimer = 0;
@@ -3419,7 +3438,8 @@
                         const dist = Math.sqrt(Math.pow(tileCX - playerCX, 2) + Math.pow(tileCY - playerCY, 2));
                         
                         if (dist < TILE_SIZE * 2) {
-                            const damage = 15 * (1 - getEffectiveUpgrade('armor', 90) / 100);
+                            const metaArmor = getMetaBonus('armor');
+                            const damage = 15 * (1 - (getEffectiveUpgrade('armor', 90) + metaArmor) / 100);
                             hull -= damage;
                             comboCount = 0;
                             comboTimer = 0;
@@ -3628,8 +3648,10 @@
                     
                     if (newY < player.y && newY >= MIN_PLAYER_Y) {
                         player.y = newY;
-                        let climbCost = 0.1 * (1 - getEffectiveUpgrade('fuelEfficiency', 90) / 100);
+                        const metaFuelEff = getMetaBonus('fuelEff');
+                        let climbCost = 0.1 * (1 - (getEffectiveUpgrade('fuelEfficiency', 90) + metaFuelEff) / 100);
                         if (feverMode) climbCost *= 0.5;
+                        if (hoverMode) climbCost *= 0.2; // 80% reduction in hover mode
                         fuel -= climbCost * deltaMultiplier;
                         updateFuelBar();
                         
@@ -4473,9 +4495,16 @@
                     break;
                     
                 case TILE.BOMB:
-                    // Dark background
-                    ctx.fillStyle = '#1a1515';
+                    // Dark background with subtle gold tint
+                    ctx.fillStyle = '#1a1812';
                     ctx.fillRect(x, y, s, s);
+                    
+                    // Gold glow behind bomb
+                    const goldGlow = 0.15 + Math.sin(time * 3 + tx * 2 + ty) * 0.1;
+                    ctx.fillStyle = `rgba(255, 200, 50, ${goldGlow})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2, s/2 + 2, 0, Math.PI * 2);
+                    ctx.fill();
                     
                     // Bomb body (pulsing)
                     const bombPulse = 0.9 + Math.sin(time * 5 + tx + ty) * 0.1;
@@ -4484,25 +4513,48 @@
                     ctx.arc(x + s/2, y + s/2 + 2, (s/2 - 4) * bombPulse, 0, Math.PI * 2);
                     ctx.fill();
                     
+                    // Gold band around bomb
+                    const bandShimmer = 0.7 + Math.sin(time * 4 + tx) * 0.3;
+                    ctx.strokeStyle = `rgba(255, 215, 0, ${bandShimmer})`;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2 + 2, (s/2 - 6), 0, Math.PI * 2);
+                    ctx.stroke();
+                    
                     // Bomb highlight
                     ctx.fillStyle = '#555555';
                     ctx.beginPath();
                     ctx.arc(x + s/2 - 3, y + s/2 - 1, 3, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    // Fuse
-                    ctx.strokeStyle = '#aa6600';
+                    // Gold glisten sparkle (moves around)
+                    const sparkleAngle = time * 2 + tx * 3;
+                    const sparkleX = x + s/2 + Math.cos(sparkleAngle) * 6;
+                    const sparkleY = y + s/2 + Math.sin(sparkleAngle) * 6;
+                    const sparkleAlpha = 0.4 + Math.sin(time * 8 + tx) * 0.4;
+                    ctx.fillStyle = `rgba(255, 255, 200, ${sparkleAlpha})`;
+                    ctx.beginPath();
+                    ctx.arc(sparkleX, sparkleY, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Fuse (now gold)
+                    ctx.strokeStyle = '#ffcc00';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
                     ctx.moveTo(x + s/2, y + 4);
                     ctx.quadraticCurveTo(x + s/2 + 4, y + 2, x + s/2 + 6, y + 5);
                     ctx.stroke();
                     
-                    // Spark
-                    const sparkAlpha = 0.5 + Math.sin(time * 10) * 0.5;
-                    ctx.fillStyle = `rgba(255, 200, 50, ${sparkAlpha})`;
+                    // Spark (brighter)
+                    const sparkAlpha = 0.6 + Math.sin(time * 10) * 0.4;
+                    ctx.fillStyle = `rgba(255, 220, 100, ${sparkAlpha})`;
                     ctx.beginPath();
-                    ctx.arc(x + s/2 + 6, y + 4, 3, 0, Math.PI * 2);
+                    ctx.arc(x + s/2 + 6, y + 4, 3 + Math.sin(time * 8) * 1, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Spark core
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(x + s/2 + 6, y + 4, 1.5, 0, Math.PI * 2);
                     ctx.fill();
                     break;
                     
@@ -5844,6 +5896,7 @@
             unstableTiles = [];
             enemies = [];
             firstEnemySpawned = false;
+            secondEnemySpawned = false;
             
             // Reset upgrade overlay states
             upgradeSelectionActive = false;
