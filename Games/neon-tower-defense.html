@@ -4473,6 +4473,10 @@
         }
 
         function updateProjectile(proj, dt) {
+            // Store previous position for swept collision detection
+            const prevX = proj.x;
+            const prevY = proj.y;
+            
             proj.x += proj.vx * dt;
             proj.y += proj.vy * dt;
             
@@ -4492,18 +4496,38 @@
                 return;
             }
             
-            // Check collision with enemies
+            // Check collision with enemies using swept collision (line segment to circle)
+            // This prevents tunneling at high game speeds
             for (const enemy of enemies) {
                 if (!enemy.alive) continue;
                 if (proj.hitEnemies && proj.hitEnemies.includes(enemy)) continue; // Skip already hit enemies for chain
                 
-                const dx = enemy.x - proj.x;
-                const dy = enemy.y - proj.y;
+                // Calculate closest point on line segment (prevPos -> newPos) to enemy center
+                const segDx = proj.x - prevX;
+                const segDy = proj.y - prevY;
+                const segLenSq = segDx * segDx + segDy * segDy;
+                
+                let closestX, closestY;
+                if (segLenSq < 0.001) {
+                    // Projectile barely moved, use current position
+                    closestX = proj.x;
+                    closestY = proj.y;
+                } else {
+                    // Project enemy position onto line segment
+                    const t = Math.max(0, Math.min(1, 
+                        ((enemy.x - prevX) * segDx + (enemy.y - prevY) * segDy) / segLenSq
+                    ));
+                    closestX = prevX + t * segDx;
+                    closestY = prevY + t * segDy;
+                }
+                
+                // Distance from closest point on path to enemy center
+                const dx = enemy.x - closestX;
+                const dy = enemy.y - closestY;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 
-                // Larger hitbox for fast projectiles (speed > 10) to prevent tunneling
-                const projSpeed = Math.sqrt(proj.vx * proj.vx + proj.vy * proj.vy);
-                const hitRadius = enemy.size + (projSpeed > 10 ? 8 : 5);
+                // Hit radius based on enemy size
+                const hitRadius = enemy.size + 6;
                 
                 if (dist < hitRadius) {
                     // Clear incoming damage tracking (shot has connected)
