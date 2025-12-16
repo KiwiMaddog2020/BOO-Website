@@ -1682,7 +1682,7 @@
         let worldRowOffset = 0;
         
         // ==================== ALIEN TIP SYSTEM ====================
-        const alienTips = [
+        const alienTipsRegular = [
             "Return to surface to refuel & repair!",
             "Hold against walls to drill sideways!",
             "Hover mode uses 80% less fuel!",
@@ -1692,9 +1692,11 @@
             "Green gas and lava hurt your hull!",
             "Upgrades appear every 50m depth!",
             "Spend points on permanent upgrades!",
-            "Chests hold powerful upgrades!",
-            "Not such a long time 'till you see me again, eh?"
+            "Chests hold powerful upgrades!"
         ];
+        const alienTipSpecial = "Not such a long time 'till you see me again, eh?";
+        let alienTipHistory = []; // Track shown tips for bad luck protection
+        let alienPassCount = 0; // Track number of alien passes
         let alienActive = false;
         let alienX = 0;
         let alienY = 0;
@@ -1702,6 +1704,27 @@
         let alienCooldown = 0;
         const ALIEN_SPEED = 0.8;
         const ALIEN_COOLDOWN = 1200; // ~20 seconds between tips
+        
+        function getNextAlienTip() {
+            // Special line only after 5th pass, with 20% chance
+            if (alienPassCount >= 5 && Math.random() < 0.2) {
+                return alienTipSpecial;
+            }
+            
+            // Bad luck protection: reset history when all tips shown
+            if (alienTipHistory.length >= alienTipsRegular.length) {
+                alienTipHistory = [];
+            }
+            
+            // Get available tips (not recently shown)
+            const availableTips = alienTipsRegular.filter(tip => !alienTipHistory.includes(tip));
+            
+            // Pick random from available
+            const tip = availableTips[Math.floor(Math.random() * availableTips.length)];
+            alienTipHistory.push(tip);
+            
+            return tip;
+        }
         
         // ==================== META UPGRADES (Persistent) ====================
         const META_UPGRADE_KEY = 'goldmine_meta_upgrades';
@@ -3811,23 +3834,25 @@
             const lerpSpeed = cameraDiff < 0 ? 0.15 : 0.08;
             cameraY += cameraDiff * lerpSpeed * deltaMultiplier;
             
-            // Depth tracking
-            const newDepth = Math.floor((player.y - 60) / TILE_SIZE);
-            if (newDepth > depth) {
-                depth = newDepth;
-                if (depth > maxDepthThisRun) {
-                    maxDepthThisRun = depth;
-                    maxDepthEl.textContent = maxDepthThisRun;
-                }
-                depthEl.textContent = depth;
-                depthColorShift = Math.min(depth / 200, 1);
+            // Depth tracking - current depth always updates
+            const currentDepth = Math.max(0, Math.floor((player.y - 60) / TILE_SIZE));
+            depthEl.textContent = currentDepth;
+            
+            // Max depth only increases
+            if (currentDepth > maxDepthThisRun) {
+                maxDepthThisRun = currentDepth;
+                maxDepthEl.textContent = maxDepthThisRun;
+                depthColorShift = Math.min(maxDepthThisRun / 200, 1);
                 
-                const milestone = Math.floor(depth / 50) * 50;
+                const milestone = Math.floor(maxDepthThisRun / 50) * 50;
                 if (milestone > lastUpgradeDepth && milestone > 0) {
                     lastUpgradeDepth = milestone;
                     showUpgradeSelector(milestone % 250 === 0);
                 }
             }
+            
+            // Update depth variable for other systems (alien spawn check, etc)
+            depth = currentDepth;
             
             updateParticles();
             updateAlien(deltaMultiplier);
@@ -4570,11 +4595,6 @@
                     ctx.arc(x + s/2, y + s/2 + 2, (s/2 - 4) * bombPulse, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    // Thin outline for contrast
-                    ctx.strokeStyle = '#444444';
-                    ctx.lineWidth = 0.5;
-                    ctx.stroke();
-                    
                     // Bomb highlight
                     ctx.fillStyle = '#444444';
                     ctx.beginPath();
@@ -4606,6 +4626,19 @@
                     ctx.beginPath();
                     ctx.arc(x + s/2 + 6, y + 4, 1.5, 0, Math.PI * 2);
                     ctx.fill();
+                    
+                    // Static grey outline (top layer, crisp, no blur)
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                    ctx.shadowBlur = 0;
+                    ctx.shadowOffsetX = 1;
+                    ctx.shadowOffsetY = 1;
+                    ctx.strokeStyle = '#888888';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2 + 2, s/2 - 4, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.shadowOffsetX = 0;
+                    ctx.shadowOffsetY = 0;
                     break;
                     
                 case TILE.CHEST:
@@ -5393,8 +5426,9 @@
             
             alienActive = true;
             alienX = BASE_WIDTH + 60;
-            alienY = 40 + Math.random() * 60;
-            alienTip = alienTips[Math.floor(Math.random() * alienTips.length)];
+            alienY = 78; // Fixed screen Y - just above "FUEL & REPAIR HERE" text
+            alienTip = getNextAlienTip();
+            alienPassCount++;
         }
         
         function updateAlien(deltaMultiplier) {
@@ -5403,18 +5437,17 @@
             }
             
             if (!alienActive) {
-                // Chance to spawn when player is near surface
-                if (depth < 15 && alienCooldown <= 0 && Math.random() < 0.002) {
+                // Only spawn when sky is visible (camera showing above ground)
+                // cameraY < 50 means sky area is on screen
+                const skyVisible = cameraY < 50;
+                if (skyVisible && alienCooldown <= 0 && Math.random() < 0.002) {
                     spawnAlien();
                 }
                 return;
             }
             
-            // Move alien left
+            // Move alien left (fixed screen position, doesn't follow camera)
             alienX -= ALIEN_SPEED * deltaMultiplier;
-            
-            // Gentle bobbing
-            alienY += Math.sin(globalTime * 0.08) * 0.3;
             
             // Remove when off screen
             if (alienX < -180) {
@@ -5427,7 +5460,8 @@
             if (!alienActive) return;
             
             const ax = alienX;
-            const ay = alienY;
+            // Gentle bobbing applied as offset (doesn't drift)
+            const ay = alienY + Math.sin(globalTime * 0.08) * 3;
             const time = globalTime * 0.1;
             
             // UFO body (ellipse)
