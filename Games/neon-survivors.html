@@ -1922,7 +1922,7 @@
             width: 100%;
             /* Tight fit - only UI elements + 4px bottom gap */
             height: auto;
-            min-height: calc(140px * var(--scale, 1));
+            min-height: calc(120px * var(--scale, 1));
             flex: 0 0 auto;
             padding: 0px calc(12px * var(--scale, 1)) calc(4px * var(--scale, 1)) calc(12px * var(--scale, 1));
             box-sizing: border-box;
@@ -3753,8 +3753,8 @@
                 
                 // Account for trackpad zone below canvas
                 // Trackpad base height is compact to maximize game view
-                const TRACKPAD_BASE_HEIGHT = 140;
-                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 140 = 660
+                const TRACKPAD_BASE_HEIGHT = 120;
+                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 120 = 640
                 const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.73
                 
                 const availWidth = viewW - totalMargin;
@@ -13015,51 +13015,77 @@
             const shieldText = currentShield >= maxShieldVal ? `${maxShieldVal}` : `${currentShield}/${maxShieldVal}`;
             
             // Build HP bar HTML with shield section and text overlays
+            // HP text is always centered on the ENTIRE bar (not just HP portion)
             let hpBarContent = `
                 <div style="height: 100%; width: ${hpPortionWidth}px; display: inline-block; background: rgba(255, 0, 0, 0.3); position: relative; vertical-align: top;">
                     <div style="height: 100%; width: ${hpFillPercent}%; background: linear-gradient(90deg, #39ff9f, #00ff66); box-shadow: 0 0 6px #39ff9f;"></div>
-                    <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: ${hpTextSize}; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; pointer-events: none; background: none; padding: 0; height: auto; min-height: auto; max-height: none; display: flex; align-items: center; justify-content: center;">${hpText}</span>
                 </div>`;
             
             if (player.maxShieldHp > 0) {
                 hpBarContent += `
                 <div style="height: 100%; width: ${shieldPortionWidth}px; display: inline-block; background: rgba(68, 136, 255, 0.3); position: relative; vertical-align: top;">
                     <div style="height: 100%; width: ${shieldFillPercent}%; background: linear-gradient(90deg, #4488ff, #66aaff); box-shadow: 0 0 6px #4488ff;"></div>
-                    ${showShieldText ? `<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: ${hpTextSize}; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; pointer-events: none; background: none; padding: 0; height: auto; min-height: auto; max-height: none; display: flex; align-items: center; justify-content: center;">${shieldText}</span>` : ''}
                 </div>`;
+            }
+            
+            // Add centered HP text overlay spanning entire bar
+            hpBarContent += `<span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: ${hpTextSize}; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; pointer-events: none; z-index: 1;">${hpText}</span>`;
+            
+            // Add shield text if there's room
+            if (player.maxShieldHp > 0 && showShieldText) {
+                // Position shield text in the right portion of the bar
+                const shieldTextLeft = hpPortionWidth + (shieldPortionWidth / 2);
+                hpBarContent += `<span style="position: absolute; top: 50%; left: ${shieldTextLeft}px; transform: translate(-50%, -50%); font-size: ${hpTextSize}; font-weight: bold; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; pointer-events: none; z-index: 1;">${shieldText}</span>`;
             }
             
             // Border color changes when shield is present
             const borderColor = player.maxShieldHp > 0 ? '#66aaff' : '#39ff9f';
             
-            // Calculate HP bar position to align with weapons/tomes bar centers
+            // Calculate HP bar position centered on minimap (true center of trackpad)
             const weaponsBar = document.getElementById('weaponsDisplay');
             const tomesBar = document.getElementById('tomesDisplay');
+            const minimapWrapper = document.getElementById('trackpadMinimapWrapper');
             const statsRowContainer = statsDisplay.querySelector('.stats-row-container');
             
-            if (statsRowContainer && weaponsBar && tomesBar) {
+            if (statsRowContainer && weaponsBar && tomesBar && minimapWrapper) {
                 const statsRect = statsRowContainer.getBoundingClientRect();
                 const weaponsRect = weaponsBar.getBoundingClientRect();
                 const tomesRect = tomesBar.getBoundingClientRect();
+                const minimapRect = minimapWrapper.getBoundingClientRect();
                 
                 // Get center X positions relative to stats container
                 const weaponsCenterX = (weaponsRect.left + weaponsRect.width / 2) - statsRect.left;
                 const tomesCenterX = (tomesRect.left + tomesRect.width / 2) - statsRect.left;
+                const minimapCenterX = (minimapRect.left + minimapRect.width / 2) - statsRect.left;
                 
-                // HP bar spans from weapons center to tomes center
-                const hpBarLeft = weaponsCenterX;
-                const hpBarWidth = tomesCenterX - weaponsCenterX;
+                // HP bar width based on weapons-to-tomes span
+                const hpBarWidth = Math.max(50, tomesCenterX - weaponsCenterX);
+                
+                // Center HP bar on minimap center
+                const hpBarLeft = minimapCenterX - (hpBarWidth / 2);
+                
+                // Left zone: from edge to HP bar left edge
+                // Right zone: from HP bar right edge to edge
+                const leftZoneWidth = hpBarLeft;
+                const rightZoneWidth = statsRect.width - (hpBarLeft + hpBarWidth);
                 
                 statsRowContainer.style.fontSize = fontSize;
                 statsRowContainer.style.position = 'relative';
+                statsRowContainer.style.display = 'flex';
+                statsRowContainer.style.alignItems = 'center';
+                statsRowContainer.style.justifyContent = 'space-between';
                 statsRowContainer.innerHTML = `
-                    <span style="color: #fff; text-shadow: 0 0 4px #0ff;">${timeStr}</span>
-                    <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">${kills} Kills</span>
-                    <div id="hpBarAligned" style="position: absolute; left: ${hpBarLeft}px; width: ${hpBarWidth}px; height: ${hpHeight}; border: 1px solid ${borderColor}; border-radius: 3px; overflow: hidden; background: transparent; white-space: nowrap; font-size: 0; top: 50%; transform: translateY(-50%);">
+                    <div style="display: flex; justify-content: space-evenly; align-items: center; width: ${leftZoneWidth}px; flex-shrink: 0;">
+                        <span style="color: #fff; text-shadow: 0 0 4px #0ff;">${timeStr}</span>
+                        <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">${kills} Kills</span>
+                    </div>
+                    <div id="hpBarAligned" style="position: absolute; left: ${hpBarLeft}px; width: ${hpBarWidth}px; height: ${hpHeight}; border: 1px solid ${borderColor}; border-radius: 3px; overflow: hidden; background: transparent; white-space: nowrap; font-size: 0; top: 50%; transform: translateY(-50%); z-index: 0;">
                         ${hpBarContent}
                     </div>
-                    <span style="color: #ffd700; text-shadow: 0 0 4px #ffd700;">🪙${playerGold}</span>
-                    <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">Level ${player.level}</span>
+                    <div style="display: flex; justify-content: space-evenly; align-items: center; width: ${rightZoneWidth}px; flex-shrink: 0;">
+                        <span style="color: #ffd700; text-shadow: 0 0 4px #ffd700;">🪙${playerGold}</span>
+                        <span style="color: #0ff; text-shadow: 0 0 4px #0ff;">Level ${player.level}</span>
+                    </div>
                 `;
             } else {
                 // Fallback if elements not found
