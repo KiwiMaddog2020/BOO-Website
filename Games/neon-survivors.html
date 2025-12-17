@@ -80,7 +80,7 @@
             border: none;
             display: flex;
             flex-direction: column;
-            justify-content: flex-start;
+            justify-content: flex-end;
             align-items: center;
             overflow: hidden;
         }
@@ -101,7 +101,7 @@
             box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
             overflow: visible;
             flex-shrink: 0;
-            flex-grow: 1;
+            flex-grow: 0;
         }
         
         /* Fullscreen body centering - JS adds this class */
@@ -118,14 +118,14 @@
             padding: 0 !important;
             display: flex !important;
             justify-content: center !important;
-            align-items: flex-start !important;
+            align-items: flex-end !important;
             overflow: hidden !important;
         }
         
         /* Force fullscreen layout when in iframe (CSS kicks in immediately) */
-        /* Align to top, letterbox only at bottom */
+        /* Align to bottom, letterbox only at top */
         html.in-iframe body {
-            align-items: flex-start;
+            align-items: flex-end;
         }
         
         html.in-iframe .game-container {
@@ -533,12 +533,13 @@
             flex-direction: row;
             align-items: stretch;
             justify-content: space-between;
-            gap: calc(8px * var(--scale, 1));
+            gap: calc(6px * var(--scale, 1));
             width: 100%;
-            margin: calc(2px * var(--scale, 1)) 0 0 0;
+            margin: calc(1px * var(--scale, 1)) 0 0 0;
             max-width: 100%;
             box-sizing: border-box;
             flex-grow: 1;
+            max-height: 100%;
         }
         
         /* Left zone for offense panel + weapons */
@@ -2381,9 +2382,9 @@
             width: 100%;
             /* Height set by JavaScript in fullscreen mode */
             height: auto;
-            min-height: calc(126px * var(--scale, 1));
+            min-height: 80px;
             flex: 0 0 auto;
-            padding: 2px calc(12px * var(--scale, 1)) calc(22px * var(--scale, 1)) calc(12px * var(--scale, 1));
+            padding: 2px calc(8px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(8px * var(--scale, 1));
             box-sizing: border-box;
             /* Touch control */
             touch-action: none;
@@ -4193,13 +4194,36 @@
         const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
         const rawDPR = window.devicePixelRatio || 1;
         
+        // Detect display capabilities for pixel density scaling
+        const screenWidth = window.screen.width * rawDPR;
+        const screenHeight = window.screen.height * rawDPR;
+        const is4K = screenWidth >= 3840 || screenHeight >= 2160;
+        const isHighDPI = rawDPR >= 2;
+        const isRetina3x = rawDPR >= 2.5;
+        
         // iOS canvas memory limit: 16,777,216 pixels max (approx 4096x4096)
         const MAX_CANVAS_PIXELS = 16777216;
         
-        // Performance-based DPR limits
+        // Performance-based DPR limits - tiered by device capability
         const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
-        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
-        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
+        const isMidPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 8 : false;
+        
+        // DPR limits by device type:
+        // - Low perf mobile: 1.5x normal, 2x fullscreen
+        // - Mid perf / tablets: 2x normal, 2.5x fullscreen  
+        // - High perf desktop: 2x normal, 3x fullscreen (for 4K)
+        let maxNormalDPR, maxFullscreenDPR;
+        if (isLowPerfDevice) {
+            maxNormalDPR = 1.5;
+            maxFullscreenDPR = 2;
+        } else if (isMidPerfDevice || isTablet) {
+            maxNormalDPR = 2;
+            maxFullscreenDPR = 2.5;
+        } else {
+            // High performance desktop - allow up to 3x for 4K displays
+            maxNormalDPR = 2;
+            maxFullscreenDPR = is4K ? 3 : 2.5;
+        }
         
         // Scaling state
         let dprScale = 1;
@@ -4254,9 +4278,8 @@
                 const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 0 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Trackpad height scales with width
-                const TRACKPAD_MIN_HEIGHT = 104;
-                const TRACKPAD_RATIO = 0.131;
+                // Trackpad takes 1/3 of total height, game canvas takes 2/3
+                const TRACKPAD_MIN_HEIGHT = 80;
                 
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
@@ -4264,24 +4287,10 @@
                 // Canvas aspect ratio (game logic coordinates)
                 const canvasAspect = BASE_WIDTH / BASE_HEIGHT; // 800/520 = 1.538
                 
-                // Calculate canvas and trackpad together to maximize vertical fill
-                // trackpad = max(175, cssWidth * 0.22) = max(175, cssHeight * aspect * 0.22)
-                // cssHeight + trackpad = availHeight
-                
-                // First try: trackpad scales with canvas
-                // cssHeight + cssHeight * aspect * RATIO = availHeight
-                // cssHeight * (1 + aspect * RATIO) = availHeight
-                const scaledTrackpadRatio = canvasAspect * TRACKPAD_RATIO; // 1.538 * 0.22 = 0.338
-                let cssHeightCalc = Math.floor(availHeight / (1 + scaledTrackpadRatio));
+                // Trackpad = 1/3 of available height, Canvas = 2/3
+                const trackpadCalc = Math.max(TRACKPAD_MIN_HEIGHT, Math.floor(availHeight / 3));
+                let cssHeightCalc = availHeight - trackpadCalc;
                 let cssWidthCalc = Math.floor(cssHeightCalc * canvasAspect);
-                let trackpadCalc = Math.floor(cssWidthCalc * TRACKPAD_RATIO);
-                
-                // If trackpad would be smaller than minimum, use minimum
-                if (trackpadCalc < TRACKPAD_MIN_HEIGHT) {
-                    trackpadCalc = TRACKPAD_MIN_HEIGHT;
-                    cssHeightCalc = Math.floor(availHeight - TRACKPAD_MIN_HEIGHT);
-                    cssWidthCalc = Math.floor(cssHeightCalc * canvasAspect);
-                }
                 
                 cssHeight = cssHeightCalc;
                 cssWidth = cssWidthCalc;
@@ -4292,17 +4301,32 @@
                     cssHeight = Math.floor(cssWidth / canvasAspect);
                 }
                 
-                // Final trackpad height based on actual canvas width
-                const finalTrackpadHeight = Math.max(TRACKPAD_MIN_HEIGHT, Math.floor(cssWidth * TRACKPAD_RATIO));
+                // Final trackpad height - fixed at 1/3
+                const finalTrackpadHeight = trackpadCalc;
                 
-                // Determine optimal buffer scale based on device
+                // Determine optimal buffer scale based on device type and display
                 let bufferScale;
-                if (isTablet || isIPad) {
-                    bufferScale = 2;
+                const displayScale = cssWidth / BASE_WIDTH;
+                
+                if (isIPad) {
+                    // iPads: scale based on actual DPR, capped for memory safety
+                    bufferScale = Math.min(rawDPR * displayScale, 2.5);
+                } else if (isTablet) {
+                    // Android tablets: use their reported DPR with slight reduction
+                    bufferScale = Math.min(rawDPR * displayScale * 0.85, 2.5);
+                } else if (is4K) {
+                    // 4K displays: allow up to 3x for crisp rendering
+                    bufferScale = Math.min(displayScale * rawDPR, 3);
+                } else if (isHighDPI) {
+                    // High DPI displays (retina MacBooks, etc)
+                    bufferScale = Math.min(displayScale * rawDPR, maxFullscreenDPR);
                 } else {
-                    const displayScale = cssWidth / BASE_WIDTH;
+                    // Standard displays
                     bufferScale = Math.min(displayScale * rawDPR, maxFullscreenDPR);
                 }
+                
+                // Ensure minimum quality
+                bufferScale = Math.max(1, bufferScale);
                 
                 // iOS canvas memory safety check
                 let bufferWidth = Math.round(BASE_WIDTH * bufferScale);
@@ -4327,6 +4351,8 @@
                     trackpadEl.style.width = cssWidth + 'px';
                     trackpadEl.style.height = finalTrackpadHeight + 'px';
                     trackpadEl.style.minHeight = finalTrackpadHeight + 'px';
+                    trackpadEl.style.maxHeight = finalTrackpadHeight + 'px';
+                    trackpadEl.style.overflow = 'hidden';
                 }
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -4354,7 +4380,11 @@
                 const maxAvailWidth = viewW - containerPadding * 2 - 6;
                 cssWidth = Math.min(BASE_WIDTH, maxAvailWidth);
                 cssHeight = cssWidth / gameAspect;
-                dprScale = Math.min(rawDPR, 1.5) * (cssWidth / BASE_WIDTH);
+                
+                // Mobile DPR scaling - allow up to 2x for retina phones
+                // Most phones are 2x-3x DPR, cap to prevent memory issues
+                const mobileDPRCap = isRetina3x ? 2 : Math.min(rawDPR, 2);
+                dprScale = mobileDPRCap * (cssWidth / BASE_WIDTH);
                 
                 let bufferWidth = Math.round(gameWidth * dprScale);
                 let bufferHeight = Math.round(gameHeight * dprScale);
@@ -4384,7 +4414,11 @@
                 document.body.classList.remove('fullscreen-active');
                 cssWidth = BASE_WIDTH;
                 cssHeight = BASE_HEIGHT;
-                dprScale = Math.min(rawDPR, maxNormalDPR);
+                
+                // Desktop windowed mode - use device DPR up to limit
+                // 4K monitors benefit from higher scaling even in windowed mode
+                const windowedDPRCap = is4K ? 2.5 : maxNormalDPR;
+                dprScale = Math.min(rawDPR, windowedDPRCap);
                 
                 let bufferWidth = Math.round(gameWidth * dprScale);
                 let bufferHeight = Math.round(gameHeight * dprScale);
@@ -7491,7 +7525,7 @@
                 const timeScale = 1 + Math.floor(gameTime / 75) * 0.25; // +25% per 75s (slowed from /60)
                 
                 this.speed = 2.2 * (1 + Math.floor(gameTime / 110) * 0.05) * enemySpeedBonus;
-                this.maxHp = Math.floor(237 * timeScale * enemyHealthBonus);
+                this.maxHp = Math.floor(190 * timeScale * enemyHealthBonus);
                 this.hp = this.maxHp;
                 this.color = COLORS.green;
                 this.dead = false;
@@ -8010,7 +8044,7 @@
                     type: 'legendary', 
                     id: randomKey,
                     icon: legendary.icon, 
-                    name: '⭐ ' + legendary.name + ' ⭐', 
+                    name: legendary.name, 
                     desc: legendary.desc,
                     color: legendary.color 
                 });
@@ -9311,7 +9345,7 @@
                         type: 'legendary', 
                         id: randomKey,
                         icon: legendary.icon, 
-                        name: '⭐ ' + legendary.name + ' ⭐', 
+                        name: legendary.name, 
                         desc: legendary.desc,
                         color: legendary.color 
                     };
@@ -10467,9 +10501,12 @@
         
         function showPowerDropNotification(icon, name, desc, color) {
             const notification = document.createElement('div');
+            const gameCanvas = document.getElementById('gameCanvas');
+            const canvasRect = gameCanvas.getBoundingClientRect();
+            
             notification.style.cssText = `
                 position: fixed;
-                top: 18%;
+                bottom: ${window.innerHeight - canvasRect.bottom + 15}px;
                 left: 50%;
                 transform: translateX(-50%);
                 background: rgba(0, 0, 0, 0.85);
@@ -13209,12 +13246,25 @@
         }
 
         function updateLeprechaunSpawning(dt) {
+            // Never spawn during active swarm
+            if (swarmActive) return;
+            
             leprechaunSpawnTimer += dt;
             
             if (leprechaunSpawnTimer >= nextLeprechaunSpawn) {
-                leprechaunSpawnTimer = 0;
-                nextLeprechaunSpawn = 120000; // 2 minutes between spawns after first
-                spawnLeprechaun();
+                // Check if we're too close to next swarm (swarm starts 60s before boss)
+                // We want to spawn 30s BEFORE swarm starts, so 90s before boss
+                const bossInterval = 300; // 5 minutes
+                const nextBossTime = Math.ceil(gameTime / bossInterval) * bossInterval;
+                const swarmStartTime = nextBossTime - 60;
+                const safeSpawnWindow = swarmStartTime - 30; // 30s before swarm
+                
+                // Only spawn if we're not within 30s of swarm starting
+                if (gameTime < safeSpawnWindow || gameTime > swarmStartTime + 30) {
+                    leprechaunSpawnTimer = 0;
+                    nextLeprechaunSpawn = 120000; // 2 minutes between spawns after first
+                    spawnLeprechaun();
+                }
             }
         }
         
