@@ -1587,7 +1587,10 @@
             GEM_COMMON: 4, GEM_RARE: 5, GEM_EPIC: 6,
             LAVA: 7, GAS: 8, FUEL: 9,
             BOMB: 10, CHEST: 11, UNSTABLE: 12, BEDROCK: 13,
-            UPGRADE_CHEST: 14
+            UPGRADE_CHEST: 14,
+            PORTAL: 15,      // Boss portal (2x2)
+            PORTAL_PART: 16, // Secondary portal tiles (top-right, bottom-left, bottom-right)
+            GATE: 17         // Locked gate requiring boss key
         });
         
         // Surface refuel settings
@@ -1875,6 +1878,88 @@
                 beetle: beetleChance,
                 lava_slug: biome === BIOME.LAVA_ZONE ? (0.006 + depthFactor * 0.014) : 0  // Only in lava
             };
+        }
+        
+        // ==================== BOSS BATTLE SYSTEM ====================
+        const BOSS_PORTAL_INTERVAL = 100; // Portal every 100m
+        const BOSS_GATE_OFFSET = 50;      // Gate 50m below each portal
+        
+        // Boss types
+        const BOSS_TYPE = {
+            BURROWER: 'burrower',       // 100m - Dig to expose weak spot
+            CRYSTAL_GOLEM: 'golem',     // 200m - Break barriers + shockwaves
+            LAVA_WURM: 'wurm',          // 300m - Rising lava survival
+            HIVE_MIND: 'hive',          // 400m - Swarm management
+            COLLECTOR: 'collector'      // 500m+ - Combined mechanics
+        };
+        
+        // Boss state
+        let bossKeys = [];              // Array of defeated boss depths (100, 200, etc.)
+        let bossArenaActive = false;
+        let bossTransitionTimer = 0;
+        let bossTransitionPhase = 'none'; // 'entering', 'active', 'victory', 'exiting', 'none'
+        let currentBossDepth = 0;       // Which portal tier (100, 200, etc.)
+        
+        // Current boss data (populated when arena active)
+        let boss = null;
+        let bossArena = {
+            width: 14,                  // Arena width in tiles
+            height: 16,                 // Arena height in tiles  
+            tiles: [],                  // Arena terrain
+            particles: [],              // Boss-specific particles
+            projectiles: [],            // Boss attacks
+            weakPoints: [],             // Exposed weak points to hit
+            hazards: []                 // Environmental hazards
+        };
+        
+        // Pre-computed portal/gate locations
+        let portalLocations = [];       // {depth, tx, spawned}
+        let gateLocations = [];         // {depth, spawned}
+        
+        function initBossSystem() {
+            bossKeys = [];
+            bossArenaActive = false;
+            bossTransitionTimer = 0;
+            bossTransitionPhase = 'none';
+            currentBossDepth = 0;
+            boss = null;
+            portalLocations = [];
+            gateLocations = [];
+            
+            // Pre-compute portal and gate depths
+            for (let i = 1; i <= 10; i++) {
+                const portalDepth = i * BOSS_PORTAL_INTERVAL;
+                const gateDepth = portalDepth + BOSS_GATE_OFFSET;
+                portalLocations.push({ depth: portalDepth, tx: null, spawned: false });
+                gateLocations.push({ depth: gateDepth, forBossDepth: portalDepth, spawned: false });
+            }
+        }
+        
+        function getBossTypeForDepth(depth) {
+            const tier = Math.floor(depth / BOSS_PORTAL_INTERVAL);
+            const cycledTier = ((tier - 1) % 5) + 1; // Cycle through 1-5
+            
+            switch(cycledTier) {
+                case 1: return BOSS_TYPE.BURROWER;
+                case 2: return BOSS_TYPE.CRYSTAL_GOLEM;
+                case 3: return BOSS_TYPE.LAVA_WURM;
+                case 4: return BOSS_TYPE.HIVE_MIND;
+                case 5: return BOSS_TYPE.COLLECTOR;
+                default: return BOSS_TYPE.BURROWER;
+            }
+        }
+        
+        function getBossDifficultyMultiplier(depth) {
+            // After first cycle (500m), bosses get harder
+            const cycle = Math.floor((depth - 1) / 500);
+            return 1 + cycle * 0.25; // +25% per cycle
+        }
+        
+        function hasKeyForGate(gateDepth) {
+            // Find which boss this gate requires
+            const gate = gateLocations.find(g => g.depth === gateDepth);
+            if (!gate) return true; // Unknown gate, allow passage
+            return bossKeys.includes(gate.forBossDepth);
         }
         
         function spawnEnemy(type, tx, ty) {
@@ -2264,12 +2349,59 @@
                 }
                 world.push(row);
                 
+                // Check for portal spawning at this depth
+                const depthM = Math.floor((y - 3) * TILE_SIZE / 16); // Depth in meters (row 3 = surface)
+                const localY = world.length - 1;
+                
+                // Spawn portals at 100m intervals
+                for (const portal of portalLocations) {
+                    if (portal.spawned) continue;
+                    
+                    // Portal row calculation (depth 100m = row ~57 from surface)
+                    const portalRow = Math.floor(portal.depth * 16 / TILE_SIZE) + 3;
+                    
+                    if (y === portalRow) {
+                        // Spawn 2x2 portal centered horizontally
+                        const portalTx = Math.floor(WORLD_WIDTH / 2) - 1;
+                        portal.tx = portalTx;
+                        portal.spawned = true;
+                        
+                        // Set portal tiles (2x2)
+                        world[localY][portalTx] = TILE.PORTAL;
+                        world[localY][portalTx + 1] = TILE.PORTAL_PART;
+                        
+                        // We need the next row too - add it now
+                        const nextRow = [];
+                        for (let x = 0; x < WORLD_WIDTH; x++) {
+                            if (x === portalTx || x === portalTx + 1) {
+                                nextRow.push(TILE.PORTAL_PART);
+                            } else {
+                                nextRow.push(generateTile(x, y + 1));
+                            }
+                        }
+                        world.push(nextRow);
+                    }
+                }
+                
+                // Spawn gates at portal depth + 50m
+                for (const gate of gateLocations) {
+                    if (gate.spawned) continue;
+                    
+                    const gateRow = Math.floor(gate.depth * 16 / TILE_SIZE) + 3;
+                    
+                    if (y === gateRow) {
+                        // Full width gate barrier
+                        gate.spawned = true;
+                        for (let x = 0; x < WORLD_WIDTH; x++) {
+                            world[localY][x] = TILE.GATE;
+                        }
+                    }
+                }
+                
                 // Try to spawn enemies in this new row
-                const depthM = y * TILE_SIZE / 16; // Convert to meters
                 const spawnChances = getEnemySpawnChance(depthM, currentBiome);
                 
                 for (let x = 0; x < WORLD_WIDTH; x++) {
-                    const localY = world.length - 1;
                     const tile = world[localY][x];
                     
                     // Worms spawn in dirt/rock
@@ -2406,6 +2538,47 @@
             if (tile === TILE.AIR) return;
             if (tile === TILE.BEDROCK) return; // Can't dig bedrock
             if (drillOverheated) return; // Can't dig when overheated
+            
+            // Handle portal entry
+            if (tile === TILE.PORTAL || tile === TILE.PORTAL_PART) {
+                // Find which portal this is
+                const depthM = Math.floor((absoluteTy - 3) * TILE_SIZE / 16);
+                const portalDepth = Math.round(depthM / BOSS_PORTAL_INTERVAL) * BOSS_PORTAL_INTERVAL;
+                
+                // Check if already defeated this boss
+                if (bossKeys.includes(portalDepth)) {
+                    // Already defeated - just clear the tile
+                    world[ty][tx] = TILE.AIR;
+                    createFloatingText('Portal depleted', tx * TILE_SIZE + TILE_SIZE, absoluteTy * TILE_SIZE, '#888888');
+                    return;
+                }
+                
+                // Enter boss arena!
+                enterBossArena(portalDepth);
+                return;
+            }
+            
+            // Handle gate blocking
+            if (tile === TILE.GATE) {
+                // Find which gate this is
+                const depthM = Math.floor((absoluteTy - 3) * TILE_SIZE / 16);
+                const gate = gateLocations.find(g => Math.abs(g.depth - depthM) < 5);
+                
+                if (gate && !hasKeyForGate(gate.depth)) {
+                    // Blocked! Need boss key
+                    triggerScreenFlash('#ff0000', 0.2, 10);
+                    screenShake = 5;
+                    createFloatingText('🔒 LOCKED!', tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE - 10, '#ff6666');
+                    createFloatingText(`Defeat boss at ${gate.forBossDepth}m`, tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE + 15, '#ffaa00');
+                    return;
+                } else {
+                    // Has key - clear the gate
+                    world[ty][tx] = TILE.AIR;
+                    createParticles(tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE + TILE_SIZE/2, '#00ff88', 15);
+                    createFloatingText('🔓 UNLOCKED!', tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE, '#00ff88');
+                    return;
+                }
+            }
             
             // Speed multipliers (includes shop bonus)
             const shopDigBonus = 1 + getShopBonus('digSpeed') / 100;
@@ -3271,9 +3444,864 @@
             enemies.splice(index, 1);
         }
         
+        // ==================== BOSS ARENA SYSTEM ====================
+        function enterBossArena(portalDepth) {
+            currentBossDepth = portalDepth;
+            bossArenaActive = true;
+            bossTransitionPhase = 'entering';
+            bossTransitionTimer = 60; // 1 second fade
+            
+            // Store player state for return
+            bossArena.savedPlayerX = player.x;
+            bossArena.savedPlayerY = player.y;
+            bossArena.savedCameraY = cameraY;
+            
+            // Initialize boss based on depth
+            initBoss(portalDepth);
+        }
+        
+        function initBoss(portalDepth) {
+            const bossType = getBossTypeForDepth(portalDepth);
+            const difficulty = getBossDifficultyMultiplier(portalDepth);
+            
+            // Arena dimensions (slightly smaller than game canvas)
+            const arenaPixelWidth = BASE_WIDTH - 28;
+            const arenaPixelHeight = BASE_HEIGHT - 60;
+            bossArena.width = Math.floor(arenaPixelWidth / TILE_SIZE);
+            bossArena.height = Math.floor(arenaPixelHeight / TILE_SIZE);
+            bossArena.offsetX = 14; // Center arena
+            bossArena.offsetY = 30;
+            bossArena.tiles = [];
+            bossArena.particles = [];
+            bossArena.projectiles = [];
+            bossArena.weakPoints = [];
+            bossArena.hazards = [];
+            
+            // Generate arena terrain (alien cavern)
+            generateBossArena(bossType);
+            
+            // Create boss entity
+            boss = {
+                type: bossType,
+                x: arenaPixelWidth / 2,
+                y: arenaPixelHeight / 3,
+                width: 56,
+                height: 56,
+                maxHealth: Math.floor(getBossBaseHealth(bossType) * difficulty),
+                health: Math.floor(getBossBaseHealth(bossType) * difficulty),
+                damage: Math.floor(getBossBaseDamage(bossType) * difficulty),
+                phase: 1,
+                maxPhases: 3,
+                phaseTimer: 0,
+                attackTimer: 0,
+                attackCooldown: 90,
+                state: 'idle', // idle, burrowing, attacking, vulnerable, stunned
+                stateTimer: 0,
+                animFrame: 0,
+                targetX: 0,
+                targetY: 0,
+                burrowProgress: 0,
+                vulnerableTimer: 0,
+                hitCount: 0,
+                hitsToStun: 3
+            };
+            
+            // Position player at bottom of arena
+            player.x = arenaPixelWidth / 2 - player.width / 2 + bossArena.offsetX;
+            player.y = arenaPixelHeight - 60 + bossArena.offsetY;
+        }
+        
+        function getBossBaseHealth(bossType) {
+            switch(bossType) {
+                case BOSS_TYPE.BURROWER: return 3;
+                case BOSS_TYPE.CRYSTAL_GOLEM: return 4;
+                case BOSS_TYPE.LAVA_WURM: return 4;
+                case BOSS_TYPE.HIVE_MIND: return 5;
+                case BOSS_TYPE.COLLECTOR: return 5;
+                default: return 3;
+            }
+        }
+        
+        function getBossBaseDamage(bossType) {
+            switch(bossType) {
+                case BOSS_TYPE.BURROWER: return 10;
+                case BOSS_TYPE.CRYSTAL_GOLEM: return 15;
+                case BOSS_TYPE.LAVA_WURM: return 20;
+                case BOSS_TYPE.HIVE_MIND: return 15;
+                case BOSS_TYPE.COLLECTOR: return 25;
+                default: return 10;
+            }
+        }
+        
+        function generateBossArena(bossType) {
+            // Create alien cavern terrain
+            for (let y = 0; y < bossArena.height; y++) {
+                const row = [];
+                for (let x = 0; x < bossArena.width; x++) {
+                    // Walls around edges
+                    if (x === 0 || x === bossArena.width - 1 || 
+                        y === 0 || y === bossArena.height - 1) {
+                        row.push(TILE.BEDROCK);
+                    }
+                    // Second layer of walls (irregular)
+                    else if ((x === 1 || x === bossArena.width - 2) && Math.random() < 0.7) {
+                        row.push(TILE.HARD_ROCK);
+                    }
+                    else if ((y === 1 || y === bossArena.height - 2) && Math.random() < 0.5) {
+                        row.push(TILE.HARD_ROCK);
+                    }
+                    // Boss-specific terrain
+                    else if (bossType === BOSS_TYPE.BURROWER) {
+                        // Burrower arena: dirt patches to burrow through
+                        if (y > 3 && y < bossArena.height - 3) {
+                            if (Math.random() < 0.3) {
+                                row.push(TILE.DIRT);
+                            } else {
+                                row.push(TILE.AIR);
+                            }
+                        } else {
+                            row.push(TILE.AIR);
+                        }
+                    }
+                    else {
+                        row.push(TILE.AIR);
+                    }
+                }
+                bossArena.tiles.push(row);
+            }
+        }
+        
+        function updateBossArena() {
+            if (!bossArenaActive || !boss) return;
+            
+            // Update global time for animations
+            globalTime = (globalTime + deltaMultiplier) % 100000;
+            
+            // Handle screen shake
+            if (screenShake > 0) {
+                screenShake *= 0.85;
+                if (screenShake < 0.1) screenShake = 0;
+            }
+            
+            // Handle transitions
+            if (bossTransitionPhase === 'entering') {
+                bossTransitionTimer--;
+                if (bossTransitionTimer <= 0) {
+                    bossTransitionPhase = 'active';
+                }
+                return;
+            }
+            
+            if (bossTransitionPhase === 'victory') {
+                bossTransitionTimer--;
+                if (bossTransitionTimer <= 0) {
+                    exitBossArena(true);
+                }
+                return;
+            }
+            
+            if (bossTransitionPhase === 'exiting') {
+                bossTransitionTimer--;
+                if (bossTransitionTimer <= 0) {
+                    bossArenaActive = false;
+                    bossTransitionPhase = 'none';
+                }
+                return;
+            }
+            
+            // Player movement in boss arena
+            updateBossArenaPlayer();
+            
+            // Boss AI
+            updateBossAI();
+            
+            // Update projectiles
+            updateBossProjectiles();
+            
+            // Update particles
+            updateBossParticles();
+            
+            // Check player collision with boss
+            checkBossCollision();
+            
+            // Check if boss defeated
+            if (boss.health <= 0) {
+                triggerBossVictory();
+            }
+            
+            // Check player death
+            if (hull <= 0) {
+                // Boss death = game over
+                deathReason = 'hull';
+                gameOver();
+            }
+        }
+        
+        function updateBossArenaPlayer() {
+            // Simplified player movement for boss arena
+            const moveSpeed = player.speed * 1.2; // Slightly faster in arena
+            
+            let dx = 0, dy = 0;
+            
+            if (keys.left) dx = -moveSpeed;
+            if (keys.right) dx = moveSpeed;
+            if (keys.up) dy = -moveSpeed * 0.8;
+            if (keys.down) dy = moveSpeed * 0.5;
+            
+            // Apply movement with arena bounds checking
+            const newX = player.x + dx * deltaMultiplier;
+            const newY = player.y + dy * deltaMultiplier;
+            
+            // Arena bounds (with offset)
+            const minX = bossArena.offsetX + TILE_SIZE * 2;
+            const maxX = bossArena.offsetX + (bossArena.width - 2) * TILE_SIZE - player.width;
+            const minY = bossArena.offsetY + TILE_SIZE * 2;
+            const maxY = bossArena.offsetY + (bossArena.height - 2) * TILE_SIZE - player.height;
+            
+            // Check arena tile collision
+            const tileX = Math.floor((newX + player.width / 2 - bossArena.offsetX) / TILE_SIZE);
+            const tileY = Math.floor((newY + player.height / 2 - bossArena.offsetY) / TILE_SIZE);
+            
+            let canMoveX = true;
+            let canMoveY = true;
+            
+            // Check X movement
+            const checkTileX = Math.floor((newX + (dx > 0 ? player.width : 0) - bossArena.offsetX) / TILE_SIZE);
+            if (checkTileX >= 0 && checkTileX < bossArena.width) {
+                for (let y = 0; y < 2; y++) {
+                    const checkY = Math.floor((player.y + y * player.height * 0.8 - bossArena.offsetY) / TILE_SIZE);
+                    if (checkY >= 0 && checkY < bossArena.height) {
+                        const tile = bossArena.tiles[checkY] ? bossArena.tiles[checkY][checkTileX] : TILE.BEDROCK;
+                        if (tile !== TILE.AIR && tile !== TILE.DIRT) {
+                            canMoveX = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Check Y movement
+            const checkTileY = Math.floor((newY + (dy > 0 ? player.height : 0) - bossArena.offsetY) / TILE_SIZE);
+            if (checkTileY >= 0 && checkTileY < bossArena.height) {
+                for (let x = 0; x < 2; x++) {
+                    const checkX = Math.floor((player.x + x * player.width * 0.8 - bossArena.offsetX) / TILE_SIZE);
+                    if (checkX >= 0 && checkX < bossArena.width) {
+                        const tile = bossArena.tiles[checkTileY] ? bossArena.tiles[checkTileY][checkX] : TILE.BEDROCK;
+                        if (tile !== TILE.AIR && tile !== TILE.DIRT) {
+                            canMoveY = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (canMoveX && newX >= minX && newX <= maxX) {
+                player.x = newX;
+            }
+            if (canMoveY && newY >= minY && newY <= maxY) {
+                player.y = newY;
+            }
+            
+            // Simple gravity in arena
+            if (!keys.up && canMoveY) {
+                const gravityY = player.y + 2 * deltaMultiplier;
+                const gravTileY = Math.floor((gravityY + player.height - bossArena.offsetY) / TILE_SIZE);
+                if (gravTileY >= 0 && gravTileY < bossArena.height) {
+                    const centerTileX = Math.floor((player.x + player.width / 2 - bossArena.offsetX) / TILE_SIZE);
+                    const groundTile = bossArena.tiles[gravTileY] ? bossArena.tiles[gravTileY][centerTileX] : TILE.BEDROCK;
+                    if (groundTile === TILE.AIR || groundTile === TILE.DIRT) {
+                        player.y = Math.min(gravityY, maxY);
+                    }
+                }
+            }
+            
+            // Digging state for boss collision detection
+            player.digging = keys.down || keys.left || keys.right;
+            
+            // Thruster animation
+            player.thrusterFlicker = Math.sin(globalTime * 0.3) * 0.3 + 0.7;
+        }
+        
+        function updateBossAI() {
+            boss.animFrame = (boss.animFrame + 0.1 * deltaMultiplier) % (Math.PI * 2);
+            boss.attackTimer += deltaMultiplier;
+            boss.stateTimer += deltaMultiplier;
+            
+            const playerCenterX = player.x + player.width / 2;
+            const playerCenterY = player.y + player.height / 2;
+            
+            switch(boss.type) {
+                case BOSS_TYPE.BURROWER:
+                    updateBurrowerAI(playerCenterX, playerCenterY);
+                    break;
+                // Other bosses will be added in future updates
+                default:
+                    updateBurrowerAI(playerCenterX, playerCenterY);
+            }
+        }
+        
+        function updateBurrowerAI(playerX, playerY) {
+            // The Burrower: Burrows through dirt, surfaces to attack, vulnerable when exposed
+            
+            switch(boss.state) {
+                case 'idle':
+                    // Choose next action
+                    if (boss.attackTimer >= boss.attackCooldown) {
+                        boss.state = 'burrowing';
+                        boss.stateTimer = 0;
+                        boss.targetX = playerX;
+                        boss.targetY = playerY - 60; // Surface above player
+                        boss.burrowProgress = 0;
+                        
+                        // Find nearest dirt to burrow into
+                        const tx = Math.floor((boss.x - bossArena.offsetX) / TILE_SIZE);
+                        const ty = Math.floor((boss.y - bossArena.offsetY) / TILE_SIZE);
+                        if (tx >= 0 && tx < bossArena.width && ty >= 0 && ty < bossArena.height) {
+                            bossArena.tiles[ty][tx] = TILE.DIRT; // Create dirt to burrow into
+                        }
+                    }
+                    break;
+                    
+                case 'burrowing':
+                    boss.burrowProgress += 0.02 * deltaMultiplier;
+                    
+                    // Move toward target while underground
+                    const dx = boss.targetX - boss.x;
+                    const dy = boss.targetY - boss.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist > 5) {
+                        boss.x += (dx / dist) * 2 * deltaMultiplier;
+                        boss.y += (dy / dist) * 2 * deltaMultiplier;
+                        
+                        // Leave dirt trail (burrow effect)
+                        if (Math.random() < 0.3) {
+                            bossArena.particles.push({
+                                x: boss.x + (Math.random() - 0.5) * 30,
+                                y: boss.y + (Math.random() - 0.5) * 30,
+                                vx: (Math.random() - 0.5) * 2,
+                                vy: -Math.random() * 2,
+                                size: 3 + Math.random() * 4,
+                                color: '#5a4030',
+                                life: 0.8
+                            });
+                        }
+                    }
+                    
+                    if (boss.burrowProgress >= 1 || dist <= 5) {
+                        boss.state = 'attacking';
+                        boss.stateTimer = 0;
+                        screenShake = 10;
+                        triggerScreenFlash('#ff6600', 0.3, 10);
+                        
+                        // Spawn dirt explosion
+                        for (let i = 0; i < 15; i++) {
+                            bossArena.particles.push({
+                                x: boss.x,
+                                y: boss.y,
+                                vx: (Math.random() - 0.5) * 8,
+                                vy: -2 - Math.random() * 6,
+                                size: 4 + Math.random() * 6,
+                                color: Math.random() < 0.5 ? '#5a4030' : '#3d2d20',
+                                life: 1
+                            });
+                        }
+                    }
+                    break;
+                    
+                case 'attacking':
+                    // Surface and attack - vulnerable for a moment
+                    if (boss.stateTimer >= 30) {
+                        boss.state = 'vulnerable';
+                        boss.stateTimer = 0;
+                        boss.vulnerableTimer = 120; // 2 seconds vulnerable
+                        
+                        // Spawn weak point
+                        bossArena.weakPoints = [{
+                            x: boss.x,
+                            y: boss.y,
+                            radius: 20,
+                            active: true
+                        }];
+                        
+                        createFloatingText('⚠️ DIG NOW!', boss.x, boss.y - 40, '#00ff88');
+                    }
+                    break;
+                    
+                case 'vulnerable':
+                    boss.vulnerableTimer -= deltaMultiplier;
+                    
+                    // Pulse effect
+                    const pulse = Math.sin(globalTime * 0.3) * 0.3;
+                    boss.width = 56 + pulse * 8;
+                    boss.height = 56 + pulse * 8;
+                    
+                    if (boss.vulnerableTimer <= 0) {
+                        boss.state = 'idle';
+                        boss.stateTimer = 0;
+                        boss.attackTimer = 0;
+                        boss.width = 56;
+                        boss.height = 56;
+                        bossArena.weakPoints = [];
+                    }
+                    break;
+                    
+                case 'stunned':
+                    if (boss.stateTimer >= 60) {
+                        boss.state = 'idle';
+                        boss.stateTimer = 0;
+                        boss.attackTimer = 0;
+                        boss.hitCount = 0;
+                    }
+                    break;
+            }
+        }
+        
+        function updateBossProjectiles() {
+            for (let i = bossArena.projectiles.length - 1; i >= 0; i--) {
+                const proj = bossArena.projectiles[i];
+                proj.x += proj.vx * deltaMultiplier;
+                proj.y += proj.vy * deltaMultiplier;
+                proj.life -= 0.02 * deltaMultiplier;
+                
+                // Check player collision
+                const dx = proj.x - (player.x + player.width / 2);
+                const dy = proj.y - (player.y + player.height / 2);
+                if (Math.sqrt(dx * dx + dy * dy) < proj.radius + 10) {
+                    // Hit player
+                    const shopArmor = getShopBonus('armor');
+                    const damage = proj.damage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
+                    hull -= damage;
+                    updateHullBar();
+                    createFloatingText(`-${Math.floor(damage)}`, player.x + player.width/2, player.y, '#ff3355');
+                    triggerScreenFlash('#ff0000', 0.3, 10);
+                    screenShake = 8;
+                    bossArena.projectiles.splice(i, 1);
+                    continue;
+                }
+                
+                if (proj.life <= 0) {
+                    bossArena.projectiles.splice(i, 1);
+                }
+            }
+        }
+        
+        function updateBossParticles() {
+            for (let i = bossArena.particles.length - 1; i >= 0; i--) {
+                const p = bossArena.particles[i];
+                p.x += p.vx * deltaMultiplier;
+                p.y += p.vy * deltaMultiplier;
+                p.vy += 0.15 * deltaMultiplier; // Gravity
+                p.life -= 0.02 * deltaMultiplier;
+                
+                if (p.life <= 0) {
+                    bossArena.particles.splice(i, 1);
+                }
+            }
+        }
+        
+        function checkBossCollision() {
+            if (!boss || boss.state === 'burrowing') return;
+            
+            const playerCenterX = player.x + player.width / 2;
+            const playerCenterY = player.y + player.height / 2;
+            
+            // Check collision with boss body
+            const dx = playerCenterX - boss.x;
+            const dy = playerCenterY - boss.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < (boss.width / 2 + player.width / 2) && boss.state !== 'stunned') {
+                // Check if player is digging (attacking)
+                if (player.digging && boss.state === 'vulnerable') {
+                    // Hit the boss!
+                    damageBoss(1);
+                } else if (boss.state === 'attacking' || boss.state === 'idle') {
+                    // Player takes damage
+                    const shopArmor = getShopBonus('armor');
+                    const damage = boss.damage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
+                    hull -= damage;
+                    updateHullBar();
+                    createFloatingText(`-${Math.floor(damage)}`, player.x + player.width/2, player.y, '#ff3355');
+                    triggerScreenFlash('#ff0000', 0.4, 15);
+                    screenShake = 12;
+                    
+                    // Knockback
+                    player.x += dx > 0 ? -30 : 30;
+                    player.y += dy > 0 ? -20 : 20;
+                }
+            }
+            
+            // Check weak points (dig to damage)
+            if (player.digging) {
+                for (const wp of bossArena.weakPoints) {
+                    if (!wp.active) continue;
+                    
+                    const wpDx = playerCenterX - wp.x;
+                    const wpDy = playerCenterY - wp.y;
+                    const wpDist = Math.sqrt(wpDx * wpDx + wpDy * wpDy);
+                    
+                    if (wpDist < wp.radius + 15) {
+                        damageBoss(1);
+                        wp.active = false;
+                    }
+                }
+            }
+        }
+        
+        function damageBoss(amount) {
+            boss.health -= amount;
+            boss.hitCount++;
+            
+            screenShake = 15;
+            triggerScreenFlash('#00ffff', 0.4, 15);
+            
+            // Spawn hit particles
+            for (let i = 0; i < 20; i++) {
+                bossArena.particles.push({
+                    x: boss.x,
+                    y: boss.y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    size: 3 + Math.random() * 5,
+                    color: Math.random() < 0.5 ? '#00ffff' : '#ff00ff',
+                    life: 1
+                });
+            }
+            
+            createFloatingText(`💥 HIT! ${boss.health}/${boss.maxHealth}`, boss.x, boss.y - 50, '#00ffff');
+            
+            if (boss.hitCount >= boss.hitsToStun && boss.health > 0) {
+                boss.state = 'stunned';
+                boss.stateTimer = 0;
+                bossArena.weakPoints = [];
+            }
+        }
+        
+        function triggerBossVictory() {
+            bossTransitionPhase = 'victory';
+            bossTransitionTimer = 180; // 3 second victory celebration
+            
+            // Add boss key
+            bossKeys.push(currentBossDepth);
+            
+            // Big score bonus
+            const bonusScore = 500 * (currentBossDepth / BOSS_PORTAL_INTERVAL);
+            score += bonusScore;
+            updateScoreDisplay();
+            
+            // Full refill
+            fuel = maxFuel;
+            hull = maxHull;
+            updateFuelBar();
+            updateHullBar();
+            
+            // Victory effects
+            screenShake = 20;
+            triggerScreenFlash('#00ff88', 0.5, 30);
+            
+            // Spawn lots of particles
+            for (let i = 0; i < 50; i++) {
+                bossArena.particles.push({
+                    x: boss.x + (Math.random() - 0.5) * 100,
+                    y: boss.y + (Math.random() - 0.5) * 100,
+                    vx: (Math.random() - 0.5) * 15,
+                    vy: (Math.random() - 0.5) * 15,
+                    size: 5 + Math.random() * 10,
+                    color: ['#00ffff', '#ff00ff', '#00ff88', '#ff9500'][Math.floor(Math.random() * 4)],
+                    life: 2
+                });
+            }
+            
+            createFloatingText(`🏆 BOSS DEFEATED! +${bonusScore}`, BASE_WIDTH / 2, BASE_HEIGHT / 3, '#00ff88');
+            createFloatingText(`🔑 KEY OBTAINED!`, BASE_WIDTH / 2, BASE_HEIGHT / 3 + 30, '#ffcc00');
+        }
+        
+        function exitBossArena(victory) {
+            bossTransitionPhase = 'exiting';
+            bossTransitionTimer = 60;
+            
+            // Restore player position
+            player.x = bossArena.savedPlayerX;
+            player.y = bossArena.savedPlayerY + TILE_SIZE; // Move down past portal
+            cameraY = bossArena.savedCameraY;
+            
+            // Clear portal from world (replace with air)
+            const portalInfo = portalLocations.find(p => p.depth === currentBossDepth);
+            if (portalInfo && portalInfo.tx !== null) {
+                const portalRow = Math.floor((currentBossDepth * 16 / TILE_SIZE) + 3);
+                const localRow = getWorldRow(portalRow);
+                if (localRow >= 0 && localRow < world.length - 1) {
+                    // Clear 2x2 portal
+                    for (let dy = 0; dy < 2; dy++) {
+                        for (let dx = 0; dx < 2; dx++) {
+                            if (world[localRow + dy] && world[localRow + dy][portalInfo.tx + dx] !== undefined) {
+                                world[localRow + dy][portalInfo.tx + dx] = TILE.AIR;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            boss = null;
+        }
+        
+        function drawBossArena() {
+            if (!bossArenaActive) return;
+            
+            // Dark background
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+            
+            // Alien cavern background effect
+            const bgPulse = 0.3 + Math.sin(globalTime * 0.02) * 0.1;
+            const bgGrad = ctx.createRadialGradient(
+                BASE_WIDTH / 2, BASE_HEIGHT / 2, 50,
+                BASE_WIDTH / 2, BASE_HEIGHT / 2, 300
+            );
+            bgGrad.addColorStop(0, `rgba(80, 0, 120, ${bgPulse})`);
+            bgGrad.addColorStop(0.5, `rgba(30, 0, 60, ${bgPulse * 0.5})`);
+            bgGrad.addColorStop(1, 'rgba(5, 5, 16, 0)');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+            
+            // Draw arena tiles
+            for (let y = 0; y < bossArena.height; y++) {
+                for (let x = 0; x < bossArena.width; x++) {
+                    const tile = bossArena.tiles[y] ? bossArena.tiles[y][x] : TILE.AIR;
+                    const screenX = x * TILE_SIZE + bossArena.offsetX;
+                    const screenY = y * TILE_SIZE + bossArena.offsetY;
+                    
+                    if (tile === TILE.BEDROCK) {
+                        // Alien wall
+                        ctx.fillStyle = '#1a0a2e';
+                        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(150, 50, 200, 0.2)';
+                        ctx.fillRect(screenX, screenY, TILE_SIZE, 2);
+                        ctx.fillRect(screenX, screenY, 2, TILE_SIZE);
+                    } else if (tile === TILE.HARD_ROCK) {
+                        ctx.fillStyle = '#150825';
+                        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = 'rgba(100, 30, 150, 0.3)';
+                        ctx.fillRect(screenX + 2, screenY + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+                    } else if (tile === TILE.DIRT) {
+                        ctx.fillStyle = '#2a1a35';
+                        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+                        ctx.fillStyle = '#3a2545';
+                        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE * 0.4);
+                    }
+                }
+            }
+            
+            // Draw boss particles (behind boss)
+            for (const p of bossArena.particles) {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+            
+            // Draw weak points
+            for (const wp of bossArena.weakPoints) {
+                if (!wp.active) continue;
+                
+                const wpPulse = 0.5 + Math.sin(globalTime * 0.2) * 0.5;
+                ctx.beginPath();
+                ctx.arc(wp.x, wp.y, wp.radius + wpPulse * 5, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(0, 255, 136, ${0.3 + wpPulse * 0.3})`;
+                ctx.fill();
+                ctx.strokeStyle = '#00ff88';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                
+                // Target reticle
+                ctx.strokeStyle = `rgba(0, 255, 136, ${wpPulse})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(wp.x - wp.radius - 10, wp.y);
+                ctx.lineTo(wp.x - wp.radius + 5, wp.y);
+                ctx.moveTo(wp.x + wp.radius + 10, wp.y);
+                ctx.lineTo(wp.x + wp.radius - 5, wp.y);
+                ctx.moveTo(wp.x, wp.y - wp.radius - 10);
+                ctx.lineTo(wp.x, wp.y - wp.radius + 5);
+                ctx.moveTo(wp.x, wp.y + wp.radius + 10);
+                ctx.lineTo(wp.x, wp.y + wp.radius - 5);
+                ctx.stroke();
+            }
+            
+            // Draw boss
+            if (boss && boss.state !== 'burrowing') {
+                drawBoss();
+            }
+            
+            // Draw projectiles
+            for (const proj of bossArena.projectiles) {
+                ctx.fillStyle = proj.color || '#ff6600';
+                ctx.beginPath();
+                ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw player in arena
+            drawPlayer();
+            
+            // Boss HP bar at top
+            if (boss) {
+                const hpBarWidth = 200;
+                const hpBarHeight = 16;
+                const hpBarX = (BASE_WIDTH - hpBarWidth) / 2;
+                const hpBarY = 10;
+                const hpPercent = boss.health / boss.maxHealth;
+                
+                // Background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(hpBarX - 2, hpBarY - 2, hpBarWidth + 4, hpBarHeight + 4);
+                
+                // HP bar
+                const hpColor = hpPercent > 0.5 ? '#00ff88' : hpPercent > 0.25 ? '#ffaa00' : '#ff3355';
+                ctx.fillStyle = hpColor;
+                ctx.fillRect(hpBarX, hpBarY, hpBarWidth * hpPercent, hpBarHeight);
+                
+                // Border
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+                
+                // Boss name
+                ctx.font = 'bold 14px Oxanium, monospace';
+                ctx.fillStyle = '#ff00ff';
+                ctx.textAlign = 'center';
+                ctx.fillText(getBossName(boss.type), BASE_WIDTH / 2, hpBarY + hpBarHeight + 18);
+            }
+            
+            // Transition overlay
+            if (bossTransitionPhase === 'entering' || bossTransitionPhase === 'exiting') {
+                const alpha = bossTransitionTimer / 60;
+                ctx.fillStyle = `rgba(0, 0, 0, ${bossTransitionPhase === 'entering' ? alpha : 1 - alpha})`;
+                ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+            }
+            
+            // Victory overlay
+            if (bossTransitionPhase === 'victory') {
+                const pulse = 0.3 + Math.sin(globalTime * 0.2) * 0.2;
+                ctx.fillStyle = `rgba(0, 255, 136, ${pulse * 0.3})`;
+                ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+                
+                ctx.font = 'bold 36px Oxanium, monospace';
+                ctx.fillStyle = '#00ff88';
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#00ff88';
+                ctx.shadowBlur = 20;
+                ctx.fillText('VICTORY!', BASE_WIDTH / 2, BASE_HEIGHT / 2 - 20);
+                ctx.shadowBlur = 0;
+            }
+        }
+        
+        function drawBoss() {
+            if (!boss) return;
+            
+            const wobble = Math.sin(boss.animFrame) * 3;
+            const x = boss.x;
+            const y = boss.y + wobble;
+            const halfW = boss.width / 2;
+            const halfH = boss.height / 2;
+            
+            ctx.save();
+            
+            // Boss glow
+            const glowAlpha = boss.state === 'vulnerable' ? 0.6 : 0.3;
+            const glowColor = boss.state === 'vulnerable' ? '#00ff88' : 
+                             boss.state === 'stunned' ? '#ffaa00' : '#ff00ff';
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 20;
+            
+            switch(boss.type) {
+                case BOSS_TYPE.BURROWER:
+                    // Worm-like creature
+                    // Body segments
+                    ctx.fillStyle = boss.state === 'vulnerable' ? '#40aa60' : '#604080';
+                    for (let i = 3; i >= 0; i--) {
+                        const segOffset = Math.sin(boss.animFrame + i * 0.5) * 5;
+                        const segSize = halfW - i * 5;
+                        ctx.beginPath();
+                        ctx.ellipse(x + segOffset, y + i * 12, segSize, segSize * 0.7, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    // Head
+                    ctx.fillStyle = boss.state === 'vulnerable' ? '#50cc70' : '#8060a0';
+                    ctx.beginPath();
+                    ctx.ellipse(x, y - 15, halfW + 5, halfH * 0.8, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Eyes
+                    ctx.fillStyle = '#ff0000';
+                    ctx.beginPath();
+                    ctx.arc(x - 12, y - 20, 6, 0, Math.PI * 2);
+                    ctx.arc(x + 12, y - 20, 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Pupils
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.arc(x - 12, y - 20, 3, 0, Math.PI * 2);
+                    ctx.arc(x + 12, y - 20, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Mandibles
+                    ctx.strokeStyle = '#403060';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(x - 20, y - 5);
+                    ctx.quadraticCurveTo(x - 30, y + 10, x - 15, y + 15);
+                    ctx.moveTo(x + 20, y - 5);
+                    ctx.quadraticCurveTo(x + 30, y + 10, x + 15, y + 15);
+                    ctx.stroke();
+                    
+                    // Weak point indicator when vulnerable
+                    if (boss.state === 'vulnerable') {
+                        const pulseSize = 5 + Math.sin(globalTime * 0.3) * 3;
+                        ctx.strokeStyle = '#00ff88';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.arc(x, y, halfW + pulseSize, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                    break;
+                    
+                default:
+                    // Default boss shape
+                    ctx.fillStyle = '#8060a0';
+                    ctx.beginPath();
+                    ctx.arc(x, y, halfW, 0, Math.PI * 2);
+                    ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+        
+        function getBossName(bossType) {
+            switch(bossType) {
+                case BOSS_TYPE.BURROWER: return 'THE BURROWER';
+                case BOSS_TYPE.CRYSTAL_GOLEM: return 'CRYSTAL GOLEM';
+                case BOSS_TYPE.LAVA_WURM: return 'LAVA WURM';
+                case BOSS_TYPE.HIVE_MIND: return 'HIVE MIND';
+                case BOSS_TYPE.COLLECTOR: return 'THE COLLECTOR';
+                default: return 'ALIEN BOSS';
+            }
+        }
+        
         // ==================== UPDATE ====================
         function update() {
             if (!gameRunning || upgradeSelectionActive) return;
+            
+            // Boss arena has its own update loop
+            if (bossArenaActive) {
+                updateBossArena();
+                return;
+            }
             
             // Keep points display in sync with score
             updatePointsDisplay();
@@ -3871,6 +4899,19 @@
         // ==================== DRAWING ====================
         function draw() {
             ctx.save();
+            
+            // Boss arena has its own drawing
+            if (bossArenaActive) {
+                if (screenShake > 0) {
+                    ctx.translate(
+                        (Math.random() - 0.5) * screenShake * 2,
+                        (Math.random() - 0.5) * screenShake * 2
+                    );
+                }
+                drawBossArena();
+                ctx.restore();
+                return;
+            }
             
             if (screenShake > 0) {
                 ctx.translate(
@@ -4767,6 +5808,123 @@
                     if (isWarning) {
                         ctx.fillStyle = `rgba(255, 100, 100, ${0.2 + Math.sin(time * 15) * 0.2})`;
                         ctx.fillRect(x, y, s, s);
+                    }
+                    break;
+                    
+                case TILE.PORTAL:
+                    // Boss portal - swirling alien vortex (2x2, this is top-left)
+                    const portalPulse = 0.7 + Math.sin(time * 2) * 0.3;
+                    const portalRotation = time * 2;
+                    
+                    // Draw across 2x2 area
+                    const portalCenterX = x + s;
+                    const portalCenterY = y + s;
+                    const portalRadius = s * 0.9;
+                    
+                    // Outer glow
+                    ctx.save();
+                    const portalGlow = ctx.createRadialGradient(
+                        portalCenterX, portalCenterY, 0,
+                        portalCenterX, portalCenterY, portalRadius * 1.5
+                    );
+                    portalGlow.addColorStop(0, `rgba(180, 50, 255, ${portalPulse * 0.8})`);
+                    portalGlow.addColorStop(0.5, `rgba(100, 0, 200, ${portalPulse * 0.5})`);
+                    portalGlow.addColorStop(1, 'rgba(50, 0, 100, 0)');
+                    ctx.fillStyle = portalGlow;
+                    ctx.fillRect(x - 5, y - 5, s * 2 + 10, s * 2 + 10);
+                    
+                    // Swirling vortex rings
+                    for (let ring = 0; ring < 4; ring++) {
+                        const ringRadius = portalRadius * (0.3 + ring * 0.2);
+                        const ringAlpha = 0.8 - ring * 0.15;
+                        const ringOffset = portalRotation + ring * 0.5;
+                        
+                        ctx.strokeStyle = `rgba(${150 + ring * 30}, ${50 + ring * 20}, 255, ${ringAlpha * portalPulse})`;
+                        ctx.lineWidth = 3 - ring * 0.5;
+                        ctx.beginPath();
+                        ctx.arc(portalCenterX, portalCenterY, ringRadius, ringOffset, ringOffset + Math.PI * 1.5);
+                        ctx.stroke();
+                    }
+                    
+                    // Center eye
+                    ctx.fillStyle = `rgba(255, 100, 255, ${portalPulse})`;
+                    ctx.beginPath();
+                    ctx.arc(portalCenterX, portalCenterY, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Inner glow
+                    ctx.fillStyle = `rgba(255, 200, 255, ${portalPulse * 0.8})`;
+                    ctx.beginPath();
+                    ctx.arc(portalCenterX, portalCenterY, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Floating particles around portal
+                    for (let i = 0; i < 6; i++) {
+                        const particleAngle = portalRotation * 0.5 + i * Math.PI / 3;
+                        const particleDist = portalRadius * (0.6 + Math.sin(time * 3 + i) * 0.3);
+                        const px = portalCenterX + Math.cos(particleAngle) * particleDist;
+                        const py = portalCenterY + Math.sin(particleAngle) * particleDist;
+                        
+                        ctx.fillStyle = `rgba(200, 100, 255, ${0.5 + Math.sin(time * 4 + i) * 0.3})`;
+                        ctx.beginPath();
+                        ctx.arc(px, py, 2 + Math.sin(time * 5 + i) * 1, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                    break;
+                    
+                case TILE.PORTAL_PART:
+                    // Secondary portal tiles - don't render (handled by TILE.PORTAL)
+                    break;
+                    
+                case TILE.GATE:
+                    // Locked gate - glowing barrier
+                    const gateTime = time * 2;
+                    const gatePulse = 0.6 + Math.sin(gateTime) * 0.4;
+                    
+                    // Dark background
+                    ctx.fillStyle = '#0a0515';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Energy barrier effect
+                    const gateGrad = ctx.createLinearGradient(x, y, x, y + s);
+                    gateGrad.addColorStop(0, `rgba(255, 50, 100, ${gatePulse * 0.3})`);
+                    gateGrad.addColorStop(0.5, `rgba(255, 100, 50, ${gatePulse * 0.6})`);
+                    gateGrad.addColorStop(1, `rgba(255, 50, 100, ${gatePulse * 0.3})`);
+                    ctx.fillStyle = gateGrad;
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Horizontal energy lines
+                    ctx.strokeStyle = `rgba(255, 150, 100, ${gatePulse})`;
+                    ctx.lineWidth = 2;
+                    for (let i = 0; i < 3; i++) {
+                        const lineY = y + s * (0.25 + i * 0.25);
+                        const waveOffset = Math.sin(gateTime + tx + i) * 3;
+                        ctx.beginPath();
+                        ctx.moveTo(x, lineY + waveOffset);
+                        ctx.lineTo(x + s, lineY - waveOffset);
+                        ctx.stroke();
+                    }
+                    
+                    // Lock icon in center (only on some tiles for pattern)
+                    if ((tx + ty) % 3 === 0) {
+                        ctx.fillStyle = `rgba(255, 200, 100, ${gatePulse})`;
+                        ctx.font = 'bold 14px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('🔒', x + s/2, y + s/2);
+                        ctx.textBaseline = 'alphabetic';
+                    }
+                    
+                    // Crackle effect
+                    if (Math.random() < 0.02) {
+                        ctx.strokeStyle = '#ffff00';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(x + Math.random() * s, y);
+                        ctx.lineTo(x + Math.random() * s, y + s);
+                        ctx.stroke();
                     }
                     break;
             }
@@ -6161,6 +7319,9 @@
             firstEnemySpawned = false;
             secondEnemySpawned = false;
             
+            // Reset boss system
+            initBossSystem();
+            
             // Reset alien tip system
             alienActive = false;
             alienCooldown = 300; // Short delay before first tip
@@ -6486,6 +7647,7 @@
         
         // ==================== INITIALIZATION ====================
         createScanlinePattern();
+        initBossSystem();
         generateWorld();
         initAmbientParticles();
         initBgStars();
