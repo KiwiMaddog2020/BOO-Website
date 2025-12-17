@@ -114,10 +114,16 @@
         
         /* Force fullscreen layout when in iframe (CSS kicks in immediately) */
         html.in-iframe body {
-            align-items: flex-start;
+            justify-content: center;
+            align-items: center;
         }
         
-        /* Tablet in iframe - center vertically */
+        html.in-iframe .game-wrapper {
+            justify-content: center;
+            align-items: center;
+        }
+        
+        /* Tablet in iframe - center */
         @media (min-width: 769px) and (pointer: coarse) {
             html.in-iframe body {
                 align-items: center;
@@ -125,10 +131,16 @@
         }
         
         html.in-iframe .game-container {
-            width: 100%;
-            height: 100%;
+            width: fit-content;
+            height: fit-content;
             max-width: 100%;
             max-height: 100%;
+            border-radius: 0;
+            border: none;
+            padding: 0;
+        }
+        
+        html.in-iframe #gameCanvas {
             border-radius: 0;
         }
 
@@ -2002,7 +2014,7 @@
             <div class="mode-title">SELECT MODE</div>
             <button class="mode-btn endless" id="campaignModeBtn">
                 CAMPAIGN
-                <div class="mode-desc">New map every 5 waves, tower unlocks</div>
+                <div class="mode-desc">New map every 5 waves</div>
             </button>
             <button class="mode-btn" id="classicModeBtn">
                 CLASSIC
@@ -2015,7 +2027,7 @@
     <!-- Map Transition Overlay -->
     <div class="map-transition-overlay" id="mapTransitionOverlay">
         <div class="transition-text" id="transitionText">STAGE 2</div>
-        <div class="transition-subtext" id="transitionSubtext">New Territory</div>
+        <div class="transition-subtext" id="transitionSubtext"></div>
         <div class="transition-progress">
             <div class="transition-progress-bar" id="transitionProgressBar"></div>
         </div>
@@ -2461,65 +2473,49 @@
         let displayWidth = BASE_WIDTH;
         let displayHeight = BASE_HEIGHT;
         
-        // Device detection - improved for iPadOS 13+ which reports as Macintosh
+        // Device detection - improved for all device types
         const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
         const isIPad = /iPad/.test(navigator.userAgent) || 
                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
                       (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
         const isTablet = isTouchDevice && (isIPad || Math.min(window.screen.width, window.screen.height) >= 600);
-        const isLaptopOrDesktop = !isTouchDevice || window.innerWidth > 1024;
         const rawDPR = window.devicePixelRatio || 1;
+        
+        // Screen size detection for 4K and large displays
+        const screenWidth = window.screen.width * rawDPR;
+        const screenHeight = window.screen.height * rawDPR;
+        const is4K = screenWidth >= 3840 || screenHeight >= 2160;
+        const isLargeMonitor = screenWidth >= 2560 || screenHeight >= 1440;
+        const isPhone = isTouchDevice && Math.min(window.screen.width, window.screen.height) < 600;
         
         // iOS canvas memory limit: 16,777,216 pixels max (approx 4096x4096)
         const MAX_CANVAS_PIXELS = 16777216;
         
-        // Performance-based DPR limits
-        const isLowPerfDevice = navigator.hardwareConcurrency ? navigator.hardwareConcurrency <= 4 : isTouchDevice;
-        const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
-        const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
+        // Performance-based detection
+        const cpuCores = navigator.hardwareConcurrency || 4;
+        const isHighPerfDevice = cpuCores >= 8 || is4K;
+        const isMidPerfDevice = cpuCores >= 4 && !isPhone;
+        const isLowPerfDevice = cpuCores < 4 || isPhone;
         
-        function calculateCanvasSize() {
-            const viewportWidth = window.innerWidth;
-            const viewportHeight = window.innerHeight;
-            const isMobile = viewportWidth <= 768;
-            
-            if (isMobile) {
-                // Mobile: use original logic
-                const padding = 20;
-                const maxWidth = viewportWidth - padding;
-                const maxHeight = viewportHeight - 180;
-                const aspectRatio = BASE_WIDTH / BASE_HEIGHT;
-                
-                let width = maxWidth;
-                let height = width / aspectRatio;
-                
-                if (height > maxHeight) {
-                    height = maxHeight;
-                    width = height * aspectRatio;
-                }
-                
-                width = Math.min(width, BASE_WIDTH);
-                height = Math.min(height, BASE_HEIGHT);
-                
-                return { width: Math.floor(width), height: Math.floor(height) };
+        // DPR limits by device category
+        // These determine the maximum buffer resolution multiplier
+        function getMaxDPR() {
+            if (is4K && isHighPerfDevice) {
+                return 3.0; // 4K displays: up to 3x for maximum crispness
             }
-            
-            // Desktop: Only scale down if the game doesn't fit
-            // Total height needed: canvas (582) + control bar (~160) + container padding (~15) + margins
-            const totalHeightNeeded = BASE_HEIGHT + 190; // ~772px total to be safe
-            const availableHeight = viewportHeight - 5; // Minimal top margin
-            
-            if (availableHeight >= totalHeightNeeded) {
-                // Enough room - use full size
-                return { width: BASE_WIDTH, height: BASE_HEIGHT };
+            if (isLargeMonitor && isHighPerfDevice) {
+                return 2.5; // Large monitors: 2.5x
             }
-            
-            // Not enough room - scale down to fit
-            const scale = availableHeight / totalHeightNeeded;
-            const width = Math.floor(BASE_WIDTH * scale);
-            const height = Math.floor(BASE_HEIGHT * scale);
-            
-            return { width, height };
+            if (isTablet || isIPad) {
+                return 2.0; // Tablets/iPads: 2x (memory constrained)
+            }
+            if (isPhone) {
+                return 2.0; // Phones: 2x (battery/memory constrained)
+            }
+            if (isMidPerfDevice) {
+                return 2.0; // Standard laptops/desktops: 2x
+            }
+            return 1.5; // Low-end devices: 1.5x
         }
         
         // Get accurate viewport size (works better in iframes)
@@ -2563,17 +2559,18 @@
                 document.body.classList.add('fullscreen-active');
                 
                 // Universal margin system
-                // iPad needs extra margin for status bar, home indicator, and close buttons
                 const borderWidth = 3;
-                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 10 : 0);
+                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 0 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
                 
-                // Calculate scale factors for both dimensions
+                // Scale to fit ENTIRE game (canvas + control bar) within viewport
                 const scaleByWidth = availWidth / TOTAL_GAME_WIDTH;
                 const scaleByHeight = availHeight / TOTAL_GAME_HEIGHT;
+                
+                // Always use min to ensure everything fits
                 const scaleFactor = Math.min(scaleByWidth, scaleByHeight);
                 
                 displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
@@ -2582,18 +2579,14 @@
                 CANVAS_WIDTH = displayWidth;
                 CANVAS_HEIGHT = displayHeight;
                 
-                // Determine buffer scale
-                let bufferScale;
-                if (isTablet || isIPad) {
-                    bufferScale = 2;
-                } else {
-                    bufferScale = Math.min(rawDPR, maxFullscreenDPR);
-                }
+                // Determine buffer scale based on device type
+                const maxDPR = getMaxDPR();
+                let bufferScale = Math.min(rawDPR, maxDPR);
                 
                 // iOS canvas memory safety check
                 let bufferWidth = Math.round(BASE_WIDTH * bufferScale);
                 let bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
-                const totalPixels = bufferWidth * bufferHeight;
+                let totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
                     const memScaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
@@ -2622,23 +2615,23 @@
                 // Debug overlay
                 GameDebug.show({
                     viewport: `${viewW}×${viewH}`,
-                    avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
                     display: `${displayWidth}×${displayHeight}`,
                     buffer: `${bufferWidth}×${bufferHeight}`,
-                    iframe: isInIframe ? 'YES' : 'NO',
-                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
+                    dpr: `${rawDPR.toFixed(2)}→${bufferScale.toFixed(2)}`,
+                    device: is4K ? '4K' : (isTablet ? 'tablet' : (isPhone ? 'phone' : 'desktop'))
                 });
             } else if (isMobile) {
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
                 
-                const containerPadding = 10;
+                const containerPadding = isInIframe ? 0 : 10;
                 const maxWidth = viewW - containerPadding * 2;
-                const maxHeight = viewH - CONTROL_BAR_HEIGHT - 20;
+                const maxHeight = viewH - (isInIframe ? 0 : 20);
                 
-                const scaleByWidth = maxWidth / BASE_WIDTH;
-                const scaleByHeight = maxHeight / BASE_HEIGHT;
-                const scaleFactor = Math.min(1, scaleByWidth, scaleByHeight);
+                // Scale to fit entire game (canvas + controls)
+                const scaleByWidth = maxWidth / TOTAL_GAME_WIDTH;
+                const scaleByHeight = maxHeight / TOTAL_GAME_HEIGHT;
+                const scaleFactor = Math.min(scaleByWidth, scaleByHeight);
                 
                 displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
                 displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
@@ -2646,17 +2639,19 @@
                 CANVAS_WIDTH = displayWidth;
                 CANVAS_HEIGHT = displayHeight;
                 
-                dprScale = Math.min(rawDPR, 1.5);
+                // Use device-appropriate DPR (phones get up to 2x, tablets up to 2x)
+                const maxDPR = getMaxDPR();
+                dprScale = Math.min(rawDPR, maxDPR);
                 
-                let bufferWidth = Math.round(displayWidth * dprScale);
-                let bufferHeight = Math.round(displayHeight * dprScale);
-                const totalPixels = bufferWidth * bufferHeight;
+                let bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                let bufferHeight = Math.round(BASE_HEIGHT * dprScale);
+                let totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
-                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
-                    dprScale *= scaleFactor;
-                    bufferWidth = Math.round(displayWidth * dprScale);
-                    bufferHeight = Math.round(displayHeight * dprScale);
+                    const memScaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    dprScale *= memScaleFactor;
+                    bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                    bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
                 canvas.width = bufferWidth;
@@ -2668,7 +2663,7 @@
                 currentScale = uiScale;
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.scale(uiScale * dprScale, uiScale * dprScale);
+                ctx.scale(dprScale, dprScale);
                 
                 const root = document.documentElement;
                 root.style.setProperty('--scale', uiScale);
@@ -2680,22 +2675,35 @@
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
                 
-                displayWidth = BASE_WIDTH;
-                displayHeight = BASE_HEIGHT;
+                // Desktop/Laptop: scale to fill available space
+                const containerPadding = isInIframe ? 0 : 20;
+                const maxWidth = viewW - containerPadding * 2;
+                const maxHeight = viewH - (isInIframe ? 0 : 40);
+                
+                // Scale to fit entire game (canvas + controls)
+                const scaleByWidth = maxWidth / TOTAL_GAME_WIDTH;
+                const scaleByHeight = maxHeight / TOTAL_GAME_HEIGHT;
+                const scaleFactor = Math.min(scaleByWidth, scaleByHeight);
+                
+                displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
+                displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
+                
                 CANVAS_WIDTH = displayWidth;
                 CANVAS_HEIGHT = displayHeight;
                 
-                dprScale = Math.min(rawDPR, maxNormalDPR);
+                // Use device-appropriate DPR (laptops 2x, large monitors 2.5x, 4K up to 3x)
+                const maxDPR = getMaxDPR();
+                dprScale = Math.min(rawDPR, maxDPR);
                 
-                let bufferWidth = Math.round(displayWidth * dprScale);
-                let bufferHeight = Math.round(displayHeight * dprScale);
-                const totalPixels = bufferWidth * bufferHeight;
+                let bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                let bufferHeight = Math.round(BASE_HEIGHT * dprScale);
+                let totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
-                    const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
-                    dprScale *= scaleFactor;
-                    bufferWidth = Math.round(displayWidth * dprScale);
-                    bufferHeight = Math.round(displayHeight * dprScale);
+                    const memScaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
+                    dprScale *= memScaleFactor;
+                    bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                    bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
                 canvas.width = bufferWidth;
@@ -2703,11 +2711,11 @@
                 canvas.style.width = displayWidth + 'px';
                 canvas.style.height = displayHeight + 'px';
                 
-                const uiScale = 1;
+                const uiScale = displayWidth / BASE_WIDTH;
                 currentScale = uiScale;
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
-                ctx.scale(uiScale * dprScale, uiScale * dprScale);
+                ctx.scale(dprScale, dprScale);
                 
                 const root = document.documentElement;
                 root.style.setProperty('--scale', uiScale);
@@ -2897,16 +2905,17 @@
         };
         
         // Tower unlock waves (Campaign mode only)
+        // Wave 0 = available at game start
         const TOWER_UNLOCKS = {
-            basic: 1,    // Available from start
-            sniper: 1,   // Available from start
-            freeze: 3,   // Wave 3
+            basic: 0,    // Blaster - available from start
+            sniper: 0,   // Sniper - available from start
+            minigun: 0,  // Rapid Shot - available from start
+            cannon: 0,   // Cannon - available from start
+            freeze: 0,   // Freezer - available from start
+            poison: 0,   // Poison - available from start
             splash: 5,   // Wave 5
-            laser: 7,    // Wave 7
-            minigun: 9,  // Wave 9
-            cannon: 11,  // Wave 11
-            poison: 14,  // Wave 14
-            chain: 17,   // Wave 17
+            laser: 10,   // Wave 10
+            chain: 15,   // Wave 15
             buff: 20     // Wave 20 (final unlock)
         };
         
@@ -2916,7 +2925,8 @@
             if (gameMode === 'classic') return true;
             
             // Campaign mode: check wave requirement
-            const unlockWave = TOWER_UNLOCKS[type] || 1;
+            const unlockWave = TOWER_UNLOCKS[type];
+            if (unlockWave === undefined) return true; // Unknown tower = unlocked
             return highestWaveReached >= unlockWave;
         }
 
@@ -5014,16 +5024,9 @@
             const transitionSubtext = document.getElementById('transitionSubtext');
             const progressBar = document.getElementById('transitionProgressBar');
             
-            const stageNames = [
-                'The Outskirts', 'Open Fields', 'Rocky Pass', 'Forest Edge',
-                'Dark Woods', 'Mountain Base', 'Canyon Run', 'River Crossing',
-                'Cliff Side', 'The Fortress', 'Inner Sanctum', 'The Gauntlet',
-                'Final Approach', 'The Wall', 'Beyond the Wall'
-            ];
-            
             const nextStage = campaignStage + 1;
             transitionText.textContent = `STAGE ${nextStage}`;
-            transitionSubtext.textContent = stageNames[Math.min(nextStage - 1, stageNames.length - 1)];
+            transitionSubtext.style.display = 'none'; // Hide subtext
             
             // Reset progress bar animation
             progressBar.style.animation = 'none';
