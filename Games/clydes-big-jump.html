@@ -1100,7 +1100,7 @@
                     <div class="mushroom-stem"></div>
                 </div>
                 <div class="loading-text">LOADING...</div>
-                <div class="loading-tip">That cookie is really kicking in... 🍪✨</div>
+                <div class="loading-tip">That cookie is really kicking in...</div>
             </div>
         </div>
         
@@ -1225,10 +1225,6 @@
             const isTablet = isIPad || (window.innerWidth >= 768 && window.innerWidth <= 1366 && 'ontouchstart' in window);
             const isLaptopOrDesktop = !isMobile && !isTablet;
             
-            const rawDPR = window.devicePixelRatio || 1;
-            const maxNormalDPR = isLaptopOrDesktop ? 2 : 1.5;
-            const maxFullscreenDPR = isLaptopOrDesktop ? Math.min(rawDPR, 2) : 2;
-            
             // Get actual viewport size
             let viewW, viewH;
             if (window.visualViewport) {
@@ -1237,6 +1233,37 @@
             } else {
                 viewW = window.innerWidth;
                 viewH = window.innerHeight;
+            }
+            
+            const rawDPR = window.devicePixelRatio || 1;
+            
+            // Detect display tier for appropriate scaling
+            // 4K/5K displays: viewport > 1920 AND high DPR
+            // Large monitors: viewport > 1920 OR DPR >= 2
+            // Standard: everything else
+            const is4KDisplay = viewW > 1920 && rawDPR >= 2;
+            const isLargeMonitor = viewW > 1920 || (isLaptopOrDesktop && rawDPR >= 2);
+            const isRetinaLaptop = isLaptopOrDesktop && rawDPR >= 2 && viewW <= 1920;
+            
+            // DPR limits by device type
+            // Mobile phones: 1.5x (battery/performance)
+            // Tablets/iPads: 2x
+            // Laptops/standard monitors: 2x
+            // Large monitors: 2.5x
+            // 4K displays: 3x
+            let maxDPR;
+            if (isMobile && !isTablet) {
+                maxDPR = 2;  // Bump phones to 2x for sharper text
+            } else if (isTablet || isIPad) {
+                maxDPR = 2;
+            } else if (is4KDisplay) {
+                maxDPR = 3;  // Full 3x for 4K
+            } else if (isLargeMonitor) {
+                maxDPR = 2.5;
+            } else if (isRetinaLaptop) {
+                maxDPR = 2;
+            } else {
+                maxDPR = 2;
             }
             
             let displayWidth, displayHeight;
@@ -1262,13 +1289,8 @@
                     displayHeight = Math.floor(displayWidth / ratio);
                 }
                 
-                // Determine buffer scale
-                let bufferScale;
-                if (isTablet || isIPad) {
-                    bufferScale = 2;
-                } else {
-                    bufferScale = Math.min(rawDPR, maxFullscreenDPR);
-                }
+                // Determine buffer scale - use full DPR up to device max
+                let bufferScale = Math.min(rawDPR, maxDPR);
                 
                 // iOS canvas memory safety check
                 let bufferWidth = Math.round(baseWidth * bufferScale);
@@ -1294,8 +1316,8 @@
                     avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
                     display: `${displayWidth}×${displayHeight}`,
                     buffer: `${bufferWidth}×${bufferHeight}`,
-                    iframe: isInIframe ? 'YES' : 'NO',
-                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
+                    dpr: `${rawDPR.toFixed(2)} → ${bufferScale.toFixed(2)}`,
+                    device: is4KDisplay ? '4K' : (isLargeMonitor ? 'large' : (isTablet ? 'tablet' : (isMobile ? 'mobile' : 'desktop')))
                 });
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
@@ -1312,13 +1334,8 @@
                     displayHeight = maxWidth / ratio;
                 }
                 
-                if (isMobile) {
-                    dprScale = Math.min(rawDPR, 1.5);
-                } else if (isTablet || isLaptopOrDesktop) {
-                    dprScale = Math.min(rawDPR, maxNormalDPR);
-                } else {
-                    dprScale = 1;
-                }
+                // Apply device-appropriate DPR
+                dprScale = Math.min(rawDPR, maxDPR);
                 
                 // iOS canvas memory safety check
                 let bufferWidth = Math.round(displayWidth * dprScale);
