@@ -1547,7 +1547,7 @@
         /* Surface upgrade button */
         .surface-upgrade-btn {
             position: absolute;
-            bottom: 190px;
+            bottom: 140px;
             left: 50%;
             transform: translateX(-50%);
             background: linear-gradient(180deg, #cc00ff, #9900cc);
@@ -2918,6 +2918,10 @@
         
         // ==================== CACHED GRADIENTS ====================
         let cachedScanlinePattern = null;
+        let cachedVignette = null;
+        let cachedVignetteState = null; // Track state to know when to recreate
+        let cachedBgGradient = null;
+        let cachedBgState = null;
         
         function createScanlinePattern() {
             const patternCanvas = document.createElement('canvas');
@@ -2928,6 +2932,66 @@
             pctx.fillRect(0, 0, 4, 1);
             pctx.fillRect(0, 3, 4, 1);
             cachedScanlinePattern = ctx.createPattern(patternCanvas, 'repeat');
+        }
+        
+        function getVignetteState() {
+            // Return a key representing current vignette state
+            if (drillOverheated) return 'overheat';
+            const heatPercent = drillHeat / maxDrillHeat;
+            if (heatPercent > 0.7) return 'warning';
+            if (feverMode) return 'fever';
+            return 'normal';
+        }
+        
+        function createCachedVignette(state) {
+            const vignette = ctx.createRadialGradient(
+                BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.25,
+                BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.85
+            );
+            
+            if (state === 'overheat') {
+                vignette.addColorStop(0, 'rgba(50, 0, 0, 0)');
+                vignette.addColorStop(0.5, 'rgba(100, 0, 0, 0.12)');
+                vignette.addColorStop(1, 'rgba(150, 0, 0, 0.35)');
+            } else if (state === 'warning') {
+                vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                vignette.addColorStop(0.6, 'rgba(80, 30, 0, 0.1)');
+                vignette.addColorStop(1, 'rgba(120, 40, 0, 0.2)');
+            } else if (state === 'fever') {
+                vignette.addColorStop(0, 'rgba(50, 0, 50, 0)');
+                vignette.addColorStop(0.6, 'rgba(80, 0, 80, 0.15)');
+                vignette.addColorStop(1, 'rgba(100, 0, 100, 0.4)');
+            } else {
+                vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                vignette.addColorStop(0.7, 'rgba(0, 0, 0, 0.15)');
+                vignette.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+            }
+            
+            return vignette;
+        }
+        
+        function getBgState() {
+            // Return a key for background state - only recreate on significant changes
+            const depthBucket = Math.floor(depthColorShift * 10);
+            return feverMode ? `fever_${depthBucket}` : `normal_${depthBucket}`;
+        }
+        
+        function createCachedBgGradient(isFever, depthShift) {
+            const bgGrad = ctx.createLinearGradient(0, 0, 0, BASE_HEIGHT);
+            const hue1 = 220 - depthShift * 40;
+            const hue2 = 240 - depthShift * 50;
+            
+            if (isFever) {
+                bgGrad.addColorStop(0, 'hsl(300, 50%, 2.5%)');
+                bgGrad.addColorStop(0.5, 'hsl(280, 45%, 2%)');
+                bgGrad.addColorStop(1, 'hsl(260, 55%, 1.5%)');
+            } else {
+                bgGrad.addColorStop(0, `hsl(${hue1}, 40%, 3%)`);
+                bgGrad.addColorStop(0.5, `hsl(${hue2}, 35%, 2%)`);
+                bgGrad.addColorStop(1, `hsl(${hue2 - 10}, 45%, 1%)`);
+            }
+            
+            return bgGrad;
         }
         
         // ==================== INITIALIZATION ====================
@@ -3536,9 +3600,9 @@
             const feverBonus = feverMode ? 1.5 : 1;
             const totalSpeed = speedMultiplier * feverBonus * shopDigBonus;
             
-            let digTime = 0.35 / totalSpeed; // Base dig time
+            let digTime = 0.44 / totalSpeed; // Base dig time (slowed 25% total)
             
-            if (tile === TILE.ROCK) digTime = 0.55 / totalSpeed;
+            if (tile === TILE.ROCK) digTime = 0.69 / totalSpeed; // Slowed 25% total
             if (tile === TILE.HARD_ROCK) {
                 const drillChance = getEffectiveUpgrade('drillPower', 90);
                 digTime = Math.random() * 100 < drillChance ? 0.1 : 0.85 / totalSpeed;
@@ -4277,11 +4341,7 @@
             const playerBottomY = player.y + player.height;
             const absoluteTy = Math.floor(playerBottomY / TILE_SIZE);
             
-            // SAFETY: Ensure target row is actually BELOW player's center
-            const playerCenterTY = Math.floor((player.y + player.height / 2) / TILE_SIZE);
-            if (absoluteTy <= playerCenterTY) {
-                return null;
-            }
+
             
             const ty = getWorldRow(absoluteTy);
             if (ty < 0 || ty >= world.length) return null;
@@ -6752,23 +6812,13 @@
                 );
             }
             
-            // Background
-            const hue1 = 220 - depthColorShift * 40;
-            const hue2 = 240 - depthColorShift * 50;
-            const bgGrad = ctx.createLinearGradient(0, 0, 0, BASE_HEIGHT);
-            
-            // Fever mode tints background magenta
-            if (feverMode) {
-                const feverPulse = 0.5 + Math.sin(globalTime * 0.1) * 0.2;
-                bgGrad.addColorStop(0, `hsl(300, 50%, ${4 * feverPulse}%)`);
-                bgGrad.addColorStop(0.5, `hsl(280, 45%, ${3 * feverPulse}%)`);
-                bgGrad.addColorStop(1, `hsl(260, 55%, ${2 * feverPulse}%)`);
-            } else {
-                bgGrad.addColorStop(0, `hsl(${hue1}, 40%, 3%)`);
-                bgGrad.addColorStop(0.5, `hsl(${hue2}, 35%, 2%)`);
-                bgGrad.addColorStop(1, `hsl(${hue2 - 10}, 45%, 1%)`);
+            // Background - use cached gradient, recreate only when state changes
+            const bgState = getBgState();
+            if (bgState !== cachedBgState) {
+                cachedBgGradient = createCachedBgGradient(feverMode, depthColorShift);
+                cachedBgState = bgState;
             }
-            ctx.fillStyle = bgGrad;
+            ctx.fillStyle = cachedBgGradient;
             ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             
             // Background stars (simplified)
@@ -6798,16 +6848,14 @@
                 ctx.globalAlpha = 1;
             }
             
-            // Ambient particles
+            // Ambient particles - use fillRect for performance (small particles look identical)
             for (let i = 0; i < ambientParticles.length; i++) {
                 const p = ambientParticles[i];
                 const sy = p.y - cameraY;
                 if (sy > -10 && sy < BASE_HEIGHT + 10) {
                     const hue = feverMode ? 300 : p.hue;
                     ctx.fillStyle = `hsla(${hue}, 100%, 60%, ${p.alpha})`;
-                    ctx.beginPath();
-                    ctx.arc(p.x, sy, p.size, 0, Math.PI * 2);
-                    ctx.fill();
+                    ctx.fillRect(p.x - p.size/2, sy - p.size/2, p.size, p.size);
                 }
             }
             
@@ -6825,7 +6873,7 @@
                 ctx.textAlign = 'center';
                 ctx.shadowColor = '#00ff88';
                 ctx.shadowBlur = 10;
-                ctx.fillText('⛽ FUEL & REPAIR HERE 🔧', BASE_WIDTH / 2, surfaceScreenY + 12);
+                ctx.fillText('⛽ FUEL & REPAIR HERE 🔧', BASE_WIDTH / 2, surfaceScreenY + 30);
                 ctx.restore();
                 
                 // Refuel zone indicator line (dashed) at bottom of refuel zone
@@ -6864,7 +6912,7 @@
                     ctx.fillStyle = `rgba(0, 255, 136, ${0.5 + Math.sin(globalTime * 0.25) * 0.3})`;
                     ctx.font = 'bold 11px Oxanium, monospace';
                     ctx.textAlign = 'center';
-                    ctx.fillText(statusText, BASE_WIDTH / 2, surfaceScreenY + 28);
+                    ctx.fillText(statusText, BASE_WIDTH / 2, surfaceScreenY + 46);
                 }
             }
             
@@ -7079,36 +7127,13 @@
             drawPlayer();
             drawFloatingTexts();
             
-            // Vignette (stronger during fever mode, red during overheat)
-            const vignette = ctx.createRadialGradient(
-                BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.25,
-                BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.85
-            );
-            
-            const heatPercent = drillHeat / maxDrillHeat;
-            
-            if (drillOverheated) {
-                // Pulsing red vignette when overheated
-                const pulse = Math.sin(globalTime * 0.25) * 0.15 + 0.35;
-                vignette.addColorStop(0, 'rgba(50, 0, 0, 0)');
-                vignette.addColorStop(0.5, `rgba(100, 0, 0, ${pulse * 0.3})`);
-                vignette.addColorStop(1, `rgba(150, 0, 0, ${pulse})`);
-            } else if (heatPercent > 0.7) {
-                // Warning orange vignette when near overheat
-                const warningAlpha = (heatPercent - 0.7) / 0.3 * 0.25;
-                vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                vignette.addColorStop(0.6, `rgba(80, 30, 0, ${warningAlpha * 0.5})`);
-                vignette.addColorStop(1, `rgba(120, 40, 0, ${warningAlpha})`);
-            } else if (feverMode) {
-                vignette.addColorStop(0, 'rgba(50, 0, 50, 0)');
-                vignette.addColorStop(0.6, 'rgba(80, 0, 80, 0.15)');
-                vignette.addColorStop(1, 'rgba(100, 0, 100, 0.4)');
-            } else {
-                vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                vignette.addColorStop(0.7, 'rgba(0, 0, 0, 0.15)');
-                vignette.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+            // Vignette - use cached gradient, recreate only when state changes
+            const vignetteState = getVignetteState();
+            if (vignetteState !== cachedVignetteState) {
+                cachedVignette = createCachedVignette(vignetteState);
+                cachedVignetteState = vignetteState;
             }
-            ctx.fillStyle = vignette;
+            ctx.fillStyle = cachedVignette;
             ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             
             // OPTIMIZATION: Use cached scanline pattern
@@ -8596,26 +8621,18 @@
                     ctx.fill();
                     ctx.shadowBlur = 0;
                 } else if (p.type === 'smoke') {
-                    // Rising smoke/steam particles
-                    const smokeAlpha = p.life * 0.6;
-                    const smokeSize = p.size * (1 + (1 - p.life) * 0.5); // Expand as they rise
-                    const gradient = ctx.createRadialGradient(p.x, screenY, 0, p.x, screenY, smokeSize);
-                    gradient.addColorStop(0, p.color);
-                    gradient.addColorStop(0.5, `rgba(100, 100, 100, ${smokeAlpha * 0.5})`);
-                    gradient.addColorStop(1, 'rgba(50, 50, 50, 0)');
-                    ctx.fillStyle = gradient;
-                    ctx.beginPath();
-                    ctx.arc(p.x, screenY, smokeSize, 0, Math.PI * 2);
-                    ctx.fill();
+                    // Rising smoke/steam particles - simplified for performance
+                    const smokeAlpha = p.life * 0.5;
+                    const smokeSize = p.size * (1 + (1 - p.life) * 0.5);
+                    ctx.globalAlpha = smokeAlpha;
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x - smokeSize/2, screenY - smokeSize/2, smokeSize, smokeSize);
                 } else if (p.type === 'thruster') {
-                    // Fiery thruster particles
-                    const gradient = ctx.createRadialGradient(p.x, screenY, 0, p.x, screenY, p.size);
-                    gradient.addColorStop(0, p.color);
-                    gradient.addColorStop(1, 'rgba(255, 50, 0, 0)');
-                    ctx.fillStyle = gradient;
-                    ctx.beginPath();
-                    ctx.arc(p.x, screenY, p.size * 1.5, 0, Math.PI * 2);
-                    ctx.fill();
+                    // Fiery thruster particles - simplified for performance
+                    ctx.globalAlpha = p.life * 0.8;
+                    ctx.fillStyle = p.color;
+                    const tSize = p.size * 1.5;
+                    ctx.fillRect(p.x - tSize/2, screenY - tSize/2, tSize, tSize);
                 } else if (p.type === 'debris' && p.rotation !== undefined) {
                     ctx.fillStyle = p.color;
                     ctx.save();
@@ -8624,10 +8641,10 @@
                     ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size);
                     ctx.restore();
                 } else {
+                    // Normal particles - use fillRect for small ones (faster than arc)
                     ctx.fillStyle = p.color;
-                    ctx.beginPath();
-                    ctx.arc(p.x, screenY, p.size * p.life, 0, Math.PI * 2);
-                    ctx.fill();
+                    const drawSize = p.size * p.life;
+                    ctx.fillRect(p.x - drawSize/2, screenY - drawSize/2, drawSize, drawSize);
                 }
             }
             ctx.globalAlpha = 1;
