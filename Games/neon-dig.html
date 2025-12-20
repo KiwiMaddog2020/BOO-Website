@@ -3229,7 +3229,7 @@
             if (rand < 0.04 + depthFactor * 0.03) return TILE.UNSTABLE;
             
             // Fuel canisters - anti-clustered with quota limit
-            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.012 + depthFactor * 0.005, 'fuel')) {
+            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.006 + depthFactor * 0.0025, 'fuel')) {
                 recordFuelCanisterSpawn(depth);
                 return TILE.FUEL;
             }
@@ -3276,7 +3276,7 @@
             if (antiClusterRandom(0.00049, 'upgradeChest')) return TILE.UPGRADE_CHEST;
             if (antiClusterRandom(0.014, 'chest')) return TILE.CHEST;
             if (rand < 0.029) return TILE.BOMB;
-            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.007, 'fuel')) {
+            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.0035, 'fuel')) {
                 recordFuelCanisterSpawn(depth);
                 return TILE.FUEL;
             }
@@ -3299,7 +3299,7 @@
             if (antiClusterRandom(0.0007, 'upgradeChest')) return TILE.UPGRADE_CHEST;
             if (antiClusterRandom(0.0098, 'chest')) return TILE.CHEST;
             if (rand < 0.03) return TILE.BOMB;
-            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.01, 'fuel')) {
+            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.005, 'fuel')) {
                 recordFuelCanisterSpawn(depth);
                 return TILE.FUEL;
             }
@@ -3359,7 +3359,7 @@
             
             if (antiClusterRandom(0.0105, 'chest')) return TILE.CHEST;
             if (rand < 0.0225) return TILE.BOMB;
-            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.007, 'fuel')) {
+            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.0035, 'fuel')) {
                 recordFuelCanisterSpawn(depth);
                 return TILE.FUEL;
             }
@@ -3382,7 +3382,7 @@
             
             if (antiClusterRandom(0.0175, 'chest')) return TILE.CHEST;
             if (rand < 0.0375) return TILE.BOMB;
-            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.005, 'fuel')) {
+            if (canSpawnFuelCanister(depth) && antiClusterRandom(0.0025, 'fuel')) {
                 recordFuelCanisterSpawn(depth);
                 return TILE.FUEL;
             }
@@ -3637,25 +3637,25 @@
             const feverBonus = feverMode ? 1.5 : 1;
             const totalSpeed = speedMultiplier * feverBonus * shopDigBonus;
             
-            let digTime = 0.88 / totalSpeed; // Base dig time (halved from 0.44)
+            let digTime = 0.73 / totalSpeed; // Base dig time (20% faster)
             
-            if (tile === TILE.ROCK) digTime = 1.38 / totalSpeed; // Halved from 0.69
+            if (tile === TILE.ROCK) digTime = 1.15 / totalSpeed; // 20% faster
             if (tile === TILE.HARD_ROCK) {
                 const drillChance = getEffectiveUpgrade('drillPower', 90);
-                digTime = Math.random() * 100 < drillChance ? 0.1 : 0.85 / totalSpeed;
+                digTime = Math.random() * 100 < drillChance ? 0.1 : 0.71 / totalSpeed;
             }
             if (tile === TILE.UNSTABLE) {
-                digTime = 0.6 / totalSpeed; // Takes a bit to break
+                digTime = 0.5 / totalSpeed; // Takes a bit to break
                 // Start collapse timer if not already started
                 const existing = unstableTiles.find(u => u.tx === tx && u.absoluteTy === absoluteTy);
                 if (!existing) {
                     startUnstableTimer(tx, absoluteTy);
                 }
             }
-            if (tile === TILE.BOMB) digTime = 0.15 / totalSpeed; // Quick to trigger
-            if (tile === TILE.CHEST) digTime = 0.35 / totalSpeed; // Satisfying open time
-            if (tile === TILE.UPGRADE_CHEST) digTime = 0.5 / totalSpeed; // Slightly longer for anticipation
-            if (tile === TILE.ALIEN_NODE) digTime = 0.6 / totalSpeed; // Alien tech takes time to crack
+            if (tile === TILE.BOMB) digTime = 0.125 / totalSpeed; // Quick to trigger
+            if (tile === TILE.CHEST) digTime = 0.29 / totalSpeed; // Satisfying open time
+            if (tile === TILE.UPGRADE_CHEST) digTime = 0.42 / totalSpeed; // Slightly longer for anticipation
+            if (tile === TILE.ALIEN_NODE) digTime = 0.5 / totalSpeed; // Alien tech takes time to crack
             
             player.digging = true;
             player.digTarget = { x: tx, y: absoluteTy, time: digTime };
@@ -4370,14 +4370,16 @@
             world[ty][tx] = TILE.AIR;
             createDigParticles(tileCenterX, absoluteTy * TILE_SIZE + TILE_SIZE/2, tile);
             
-            // When drilling DOWN, slide player to center over the cleared tile
+            // When drilling DOWN, snap player horizontally and slide vertically
             if (lastDigDirection === 'down') {
-                // Set slide animation target (center over the cleared tile)
+                // Snap X immediately to stay in the same column (funnel behavior)
                 const targetX = tx * TILE_SIZE + TILE_SIZE/2 - player.width/2;
-                const targetY = absoluteTy * TILE_SIZE + 4; // Slightly into the hole
+                player.x = targetX;
                 
+                // Animate Y with slide
+                const targetY = absoluteTy * TILE_SIZE + 4; // Slightly into the hole
                 slideAnimation.active = true;
-                slideAnimation.targetX = targetX;
+                slideAnimation.targetX = targetX; // Already snapped, but keep for reference
                 slideAnimation.targetY = targetY;
                 player.vy = 0; // Reset fall velocity during slide
             }
@@ -6475,30 +6477,22 @@
                             if (dx > 0) blockedTimerRight = 0;
                             else blockedTimerLeft = 0;
                         } else {
-                            // Blocked horizontally - track time before drilling
-                            if (dx > 0) {
-                                blockedTimerRight += deltaMultiplier;
-                                blockedTimerLeft = 0;
-                                if (blockedTimerRight >= BLOCKED_DRILL_DELAY && !player.digging) {
+                            // Blocked horizontally - drill immediately
+                            if (!player.digging) {
+                                if (dx > 0) {
                                     lastDigDirection = 'right';
                                     const checkX = newX + player.width;
                                     const midY = player.y + player.height / 2;
                                     const tx = Math.floor(checkX / TILE_SIZE);
                                     const absoluteTy = Math.floor(midY / TILE_SIZE);
                                     dig(tx, absoluteTy);
-                                    blockedTimerRight = 0;
-                                }
-                            } else {
-                                blockedTimerLeft += deltaMultiplier;
-                                blockedTimerRight = 0;
-                                if (blockedTimerLeft >= BLOCKED_DRILL_DELAY && !player.digging) {
+                                } else {
                                     lastDigDirection = 'left';
                                     const checkX = newX;
                                     const midY = player.y + player.height / 2;
                                     const tx = Math.floor(checkX / TILE_SIZE);
                                     const absoluteTy = Math.floor(midY / TILE_SIZE);
                                     dig(tx, absoluteTy);
-                                    blockedTimerLeft = 0;
                                 }
                             }
                         }
@@ -7644,13 +7638,13 @@
                     const upgradeGlow = 0.85 + Math.sin(time * 3 + tx) * 0.15;
                     const pulsePhase = Math.sin(time * 2) * 0.5 + 0.5;
                     
-                    // Background glow
+                    // Background glow (contained within tile)
                     ctx.fillStyle = `rgba(0, 255, 200, ${0.2 + pulsePhase * 0.15})`;
-                    ctx.fillRect(x - 2, y - 2, s + 4, s + 4);
+                    ctx.fillRect(x, y, s, s);
                     
                     // Dark base
                     ctx.fillStyle = '#0a1520';
-                    ctx.fillRect(x, y, s, s);
+                    ctx.fillRect(x + 1, y + 1, s - 2, s - 2);
                     
                     // Chest body (dark teal box)
                     ctx.fillStyle = `rgb(${Math.floor(20 * upgradeGlow)}, ${Math.floor(70 * upgradeGlow)}, ${Math.floor(80 * upgradeGlow)})`;
