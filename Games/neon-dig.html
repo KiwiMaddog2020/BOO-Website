@@ -1438,23 +1438,23 @@
         }
         .shop-item-name {
             font-family: 'Oxanium', monospace;
-            font-size: 13px;
+            font-size: 15px;
             font-weight: 600;
             color: #fff;
         }
         .shop-item-level {
-            font-size: 11px;
+            font-size: 13px;
             color: var(--cyan);
             opacity: 0.8;
         }
         .shop-item-desc {
-            font-size: 10px;
+            font-size: 12px;
             color: #888;
             margin-top: 2px;
         }
         .shop-item-cost {
             font-family: 'Oxanium', monospace;
-            font-size: 14px;
+            font-size: 16px;
             font-weight: 600;
             color: var(--orange);
             min-width: 60px;
@@ -2854,6 +2854,14 @@
             vy: 0  // Vertical velocity for falling physics
         };
         
+        // Slide animation for smooth repositioning when drilling down
+        let slideAnimation = {
+            active: false,
+            targetX: 0,
+            targetY: 0,
+            speed: 0.15  // Lerp factor (0-1, lower = slower slide)
+        };
+        
         // Falling physics constants
         const GRAVITY = 0.2;           // Acceleration per frame (slower buildup)
         const MAX_FALL_SPEED = 12;     // Maximum fall velocity
@@ -3629,9 +3637,9 @@
             const feverBonus = feverMode ? 1.5 : 1;
             const totalSpeed = speedMultiplier * feverBonus * shopDigBonus;
             
-            let digTime = 0.44 / totalSpeed; // Base dig time (slowed 25% total)
+            let digTime = 0.88 / totalSpeed; // Base dig time (halved from 0.44)
             
-            if (tile === TILE.ROCK) digTime = 0.69 / totalSpeed; // Slowed 25% total
+            if (tile === TILE.ROCK) digTime = 1.38 / totalSpeed; // Halved from 0.69
             if (tile === TILE.HARD_ROCK) {
                 const drillChance = getEffectiveUpgrade('drillPower', 90);
                 digTime = Math.random() * 100 < drillChance ? 0.1 : 0.85 / totalSpeed;
@@ -4274,14 +4282,24 @@
             
             // ===== UNSTABLE ROCK =====
             if (tile === TILE.UNSTABLE) {
-                // Successfully mined before collapse - bonus gems!
+                // Breaking unstable rock always damages player
+                const shopArmor = getShopBonus('armor');
+                const damage = 15 * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
+                hull -= damage;
+                comboCount = 0;
+                comboTimer = 0;
+                createFloatingText(`-${Math.floor(damage)}`, player.x + 12, player.y, '#ff3355');
+                triggerScreenFlash('#ff0000', 0.2, 6);
+                screenShake = 8;
+                updateHullBar();
+                
+                // Still give some points for the risk
                 const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
-                const value = Math.floor(20 * (1 + totalGemBonus / 100) * getComboMultiplier());
+                const value = Math.floor(10 * (1 + totalGemBonus / 100));
                 score += value;
                 updateScoreDisplay();
                 createFloatingText(`+${value}`, tileCenterX, worldY - 5, '#aaaaff');
                 createParticles(tileCenterX, tileCenterY, '#8888aa', 10);
-                addCombo();
                 
                 // Remove from unstable tracking
                 unstableTiles = unstableTiles.filter(u => !(u.tx === tx && u.absoluteTy === absoluteTy));
@@ -4352,6 +4370,18 @@
             world[ty][tx] = TILE.AIR;
             createDigParticles(tileCenterX, absoluteTy * TILE_SIZE + TILE_SIZE/2, tile);
             
+            // When drilling DOWN, slide player to center over the cleared tile
+            if (lastDigDirection === 'down') {
+                // Set slide animation target (center over the cleared tile)
+                const targetX = tx * TILE_SIZE + TILE_SIZE/2 - player.width/2;
+                const targetY = absoluteTy * TILE_SIZE + 4; // Slightly into the hole
+                
+                slideAnimation.active = true;
+                slideAnimation.targetX = targetX;
+                slideAnimation.targetY = targetY;
+                player.vy = 0; // Reset fall velocity during slide
+            }
+            
             player.digging = false;
             player.digTarget = null;
             
@@ -4362,62 +4392,29 @@
         }
         
         // Find the block to dig when pressing down
-        // Targets tiles the player overlaps by more than 30%
+        // Simply target the tile directly below the player's center
         function findDownDigTarget() {
-            const playerLeftX = player.x;
-            const playerRightX = player.x + player.width;
             const playerCenterX = player.x + player.width / 2;
             const playerBottomY = player.y + player.height;
-            const absoluteTy = Math.floor(playerBottomY / TILE_SIZE);
+            const targetTX = Math.floor(playerCenterX / TILE_SIZE);
             
-            const ty = getWorldRow(absoluteTy);
-            if (ty < 0 || ty >= world.length) {
-                console.log(`[DOWN-DIG FAIL] ty out of bounds: ty=${ty}, world.length=${world.length}`);
-                return null;
+            // Check current row and next row
+            for (let rowOffset = 0; rowOffset < 2; rowOffset++) {
+                const absoluteTy = Math.floor(playerBottomY / TILE_SIZE) + rowOffset;
+                const ty = getWorldRow(absoluteTy);
+                
+                if (ty < 0 || ty >= world.length) continue;
+                if (targetTX < 0 || targetTX >= WORLD_WIDTH) continue;
+                
+                const tile = world[ty][targetTX];
+                
+                // Skip non-diggable tiles
+                if (tile === TILE.AIR || tile === TILE.BEDROCK || tile === TILE.PORTAL || tile === TILE.PORTAL_PART) continue;
+                
+                return { tx: targetTX, absoluteTy };
             }
             
-            // Find tiles the player overlaps horizontally
-            const leftTX = Math.floor(playerLeftX / TILE_SIZE);
-            const rightTX = Math.floor((playerRightX - 1) / TILE_SIZE);
-            
-            // Threshold: 30% of player width
-            const overlapThreshold = player.width * 0.3;
-            
-            let bestTarget = null;
-            let bestOverlap = 0;
-            let debugInfo = [];
-            
-            for (let tx = leftTX; tx <= rightTX; tx++) {
-                if (tx < 0 || tx >= WORLD_WIDTH) continue;
-                
-                const tile = world[ty][tx];
-                if (tile === TILE.AIR || tile === TILE.BEDROCK || tile === TILE.PORTAL || tile === TILE.PORTAL_PART) {
-                    debugInfo.push(`tx=${tx}: skipped (tile=${tile})`);
-                    continue;
-                }
-                
-                // Calculate overlap with this tile
-                const tileLeftX = tx * TILE_SIZE;
-                const tileRightX = tileLeftX + TILE_SIZE;
-                
-                const overlapLeft = Math.max(playerLeftX, tileLeftX);
-                const overlapRight = Math.min(playerRightX, tileRightX);
-                const overlap = overlapRight - overlapLeft;
-                
-                debugInfo.push(`tx=${tx}: tile=${tile}, overlap=${overlap.toFixed(1)}, threshold=${overlapThreshold.toFixed(1)}`);
-                
-                if (overlap > overlapThreshold && overlap > bestOverlap) {
-                    bestOverlap = overlap;
-                    bestTarget = { tx, absoluteTy };
-                }
-            }
-            
-            if (!bestTarget && debugInfo.length > 0) {
-                console.log(`[DOWN-DIG FAIL] No valid target. Player at (${player.x.toFixed(1)}, ${player.y.toFixed(1)}), bottomY=${playerBottomY.toFixed(1)}, targetRow=${absoluteTy}`);
-                console.log(`  Checked tiles: ${debugInfo.join(' | ')}`);
-            }
-            
-            return bestTarget;
+            return null;
         }
         
         // Attempt to dig in a specific direction
@@ -6294,6 +6291,7 @@
             });
             
             // ===== UNSTABLE TILES UPDATE =====
+            // Process unstable tile timers (only starts when player digs them)
             unstableTiles = unstableTiles.filter(unstable => {
                 unstable.timer -= deltaMultiplier;
                 
@@ -6341,6 +6339,29 @@
             });
             
             player.thrusterFlicker = Math.sin(globalTime * 0.3) * 0.3 + 0.7;
+            
+            // ===== SLIDE ANIMATION (smooth repositioning when drilling down) =====
+            if (slideAnimation.active) {
+                // Lerp towards target position
+                const dx = slideAnimation.targetX - player.x;
+                const dy = slideAnimation.targetY - player.y;
+                
+                // Move towards target
+                player.x += dx * slideAnimation.speed * deltaMultiplier;
+                
+                // Only slide down, not up (for Y)
+                if (dy > 0) {
+                    player.y += dy * slideAnimation.speed * deltaMultiplier;
+                }
+                
+                // Check if close enough to snap and end animation
+                const distSq = dx * dx + (dy > 0 ? dy * dy : 0);
+                if (distSq < 1) {
+                    player.x = slideAnimation.targetX;
+                    if (dy > 0) player.y = slideAnimation.targetY;
+                    slideAnimation.active = false;
+                }
+            }
             
             // Skip player input during death animation
             if (deathAnimationActive) {
@@ -6406,8 +6427,10 @@
             } else {
                 let dx = 0, dy = 0;
                 
-                // Apply fever mode speed bonus
-                const moveSpeed = player.speed * (feverMode ? 1.3 : 1);
+                // Apply speed bonuses (fever mode + hover mode stack)
+                let moveSpeed = player.speed;
+                if (feverMode) moveSpeed *= 1.3;
+                if (hoverMode) moveSpeed *= 1.3; // 30% faster in hover mode
                 
                 if (keys.left) dx = -moveSpeed;
                 if (keys.right) dx = moveSpeed;
@@ -6416,11 +6439,26 @@
                     dy = -moveSpeed * 0.7 * (1 + (permanentUpgrades.climbSpeed + shopClimbBonus) / 100);
                 }
                 
-                if (keys.down && !player.digging && !hoverMode) {
-                    // Don't drill down in hover mode
+                if (keys.down && !player.digging) {
+                    // Exit hover mode when pressing down to drill
+                    if (hoverMode) {
+                        hoverMode = false;
+                        groundedTimer = 0;
+                    }
                     lastDigDirection = 'down';
                     const target = findDownDigTarget();
                     if (target) {
+                        // Start unstable timer if digging unstable rock
+                        const ty = getWorldRow(target.absoluteTy);
+                        if (ty >= 0 && ty < world.length) {
+                            const tile = world[ty][target.tx];
+                            if (tile === TILE.UNSTABLE) {
+                                const existing = unstableTiles.find(u => u.tx === target.tx && u.absoluteTy === target.absoluteTy);
+                                if (!existing) {
+                                    startUnstableTimer(target.tx, target.absoluteTy);
+                                }
+                            }
+                        }
                         dig(target.tx, target.absoluteTy);
                     }
                 }
@@ -6437,42 +6475,31 @@
                             if (dx > 0) blockedTimerRight = 0;
                             else blockedTimerLeft = 0;
                         } else {
-                            // Blocked horizontally
-                            if (hoverMode) {
-                                // In hover mode, track time blocked before drilling
-                                if (dx > 0) {
-                                    blockedTimerRight += deltaMultiplier;
-                                    blockedTimerLeft = 0;
-                                    if (blockedTimerRight >= BLOCKED_DRILL_DELAY && !player.digging) {
-                                        lastDigDirection = 'right';
-                                        const checkX = newX + player.width;
-                                        const midY = player.y + player.height / 2;
-                                        const tx = Math.floor(checkX / TILE_SIZE);
-                                        const absoluteTy = Math.floor(midY / TILE_SIZE);
-                                        dig(tx, absoluteTy);
-                                        blockedTimerRight = 0;
-                                    }
-                                } else {
-                                    blockedTimerLeft += deltaMultiplier;
+                            // Blocked horizontally - track time before drilling
+                            if (dx > 0) {
+                                blockedTimerRight += deltaMultiplier;
+                                blockedTimerLeft = 0;
+                                if (blockedTimerRight >= BLOCKED_DRILL_DELAY && !player.digging) {
+                                    lastDigDirection = 'right';
+                                    const checkX = newX + player.width;
+                                    const midY = player.y + player.height / 2;
+                                    const tx = Math.floor(checkX / TILE_SIZE);
+                                    const absoluteTy = Math.floor(midY / TILE_SIZE);
+                                    dig(tx, absoluteTy);
                                     blockedTimerRight = 0;
-                                    if (blockedTimerLeft >= BLOCKED_DRILL_DELAY && !player.digging) {
-                                        lastDigDirection = 'left';
-                                        const checkX = newX;
-                                        const midY = player.y + player.height / 2;
-                                        const tx = Math.floor(checkX / TILE_SIZE);
-                                        const absoluteTy = Math.floor(midY / TILE_SIZE);
-                                        dig(tx, absoluteTy);
-                                        blockedTimerLeft = 0;
-                                    }
                                 }
-                            } else if (!player.digging) {
-                                // Not in hover mode - immediate drill
-                                lastDigDirection = dx > 0 ? 'right' : 'left';
-                                const checkX = dx > 0 ? newX + player.width : newX;
-                                const midY = player.y + player.height / 2;
-                                const tx = Math.floor(checkX / TILE_SIZE);
-                                const absoluteTy = Math.floor(midY / TILE_SIZE);
-                                dig(tx, absoluteTy);
+                            } else {
+                                blockedTimerLeft += deltaMultiplier;
+                                blockedTimerRight = 0;
+                                if (blockedTimerLeft >= BLOCKED_DRILL_DELAY && !player.digging) {
+                                    lastDigDirection = 'left';
+                                    const checkX = newX;
+                                    const midY = player.y + player.height / 2;
+                                    const tx = Math.floor(checkX / TILE_SIZE);
+                                    const absoluteTy = Math.floor(midY / TILE_SIZE);
+                                    dig(tx, absoluteTy);
+                                    blockedTimerLeft = 0;
+                                }
                             }
                         }
                     }
@@ -6503,20 +6530,13 @@
                     // Handle blocked state - track time and eventually drill
                     if (blocked) {
                         blockedTimer += deltaMultiplier;
-                        // After 0.5s stuck, drill upward even in hover mode
+                        // After 0.33s stuck, drill upward
                         if (blockedTimer >= BLOCKED_DRILL_DELAY && !player.digging) {
                             lastDigDirection = 'up';
                             const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
                             const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
                             dig(tx, absoluteTy);
                             blockedTimer = 0; // Reset after initiating dig
-                        }
-                        // Immediate drill if not in hover mode
-                        else if (!hoverMode && !player.digging) {
-                            lastDigDirection = 'up';
-                            const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
-                            const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
-                            dig(tx, absoluteTy);
                         }
                     } else {
                         blockedTimer = 0; // Reset when not blocked
@@ -6559,8 +6579,8 @@
                     }
                 }
                 
-                // Gravity with acceleration
-                if (!keys.up) {
+                // Gravity with acceleration (skip during slide animation)
+                if (!keys.up && !slideAnimation.active) {
                     flightTimer = 0; // Reset flight timer when not holding up
                     blockedTimer = 0; // Reset blocked timer when not flying
                     
@@ -9586,6 +9606,9 @@
             player.digging = false;
             player.digTarget = null;
             player.digProgress = 0;
+            
+            // Reset slide animation
+            slideAnimation.active = false;
             
             particles = [];
             floatingTexts = [];
