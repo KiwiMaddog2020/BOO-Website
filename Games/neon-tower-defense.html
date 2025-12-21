@@ -766,8 +766,6 @@
         }
         
         .shop-continue-btn {
-            display: block;
-            margin: 20px auto 0;
             padding: 12px 40px;
             font-size: 14px;
             font-weight: bold;
@@ -786,25 +784,31 @@
             box-shadow: 0 0 20px rgba(255, 50, 50, 0.5);
         }
         
-        /* Stats toggle button */
+        /* Stats toggle button - matches exit button styling */
         .shop-stats-toggle {
-            position: absolute;
-            top: 15px;
-            right: 18px;
-            padding: 6px 12px;
-            font-size: 12px;
+            padding: 12px 40px;
+            font-size: 14px;
             font-weight: bold;
-            background: rgba(0, 255, 255, 0.15);
+            background: rgba(0, 255, 255, 0.2);
             border: 2px solid #0ff;
-            border-radius: 5px;
+            border-radius: 6px;
             color: #0ff;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 2px;
         }
         
         .shop-stats-toggle:hover {
-            background: rgba(0, 255, 255, 0.3);
-            box-shadow: 0 0 12px rgba(0, 255, 255, 0.4);
+            background: rgba(0, 255, 255, 0.4);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+        }
+        
+        .shop-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
         }
         
         /* Stats panel */
@@ -2724,16 +2728,17 @@
     <div class="shop-overlay" id="shopOverlay">
         <div class="shop-container">
             <div class="shop-gold">💰 <span id="shopGoldDisplay">0</span></div>
-            <button class="shop-stats-toggle" id="shopStatsToggle">📊 STATS</button>
             <div class="shop-header">
                 <div class="shop-title" id="shopTitle">🛒 TOWER UPGRADES</div>
             </div>
             <div class="shop-grid" id="shopGrid"></div>
             <div class="shop-stats-panel" id="shopStatsPanel">
-                <div class="stats-title">UPGRADE BONUSES</div>
                 <div class="stats-grid" id="statsGrid"></div>
             </div>
-            <button class="shop-continue-btn" id="shopClose">EXIT</button>
+            <div class="shop-buttons">
+                <button class="shop-stats-toggle" id="shopStatsToggle">STATS</button>
+                <button class="shop-continue-btn" id="shopClose">EXIT</button>
+            </div>
         </div>
     </div>
 
@@ -3621,7 +3626,8 @@
             { id: 'life', icon: '❤️', name: 'Extra Life', descTemplate: '+{val} lives', baseVal: 2, key: 'lives', isPercent: false },
             { id: 'interest', icon: '📈', name: 'Interest', descTemplate: '+{val}% gold per wave', baseVal: 3, key: 'interest', isPercent: true },
             { id: 'chain', icon: '⚡', name: 'Chain Power', descTemplate: '+{val} chain bounce', baseVal: 1, key: 'chainBonus', isPercent: false },
-            { id: 'multishot', icon: '🎯', name: 'Multi-Shot', descTemplate: '+{val}% double shot', baseVal: 6, key: 'multishot', isPercent: true }
+            { id: 'multishot', icon: '🎯', name: 'Multi-Shot', descTemplate: '+{val}% double shot', baseVal: 6, key: 'multishot', isPercent: true },
+            { id: 'luck', icon: '🍀', name: 'Lucky', descTemplate: '+{val}% luck', baseVal: 5, key: 'luck', isPercent: true }
         ];
         
         // Rarity multipliers for upgrade values
@@ -3633,11 +3639,11 @@
             legendary: 3.0
         };
         
-        // Rarity configuration (matching neon-survivors but with visible rare)
+        // Base rarity configuration - starts common-heavy, luck shifts weights
         const RARITY_CONFIG = {
-            common:    { weight: 50, color: '#aaaaaa', glow: 'rgba(170, 170, 170, 0.4)', label: 'COMMON' },
-            uncommon:  { weight: 30, color: '#55ff55', glow: 'rgba(85, 255, 85, 0.5)', label: 'UNCOMMON' },
-            rare:      { weight: 15, color: '#5555ff', glow: 'rgba(85, 85, 255, 0.6)', label: 'RARE' },
+            common:    { weight: 65, color: '#aaaaaa', glow: 'rgba(170, 170, 170, 0.4)', label: 'COMMON' },
+            uncommon:  { weight: 20, color: '#55ff55', glow: 'rgba(85, 255, 85, 0.5)', label: 'UNCOMMON' },
+            rare:      { weight: 10, color: '#5555ff', glow: 'rgba(85, 85, 255, 0.6)', label: 'RARE' },
             epic:      { weight: 4,  color: '#aa55ff', glow: 'rgba(170, 85, 255, 0.6)', label: 'EPIC' },
             legendary: { weight: 1,  color: '#ffaa00', glow: 'rgba(255, 170, 0, 0.7)', label: 'LEGENDARY' }
         };
@@ -3670,6 +3676,19 @@
                 epic: RARITY_CONFIG.epic.weight,
                 legendary: RARITY_CONFIG.legendary.weight
             };
+            
+            // Apply player luck stat - boosts uncommon+ weights, reduces common
+            const luckBonus = permUpgrades.luck || 0;
+            if (luckBonus > 0) {
+                // Each 1% luck adds to higher rarity weights
+                const luckMult = 1 + luckBonus;
+                weights.uncommon *= luckMult;
+                weights.rare *= luckMult;
+                weights.epic *= luckMult;
+                weights.legendary *= luckMult;
+                // Reduce common weight proportionally
+                weights.common = Math.max(20, weights.common - (luckBonus * 30));
+            }
             
             // Bad luck protection - boost higher rarities based on pity counter
             const pity = luckState.pityCounter;
@@ -4196,7 +4215,12 @@
             splashBonus: 0,
             slowBonus: 0,
             critChance: 0,
-            interest: 0
+            interest: 0,
+            poisonBonus: 0,
+            armorShred: 0,
+            chainBonus: 0,
+            multishot: 0,
+            luck: 0
         };
         let permUpgradeStacks = {};
         let upgradeOfferHistory = {};
@@ -4609,7 +4633,12 @@
                 splashBonus: 0,
                 slowBonus: 0,
                 critChance: 0,
-                interest: 0
+                interest: 0,
+                poisonBonus: 0,
+                armorShred: 0,
+                chainBonus: 0,
+                multishot: 0,
+                luck: 0
             };
             permUpgradeStacks = {};
             upgradeOfferHistory = {};
@@ -6815,7 +6844,12 @@
                 splashBonus: 0,
                 slowBonus: 0,
                 critChance: 0,
-                interest: 0
+                interest: 0,
+                poisonBonus: 0,
+                armorShred: 0,
+                chainBonus: 0,
+                multishot: 0,
+                luck: 0
             };
             permUpgradeStacks = {};
             upgradeOfferHistory = {};
@@ -7583,6 +7617,7 @@
             
             const statDefs = [
                 { key: 'damageBonus', name: '⚔️ Damage', suffix: '%' },
+                { key: 'luck', name: '🍀 Luck', suffix: '%' },
                 { key: 'rangeBonus', name: '📡 Range', suffix: '%' },
                 { key: 'fireRateBonus', name: '🔥 Fire Rate', suffix: '%' },
                 { key: 'splashBonus', name: '💫 Splash', suffix: '%' },
@@ -7626,13 +7661,13 @@
             if (showingStats) {
                 shopGrid.classList.add('hidden');
                 shopStatsPanel.classList.add('active');
-                shopStatsToggle.textContent = '🛒 SHOP';
+                shopStatsToggle.textContent = 'SHOP';
                 shopTitle.textContent = '📊 PLAYER STATS';
                 renderStatsPanel();
             } else {
                 shopGrid.classList.remove('hidden');
                 shopStatsPanel.classList.remove('active');
-                shopStatsToggle.textContent = '📊 STATS';
+                shopStatsToggle.textContent = 'STATS';
                 shopTitle.textContent = '🛒 TOWER UPGRADES';
             }
         });
@@ -7644,7 +7679,7 @@
             showingStats = false;
             shopGrid.classList.remove('hidden');
             shopStatsPanel.classList.remove('active');
-            shopStatsToggle.textContent = '📊 STATS';
+            shopStatsToggle.textContent = 'STATS';
             shopTitle.textContent = '🛒 TOWER UPGRADES';
         }
         
