@@ -2331,7 +2331,12 @@
             PORTAL: 15,      // Boss portal (2x2)
             PORTAL_PART: 16, // Secondary portal tiles (top-right, bottom-left, bottom-right)
             GATE: 17,        // Locked gate requiring boss key
-            ALIEN_NODE: 18   // Alien gem node - drops multiple gems
+            ALIEN_NODE: 18,  // Alien gem node - drops multiple gems
+            CHAIN_CRYSTAL: 19, // Breaks adjacent chain crystals in chain reaction
+            BOUNCE_PAD: 20,    // Launches player upward
+            MYSTERY_BLOCK: 21, // Random reward when broken
+            DEPTH_CHARGE: 22,  // Clears 5 blocks below when broken
+            MAGNET_ORE: 23     // Pulls nearby gems toward player
         });
         
         // Surface refuel settings
@@ -2891,6 +2896,11 @@
             fuel: -100,          // Tile index of last fuel spawn
             chest: -100,         // Tile index of last chest spawn
             upgradeChest: -100,  // Tile index of last upgrade chest spawn
+            mystery: -100,       // Mystery blocks
+            chainCrystal: -100,  // Chain crystals
+            bouncePad: -100,     // Bounce pads
+            depthCharge: -100,   // Depth charges
+            magnetOre: -100,     // Magnet ore
             currentTile: 0       // Current tile being generated
         };
         
@@ -2899,7 +2909,12 @@
             gem: 6,            // Gems shouldn't spawn within 6 tiles of each other
             fuel: 12,          // Fuel spread out more
             chest: 20,         // Chests well spaced
-            upgradeChest: 40   // Upgrade chests very spread out
+            upgradeChest: 40,  // Upgrade chests very spread out
+            mystery: 15,       // Mystery blocks moderately spaced
+            chainCrystal: 8,   // Chain crystals can cluster a bit (it's fun!)
+            bouncePad: 25,     // Bounce pads well spaced
+            depthCharge: 20,   // Depth charges spread out
+            magnetOre: 18      // Magnet ore moderately spaced
         };
         
         // Anti-clustering: only REDUCES chance if item spawned recently
@@ -2945,6 +2960,11 @@
                 fuel: -100,
                 chest: -100,
                 upgradeChest: -100,
+                mystery: -100,
+                chainCrystal: -100,
+                bouncePad: -100,
+                depthCharge: -100,
+                magnetOre: -100,
                 currentTile: 0
             };
         }
@@ -3306,6 +3326,47 @@
             // Rare chests - anti-clustered
             if (antiClusterRandom(0.0056 + depthFactor * 0.0028, 'chest')) {
                 return TILE.CHEST;
+            }
+            
+            // === NEW SPECIAL BLOCKS ===
+            // Mystery Block - uncommon (rainbow shimmer, random reward)
+            if (antiClusterRandom(0.0016 + depthFactor * 0.0008, 'mystery')) {
+                return TILE.MYSTERY_BLOCK;
+            }
+            
+            // Chain Crystal - spawns in veins (check if neighbor is chain crystal for higher chance)
+            let chainChance = 0.002 + depthFactor * 0.001;
+            // Check left neighbor for chain clustering
+            if (x > 0 && world.length > 0) {
+                const lastRow = world[world.length - 1];
+                if (lastRow && lastRow[x - 1] === TILE.CHAIN_CRYSTAL) {
+                    chainChance = 0.4; // 40% chance to continue a vein horizontally
+                }
+                // Check above neighbor too (if we have the row)
+                if (world.length > 1) {
+                    const aboveRow = world[world.length - 1];
+                    if (aboveRow && aboveRow[x] === TILE.CHAIN_CRYSTAL) {
+                        chainChance = Math.max(chainChance, 0.35); // 35% chance to continue vertically
+                    }
+                }
+            }
+            if (Math.random() < chainChance) {
+                return TILE.CHAIN_CRYSTAL;
+            }
+            
+            // Bounce Pad - rare (fuel-free ascent)
+            if (depth >= 20 && antiClusterRandom(0.0015, 'bouncePad')) {
+                return TILE.BOUNCE_PAD;
+            }
+            
+            // Depth Charge - rare (clears blocks below)
+            if (depth >= 30 && antiClusterRandom(0.0012 + depthFactor * 0.0006, 'depthCharge')) {
+                return TILE.DEPTH_CHARGE;
+            }
+            
+            // Magnet Ore - uncommon (pulls gems)
+            if (antiClusterRandom(0.0025 + depthFactor * 0.001, 'magnetOre')) {
+                return TILE.MAGNET_ORE;
             }
             
             if (rand < 0.01125 + depthFactor * 0.006) return TILE.BOMB;
@@ -3723,25 +3784,32 @@
             const feverBonus = feverMode ? 1.5 : 1;
             const totalSpeed = speedMultiplier * feverBonus * shopDigBonus;
             
-            let digTime = 0.73 / totalSpeed; // Base dig time (20% faster)
+            let digTime = 0.66 / totalSpeed; // Base dig time (10% faster)
             
-            if (tile === TILE.ROCK) digTime = 1.15 / totalSpeed; // 20% faster
+            if (tile === TILE.ROCK) digTime = 1.04 / totalSpeed;
             if (tile === TILE.HARD_ROCK) {
                 const drillChance = getEffectiveUpgrade('drillPower', 90);
-                digTime = Math.random() * 100 < drillChance ? 0.1 : 0.71 / totalSpeed;
+                digTime = Math.random() * 100 < drillChance ? 0.09 : 0.64 / totalSpeed;
             }
             if (tile === TILE.UNSTABLE) {
-                digTime = 0.5 / totalSpeed; // Takes a bit to break
+                digTime = 0.45 / totalSpeed;
                 // Start collapse timer if not already started
                 const existing = unstableTiles.find(u => u.tx === tx && u.absoluteTy === absoluteTy);
                 if (!existing) {
                     startUnstableTimer(tx, absoluteTy);
                 }
             }
-            if (tile === TILE.BOMB) digTime = 0.125 / totalSpeed; // Quick to trigger
-            if (tile === TILE.CHEST) digTime = 0.29 / totalSpeed; // Satisfying open time
-            if (tile === TILE.UPGRADE_CHEST) digTime = 0.42 / totalSpeed; // Slightly longer for anticipation
-            if (tile === TILE.ALIEN_NODE) digTime = 0.5 / totalSpeed; // Alien tech takes time to crack
+            if (tile === TILE.BOMB) digTime = 0.11 / totalSpeed;
+            if (tile === TILE.CHEST) digTime = 0.26 / totalSpeed;
+            if (tile === TILE.UPGRADE_CHEST) digTime = 0.38 / totalSpeed;
+            if (tile === TILE.ALIEN_NODE) digTime = 0.45 / totalSpeed;
+            
+            // New special blocks
+            if (tile === TILE.CHAIN_CRYSTAL) digTime = 0.23 / totalSpeed;
+            if (tile === TILE.BOUNCE_PAD) digTime = 0.14 / totalSpeed;
+            if (tile === TILE.MYSTERY_BLOCK) digTime = 0.36 / totalSpeed;
+            if (tile === TILE.DEPTH_CHARGE) digTime = 0.32 / totalSpeed;
+            if (tile === TILE.MAGNET_ORE) digTime = 0.27 / totalSpeed;
             
             player.digging = true;
             player.digTarget = { x: tx, y: absoluteTy, time: digTime };
@@ -4007,6 +4075,262 @@
             screenShake = 12;
             updateScoreDisplay();
             updateFuelBar();
+        }
+        
+        // Chain Crystal - breaks all adjacent chain crystals in a chain reaction
+        function triggerChainCrystalExplosion(startTX, startAbsTY) {
+            let crystalsToBreak = [{tx: startTX, absoluteTy: startAbsTY}];
+            let brokenCrystals = new Set();
+            let totalValue = 0;
+            let chainCount = 0;
+            
+            while (crystalsToBreak.length > 0) {
+                const current = crystalsToBreak.shift();
+                const key = `${current.tx},${current.absoluteTy}`;
+                
+                if (brokenCrystals.has(key)) continue;
+                brokenCrystals.add(key);
+                
+                const ty = getWorldRow(current.absoluteTy);
+                if (ty < 0 || ty >= world.length) continue;
+                if (current.tx < 0 || current.tx >= WORLD_WIDTH) continue;
+                
+                const tile = world[ty][current.tx];
+                if (tile !== TILE.CHAIN_CRYSTAL && chainCount > 0) continue;
+                
+                // Break this crystal
+                world[ty][current.tx] = TILE.AIR;
+                chainCount++;
+                
+                const tileCenterX = current.tx * TILE_SIZE + TILE_SIZE/2;
+                const tileCenterY = current.absoluteTy * TILE_SIZE + TILE_SIZE/2;
+                
+                // Value increases with chain length!
+                const chainBonus = Math.min(chainCount, 10);
+                const value = 5 * chainBonus;
+                totalValue += value;
+                
+                // Electric explosion particles
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    particles.push({
+                        x: tileCenterX, y: tileCenterY,
+                        vx: Math.cos(angle) * (3 + Math.random() * 2),
+                        vy: Math.sin(angle) * (3 + Math.random() * 2),
+                        size: 3 + Math.random() * 2,
+                        color: Math.random() < 0.5 ? '#00ffff' : '#ffffff',
+                        life: 0.6,
+                        type: 'gem'
+                    });
+                }
+                
+                // Check all 8 neighbors for more chain crystals
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const neighborTX = current.tx + dx;
+                        const neighborAbsTY = current.absoluteTy + dy;
+                        const neighborTY = getWorldRow(neighborAbsTY);
+                        
+                        if (neighborTY >= 0 && neighborTY < world.length && 
+                            neighborTX >= 0 && neighborTX < WORLD_WIDTH) {
+                            if (world[neighborTY][neighborTX] === TILE.CHAIN_CRYSTAL) {
+                                crystalsToBreak.push({tx: neighborTX, absoluteTy: neighborAbsTY});
+                            }
+                        }
+                    }
+                }
+                
+                addCombo();
+            }
+            
+            // Award points
+            score += totalValue;
+            updateScoreDisplay();
+            
+            const centerX = startTX * TILE_SIZE + TILE_SIZE/2;
+            const centerY = startAbsTY * TILE_SIZE;
+            
+            if (chainCount > 1) {
+                createFloatingText(`⚡ CHAIN x${chainCount}! ⚡`, centerX, centerY - 15, '#00ffff');
+                createFloatingText(`+${totalValue}`, centerX, centerY, '#ffffff');
+                triggerScreenFlash('#00ffff', 0.3, 10 + chainCount);
+                screenShake = 4 + chainCount;
+            } else {
+                createFloatingText(`⚡ +${totalValue}`, centerX, centerY - 5, '#00ffff');
+                triggerScreenFlash('#00ffff', 0.15, 6);
+                screenShake = 3;
+            }
+        }
+        
+        // Depth Charge - clears 5 blocks directly below
+        function triggerDepthCharge(tx, startAbsTY) {
+            const centerX = tx * TILE_SIZE + TILE_SIZE/2;
+            let blocksCleared = 0;
+            let totalValue = 0;
+            
+            createFloatingText('▼▼▼ DEPTH CHARGE ▼▼▼', centerX, startAbsTY * TILE_SIZE - 10, '#ff6644');
+            
+            // Clear 5 blocks below
+            for (let i = 1; i <= 5; i++) {
+                const targetAbsTY = startAbsTY + i;
+                const targetTY = getWorldRow(targetAbsTY);
+                
+                if (targetTY < 0 || targetTY >= world.length) continue;
+                
+                const tile = world[targetTY][tx];
+                const tileCenterX = tx * TILE_SIZE + TILE_SIZE/2;
+                const tileCenterY = targetAbsTY * TILE_SIZE + TILE_SIZE/2;
+                
+                // Can't destroy bedrock, portals, gates, or hard rock
+                if (tile === TILE.BEDROCK || tile === TILE.PORTAL || 
+                    tile === TILE.PORTAL_PART || tile === TILE.GATE || 
+                    tile === TILE.HARD_ROCK || tile === TILE.AIR) {
+                    if (tile !== TILE.AIR) break; // Stop at obstacles
+                    continue;
+                }
+                
+                // Collect gems
+                if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
+                    let baseValue = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
+                    const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
+                    const value = Math.floor(baseValue * (1 + totalGemBonus / 100) * getComboMultiplier());
+                    totalValue += value;
+                    addCombo();
+                    const color = tile === TILE.GEM_EPIC ? '#ff9500' : tile === TILE.GEM_RARE ? '#ff00ff' : '#00f0ff';
+                    createGemParticles(tileCenterX, tileCenterY, color);
+                }
+                
+                // Collect fuel
+                if (tile === TILE.FUEL) {
+                    const fuelGain = 10;
+                    fuel = Math.min(fuel + fuelGain, maxFuel);
+                    createParticles(tileCenterX, tileCenterY, '#ff9500', 6);
+                }
+                
+                // Trigger chain crystals
+                if (tile === TILE.CHAIN_CRYSTAL) {
+                    triggerChainCrystalExplosion(tx, targetAbsTY);
+                }
+                
+                // Trigger bombs
+                if (tile === TILE.BOMB) {
+                    explodeBomb(tx, targetAbsTY);
+                }
+                
+                world[targetTY][tx] = TILE.AIR;
+                blocksCleared++;
+                
+                // Downward explosion particles
+                for (let j = 0; j < 4; j++) {
+                    particles.push({
+                        x: tileCenterX + (Math.random() - 0.5) * 10,
+                        y: tileCenterY,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: 2 + Math.random() * 3,
+                        size: 3 + Math.random() * 3,
+                        color: Math.random() < 0.5 ? '#ff4400' : '#ffaa00',
+                        life: 0.5,
+                        type: 'explosion'
+                    });
+                }
+            }
+            
+            if (totalValue > 0) {
+                score += totalValue;
+                updateScoreDisplay();
+                createFloatingText(`+${totalValue}`, centerX, (startAbsTY + 3) * TILE_SIZE, '#ffff00');
+            }
+            
+            triggerScreenFlash('#ff4400', 0.3, 12);
+            screenShake = 8;
+            updateFuelBar();
+        }
+        
+        // Magnet Ore - pulls all gems within 3 tiles toward player
+        function triggerMagnetPull(centerTX, centerAbsTY) {
+            const MAGNET_RANGE = 3;
+            let gemsCollected = 0;
+            let totalValue = 0;
+            
+            for (let dy = -MAGNET_RANGE; dy <= MAGNET_RANGE; dy++) {
+                for (let dx = -MAGNET_RANGE; dx <= MAGNET_RANGE; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    
+                    const targetTX = centerTX + dx;
+                    const targetAbsTY = centerAbsTY + dy;
+                    const targetTY = getWorldRow(targetAbsTY);
+                    
+                    if (targetTY < 0 || targetTY >= world.length) continue;
+                    if (targetTX < 0 || targetTX >= WORLD_WIDTH) continue;
+                    
+                    const tile = world[targetTY][targetTX];
+                    
+                    // Pull gems
+                    if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
+                        let baseValue = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
+                        const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
+                        const value = Math.floor(baseValue * (1 + totalGemBonus / 100) * getComboMultiplier());
+                        if (feverMode) baseValue = Math.floor(value * 1.5);
+                        totalValue += value;
+                        gemsCollected++;
+                        addCombo();
+                        
+                        const color = tile === TILE.GEM_EPIC ? '#ff9500' : tile === TILE.GEM_RARE ? '#ff00ff' : '#00f0ff';
+                        const startX = targetTX * TILE_SIZE + TILE_SIZE/2;
+                        const startY = targetAbsTY * TILE_SIZE + TILE_SIZE/2;
+                        const endX = centerTX * TILE_SIZE + TILE_SIZE/2;
+                        const endY = centerAbsTY * TILE_SIZE + TILE_SIZE/2;
+                        
+                        // Create trail particles from gem to center
+                        for (let i = 0; i < 5; i++) {
+                            const t = i / 5;
+                            particles.push({
+                                x: startX + (endX - startX) * t,
+                                y: startY + (endY - startY) * t,
+                                vx: (endX - startX) * 0.1,
+                                vy: (endY - startY) * 0.1,
+                                size: 3 + Math.random() * 2,
+                                color: color,
+                                life: 0.3 + t * 0.3,
+                                type: 'gem'
+                            });
+                        }
+                        
+                        world[targetTY][targetTX] = TILE.AIR;
+                    }
+                }
+            }
+            
+            const centerX = centerTX * TILE_SIZE + TILE_SIZE/2;
+            const centerY = centerAbsTY * TILE_SIZE;
+            
+            if (gemsCollected > 0) {
+                score += totalValue;
+                updateScoreDisplay();
+                createFloatingText(`🧲 ${gemsCollected} GEMS!`, centerX, centerY - 20, '#ff66ff');
+                createFloatingText(`+${totalValue}`, centerX, centerY - 5, '#ffff00');
+                triggerScreenFlash('#ff66ff', 0.25, 8 + gemsCollected);
+                screenShake = 4 + gemsCollected;
+            } else {
+                triggerScreenFlash('#ff66ff', 0.15, 5);
+                screenShake = 3;
+            }
+            
+            // Magnetic field effect particles
+            for (let i = 0; i < 12; i++) {
+                const angle = (i / 12) * Math.PI * 2;
+                particles.push({
+                    x: centerX + Math.cos(angle) * 30,
+                    y: centerAbsTY * TILE_SIZE + TILE_SIZE/2 + Math.sin(angle) * 30,
+                    vx: -Math.cos(angle) * 3,
+                    vy: -Math.sin(angle) * 3,
+                    size: 2 + Math.random() * 2,
+                    color: '#ff66ff',
+                    life: 0.5,
+                    type: 'gem'
+                });
+            }
         }
         
         function openChest(tx, absoluteTy) {
@@ -4404,6 +4728,127 @@
                 triggerScreenFlash('#ff0000', 0.25, 8);
                 screenShake = 6;
                 updateHullBar();
+            }
+            
+            // ===== CHAIN CRYSTAL =====
+            if (tile === TILE.CHAIN_CRYSTAL) {
+                world[ty][tx] = TILE.AIR;
+                triggerChainCrystalExplosion(tx, absoluteTy);
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return;
+            }
+            
+            // ===== BOUNCE PAD =====
+            if (tile === TILE.BOUNCE_PAD) {
+                // Launch player upward (4-5 tiles)
+                player.vy = -12; // Strong upward velocity
+                player.y -= 5; // Small initial boost
+                
+                createFloatingText('⬆️ BOUNCE!', tileCenterX, worldY - 10, '#50ff64');
+                createParticles(tileCenterX, tileCenterY, '#50ff64', 15);
+                triggerScreenFlash('#50ff64', 0.2, 8);
+                screenShake = 4;
+                
+                // Give small score bonus
+                score += 5;
+                updateScoreDisplay();
+                addCombo();
+            }
+            
+            // ===== MYSTERY BLOCK =====
+            if (tile === TILE.MYSTERY_BLOCK) {
+                world[ty][tx] = TILE.AIR;
+                const roll = Math.random();
+                
+                if (roll < 0.50) {
+                    // 50% - Random gem
+                    const gemRoll = Math.random();
+                    let gemValue, gemColor, gemName;
+                    if (gemRoll < 0.1) {
+                        gemValue = 50; gemColor = '#ff9500'; gemName = 'EPIC';
+                    } else if (gemRoll < 0.4) {
+                        gemValue = 25; gemColor = '#ff00ff'; gemName = 'RARE';
+                    } else {
+                        gemValue = 10; gemColor = '#00f0ff'; gemName = 'COMMON';
+                    }
+                    const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
+                    gemValue = Math.floor(gemValue * (1 + totalGemBonus / 100) * getComboMultiplier());
+                    if (feverMode) gemValue = Math.floor(gemValue * 1.5);
+                    score += gemValue;
+                    updateScoreDisplay();
+                    createFloatingText(`🎲 ${gemName}! +${gemValue}`, tileCenterX, worldY - 10, gemColor);
+                    createGemParticles(tileCenterX, tileCenterY, gemColor);
+                    addCombo();
+                } else if (roll < 0.70) {
+                    // 20% - Fuel
+                    const fuelGain = 15 + Math.floor(Math.random() * 10);
+                    fuel = Math.min(fuel + fuelGain, maxFuel);
+                    updateFuelBar();
+                    createFloatingText(`🎲 FUEL! +${fuelGain}`, tileCenterX, worldY - 10, '#ff9500');
+                    createParticles(tileCenterX, tileCenterY, '#ff9500', 12);
+                } else if (roll < 0.82) {
+                    // 12% - Nothing (dud)
+                    createFloatingText('🎲 Empty...', tileCenterX, worldY - 10, '#888888');
+                    createParticles(tileCenterX, tileCenterY, '#555555', 5);
+                } else if (roll < 0.92) {
+                    // 10% - Bomb (oops!)
+                    createFloatingText('🎲 BOMB!', tileCenterX, worldY - 10, '#ff4444');
+                    explodeBomb(tx, absoluteTy);
+                } else {
+                    // 8% - Jackpot! Big reward
+                    const jackpotValue = 100 + Math.floor(Math.random() * 50);
+                    score += jackpotValue;
+                    updateScoreDisplay();
+                    createFloatingText(`🎲 JACKPOT! +${jackpotValue}`, tileCenterX, worldY - 15, '#ffff00');
+                    createFloatingText('⭐⭐⭐', tileCenterX, worldY - 5, '#ffff00');
+                    triggerScreenFlash('#ffff00', 0.4, 15);
+                    screenShake = 8;
+                    for (let i = 0; i < 5; i++) addCombo();
+                    createParticles(tileCenterX, tileCenterY, '#ffff00', 25);
+                }
+                
+                triggerScreenFlash('#ffffff', 0.15, 6);
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return;
+            }
+            
+            // ===== DEPTH CHARGE =====
+            if (tile === TILE.DEPTH_CHARGE) {
+                world[ty][tx] = TILE.AIR;
+                triggerDepthCharge(tx, absoluteTy);
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return;
+            }
+            
+            // ===== MAGNET ORE =====
+            if (tile === TILE.MAGNET_ORE) {
+                world[ty][tx] = TILE.AIR;
+                triggerMagnetPull(tx, absoluteTy);
+                
+                // Small base reward
+                score += 15;
+                updateScoreDisplay();
+                createFloatingText('🧲 MAGNET!', tileCenterX, worldY - 10, '#ff66ff');
+                addCombo();
+                
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return;
             }
             
             // Don't charge fuel for magnet-collected gems
@@ -6563,23 +7008,47 @@
                             if (dx > 0) blockedTimerRight = 0;
                             else blockedTimerLeft = 0;
                         } else {
-                            // Blocked horizontally - drill immediately (but not in sky rows)
+                            // Blocked horizontally
                             if (!player.digging) {
                                 const midY = player.y + player.height / 2;
                                 const absoluteTy = Math.floor(midY / TILE_SIZE);
                                 
                                 // Don't drill in sky rows
                                 if (absoluteTy >= FIRST_DIGGABLE_ROW) {
-                                    if (dx > 0) {
-                                        lastDigDirection = 'right';
-                                        const checkX = newX + player.width;
-                                        const tx = Math.floor(checkX / TILE_SIZE);
-                                        dig(tx, absoluteTy);
+                                    // In hover mode, use delay before drilling (same as up-drilling)
+                                    if (hoverMode) {
+                                        if (dx > 0) {
+                                            blockedTimerRight += deltaMultiplier;
+                                            if (blockedTimerRight >= BLOCKED_DRILL_DELAY) {
+                                                lastDigDirection = 'right';
+                                                const checkX = newX + player.width;
+                                                const tx = Math.floor(checkX / TILE_SIZE);
+                                                dig(tx, absoluteTy);
+                                                blockedTimerRight = 0;
+                                            }
+                                        } else {
+                                            blockedTimerLeft += deltaMultiplier;
+                                            if (blockedTimerLeft >= BLOCKED_DRILL_DELAY) {
+                                                lastDigDirection = 'left';
+                                                const checkX = newX;
+                                                const tx = Math.floor(checkX / TILE_SIZE);
+                                                dig(tx, absoluteTy);
+                                                blockedTimerLeft = 0;
+                                            }
+                                        }
                                     } else {
-                                        lastDigDirection = 'left';
-                                        const checkX = newX;
-                                        const tx = Math.floor(checkX / TILE_SIZE);
-                                        dig(tx, absoluteTy);
+                                        // Not hovering - drill immediately
+                                        if (dx > 0) {
+                                            lastDigDirection = 'right';
+                                            const checkX = newX + player.width;
+                                            const tx = Math.floor(checkX / TILE_SIZE);
+                                            dig(tx, absoluteTy);
+                                        } else {
+                                            lastDigDirection = 'left';
+                                            const checkX = newX;
+                                            const tx = Math.floor(checkX / TILE_SIZE);
+                                            dig(tx, absoluteTy);
+                                        }
                                     }
                                 }
                             }
@@ -7546,29 +8015,29 @@
                     ctx.fillRect(x, y, s, s);
                     ctx.fillStyle = `rgba(80, 220, 80, ${gasAlpha})`;
                     ctx.fillRect(x, y, s, s);
-                    // Faint skull warning (half size)
+                    // Faint skull warning (30% larger)
                     const skullAlpha = 0.12 + Math.sin(time * 1.5 + tx * 2 + ty) * 0.06;
                     ctx.fillStyle = `rgba(255, 255, 200, ${skullAlpha})`;
-                    // Skull head (halved from s * 0.28 to s * 0.14)
+                    // Skull head (30% larger: 0.14 * 1.3 = 0.182)
                     ctx.beginPath();
-                    ctx.arc(x + s/2, y + s * 0.45, s * 0.14, 0, Math.PI * 2);
+                    ctx.arc(x + s/2, y + s * 0.43, s * 0.182, 0, Math.PI * 2);
                     ctx.fill();
-                    // Eye sockets (halved from s * 0.08 to s * 0.04)
+                    // Eye sockets (30% larger: 0.04 * 1.3 = 0.052)
                     ctx.fillStyle = `rgba(20, 40, 20, ${skullAlpha + 0.15})`;
                     ctx.beginPath();
-                    ctx.arc(x + s * 0.44, y + s * 0.44, s * 0.04, 0, Math.PI * 2);
-                    ctx.arc(x + s * 0.56, y + s * 0.44, s * 0.04, 0, Math.PI * 2);
+                    ctx.arc(x + s * 0.42, y + s * 0.42, s * 0.052, 0, Math.PI * 2);
+                    ctx.arc(x + s * 0.58, y + s * 0.42, s * 0.052, 0, Math.PI * 2);
                     ctx.fill();
-                    // Jaw/teeth area (halved dimensions)
+                    // Jaw/teeth area (30% larger)
                     ctx.fillStyle = `rgba(255, 255, 200, ${skullAlpha * 0.8})`;
-                    ctx.fillRect(x + s * 0.425, y + s * 0.525, s * 0.15, s * 0.09);
-                    // Teeth lines (adjusted for smaller jaw)
+                    ctx.fillRect(x + s * 0.40, y + s * 0.54, s * 0.195, s * 0.117);
+                    // Teeth lines (adjusted for larger jaw)
                     ctx.strokeStyle = `rgba(20, 40, 20, ${skullAlpha + 0.1})`;
                     ctx.lineWidth = 1;
-                    for (let i = 0; i < 2; i++) {
+                    for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
-                        ctx.moveTo(x + s * (0.45 + i * 0.1), y + s * 0.525);
-                        ctx.lineTo(x + s * (0.45 + i * 0.1), y + s * 0.6);
+                        ctx.moveTo(x + s * (0.43 + i * 0.07), y + s * 0.54);
+                        ctx.lineTo(x + s * (0.43 + i * 0.07), y + s * 0.64);
                         ctx.stroke();
                     }
                     break;
@@ -7872,6 +8341,240 @@
                     ctx.lineTo(x + 2, y + s/3);
                     ctx.closePath();
                     ctx.stroke();
+                    break;
+                
+                case TILE.CHAIN_CRYSTAL:
+                    // Electric blue crystal with lightning
+                    const chainPulse = 0.7 + Math.sin(time * 4 + tx * 3 + ty * 2) * 0.3;
+                    
+                    // Dark base
+                    ctx.fillStyle = '#0a1520';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Crystal body
+                    ctx.fillStyle = `rgba(0, 200, 255, ${chainPulse})`;
+                    ctx.beginPath();
+                    ctx.moveTo(x + s/2, y + 2);
+                    ctx.lineTo(x + s - 3, y + s/2);
+                    ctx.lineTo(x + s/2, y + s - 2);
+                    ctx.lineTo(x + 3, y + s/2);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Inner glow
+                    ctx.fillStyle = `rgba(150, 255, 255, ${chainPulse * 0.8})`;
+                    ctx.beginPath();
+                    ctx.moveTo(x + s/2, y + 6);
+                    ctx.lineTo(x + s - 7, y + s/2);
+                    ctx.lineTo(x + s/2, y + s - 6);
+                    ctx.lineTo(x + 7, y + s/2);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Lightning arcs
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${0.5 + Math.sin(time * 8 + tx) * 0.5})`;
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i < 3; i++) {
+                        const boltAngle = time * 3 + i * Math.PI * 2 / 3;
+                        ctx.beginPath();
+                        ctx.moveTo(x + s/2, y + s/2);
+                        const midX = x + s/2 + Math.cos(boltAngle) * 6 + Math.sin(time * 10) * 2;
+                        const midY = y + s/2 + Math.sin(boltAngle) * 6;
+                        ctx.lineTo(midX, midY);
+                        ctx.lineTo(x + s/2 + Math.cos(boltAngle) * 11, y + s/2 + Math.sin(boltAngle) * 11);
+                        ctx.stroke();
+                    }
+                    
+                    // ⚡ symbol
+                    ctx.fillStyle = `rgba(255, 255, 100, ${chainPulse})`;
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('⚡', x + s/2, y + s/2);
+                    ctx.textBaseline = 'alphabetic';
+                    break;
+                
+                case TILE.BOUNCE_PAD:
+                    // Neon green spring pad
+                    const bouncePulse = 0.7 + Math.sin(time * 5 + tx + ty) * 0.3;
+                    const springCompress = Math.sin(time * 3) * 2;
+                    
+                    // Dark base
+                    ctx.fillStyle = '#0a1a0a';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Platform top
+                    ctx.fillStyle = `rgba(50, 255, 100, ${bouncePulse})`;
+                    ctx.fillRect(x + 2, y + 3 + springCompress, s - 4, 5);
+                    
+                    // Spring coils
+                    ctx.strokeStyle = `rgba(100, 255, 150, ${bouncePulse})`;
+                    ctx.lineWidth = 2;
+                    for (let i = 0; i < 3; i++) {
+                        const coilY = y + 10 + i * 6 + springCompress * (1 - i * 0.3);
+                        ctx.beginPath();
+                        ctx.moveTo(x + 6, coilY);
+                        ctx.quadraticCurveTo(x + s/2, coilY - 3, x + s - 6, coilY);
+                        ctx.stroke();
+                    }
+                    
+                    // Base plate
+                    ctx.fillStyle = '#2a5a2a';
+                    ctx.fillRect(x + 2, y + s - 5, s - 4, 4);
+                    
+                    // Glow effect
+                    ctx.fillStyle = `rgba(50, 255, 100, ${bouncePulse * 0.3})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Up arrow
+                    ctx.fillStyle = `rgba(200, 255, 200, ${bouncePulse})`;
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('↑', x + s/2, y + s/2 - 2);
+                    ctx.textBaseline = 'alphabetic';
+                    break;
+                
+                case TILE.MYSTERY_BLOCK:
+                    // Rainbow shimmer with question mark
+                    const mysteryTime = time * 2 + tx + ty;
+                    const hue1 = (mysteryTime * 60) % 360;
+                    const hue2 = (hue1 + 120) % 360;
+                    const mysteryPulse = 0.7 + Math.sin(time * 3) * 0.3;
+                    
+                    // Shifting gradient background
+                    const mysteryGrad = ctx.createLinearGradient(x, y, x + s, y + s);
+                    mysteryGrad.addColorStop(0, `hsla(${hue1}, 80%, 50%, ${mysteryPulse})`);
+                    mysteryGrad.addColorStop(0.5, `hsla(${hue2}, 80%, 60%, ${mysteryPulse})`);
+                    mysteryGrad.addColorStop(1, `hsla(${(hue2 + 120) % 360}, 80%, 50%, ${mysteryPulse})`);
+                    ctx.fillStyle = '#1a1a2a';
+                    ctx.fillRect(x, y, s, s);
+                    ctx.fillStyle = mysteryGrad;
+                    ctx.fillRect(x + 1, y + 1, s - 2, s - 2);
+                    
+                    // Sparkles
+                    for (let i = 0; i < 4; i++) {
+                        const sparkX = x + 5 + (i % 2) * (s - 10);
+                        const sparkY = y + 5 + Math.floor(i / 2) * (s - 10);
+                        const sparkAlpha = 0.5 + Math.sin(time * 5 + i * 2) * 0.5;
+                        ctx.fillStyle = `rgba(255, 255, 255, ${sparkAlpha})`;
+                        ctx.beginPath();
+                        ctx.arc(sparkX, sparkY, 2, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    // Question mark
+                    ctx.fillStyle = `rgba(255, 255, 255, ${mysteryPulse})`;
+                    ctx.font = 'bold 16px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('?', x + s/2, y + s/2);
+                    ctx.textBaseline = 'alphabetic';
+                    
+                    // Border shimmer
+                    ctx.strokeStyle = `hsla(${hue1}, 100%, 70%, ${mysteryPulse})`;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(x + 1, y + 1, s - 2, s - 2);
+                    break;
+                
+                case TILE.DEPTH_CHARGE:
+                    // Red block with downward arrows
+                    const depthPulse = 0.6 + Math.sin(time * 3 + tx + ty) * 0.4;
+                    const arrowBob = Math.sin(time * 4) * 2;
+                    
+                    // Dark red base
+                    ctx.fillStyle = '#2a0a0a';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Red gradient fill
+                    const depthGrad = ctx.createLinearGradient(x, y, x, y + s);
+                    depthGrad.addColorStop(0, `rgba(255, 50, 50, ${depthPulse * 0.7})`);
+                    depthGrad.addColorStop(1, `rgba(200, 0, 0, ${depthPulse})`);
+                    ctx.fillStyle = depthGrad;
+                    ctx.fillRect(x + 2, y + 2, s - 4, s - 4);
+                    
+                    // Downward arrows
+                    ctx.fillStyle = `rgba(255, 200, 100, ${depthPulse})`;
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('▼', x + s/2, y + s/3 + arrowBob);
+                    ctx.fillText('▼', x + s/2, y + s * 2/3 + arrowBob * 0.5);
+                    ctx.textBaseline = 'alphabetic';
+                    
+                    // Warning stripes
+                    ctx.strokeStyle = `rgba(255, 200, 0, ${depthPulse * 0.5})`;
+                    ctx.lineWidth = 2;
+                    for (let i = 0; i < 3; i++) {
+                        ctx.beginPath();
+                        ctx.moveTo(x + 3 + i * 8, y + s - 2);
+                        ctx.lineTo(x + 7 + i * 8, y + s - 6);
+                        ctx.stroke();
+                    }
+                    
+                    // Glow
+                    ctx.fillStyle = `rgba(255, 100, 50, ${depthPulse * 0.2})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                
+                case TILE.MAGNET_ORE:
+                    // Purple/pink with magnetic field lines
+                    const magnetPulse = 0.6 + Math.sin(time * 2.5 + tx + ty) * 0.4;
+                    const fieldRotation = time * 1.5;
+                    
+                    // Dark purple base
+                    ctx.fillStyle = '#1a0a1a';
+                    ctx.fillRect(x, y, s, s);
+                    
+                    // Magnetic field lines (radiating outward)
+                    ctx.strokeStyle = `rgba(255, 100, 200, ${magnetPulse * 0.6})`;
+                    ctx.lineWidth = 1;
+                    for (let i = 0; i < 6; i++) {
+                        const angle = fieldRotation + i * Math.PI / 3;
+                        const innerR = 4;
+                        const outerR = s/2 - 2;
+                        ctx.beginPath();
+                        ctx.moveTo(x + s/2 + Math.cos(angle) * innerR, y + s/2 + Math.sin(angle) * innerR);
+                        // Curved field line
+                        const midAngle = angle + 0.3;
+                        ctx.quadraticCurveTo(
+                            x + s/2 + Math.cos(midAngle) * (outerR * 0.7),
+                            y + s/2 + Math.sin(midAngle) * (outerR * 0.7),
+                            x + s/2 + Math.cos(angle + 0.5) * outerR,
+                            y + s/2 + Math.sin(angle + 0.5) * outerR
+                        );
+                        ctx.stroke();
+                    }
+                    
+                    // Core ore
+                    const magnetGrad = ctx.createRadialGradient(x + s/2, y + s/2, 0, x + s/2, y + s/2, s/3);
+                    magnetGrad.addColorStop(0, `rgba(255, 150, 255, ${magnetPulse})`);
+                    magnetGrad.addColorStop(0.5, `rgba(200, 50, 200, ${magnetPulse})`);
+                    magnetGrad.addColorStop(1, `rgba(100, 20, 100, ${magnetPulse * 0.5})`);
+                    ctx.fillStyle = magnetGrad;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2, s/3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Magnetic poles (N/S indicators)
+                    ctx.fillStyle = `rgba(255, 100, 100, ${magnetPulse})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + 5, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = `rgba(100, 100, 255, ${magnetPulse})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s - 5, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Outer glow
+                    ctx.fillStyle = `rgba(255, 100, 255, ${magnetPulse * 0.15})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2, s/2 + 3, 0, Math.PI * 2);
+                    ctx.fill();
                     break;
                     
                 case TILE.UNSTABLE:
