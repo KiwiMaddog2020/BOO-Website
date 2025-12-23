@@ -597,7 +597,7 @@
         .placement-tooltip {
             display: none;
             position: absolute;
-            bottom: 156px;
+            bottom: auto;
             left: 0;
             text-align: center;
             padding: 6px 14px;
@@ -629,7 +629,6 @@
         
         @media (max-width: 600px) {
             .placement-tooltip {
-                bottom: 136px;
                 font-size: 11px;
                 padding: 6px 12px;
                 border-width: 2px;
@@ -1877,7 +1876,7 @@
             color: #ffffff;
             animation: bounceArrow 1s ease-in-out infinite;
             opacity: 1;
-            transition: opacity 0.5s ease-out;
+            transition: opacity 0.3s ease-out;
             pointer-events: none;
             z-index: 9999;
         }
@@ -4219,6 +4218,8 @@
         // Leprechaun system - spawns once per 10-wave cycle on waves 7-10
         let leprechaunSpawnedThisCycle = false;
         let leprechaunAlive = false; // Track if leprechaun is currently on field
+        let leprechaunDamaged = false; // Track if leprechaun has been hit
+        let preleprechaunSpeed = 1; // Store game speed before leprechaun slowdown
         
         // Tower limit bonus (unused in classic, used in campaign for stage progression)
         let endlessTowerLimitBonus = 0;
@@ -4339,12 +4340,17 @@
             const barRect = towerBarEl.getBoundingClientRect();
             const containerRect = gameContainer.getBoundingClientRect();
             const tooltipWidth = placementTooltip.offsetWidth;
+            const tooltipHeight = placementTooltip.offsetHeight;
             
             // Calculate center of tower bar relative to game container
             const barCenterX = barRect.left + barRect.width / 2 - containerRect.left;
             const tooltipLeft = barCenterX - tooltipWidth / 2;
             
+            // Position tooltip 8px above tower bar (consistent gap)
+            const tooltipBottom = containerRect.bottom - barRect.top + 8;
+            
             placementTooltip.style.left = tooltipLeft + 'px';
+            placementTooltip.style.bottom = tooltipBottom + 'px';
             placementTooltip.style.transform = 'none';
         }
         
@@ -4655,6 +4661,8 @@
             // Reset leprechaun state
             leprechaunSpawnedThisCycle = false;
             leprechaunAlive = false;
+            leprechaunDamaged = false;
+            preleprechaunSpeed = 1;
             
             // Set starting map based on mode
             if (gameMode === 'campaign') {
@@ -5021,12 +5029,11 @@
                 type = 'fast';
             }
             
-            // Leprechaun spawn check - waves 7-10 of each 10-wave cycle
+            // Leprechaun spawn check - waves 8-10 of each 10-wave cycle
             const cycleWave = ((wave - 1) % 10) + 1; // 1-10 within cycle
-            if (!leprechaunSpawnedThisCycle && !leprechaunAlive && cycleWave >= 7) {
-                // Increasing chance: 5% at wave 7, 15% at 8, 35% at 9, 100% at 10
-                const leprechaunChance = cycleWave === 7 ? 0.05 : 
-                                         cycleWave === 8 ? 0.15 : 
+            if (!leprechaunSpawnedThisCycle && !leprechaunAlive && cycleWave >= 8) {
+                // Increasing chance: 15% at wave 8, 35% at 9, 100% at 10
+                const leprechaunChance = cycleWave === 8 ? 0.15 : 
                                          cycleWave === 9 ? 0.35 : 1.0;
                 if (Math.random() < leprechaunChance) {
                     type = 'leprechaun';
@@ -5114,6 +5121,15 @@
                 // Leprechaun escape: no penalty, just missed bonus
                 if (enemy.type === 'leprechaun') {
                     leprechaunAlive = false;
+                    leprechaunDamaged = false;
+                    // Resume previous game speed
+                    if (preleprechaunSpeed > 1) {
+                        gameSpeed = preleprechaunSpeed;
+                        const btn = document.getElementById('speedBtn');
+                        btn.textContent = '▶▶ ' + gameSpeed + 'x';
+                        btn.classList.add('active');
+                        preleprechaunSpeed = 1;
+                    }
                     createParticles(enemy.x, enemy.y, '#00ff66', 15);
                     createParticles(enemy.x, enemy.y, '#ffd700', 10);
                     return;
@@ -5164,6 +5180,18 @@
         function damageEnemy(enemy, damage, isCrit = false) {
             if (!enemy.alive) return;
             
+            // Slow down game speed when leprechaun is first damaged
+            if (enemy.type === 'leprechaun' && !leprechaunDamaged) {
+                leprechaunDamaged = true;
+                if (gameSpeed > 1) {
+                    preleprechaunSpeed = gameSpeed;
+                    gameSpeed = 1;
+                    const btn = document.getElementById('speedBtn');
+                    btn.textContent = '▶▶ ' + gameSpeed + 'x';
+                    btn.classList.remove('active');
+                }
+            }
+            
             enemy.health -= damage;
             createDamageNumber(enemy.x, enemy.y - enemy.size, damage, isCrit);
             
@@ -5178,6 +5206,15 @@
                 // Leprechaun death: special reward!
                 if (enemy.type === 'leprechaun') {
                     leprechaunAlive = false;
+                    leprechaunDamaged = false;
+                    // Resume previous game speed
+                    if (preleprechaunSpeed > 1) {
+                        gameSpeed = preleprechaunSpeed;
+                        const btn = document.getElementById('speedBtn');
+                        btn.textContent = '▶▶ ' + gameSpeed + 'x';
+                        btn.classList.add('active');
+                        preleprechaunSpeed = 1;
+                    }
                     createParticles(enemy.x, enemy.y, '#00ff66', 30);
                     createParticles(enemy.x, enemy.y, '#ffd700', 25);
                     createParticles(enemy.x, enemy.y, '#ffffff', 15);
@@ -5352,26 +5389,33 @@
             panel.classList.remove('move-mode');
             panel.classList.add('active');
             
-            // Show bouncing arrow for first tower placement
-            if (towers.length === 0) {
-                const arrow = document.getElementById('firstPlacementArrow');
-                if (arrow) {
-                    // Wait a frame for panel to render, then position arrow
-                    requestAnimationFrame(() => {
+            // Show bouncing arrow for tower placement
+            const arrow = document.getElementById('firstPlacementArrow');
+            if (arrow) {
+                // Wait a frame for panel and tooltip to render, then position arrow above tooltip
+                requestAnimationFrame(() => {
+                    const tooltip = document.getElementById('placementTooltip');
+                    if (tooltip && tooltip.classList.contains('active')) {
+                        const tooltipRect = tooltip.getBoundingClientRect();
+                        arrow.style.left = (tooltipRect.left + tooltipRect.width / 2 - 12) + 'px';
+                        arrow.style.top = (tooltipRect.top - 40) + 'px';
+                    } else {
+                        // Fallback to panel positioning if tooltip not visible
                         const panelRect = panel.getBoundingClientRect();
                         arrow.style.left = (panelRect.left + panelRect.width / 2 - 12) + 'px';
                         arrow.style.top = (panelRect.top - 83) + 'px';
-                        arrow.style.display = 'block';
-                        arrow.classList.remove('fade-out');
-                        // Fade out after 1 second
+                    }
+                    arrow.style.display = 'block';
+                    arrow.classList.remove('fade-out');
+                    // Fade out faster if towers already placed, slower for first tower
+                    const fadeDelay = towers.length === 0 ? 1000 : 400;
+                    setTimeout(() => {
+                        arrow.classList.add('fade-out');
                         setTimeout(() => {
-                            arrow.classList.add('fade-out');
-                            setTimeout(() => {
-                                arrow.style.display = 'none';
-                            }, 500);
-                        }, 1000);
-                    });
-                }
+                            arrow.style.display = 'none';
+                        }, 500);
+                    }, fadeDelay);
+                });
             }
         }
         
@@ -5526,6 +5570,15 @@
                 
                 // Set selectedTower in case it was deselected
                 selectedTower = type;
+                
+                // Immediately fade the arrow when placing
+                const arrow = document.getElementById('firstPlacementArrow');
+                if (arrow && arrow.style.display !== 'none') {
+                    arrow.classList.add('fade-out');
+                    setTimeout(() => {
+                        arrow.style.display = 'none';
+                    }, 300);
+                }
                 
                 placeTower(x, y);
             }
@@ -9211,6 +9264,26 @@
                     const shimmer = 0.5 + Math.sin(now / 120) * 0.5;
                     const shimmer2 = 0.5 + Math.sin(now / 80 + 2) * 0.5;
                     
+                    // Rainbow beam going up into the sky
+                    const rainbowColors = ['#ff0000', '#ff7700', '#ffff00', '#00ff00', '#0088ff', '#8800ff'];
+                    const beamWidth = s * 0.4;
+                    const beamTop = 0; // Top of canvas
+                    const beamBottom = ghostY - s * 1.2; // Just above the hat
+                    ctx.globalAlpha = 0.5 + shimmer * 0.3;
+                    for (let i = 0; i < rainbowColors.length; i++) {
+                        const offsetX = (i - 2.5) * (beamWidth / 6);
+                        ctx.strokeStyle = rainbowColors[i];
+                        ctx.lineWidth = beamWidth / 5;
+                        ctx.shadowColor = rainbowColors[i];
+                        ctx.shadowBlur = 8;
+                        ctx.beginPath();
+                        ctx.moveTo(x + offsetX, beamBottom);
+                        ctx.lineTo(x + offsetX * 0.3, beamTop);
+                        ctx.stroke();
+                    }
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 1;
+                    
                     // Gold sparkle ring
                     ctx.strokeStyle = '#ffd700';
                     ctx.lineWidth = 2;
@@ -9243,8 +9316,43 @@
                         ctx.fill();
                     }
                     
+                    // Leprechaun hat - drawn above ghost body
                     ctx.globalAlpha = 1;
                     ctx.shadowBlur = 0;
+                    const hatTop = ghostY - s * 1.2;
+                    const hatBrimY = ghostY - s * 0.55;
+                    const hatWidth = s * 1.1;
+                    const hatHeight = s * 0.7;
+                    
+                    // Hat body (green top hat)
+                    ctx.fillStyle = '#006600';
+                    ctx.beginPath();
+                    ctx.moveTo(x - hatWidth * 0.35, hatBrimY);
+                    ctx.lineTo(x - hatWidth * 0.3, hatTop);
+                    ctx.lineTo(x + hatWidth * 0.3, hatTop);
+                    ctx.lineTo(x + hatWidth * 0.35, hatBrimY);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Hat brim (wider dark green)
+                    ctx.fillStyle = '#004400';
+                    ctx.beginPath();
+                    ctx.ellipse(x, hatBrimY, hatWidth * 0.55, s * 0.12, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Gold buckle/band
+                    ctx.fillStyle = '#ffd700';
+                    ctx.shadowColor = '#ffd700';
+                    ctx.shadowBlur = 5;
+                    ctx.fillRect(x - hatWidth * 0.35, hatBrimY - hatHeight * 0.25, hatWidth * 0.7, s * 0.12);
+                    // Buckle square
+                    ctx.fillStyle = '#ffaa00';
+                    ctx.fillRect(x - s * 0.12, hatBrimY - hatHeight * 0.3, s * 0.24, s * 0.18);
+                    ctx.fillStyle = '#006600';
+                    ctx.fillRect(x - s * 0.06, hatBrimY - hatHeight * 0.23, s * 0.12, s * 0.08);
+                    
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 1;
                 }
                 
                 // Status effect outer glow
