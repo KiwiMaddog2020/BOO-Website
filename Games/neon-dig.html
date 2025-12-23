@@ -3429,20 +3429,22 @@
                 return TILE.MYSTERY_BLOCK;
             }
             
-            // Chain Crystal - spawns in veins (check if neighbor is chain crystal for higher chance)
+            // Chain Crystal - spawns in veins, post-processing ensures at least 2
             let chainChance = 0.002 + depthFactor * 0.001;
-            // Check left neighbor for chain clustering
-            if (x > 0 && world.length > 0) {
-                const lastRow = world[world.length - 1];
-                if (lastRow && lastRow[x - 1] === TILE.CHAIN_CRYSTAL) {
-                    chainChance = 0.4; // 40% chance to continue a vein horizontally
+            
+            // Check previous row for chain clustering (increases vein continuation chance)
+            if (world.length > 0) {
+                const prevRow = world[world.length - 1];
+                // Check if above tile is a chain crystal
+                if (prevRow && prevRow[x] === TILE.CHAIN_CRYSTAL) {
+                    chainChance = 0.4; // 40% chance to continue a vein vertically
                 }
-                // Check above neighbor too (if we have the row)
-                if (world.length > 1) {
-                    const aboveRow = world[world.length - 1];
-                    if (aboveRow && aboveRow[x] === TILE.CHAIN_CRYSTAL) {
-                        chainChance = Math.max(chainChance, 0.35); // 35% chance to continue vertically
-                    }
+                // Check diagonal neighbors too for more organic veins
+                if (prevRow && x > 0 && prevRow[x - 1] === TILE.CHAIN_CRYSTAL) {
+                    chainChance = Math.max(chainChance, 0.25);
+                }
+                if (prevRow && x < WORLD_WIDTH - 1 && prevRow[x + 1] === TILE.CHAIN_CRYSTAL) {
+                    chainChance = Math.max(chainChance, 0.25);
                 }
             }
             if (Math.random() < chainChance) {
@@ -3640,6 +3642,28 @@
                 for (let x = 0; x < WORLD_WIDTH; x++) {
                     row.push(generateTile(x, y));
                 }
+                
+                // Post-process: ensure chain crystals always have at least one partner
+                for (let x = 1; x < WORLD_WIDTH - 1; x++) {
+                    if (row[x] === TILE.CHAIN_CRYSTAL) {
+                        // Check if this crystal has any adjacent partner
+                        const hasLeftPartner = row[x - 1] === TILE.CHAIN_CRYSTAL;
+                        const hasRightPartner = row[x + 1] === TILE.CHAIN_CRYSTAL;
+                        const prevRow = world.length > 0 ? world[world.length - 1] : null;
+                        const hasAbovePartner = prevRow && prevRow[x] === TILE.CHAIN_CRYSTAL;
+                        
+                        if (!hasLeftPartner && !hasRightPartner && !hasAbovePartner) {
+                            // Isolated crystal - add a partner to the right if possible
+                            if (x + 1 < WORLD_WIDTH - 1 && row[x + 1] !== TILE.BEDROCK) {
+                                row[x + 1] = TILE.CHAIN_CRYSTAL;
+                            } else if (row[x - 1] !== TILE.BEDROCK) {
+                                // Can't go right, add to the left
+                                row[x - 1] = TILE.CHAIN_CRYSTAL;
+                            }
+                        }
+                    }
+                }
+                
                 world.push(row);
                 
                 const localY = world.length - 1;
