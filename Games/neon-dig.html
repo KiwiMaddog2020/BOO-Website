@@ -7198,14 +7198,31 @@
                 player.y += 1 * deltaMultiplier;
                 player.digging = false;
                 player.digTarget = null;
+                player.digProgress = 0;
             }
             // ===== SAFETY: Reset stuck digging state =====
             else if (player.digging && !player.digTarget) {
                 // Edge case: digging flag is true but no target - reset to prevent getting stuck
                 player.digging = false;
+                player.digProgress = 0;
             }
-            // ===== DIG CANCELLATION WHEN KEY RELEASED =====
+            // ===== SAFETY: Reset if target tile no longer exists =====
             else if (player.digging && player.digTarget) {
+                const checkTy = getWorldRow(player.digTarget.y);
+                const checkTile = (checkTy >= 0 && checkTy < world.length) ? 
+                    world[checkTy][player.digTarget.x] : TILE.AIR;
+                
+                // If target is now air or destroyed, cancel dig immediately
+                if (checkTile === TILE.AIR) {
+                    player.digging = false;
+                    player.digTarget = null;
+                    player.digProgress = 0;
+                    // Don't auto-continue here - let player initiate new dig
+                }
+            }
+            
+            // ===== DIG CANCELLATION WHEN KEY RELEASED =====
+            if (player.digging && player.digTarget) {
                 // Check if the direction key for current dig is still held
                 let keyStillHeld = false;
                 if (lastDigDirection === 'down' && keys.down) keyStillHeld = true;
@@ -7217,6 +7234,7 @@
                     // Key released - cancel dig
                     player.digging = false;
                     player.digTarget = null;
+                    player.digProgress = 0;
                 } else {
                     // Get tile being dug for heat calculation
                     const digTy = getWorldRow(player.digTarget.y);
@@ -7226,6 +7244,7 @@
                     if (digTile === TILE.AIR) {
                         player.digging = false;
                         player.digTarget = null;
+                        player.digProgress = 0;
                         // Try to continue in same direction
                         if (lastDigDirection) {
                             tryDigInDirection(lastDigDirection);
@@ -7257,6 +7276,7 @@
                             drillCooldownTimer = DRILL_COOLDOWN_FRAMES;
                             player.digging = false;
                             player.digTarget = null;
+                            player.digProgress = 0;
                             triggerScreenFlash('#ff4400', 0.4, 15);
                             screenShake = 8;
                             createFloatingText('🔥 OVERHEATED!', player.x + player.width/2, player.y - 20, '#ff4400');
@@ -7417,8 +7437,11 @@
                         fuel -= climbCost * deltaMultiplier;
                         updateFuelBar();
                         
-                        // Track unobstructed flight for hover mode
-                        if (!blocked) {
+                    // Track flight time for hover mode activation
+                        // Count time if: moving upward, digging, or blocked but about to auto-drill
+                        const movedUp = newY < player.y;
+                        const tryingToProgress = movedUp || player.digging || blocked;
+                        if (tryingToProgress) {
                             flightTimer += deltaMultiplier;
                             if (flightTimer >= HOVER_MODE_DELAY && !hoverMode) {
                                 hoverMode = true;
@@ -7446,7 +7469,11 @@
                 }
                 
                 // Gravity with acceleration (skip during slide animation or wall gripping)
-                if (!keys.up && !slideAnimation.active && !wallGripping) {
+                // Also skip gravity when holding L/R to dig - prevents dropping between blocks
+                const holdingHorizontalDig = (keys.left || keys.right) && 
+                    (player.digging || lastDigDirection === 'left' || lastDigDirection === 'right');
+                
+                if (!keys.up && !slideAnimation.active && !wallGripping && !holdingHorizontalDig) {
                     flightTimer = 0; // Reset flight timer when not holding up
                     blockedTimer = 0; // Reset blocked timer when not flying
                     
@@ -7503,6 +7530,9 @@
                     }
                 } else if (wallGripping) {
                     // Wall gripping - reset fall velocity to prevent accumulation
+                    player.vy = 0;
+                } else if (holdingHorizontalDig) {
+                    // Holding horizontal dig - reset fall velocity to prevent dropping
                     player.vy = 0;
                 } else {
                     // Flying up - reset fall velocity
