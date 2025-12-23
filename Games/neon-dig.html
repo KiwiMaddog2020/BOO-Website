@@ -2602,7 +2602,8 @@
         let rightDigMomentum = 0; // Track momentum for continuous right digging in hover
         const HOVER_MODE_DELAY = 20; // ~0.33 seconds of unobstructed flight
         const GROUNDED_EXIT_DELAY = 15; // ~0.25 seconds on ground to exit hover
-        const BLOCKED_DRILL_DELAY = 20; // ~0.33 seconds stuck to auto-drill
+        const BLOCKED_DRILL_DELAY = 30; // ~0.5 seconds stuck to auto-drill (upward)
+        const HORIZONTAL_DRILL_DELAY = 60; // ~1.0 seconds for left/right drilling
         const UP_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum after completing an upward dig
         const HORIZONTAL_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum for hover L/R drilling
         
@@ -3269,7 +3270,7 @@
             for (let y = 0; y < 200; y++) {
                 const row = [];
                 for (let x = 0; x < WORLD_WIDTH; x++) {
-                    row.push(generateTile(x, y));
+                    row.push(generateTile(x, y, row));
                 }
                 world.push(row);
                 
@@ -3363,7 +3364,7 @@
             }
         }
         
-        function generateTile(x, y) {
+        function generateTile(x, y, currentRow = null) {
             // Row 0-2: Air (above ground)
             if (y < 3) return TILE.AIR;
             
@@ -3398,11 +3399,43 @@
                 case BIOME.GEM_VEIN:
                     return generateGemVein(x, y, rand, depthFactor);
                 default:
-                    return generateNormalTile(x, y, rand, depthFactor);
+                    return generateNormalTile(x, y, rand, depthFactor, currentRow);
             }
         }
         
-        function generateNormalTile(x, y, rand, depthFactor) {
+        // Check if there's a magnet ore nearby (for spawn boosting)
+        function hasMagnetNearby(x, currentRow) {
+            const range = 3; // Check 3 tiles in each direction
+            
+            // Check current row (already generated tiles to the left)
+            if (currentRow) {
+                for (let dx = 1; dx <= range; dx++) {
+                    if (x - dx >= 0 && currentRow[x - dx] === TILE.MAGNET_ORE) return true;
+                }
+            }
+            
+            // Check previous row
+            if (world.length > 0) {
+                const prevRow = world[world.length - 1];
+                for (let dx = -range; dx <= range; dx++) {
+                    const checkX = x + dx;
+                    if (checkX >= 0 && checkX < WORLD_WIDTH && prevRow[checkX] === TILE.MAGNET_ORE) return true;
+                }
+            }
+            
+            // Check 2 rows up
+            if (world.length > 1) {
+                const prevRow2 = world[world.length - 2];
+                for (let dx = -range; dx <= range; dx++) {
+                    const checkX = x + dx;
+                    if (checkX >= 0 && checkX < WORLD_WIDTH && prevRow2[checkX] === TILE.MAGNET_ORE) return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        function generateNormalTile(x, y, rand, depthFactor, currentRow) {
             // Alien gem nodes - start at 100m, quota-limited
             const depth = y - 2;
             if (depth >= 100 && canSpawnAlienNode(depth)) {
@@ -3412,6 +3445,10 @@
                     return TILE.ALIEN_NODE;
                 }
             }
+            
+            // Check for magnet proximity boost (gems, chain crystals, bombs more likely near magnets)
+            const nearMagnet = hasMagnetNearby(x, currentRow);
+            const magnetBoost = nearMagnet ? 1.5 : 1.0; // 50% boost near magnets
             
             // Very rare upgrade chest - anti-clustered
             if (antiClusterRandom(0.00035 + depthFactor * 0.000175, 'upgradeChest')) {
@@ -3429,8 +3466,8 @@
                 return TILE.MYSTERY_BLOCK;
             }
             
-            // Chain Crystal - spawns in veins, post-processing ensures at least 2
-            let chainChance = 0.002 + depthFactor * 0.001;
+            // Chain Crystal - spawns in veins, boosted near magnets
+            let chainChance = (0.002 + depthFactor * 0.001) * magnetBoost;
             
             // Check previous row for chain clustering (increases vein continuation chance)
             if (world.length > 0) {
@@ -3466,7 +3503,9 @@
                 return TILE.MAGNET_ORE;
             }
             
-            if (rand < 0.01125 + depthFactor * 0.006) return TILE.BOMB;
+            // Bombs - boosted near magnets
+            const bombChance = (0.01125 + depthFactor * 0.006) * magnetBoost;
+            if (rand < bombChance) return TILE.BOMB;
             if (rand < 0.04 + depthFactor * 0.03) return TILE.UNSTABLE;
             
             // Fuel canisters - anti-clustered with quota limit and spatial check
@@ -3482,8 +3521,8 @@
             if (rand < hardRockChance) return TILE.HARD_ROCK;
             if (rand < hardRockChance + rockChance) return TILE.ROCK;
             
-            // Gems - anti-clustered
-            if (antiClusterRandom(0.10, 'gem')) {
+            // Gems - anti-clustered, boosted near magnets
+            if (antiClusterRandom(0.10 * magnetBoost, 'gem')) {
                 return selectGemType(depthFactor);
             }
             
@@ -3640,7 +3679,7 @@
                 const y = world.length + worldRowOffset;
                 const row = [];
                 for (let x = 0; x < WORLD_WIDTH; x++) {
-                    row.push(generateTile(x, y));
+                    row.push(generateTile(x, y, row));
                 }
                 
                 // Post-process: ensure chain crystals always have at least one partner
@@ -7388,13 +7427,12 @@
                                 
                                 // Don't drill in sky rows
                                 if (absoluteTy >= FIRST_DIGGABLE_ROW) {
-                                    // In hover mode, use delay before drilling (or momentum to skip)
                                     if (hoverMode) {
+                                        // In hover mode: 1s delay OR momentum to drill horizontally
                                         if (dx > 0) {
                                             blockedTimerRight += deltaMultiplier;
-                                            // Only use momentum if we were already drilling right (not transitioning from up)
                                             const hasRightMomentum = rightDigMomentum > 0 && lastDigDirection === 'right';
-                                            if (hasRightMomentum || blockedTimerRight >= BLOCKED_DRILL_DELAY) {
+                                            if (hasRightMomentum || blockedTimerRight >= HORIZONTAL_DRILL_DELAY) {
                                                 lastDigDirection = 'right';
                                                 const checkX = newX + player.width;
                                                 const tx = Math.floor(checkX / TILE_SIZE);
@@ -7403,9 +7441,8 @@
                                             }
                                         } else {
                                             blockedTimerLeft += deltaMultiplier;
-                                            // Only use momentum if we were already drilling left (not transitioning from up)
                                             const hasLeftMomentum = leftDigMomentum > 0 && lastDigDirection === 'left';
-                                            if (hasLeftMomentum || blockedTimerLeft >= BLOCKED_DRILL_DELAY) {
+                                            if (hasLeftMomentum || blockedTimerLeft >= HORIZONTAL_DRILL_DELAY) {
                                                 lastDigDirection = 'left';
                                                 const checkX = newX;
                                                 const tx = Math.floor(checkX / TILE_SIZE);
@@ -7414,7 +7451,7 @@
                                             }
                                         }
                                     } else {
-                                        // Not hovering - drill immediately
+                                        // Not hovering - drill immediately (0s delay)
                                         if (dx > 0) {
                                             lastDigDirection = 'right';
                                             const checkX = newX + player.width;
@@ -7469,12 +7506,16 @@
                     // Handle blocked state - track time and eventually drill
                     if (blocked) {
                         blockedTimer += deltaMultiplier;
-                        // After 0.33s stuck (or immediately with momentum), drill upward
                         const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
                         const hasUpMomentum = upDigMomentum > 0;
-                        const delayMet = hasUpMomentum || blockedTimer >= BLOCKED_DRILL_DELAY;
                         
-                        if (delayMet && !player.digging && absoluteTy >= FIRST_DIGGABLE_ROW) {
+                        // In hover mode: 0.5s delay OR momentum to drill upward
+                        // Not in hover mode: drill immediately (0s delay)
+                        const canDrill = hoverMode ? 
+                            (hasUpMomentum || blockedTimer >= BLOCKED_DRILL_DELAY) : 
+                            true; // Always can drill immediately when not hovering
+                        
+                        if (canDrill && !player.digging && absoluteTy >= FIRST_DIGGABLE_ROW) {
                             lastDigDirection = 'up';
                             const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
                             dig(tx, absoluteTy);
