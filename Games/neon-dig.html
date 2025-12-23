@@ -417,14 +417,14 @@
             justify-content: center;
             align-items: center;
             width: 100%;
-            height: 100px;
-            min-height: 100px;
-            padding: 10px 16px 14px;
+            height: 50px;
+            min-height: 50px;
+            padding: 4px 16px 6px;
             touch-action: none;
             pointer-events: auto;
             background: linear-gradient(180deg, rgba(5, 12, 20, 0.9) 0%, rgba(2, 8, 15, 0.95) 100%);
             border-top: 1px solid rgba(0, 240, 255, 0.08);
-            gap: 8px;
+            gap: 2px;
             order: 2;
         }
 
@@ -1964,7 +1964,7 @@
         
         <button class="surface-upgrade-btn" id="surfaceUpgradeBtn">UPGRADES</button>
 
-        <canvas id="gameCanvas" width="560" height="500"></canvas>
+        <canvas id="gameCanvas" width="560" height="550"></canvas>
 
         <div class="control-zone" id="controlZone">
             <div class="control-instructions" id="controlInstructions">Arrow Keys / WASD • Swipe on mobile</div>
@@ -2262,7 +2262,7 @@
         
         // Base canvas dimensions (logical size) - widened for modern screens
         const BASE_WIDTH = 560;  // 20 tiles × 28px
-        const BASE_HEIGHT = 500;
+        const BASE_HEIGHT = 550;
         let renderScale = 1;
         
         // iOS canvas memory limit: 16,777,216 pixels max (approx 4096x4096)
@@ -2333,7 +2333,7 @@
             GATE: 17,        // Locked gate requiring boss key
             ALIEN_NODE: 18,  // Alien gem node - drops multiple gems
             CHAIN_CRYSTAL: 19, // Breaks adjacent chain crystals in chain reaction
-            BOUNCE_PAD: 20,    // Launches player upward
+            BOUNCE_PAD: 20,    // Up Charge - clears blocks above
             MYSTERY_BLOCK: 21, // Random reward when broken
             DEPTH_CHARGE: 22,  // Clears 5 blocks below when broken
             MAGNET_ORE: 23     // Pulls nearby gems toward player
@@ -2403,6 +2403,10 @@
         const shopScoreEl = document.getElementById('shopScore');
         const surfaceUpgradeBtn = document.getElementById('surfaceUpgradeBtn');
         const pointsEl = document.getElementById('points');
+        
+        // Keys display elements
+        const keysDisplayEl = document.getElementById('keysDisplay');
+        const keysContainerEl = document.getElementById('keysContainer');
         
         let WORLD_WIDTH = 20; // Will be updated on resize
         
@@ -2538,22 +2542,19 @@
         }
         
         function updateKeysDisplay() {
-            const keysDisplay = document.getElementById('keysDisplay');
-            const keysContainer = document.getElementById('keysContainer');
-            
             if (bossKeys.length === 0) {
-                keysDisplay.style.display = 'none';
+                keysDisplayEl.style.display = 'none';
                 return;
             }
             
-            keysDisplay.style.display = 'flex';
-            keysContainer.innerHTML = '';
+            keysDisplayEl.style.display = 'flex';
+            keysContainerEl.innerHTML = '';
             
             for (const keyDepth of bossKeys) {
                 const keyEl = document.createElement('div');
                 keyEl.className = 'alien-key';
                 keyEl.innerHTML = `<span class="key-depth">${keyDepth}m</span>`;
-                keysContainer.appendChild(keyEl);
+                keysContainerEl.appendChild(keyEl);
             }
         }
         
@@ -2740,7 +2741,7 @@
         function recordAlienNodeSpawn(depth) {
             const band = Math.floor(depth / 100) * 100;
             alienNodeCounts[band] = (alienNodeCounts[band] || 0) + 1;
-            console.log(`Alien node spawned at depth ${depth} (band ${band}). Count: ${alienNodeCounts[band]}/${getAlienNodeQuotaForBand(band)}`);
+            // Alien node spawned at depth (debug removed for production)
         }
         
         function initBossSystem() {
@@ -2764,7 +2765,7 @@
                 portalLocations.push({ depth: portalDepth, tx: null, spawned: false });
                 gateLocations.push({ depth: gateDepth, forBossDepth: portalDepth, spawned: false });
             }
-            console.log('Boss system initialized. Portal depths:', portalLocations.map(p => p.depth));
+            // Boss system initialized (debug removed for production)
         }
         
         function getBossTypeForDepth(depth) {
@@ -2808,10 +2809,74 @@
                 direction: Math.random() < 0.5 ? -1 : 1, // For beetles/slugs
                 health: 1,
                 damage: type === ENEMY_TYPE.LAVA_SLUG ? 15 : 8,
-                inGround: type === ENEMY_TYPE.WORM, // Worms burrow through ground
+                inGround: false, // Enemies now spawn on surface
                 animFrame: 0
             };
             enemies.push(enemy);
+        }
+        
+        // Find a valid surface spawn position (AIR tile with solid ground below, outside player view)
+        function findSurfaceSpawnPosition(aroundTx, aroundTy, searchRadius) {
+            const cameraTopRow = Math.floor(cameraY / TILE_SIZE);
+            const cameraBottomRow = Math.ceil((cameraY + BASE_HEIGHT) / TILE_SIZE);
+            
+            // Search for valid positions
+            for (let attempt = 0; attempt < 20; attempt++) {
+                const offsetX = Math.floor(Math.random() * (searchRadius * 2 + 1)) - searchRadius;
+                const offsetY = Math.floor(Math.random() * searchRadius) + 2; // Always spawn below
+                
+                const testTx = aroundTx + offsetX;
+                const testAbsTy = aroundTy + worldRowOffset + offsetY;
+                const testLocalTy = testAbsTy - worldRowOffset;
+                
+                // Must be outside player view (below camera bottom)
+                if (testAbsTy <= cameraBottomRow + 2) continue;
+                
+                // Check bounds
+                if (testTx < 1 || testTx >= WORLD_WIDTH - 1) continue;
+                if (testLocalTy < 0 || testLocalTy >= world.length - 1) continue;
+                
+                // Check for valid surface: AIR tile with solid ground below
+                const tileHere = world[testLocalTy][testTx];
+                const tileBelow = world[testLocalTy + 1] ? world[testLocalTy + 1][testTx] : TILE.AIR;
+                
+                // Must be standing in AIR with solid block below (not air, not lava for beetles)
+                if (tileHere === TILE.AIR && tileBelow !== TILE.AIR && tileBelow !== TILE.LAVA &&
+                    tileBelow !== TILE.PORTAL && tileBelow !== TILE.PORTAL_PART) {
+                    return { tx: testTx, ty: testLocalTy };
+                }
+            }
+            
+            return null; // No valid position found
+        }
+        
+        // Find surface spawn for lava slugs (can walk on lava)
+        function findLavaSurfaceSpawnPosition(aroundTx, aroundTy, searchRadius) {
+            const cameraBottomRow = Math.ceil((cameraY + BASE_HEIGHT) / TILE_SIZE);
+            
+            for (let attempt = 0; attempt < 20; attempt++) {
+                const offsetX = Math.floor(Math.random() * (searchRadius * 2 + 1)) - searchRadius;
+                const offsetY = Math.floor(Math.random() * searchRadius) + 2;
+                
+                const testTx = aroundTx + offsetX;
+                const testAbsTy = aroundTy + worldRowOffset + offsetY;
+                const testLocalTy = testAbsTy - worldRowOffset;
+                
+                if (testAbsTy <= cameraBottomRow + 2) continue;
+                if (testTx < 1 || testTx >= WORLD_WIDTH - 1) continue;
+                if (testLocalTy < 0 || testLocalTy >= world.length - 1) continue;
+                
+                const tileHere = world[testLocalTy][testTx];
+                const tileBelow = world[testLocalTy + 1] ? world[testLocalTy + 1][testTx] : TILE.AIR;
+                
+                // Lava slugs can stand on any solid including lava
+                if (tileHere === TILE.AIR && tileBelow !== TILE.AIR &&
+                    tileBelow !== TILE.PORTAL && tileBelow !== TILE.PORTAL_PART) {
+                    return { tx: testTx, ty: testLocalTy };
+                }
+            }
+            
+            return null;
         }
         
         // Upgrade intervals for cleanup
@@ -2898,7 +2963,7 @@
             upgradeChest: -100,  // Tile index of last upgrade chest spawn
             mystery: -100,       // Mystery blocks
             chainCrystal: -100,  // Chain crystals
-            bouncePad: -100,     // Bounce pads
+            bouncePad: -100,     // Up charges
             depthCharge: -100,   // Depth charges
             magnetOre: -100,     // Magnet ore
             currentTile: 0       // Current tile being generated
@@ -2912,13 +2977,25 @@
             upgradeChest: 40,  // Upgrade chests very spread out
             mystery: 15,       // Mystery blocks moderately spaced
             chainCrystal: 8,   // Chain crystals can cluster a bit (it's fun!)
-            bouncePad: 25,     // Bounce pads well spaced
+            bouncePad: 25,     // Up charges well spaced
             depthCharge: 20,   // Depth charges spread out
             magnetOre: 18      // Magnet ore moderately spaced
         };
         
-        // Anti-clustering: only REDUCES chance if item spawned recently
-        // Never increases chance - preserves original spawn rates on average
+        // GOOD LUCK PROTECTION - Pity windows (tiles without item before chance ramps up)
+        // After this many tiles without finding one, spawn chance starts increasing
+        const PITY_WINDOWS = {
+            chest: 150,         // Pity kicks in after ~150 tiles without a chest
+            upgradeChest: 400,  // Very rare, long pity window
+            mystery: 200,       // Mystery blocks have medium pity
+            bouncePad: 300,     // Up charges are rare, longer pity
+            depthCharge: 250,   // Medium pity window
+            magnetOre: 200      // Medium pity window
+            // Note: gems, fuel, chainCrystal intentionally excluded (no pity needed)
+        };
+        
+        // Anti-clustering: REDUCES chance if item spawned recently
+        // Pity system: INCREASES chance if item hasn't spawned in a long time
         function antiClusterRandom(baseChance, itemType) {
             const tilesSinceLast = spawnHistory.currentTile - spawnHistory[itemType];
             const window = CLUSTER_WINDOWS[itemType] || 10;
@@ -2931,7 +3008,18 @@
                 // At window: 100% of normal chance (no modification)
                 modifier = 0.1 + 0.9 * (tilesSinceLast / window);
             }
-            // Never boost above 1.0 - this only prevents clustering
+            
+            // GOOD LUCK PROTECTION (Pity system)
+            // If player hasn't seen this item in a long time, boost the chance
+            const pityWindow = PITY_WINDOWS[itemType];
+            if (pityWindow && tilesSinceLast > pityWindow) {
+                // Ramp up chance the longer they go without finding one
+                // At pity window: 100% normal
+                // At 2x pity window: 200% chance
+                // At 3x pity window: 300% chance (capped)
+                const pityMultiplier = Math.min(1 + (tilesSinceLast - pityWindow) / pityWindow, 3);
+                modifier = Math.max(modifier, pityMultiplier);
+            }
             
             const result = Math.random() < (baseChance * modifier);
             
@@ -2972,6 +3060,10 @@
         // ==================== PARTICLES (Object Pool) ====================
         let particles = [];
         let floatingTexts = [];
+        let floatingTextQueue = []; // Queue for staggered text display
+        let floatingTextQueueTimer = 0; // Timer for queue processing
+        let lastTextShowTime = -100; // Track when we last showed a text directly
+        const FLOATING_TEXT_QUEUE_DELAY = 30; // ~0.5 seconds at 60fps
         let ambientParticles = [];
         let bgStars = [];
         
@@ -3185,7 +3277,6 @@
                     
                     // Spawn portal when we've generated the SECOND row (so both rows exist)
                     if (y === portalRow + 1 && y < 200) {
-                        console.log(`generateWorld: SPAWNING PORTAL at depth ${portal.depth}, row ${portalRow}`);
                         const portalTx = Math.floor(WORLD_WIDTH / 2) - 1;
                         portal.tx = portalTx;
                         portal.spawned = true;
@@ -3208,7 +3299,6 @@
                     const gateRow = gate.depth + 2;
                     
                     if (y === gateRow) {
-                        console.log(`generateWorld: SPAWNING GATE at depth ${gate.depth}, row ${gateRow}, forBoss ${gate.forBossDepth}`);
                         gate.spawned = true;
                         for (let x = 1; x < WORLD_WIDTH - 1; x++) {
                             world[y][x] = TILE.GATE;
@@ -3354,8 +3444,8 @@
                 return TILE.CHAIN_CRYSTAL;
             }
             
-            // Bounce Pad - rare (fuel-free ascent)
-            if (depth >= 20 && antiClusterRandom(0.0015, 'bouncePad')) {
+            // Up Charge - rare (clears blocks above)
+            if (depth >= 30 && antiClusterRandom(0.0012 + depthFactor * 0.0006, 'bouncePad')) {
                 return TILE.BOUNCE_PAD;
             }
             
@@ -3386,7 +3476,7 @@
             if (rand < hardRockChance + rockChance) return TILE.ROCK;
             
             // Gems - anti-clustered
-            if (antiClusterRandom(0.084, 'gem')) {
+            if (antiClusterRandom(0.10, 'gem')) {
                 return selectGemType(depthFactor);
             }
             
@@ -3560,7 +3650,6 @@
                     
                     // Spawn portal when we've generated the SECOND row (so both rows exist)
                     if (y === portalRow + 1) {
-                        console.log(`SPAWNING PORTAL at depth ${portal.depth}, row ${portalRow}, y=${y}`);
                         const portalTx = Math.floor(WORLD_WIDTH / 2) - 1;
                         portal.tx = portalTx;
                         portal.spawned = true;
@@ -3591,32 +3680,41 @@
                     if (y === gateRow) {
                         // Full width gate barrier (except edge bedrock)
                         gate.spawned = true;
-                        console.log(`SPAWNING GATE at depth ${gate.depth}, row ${gateRow}, localY ${localY}, forBoss ${gate.forBossDepth}`);
                         for (let x = 1; x < WORLD_WIDTH - 1; x++) {
                             world[localY][x] = TILE.GATE;
                         }
                     }
                 }
                 
-                // Try to spawn enemies in this new row
+                // Try to spawn enemies on surfaces (not inside blocks)
                 const depthM = Math.max(0, y - 2); // Depth in tiles/meters
                 const spawnChances = getEnemySpawnChance(depthM, currentBiome);
                 
-                for (let x = 0; x < WORLD_WIDTH; x++) {
-                    const tile = world[localY][x];
-                    
-                    // Worms spawn in dirt/rock
-                    if ((tile === TILE.DIRT || tile === TILE.ROCK) && Math.random() < spawnChances.worm) {
-                        spawnEnemy(ENEMY_TYPE.WORM, x, localY);
+                // Spawn beetles (early game)
+                if (Math.random() < spawnChances.beetle * WORLD_WIDTH * 0.3) {
+                    const spawnPos = findSurfaceSpawnPosition(Math.floor(WORLD_WIDTH / 2), localY, 8);
+                    if (spawnPos) {
+                        spawnEnemy(ENEMY_TYPE.BEETLE, spawnPos.tx, spawnPos.ty);
                         if (!firstEnemySpawned) firstEnemySpawned = true;
                         else if (!secondEnemySpawned) secondEnemySpawned = true;
                     }
-                    // Beetles spawn in air (tunnels) - but we don't have tunnels yet at generation
-                    // They'll spawn when tiles are dug
-                    
-                    // Lava slugs spawn on lava tiles
-                    if (tile === TILE.LAVA && Math.random() < spawnChances.lava_slug) {
-                        spawnEnemy(ENEMY_TYPE.LAVA_SLUG, x, localY);
+                }
+                
+                // Spawn worms (deeper game - faster, green variant)
+                if (Math.random() < spawnChances.worm * WORLD_WIDTH * 0.3) {
+                    const spawnPos = findSurfaceSpawnPosition(Math.floor(WORLD_WIDTH / 2), localY, 8);
+                    if (spawnPos) {
+                        spawnEnemy(ENEMY_TYPE.WORM, spawnPos.tx, spawnPos.ty);
+                        if (!firstEnemySpawned) firstEnemySpawned = true;
+                        else if (!secondEnemySpawned) secondEnemySpawned = true;
+                    }
+                }
+                
+                // Lava slugs spawn on lava surfaces
+                if (Math.random() < spawnChances.lava_slug * WORLD_WIDTH * 0.3) {
+                    const spawnPos = findLavaSurfaceSpawnPosition(Math.floor(WORLD_WIDTH / 2), localY, 8);
+                    if (spawnPos) {
+                        spawnEnemy(ENEMY_TYPE.LAVA_SLUG, spawnPos.tx, spawnPos.ty);
                         if (!firstEnemySpawned) firstEnemySpawned = true;
                         else if (!secondEnemySpawned) secondEnemySpawned = true;
                     }
@@ -3782,7 +3880,7 @@
             const shopDigBonus = 1 + getShopBonus('digSpeed') / 100;
             const speedMultiplier = 1 + getEffectiveUpgrade('digSpeed', 300) / 100;
             const feverBonus = feverMode ? 1.5 : 1;
-            const totalSpeed = speedMultiplier * feverBonus * shopDigBonus;
+            const totalSpeed = speedMultiplier * feverBonus * shopDigBonus * 0.95; // 5% slower base
             
             let digTime = 0.66 / totalSpeed; // Base dig time (10% faster)
             
@@ -4164,6 +4262,119 @@
         }
         
         // Depth Charge - clears 5 blocks directly below
+        // Up Charge - clears 7 blocks directly above
+        function triggerUpCharge(tx, startAbsTY) {
+            const centerX = tx * TILE_SIZE + TILE_SIZE/2;
+            let blocksCleared = 0;
+            let totalValue = 0;
+            
+            createFloatingText('▲▲▲ UP CHARGE ▲▲▲', centerX, startAbsTY * TILE_SIZE - 10, '#50ff64');
+            
+            // Clear 7 blocks above
+            for (let i = 1; i <= 7; i++) {
+                const targetAbsTY = startAbsTY - i;
+                const targetTY = getWorldRow(targetAbsTY);
+                
+                // Don't clear sky rows
+                if (targetAbsTY < FIRST_DIGGABLE_ROW) break;
+                if (targetTY < 0 || targetTY >= world.length) continue;
+                
+                const tile = world[targetTY][tx];
+                const tileCenterX = tx * TILE_SIZE + TILE_SIZE/2;
+                const tileCenterY = targetAbsTY * TILE_SIZE + TILE_SIZE/2;
+                
+                // Truly unbreakable - always stop
+                if (tile === TILE.BEDROCK || tile === TILE.PORTAL || 
+                    tile === TILE.PORTAL_PART || tile === TILE.GATE) {
+                    break;
+                }
+                
+                // Skip air
+                if (tile === TILE.AIR) continue;
+                
+                // Hard rock: break on first block, stop on subsequent
+                if (tile === TILE.HARD_ROCK) {
+                    if (blocksCleared === 0) {
+                        // First block - break through hard rock
+                        world[targetTY][tx] = TILE.AIR;
+                        blocksCleared++;
+                        for (let j = 0; j < 4; j++) {
+                            particles.push({
+                                x: tileCenterX + (Math.random() - 0.5) * 10,
+                                y: tileCenterY,
+                                vx: (Math.random() - 0.5) * 3,
+                                vy: -2 - Math.random() * 3,
+                                size: 3 + Math.random() * 3,
+                                color: Math.random() < 0.5 ? '#44ff44' : '#aaffaa',
+                                life: 0.5,
+                                type: 'explosion'
+                            });
+                        }
+                        continue;
+                    } else {
+                        // Subsequent blocks - stop at hard rock
+                        break;
+                    }
+                }
+                
+                // Collect gems
+                if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
+                    let baseValue = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
+                    const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
+                    const value = Math.floor(baseValue * (1 + totalGemBonus / 100) * getComboMultiplier());
+                    totalValue += value;
+                    addCombo();
+                    const color = tile === TILE.GEM_EPIC ? '#ff9500' : tile === TILE.GEM_RARE ? '#ff00ff' : '#00f0ff';
+                    createGemParticles(tileCenterX, tileCenterY, color);
+                }
+                
+                // Collect fuel
+                if (tile === TILE.FUEL) {
+                    const fuelGain = 10;
+                    fuel = Math.min(fuel + fuelGain, maxFuel);
+                    createParticles(tileCenterX, tileCenterY, '#ff9500', 6);
+                }
+                
+                // Trigger chain crystals
+                if (tile === TILE.CHAIN_CRYSTAL) {
+                    triggerChainCrystalExplosion(tx, targetAbsTY);
+                }
+                
+                // Trigger bombs
+                if (tile === TILE.BOMB) {
+                    explodeBomb(tx, targetAbsTY);
+                }
+                
+                world[targetTY][tx] = TILE.AIR;
+                blocksCleared++;
+                
+                // Upward explosion particles
+                for (let j = 0; j < 4; j++) {
+                    particles.push({
+                        x: tileCenterX + (Math.random() - 0.5) * 10,
+                        y: tileCenterY,
+                        vx: (Math.random() - 0.5) * 3,
+                        vy: -2 - Math.random() * 3,
+                        size: 3 + Math.random() * 3,
+                        color: Math.random() < 0.5 ? '#44ff44' : '#aaffaa',
+                        life: 0.5,
+                        type: 'explosion'
+                    });
+                }
+            }
+            
+            if (totalValue > 0) {
+                score += totalValue;
+                updateScoreDisplay();
+                createFloatingText(`+${totalValue}`, centerX, (startAbsTY - 3) * TILE_SIZE, '#ffff00');
+            }
+            
+            triggerScreenFlash('#50ff64', 0.3, 12);
+            screenShake = 8;
+            updateFuelBar();
+        }
+        
+        // Depth Charge - clears 5 blocks directly below
         function triggerDepthCharge(tx, startAbsTY) {
             const centerX = tx * TILE_SIZE + TILE_SIZE/2;
             let blocksCleared = 0;
@@ -4171,8 +4382,8 @@
             
             createFloatingText('▼▼▼ DEPTH CHARGE ▼▼▼', centerX, startAbsTY * TILE_SIZE - 10, '#ff6644');
             
-            // Clear 5 blocks below
-            for (let i = 1; i <= 5; i++) {
+            // Clear 7 blocks below
+            for (let i = 1; i <= 7; i++) {
                 const targetAbsTY = startAbsTY + i;
                 const targetTY = getWorldRow(targetAbsTY);
                 
@@ -4182,12 +4393,38 @@
                 const tileCenterX = tx * TILE_SIZE + TILE_SIZE/2;
                 const tileCenterY = targetAbsTY * TILE_SIZE + TILE_SIZE/2;
                 
-                // Can't destroy bedrock, portals, gates, or hard rock
+                // Truly unbreakable - always stop
                 if (tile === TILE.BEDROCK || tile === TILE.PORTAL || 
-                    tile === TILE.PORTAL_PART || tile === TILE.GATE || 
-                    tile === TILE.HARD_ROCK || tile === TILE.AIR) {
-                    if (tile !== TILE.AIR) break; // Stop at obstacles
-                    continue;
+                    tile === TILE.PORTAL_PART || tile === TILE.GATE) {
+                    break;
+                }
+                
+                // Skip air
+                if (tile === TILE.AIR) continue;
+                
+                // Hard rock: break on first block, stop on subsequent
+                if (tile === TILE.HARD_ROCK) {
+                    if (blocksCleared === 0) {
+                        // First block - break through hard rock
+                        world[targetTY][tx] = TILE.AIR;
+                        blocksCleared++;
+                        for (let j = 0; j < 4; j++) {
+                            particles.push({
+                                x: tileCenterX + (Math.random() - 0.5) * 10,
+                                y: tileCenterY,
+                                vx: (Math.random() - 0.5) * 3,
+                                vy: 2 + Math.random() * 3,
+                                size: 3 + Math.random() * 3,
+                                color: Math.random() < 0.5 ? '#ff4400' : '#ffaa00',
+                                life: 0.5,
+                                type: 'explosion'
+                            });
+                        }
+                        continue;
+                    } else {
+                        // Subsequent blocks - stop at hard rock
+                        break;
+                    }
                 }
                 
                 // Collect gems
@@ -4249,7 +4486,7 @@
         
         // Magnet Ore - pulls all gems within 3 tiles toward player
         function triggerMagnetPull(centerTX, centerAbsTY) {
-            const MAGNET_RANGE = 3;
+            const MAGNET_RANGE = 5; // Increased range for better pull effect
             let gemsCollected = 0;
             let totalValue = 0;
             
@@ -4270,8 +4507,8 @@
                     if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
                         let baseValue = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
                         const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
-                        const value = Math.floor(baseValue * (1 + totalGemBonus / 100) * getComboMultiplier());
-                        if (feverMode) baseValue = Math.floor(value * 1.5);
+                        let value = Math.floor(baseValue * (1 + totalGemBonus / 100) * getComboMultiplier());
+                        if (feverMode) value = Math.floor(value * 1.5);
                         totalValue += value;
                         gemsCollected++;
                         addCombo();
@@ -4317,17 +4554,18 @@
                 screenShake = 3;
             }
             
-            // Magnetic field effect particles
-            for (let i = 0; i < 12; i++) {
-                const angle = (i / 12) * Math.PI * 2;
+            // Magnetic field effect particles - match the pull range
+            const particleRadius = 5 * TILE_SIZE; // Match MAGNET_RANGE
+            for (let i = 0; i < 16; i++) {
+                const angle = (i / 16) * Math.PI * 2;
                 particles.push({
-                    x: centerX + Math.cos(angle) * 30,
-                    y: centerAbsTY * TILE_SIZE + TILE_SIZE/2 + Math.sin(angle) * 30,
-                    vx: -Math.cos(angle) * 3,
-                    vy: -Math.sin(angle) * 3,
-                    size: 2 + Math.random() * 2,
+                    x: centerX + Math.cos(angle) * particleRadius,
+                    y: centerAbsTY * TILE_SIZE + TILE_SIZE/2 + Math.sin(angle) * particleRadius,
+                    vx: -Math.cos(angle) * 5,
+                    vy: -Math.sin(angle) * 5,
+                    size: 3 + Math.random() * 2,
                     color: '#ff66ff',
-                    life: 0.5,
+                    life: 0.6,
                     type: 'gem'
                 });
             }
@@ -4506,7 +4744,7 @@
             unstableTiles.push({
                 tx: tx,
                 absoluteTy: absoluteTy,
-                timer: 45, // ~0.75 seconds to break before collapse
+                timer: 75, // ~1.25 seconds to break before collapse
                 warned: false
             });
         }
@@ -4742,21 +4980,16 @@
                 return;
             }
             
-            // ===== BOUNCE PAD =====
+            // ===== UP CHARGE =====
             if (tile === TILE.BOUNCE_PAD) {
-                // Launch player upward (4-5 tiles)
-                player.vy = -12; // Strong upward velocity
-                player.y -= 5; // Small initial boost
-                
-                createFloatingText('⬆️ BOUNCE!', tileCenterX, worldY - 10, '#50ff64');
-                createParticles(tileCenterX, tileCenterY, '#50ff64', 15);
-                triggerScreenFlash('#50ff64', 0.2, 8);
-                screenShake = 4;
-                
-                // Give small score bonus
-                score += 5;
-                updateScoreDisplay();
-                addCombo();
+                world[ty][tx] = TILE.AIR;
+                triggerUpCharge(tx, absoluteTy);
+                player.digging = false;
+                player.digTarget = null;
+                if (!fromMagnet && lastDigDirection) {
+                    tryDigInDirection(lastDigDirection);
+                }
+                return;
             }
             
             // ===== MYSTERY BLOCK =====
@@ -4764,8 +4997,8 @@
                 world[ty][tx] = TILE.AIR;
                 const roll = Math.random();
                 
-                if (roll < 0.50) {
-                    // 50% - Random gem
+                if (roll < 0.40) {
+                    // 40% - Random gem
                     const gemRoll = Math.random();
                     let gemValue, gemColor, gemName;
                     if (gemRoll < 0.1) {
@@ -4783,19 +5016,31 @@
                     createFloatingText(`🎲 ${gemName}! +${gemValue}`, tileCenterX, worldY - 10, gemColor);
                     createGemParticles(tileCenterX, tileCenterY, gemColor);
                     addCombo();
-                } else if (roll < 0.70) {
-                    // 20% - Fuel
-                    const fuelGain = 15 + Math.floor(Math.random() * 10);
+                } else if (roll < 0.50) {
+                    // 10% - Fuel
+                    const fuelGain = 7 + Math.floor(Math.random() * 5);
                     fuel = Math.min(fuel + fuelGain, maxFuel);
                     updateFuelBar();
                     createFloatingText(`🎲 FUEL! +${fuelGain}`, tileCenterX, worldY - 10, '#ff9500');
                     createParticles(tileCenterX, tileCenterY, '#ff9500', 12);
-                } else if (roll < 0.82) {
-                    // 12% - Nothing (dud)
+                } else if (roll < 0.60) {
+                    // 10% - Magnet effect!
+                    createFloatingText('🎲 MAGNET!', tileCenterX, worldY - 10, '#ff66ff');
+                    triggerMagnetPull(tx, absoluteTy);
+                } else if (roll < 0.70) {
+                    // 10% - Up Charge effect (clears up)
+                    createFloatingText('🎲 UP CHARGE!', tileCenterX, worldY - 10, '#50ff64');
+                    triggerUpCharge(tx, absoluteTy);
+                } else if (roll < 0.80) {
+                    // 10% - Depth Charge effect (clears down)
+                    createFloatingText('🎲 DEPTH CHARGE!', tileCenterX, worldY - 10, '#ff6644');
+                    triggerDepthCharge(tx, absoluteTy);
+                } else if (roll < 0.85) {
+                    // 5% - Nothing (dud)
                     createFloatingText('🎲 Empty...', tileCenterX, worldY - 10, '#888888');
                     createParticles(tileCenterX, tileCenterY, '#555555', 5);
                 } else if (roll < 0.92) {
-                    // 10% - Bomb (oops!)
+                    // 7% - Bomb (oops!)
                     createFloatingText('🎲 BOMB!', tileCenterX, worldY - 10, '#ff4444');
                     explodeBomb(tx, absoluteTy);
                 } else {
@@ -4883,17 +5128,12 @@
             }
             
             if (shouldSpawnBeetle) {
-                // Spawn beetle nearby (not on player's tile)
-                const offsetX = Math.random() < 0.5 ? -1 : 1;
-                const spawnTx = tx + offsetX;
-                if (spawnTx >= 0 && spawnTx < WORLD_WIDTH) {
-                    const spawnTy = ty;
-                    // Check if spawn location is valid (air tile)
-                    if (world[spawnTy] && world[spawnTy][spawnTx] === TILE.AIR) {
-                        spawnEnemy(ENEMY_TYPE.BEETLE, spawnTx, spawnTy);
-                        if (!firstEnemySpawned) firstEnemySpawned = true;
-                        else if (!secondEnemySpawned) secondEnemySpawned = true;
-                    }
+                // Spawn beetle on a surface position outside player view
+                const spawnPos = findSurfaceSpawnPosition(tx, ty, 6);
+                if (spawnPos) {
+                    spawnEnemy(ENEMY_TYPE.BEETLE, spawnPos.tx, spawnPos.ty);
+                    if (!firstEnemySpawned) firstEnemySpawned = true;
+                    else if (!secondEnemySpawned) secondEnemySpawned = true;
                 }
             }
             
@@ -5084,20 +5324,72 @@
             }
         }
         
-        function createFloatingText(text, x, worldY, color) {
-            // OPTIMIZATION: Limit floating texts
-            if (floatingTexts.length >= MAX_FLOATING_TEXTS) {
-                floatingTexts.shift();
+        function createFloatingText(text, x, worldY, color, immediate = false) {
+            // Check for existing texts at similar position and offset vertically
+            const STACK_THRESHOLD = 20; // Pixels - if texts are this close, stack them
+            const STACK_OFFSET = 18; // Pixels to offset each stacked text
+            
+            let yOffset = 0;
+            for (const existingText of floatingTexts) {
+                const xDist = Math.abs(existingText.x - x);
+                const yDist = Math.abs(existingText.y - worldY);
+                if (xDist < STACK_THRESHOLD && yDist < STACK_THRESHOLD + yOffset) {
+                    yOffset += STACK_OFFSET;
+                }
             }
-            floatingTexts.push({
+            // Also check queue
+            for (const queuedText of floatingTextQueue) {
+                const xDist = Math.abs(queuedText.x - x);
+                const yDist = Math.abs(queuedText.y - worldY);
+                if (xDist < STACK_THRESHOLD && yDist < STACK_THRESHOLD + yOffset) {
+                    yOffset += STACK_OFFSET;
+                }
+            }
+            
+            // Clamp X position to keep text visible on screen (accounting for centered text)
+            const TEXT_MARGIN = 50; // Margin from edges to account for text width
+            const clampedX = Math.max(TEXT_MARGIN, Math.min(BASE_WIDTH - TEXT_MARGIN, x));
+            
+            const textData = {
                 text: text,
-                x: x,
-                y: worldY,
-                vy: -2.5,
-                life: 1,
+                x: clampedX,
+                y: worldY - yOffset,
+                vy: -1.5,
+                life: 2,
                 color: color,
                 scale: 1.3
-            });
+            };
+            
+            const now = performance.now();
+            const timeSinceLastText = now - lastTextShowTime;
+            
+            // If immediate, queue is empty AND enough time passed, show right away
+            if (immediate || (floatingTextQueue.length === 0 && timeSinceLastText > 500)) {
+                // OPTIMIZATION: Limit floating texts
+                if (floatingTexts.length >= MAX_FLOATING_TEXTS) {
+                    floatingTexts.shift();
+                }
+                floatingTexts.push(textData);
+                lastTextShowTime = now;
+            } else {
+                // Add to queue for staggered display
+                floatingTextQueue.push(textData);
+            }
+        }
+        
+        function processFloatingTextQueue() {
+            if (floatingTextQueue.length === 0) return;
+            
+            floatingTextQueueTimer += deltaMultiplier;
+            if (floatingTextQueueTimer >= FLOATING_TEXT_QUEUE_DELAY) {
+                floatingTextQueueTimer = 0;
+                const textData = floatingTextQueue.shift();
+                if (floatingTexts.length >= MAX_FLOATING_TEXTS) {
+                    floatingTexts.shift();
+                }
+                floatingTexts.push(textData);
+                lastTextShowTime = performance.now();
+            }
         }
         
         function updateParticles() {
@@ -5162,58 +5454,44 @@
                     
                     const localTy = enemy.ty - worldRowOffset;
                     
-                    if (enemy.type === ENEMY_TYPE.WORM) {
-                        // Worms burrow toward player through dirt/rock
-                        const dx = playerCenterX - enemy.x;
-                        const dy = playerCenterY - enemy.y;
+                    // All enemies now walk on surfaces
+                    // Walk along floors, reverse at walls
+                    const nextTx = enemy.tx + enemy.direction;
+                    const belowTy = localTy + 1;
+                    
+                    // Check if can move forward and has ground below
+                    if (nextTx >= 0 && nextTx < WORLD_WIDTH && belowTy < world.length) {
+                        const nextTile = world[localTy] ? world[localTy][nextTx] : TILE.ROCK;
+                        const belowTile = world[belowTy] ? world[belowTy][nextTx] : TILE.AIR;
                         
-                        // Prefer moving toward player
-                        let moveTx = enemy.tx;
-                        let moveTy = enemy.ty;
+                        // For lava slugs, they can walk on lava
+                        const canWalkOn = enemy.type === ENEMY_TYPE.LAVA_SLUG ? 
+                            (belowTile !== TILE.AIR) : 
+                            (belowTile !== TILE.AIR && belowTile !== TILE.LAVA);
                         
-                        if (Math.abs(dx) > Math.abs(dy)) {
-                            moveTx += dx > 0 ? 1 : -1;
+                        if (nextTile === TILE.AIR && canWalkOn) {
+                            enemy.tx = nextTx;
+                            enemy.x = nextTx * TILE_SIZE + TILE_SIZE / 2;
                         } else {
-                            moveTy += dy > 0 ? 1 : -1;
-                        }
-                        
-                        // Check if can move there
-                        const newLocalTy = moveTy - worldRowOffset;
-                        if (moveTx >= 0 && moveTx < WORLD_WIDTH && newLocalTy >= 0 && newLocalTy < world.length) {
-                            const targetTile = world[newLocalTy][moveTx];
-                            // Can move through dirt, rock, or air
-                            if (targetTile === TILE.DIRT || targetTile === TILE.ROCK || targetTile === TILE.AIR) {
-                                enemy.tx = moveTx;
-                                enemy.ty = moveTy;
-                                enemy.x = moveTx * TILE_SIZE + TILE_SIZE / 2;
-                                enemy.y = moveTy * TILE_SIZE + TILE_SIZE / 2;
-                                enemy.inGround = targetTile !== TILE.AIR;
-                            }
-                        }
-                    } else if (enemy.type === ENEMY_TYPE.BEETLE || enemy.type === ENEMY_TYPE.LAVA_SLUG) {
-                        // Walk along floors, reverse at walls
-                        const nextTx = enemy.tx + enemy.direction;
-                        const belowTy = localTy + 1;
-                        
-                        // Check if can move forward and has ground below
-                        if (nextTx >= 0 && nextTx < WORLD_WIDTH && belowTy < world.length) {
-                            const nextTile = world[localTy] ? world[localTy][nextTx] : TILE.ROCK;
-                            const belowTile = world[belowTy] ? world[belowTy][nextTx] : TILE.AIR;
-                            
-                            // For lava slugs, they can walk on lava
-                            const canWalkOn = enemy.type === ENEMY_TYPE.LAVA_SLUG ? 
-                                (belowTile !== TILE.AIR) : 
-                                (belowTile !== TILE.AIR && belowTile !== TILE.LAVA);
-                            
-                            if (nextTile === TILE.AIR && canWalkOn) {
-                                enemy.tx = nextTx;
-                                enemy.x = nextTx * TILE_SIZE + TILE_SIZE / 2;
-                            } else {
-                                // Reverse direction
-                                enemy.direction *= -1;
-                            }
-                        } else {
+                            // Reverse direction
                             enemy.direction *= -1;
+                        }
+                    } else {
+                        enemy.direction *= -1;
+                    }
+                    
+                    // Check if ground disappeared - enemy falls
+                    const currentBelowTy = localTy + 1;
+                    if (currentBelowTy < world.length) {
+                        const belowTile = world[currentBelowTy] ? world[currentBelowTy][enemy.tx] : TILE.AIR;
+                        const canStandOn = enemy.type === ENEMY_TYPE.LAVA_SLUG ? 
+                            (belowTile !== TILE.AIR) : 
+                            (belowTile !== TILE.AIR && belowTile !== TILE.LAVA);
+                        
+                        if (!canStandOn) {
+                            // Fall down
+                            enemy.ty += 1;
+                            enemy.y = enemy.ty * TILE_SIZE + TILE_SIZE / 2;
                         }
                     }
                 }
@@ -6049,6 +6327,23 @@
                     bossArena.particles.splice(i, 1);
                 }
             }
+            
+            // Update floating texts in boss arena too
+            let writeIndex = 0;
+            for (let i = 0; i < floatingTexts.length; i++) {
+                const t = floatingTexts[i];
+                t.y -= 1.5 * deltaMultiplier;
+                t.vy *= 0.94;
+                t.life -= 0.006 * deltaMultiplier;
+                t.scale = 0.8 + t.life * 0.5;
+                if (t.life > 0) {
+                    floatingTexts[writeIndex++] = t;
+                }
+            }
+            floatingTexts.length = writeIndex;
+            
+            // Also process floating text queue in boss arena
+            processFloatingTextQueue();
         }
         
         function checkBossCollision() {
@@ -6609,6 +6904,7 @@
                 
                 // Update particles
                 updateParticles();
+                processFloatingTextQueue();
                 
                 if (bossTransitionTimer <= 0) {
                     // Teleport complete - enter boss arena
@@ -6903,6 +7199,11 @@
                 player.digging = false;
                 player.digTarget = null;
             }
+            // ===== SAFETY: Reset stuck digging state =====
+            else if (player.digging && !player.digTarget) {
+                // Edge case: digging flag is true but no target - reset to prevent getting stuck
+                player.digging = false;
+            }
             // ===== DIG CANCELLATION WHEN KEY RELEASED =====
             else if (player.digging && player.digTarget) {
                 // Check if the direction key for current dig is still held
@@ -6921,39 +7222,49 @@
                     const digTy = getWorldRow(player.digTarget.y);
                     const digTile = (digTy >= 0 && digTy < world.length) ? world[digTy][player.digTarget.x] : TILE.AIR;
                     
-                    // Heat generation based on material hardness
-                    let heatGen = 0;
-                    if (digTile === TILE.HARD_ROCK) {
-                        heatGen = 1.2; // High heat for hard rock
-                    } else if (digTile === TILE.ROCK) {
-                        heatGen = 0.4; // Moderate heat for rock
-                    } else if (digTile === TILE.UNSTABLE) {
-                        heatGen = 0.25; // Some heat for unstable
-                    }
-                    
-                    // Apply cooling upgrade reduction (includes shop bonus)
-                    const shopCooling = getShopBonus('cooling');
-                    const coolingReduction = 1 - Math.min((permanentUpgrades.drillCooling + shopCooling) / 100, 0.95);
-                    heatGen *= coolingReduction;
-                    
-                    // Fever mode reduces heat buildup
-                    if (feverMode) heatGen *= 0.5;
-                    
-                    drillHeat = Math.min(maxDrillHeat, drillHeat + heatGen * deltaMultiplier);
-                    
-                    // Check for overheat
-                    if (drillHeat >= maxDrillHeat && !drillOverheated) {
-                        drillOverheated = true;
-                        drillCooldownTimer = DRILL_COOLDOWN_FRAMES;
+                    // If tile was destroyed by something else (bomb, chain, etc.), cancel dig
+                    if (digTile === TILE.AIR) {
                         player.digging = false;
                         player.digTarget = null;
-                        triggerScreenFlash('#ff4400', 0.4, 15);
-                        screenShake = 8;
-                        createFloatingText('🔥 OVERHEATED!', player.x + player.width/2, player.y - 20, '#ff4400');
+                        // Try to continue in same direction
+                        if (lastDigDirection) {
+                            tryDigInDirection(lastDigDirection);
+                        }
                     } else {
-                        player.digProgress += (1/60) * deltaMultiplier;
-                        if (player.digProgress >= player.digTarget.time) {
-                            completeDig(false);
+                        // Heat generation based on material hardness
+                        let heatGen = 0;
+                        if (digTile === TILE.HARD_ROCK) {
+                            heatGen = 1.2; // High heat for hard rock
+                        } else if (digTile === TILE.ROCK) {
+                            heatGen = 0.4; // Moderate heat for rock
+                        } else if (digTile === TILE.UNSTABLE) {
+                            heatGen = 0.25; // Some heat for unstable
+                        }
+                        
+                        // Apply cooling upgrade reduction (includes shop bonus)
+                        const shopCooling = getShopBonus('cooling');
+                        const coolingReduction = 1 - Math.min((permanentUpgrades.drillCooling + shopCooling) / 100, 0.95);
+                        heatGen *= coolingReduction;
+                        
+                        // Fever mode reduces heat buildup
+                        if (feverMode) heatGen *= 0.5;
+                        
+                        drillHeat = Math.min(maxDrillHeat, drillHeat + heatGen * deltaMultiplier);
+                        
+                        // Check for overheat
+                        if (drillHeat >= maxDrillHeat && !drillOverheated) {
+                            drillOverheated = true;
+                            drillCooldownTimer = DRILL_COOLDOWN_FRAMES;
+                            player.digging = false;
+                            player.digTarget = null;
+                            triggerScreenFlash('#ff4400', 0.4, 15);
+                            screenShake = 8;
+                            createFloatingText('🔥 OVERHEATED!', player.x + player.width/2, player.y - 20, '#ff4400');
+                        } else {
+                            player.digProgress += (1/60) * deltaMultiplier;
+                            if (player.digProgress >= player.digTarget.time) {
+                                completeDig(false);
+                            }
                         }
                     }
                 }
@@ -6996,6 +7307,9 @@
                     }
                 }
                 
+                // Track if player is pressing against a wall (prevents falling)
+                let wallGripping = false;
+                
                 if (dx !== 0) {
                     const newX = player.x + dx * deltaMultiplier;
                     if (newX >= 0 && newX + player.width <= BASE_WIDTH) {
@@ -7008,7 +7322,8 @@
                             if (dx > 0) blockedTimerRight = 0;
                             else blockedTimerLeft = 0;
                         } else {
-                            // Blocked horizontally
+                            // Blocked horizontally - grip the wall to prevent falling
+                            wallGripping = true;
                             if (!player.digging) {
                                 const midY = player.y + player.height / 2;
                                 const absoluteTy = Math.floor(midY / TILE_SIZE);
@@ -7130,8 +7445,8 @@
                     }
                 }
                 
-                // Gravity with acceleration (skip during slide animation)
-                if (!keys.up && !slideAnimation.active) {
+                // Gravity with acceleration (skip during slide animation or wall gripping)
+                if (!keys.up && !slideAnimation.active && !wallGripping) {
                     flightTimer = 0; // Reset flight timer when not holding up
                     blockedTimer = 0; // Reset blocked timer when not flying
                     
@@ -7186,6 +7501,9 @@
                             blockedTimerRight = 0;
                         }
                     }
+                } else if (wallGripping) {
+                    // Wall gripping - reset fall velocity to prevent accumulation
+                    player.vy = 0;
                 } else {
                     // Flying up - reset fall velocity
                     player.vy = 0;
@@ -7271,6 +7589,7 @@
             }
             
             updateParticles();
+            processFloatingTextQueue();
             updateAlien(deltaMultiplier);
             
             if ((fuel <= 0 || hull <= 0) && !deathAnimationActive) {
@@ -7890,6 +8209,13 @@
             ctx.restore();
         }
         
+        // OPTIMIZATION: Pre-defined gem colors lookup (avoids object creation in hot loop)
+        const GEM_COLORS = {
+            4: ['#00f0ff', '#00b0bb'],  // GEM_COMMON
+            5: ['#ff00ff', '#bb00bb'],  // GEM_RARE
+            6: ['#ff9500', '#cc7700']   // GEM_EPIC
+        };
+        
         function drawTile(tile, x, y, tx, ty) {
             const s = TILE_SIZE;
             const time = globalTime * 0.02;
@@ -7950,12 +8276,7 @@
                     ctx.fillStyle = '#1a1a22';
                     ctx.fillRect(x, y, s, s);
                     
-                    const gemColors = {
-                        [TILE.GEM_COMMON]: ['#00f0ff', '#00b0bb'],
-                        [TILE.GEM_RARE]: ['#ff00ff', '#bb00bb'],
-                        [TILE.GEM_EPIC]: ['#ff9500', '#cc7700']
-                    };
-                    const colors = gemColors[tile];
+                    const colors = GEM_COLORS[tile];
                     const pulse = 0.85 + Math.sin(time * 3 + tx + ty) * 0.15;
                     
                     // OPTIMIZATION: Reduced shadow usage
@@ -8015,29 +8336,29 @@
                     ctx.fillRect(x, y, s, s);
                     ctx.fillStyle = `rgba(80, 220, 80, ${gasAlpha})`;
                     ctx.fillRect(x, y, s, s);
-                    // Faint skull warning (30% larger)
+                    // Faint skull warning (35% larger than original)
                     const skullAlpha = 0.12 + Math.sin(time * 1.5 + tx * 2 + ty) * 0.06;
                     ctx.fillStyle = `rgba(255, 255, 200, ${skullAlpha})`;
-                    // Skull head (30% larger: 0.14 * 1.3 = 0.182)
+                    // Skull head (0.14 * 1.35 = 0.189)
                     ctx.beginPath();
-                    ctx.arc(x + s/2, y + s * 0.43, s * 0.182, 0, Math.PI * 2);
+                    ctx.arc(x + s/2, y + s * 0.43, s * 0.189, 0, Math.PI * 2);
                     ctx.fill();
-                    // Eye sockets (30% larger: 0.04 * 1.3 = 0.052)
+                    // Eye sockets (0.04 * 1.35 = 0.054)
                     ctx.fillStyle = `rgba(20, 40, 20, ${skullAlpha + 0.15})`;
                     ctx.beginPath();
-                    ctx.arc(x + s * 0.42, y + s * 0.42, s * 0.052, 0, Math.PI * 2);
-                    ctx.arc(x + s * 0.58, y + s * 0.42, s * 0.052, 0, Math.PI * 2);
+                    ctx.arc(x + s * 0.42, y + s * 0.42, s * 0.054, 0, Math.PI * 2);
+                    ctx.arc(x + s * 0.58, y + s * 0.42, s * 0.054, 0, Math.PI * 2);
                     ctx.fill();
-                    // Jaw/teeth area (30% larger)
+                    // Jaw/teeth area (5% larger)
                     ctx.fillStyle = `rgba(255, 255, 200, ${skullAlpha * 0.8})`;
-                    ctx.fillRect(x + s * 0.40, y + s * 0.54, s * 0.195, s * 0.117);
+                    ctx.fillRect(x + s * 0.39, y + s * 0.54, s * 0.205, s * 0.123);
                     // Teeth lines (adjusted for larger jaw)
                     ctx.strokeStyle = `rgba(20, 40, 20, ${skullAlpha + 0.1})`;
                     ctx.lineWidth = 1;
                     for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
                         ctx.moveTo(x + s * (0.43 + i * 0.07), y + s * 0.54);
-                        ctx.lineTo(x + s * (0.43 + i * 0.07), y + s * 0.64);
+                        ctx.lineTo(x + s * (0.43 + i * 0.07), y + s * 0.65);
                         ctx.stroke();
                     }
                     break;
@@ -8078,46 +8399,46 @@
                     const goldGlow = 0.12 + Math.sin(time * 3 + tx * 2 + ty) * 0.08;
                     ctx.fillStyle = `rgba(255, 200, 50, ${goldGlow})`;
                     ctx.beginPath();
-                    ctx.arc(x + s/2, y + s/2 + 2, s/2, 0, Math.PI * 2);
+                    ctx.arc(x + s/2, y + s/2 + 2, s * 0.45, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    // Bomb body (pulsing)
+                    // Bomb body (pulsing) - 10% smaller
                     const bombPulse = 0.9 + Math.sin(time * 5 + tx + ty) * 0.1;
                     ctx.fillStyle = '#222222';
                     ctx.beginPath();
-                    ctx.arc(x + s/2, y + s/2 + 2, (s/2 - 4) * bombPulse, 0, Math.PI * 2);
+                    ctx.arc(x + s/2, y + s/2 + 2, (s * 0.36) * bombPulse, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Bomb highlight
                     ctx.fillStyle = '#444444';
                     ctx.beginPath();
-                    ctx.arc(x + s/2 - 3, y + s/2 - 1, 3, 0, Math.PI * 2);
+                    ctx.arc(x + s/2 - 2.5, y + s/2 - 0.5, 2.7, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Gold glint on highlight (stationary sparkle)
                     const glintAlpha = 0.5 + Math.sin(time * 6 + tx) * 0.4;
                     ctx.fillStyle = `rgba(255, 230, 150, ${glintAlpha})`;
                     ctx.beginPath();
-                    ctx.arc(x + s/2 - 4, y + s/2 - 2, 2, 0, Math.PI * 2);
+                    ctx.arc(x + s/2 - 3.5, y + s/2 - 1.5, 1.8, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Fuse (gold tinted)
                     ctx.strokeStyle = '#cc9933';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    ctx.moveTo(x + s/2, y + 4);
-                    ctx.quadraticCurveTo(x + s/2 + 4, y + 2, x + s/2 + 6, y + 5);
+                    ctx.moveTo(x + s/2, y + 5);
+                    ctx.quadraticCurveTo(x + s/2 + 3.5, y + 3, x + s/2 + 5.5, y + 6);
                     ctx.stroke();
                     
                     // Bright spark
                     const sparkAlpha = 0.6 + Math.sin(time * 10) * 0.4;
                     ctx.fillStyle = `rgba(255, 220, 100, ${sparkAlpha})`;
                     ctx.beginPath();
-                    ctx.arc(x + s/2 + 6, y + 4, 3.5, 0, Math.PI * 2);
+                    ctx.arc(x + s/2 + 5.5, y + 5, 3.2, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = `rgba(255, 255, 200, ${sparkAlpha * 0.8})`;
                     ctx.beginPath();
-                    ctx.arc(x + s/2 + 6, y + 4, 1.5, 0, Math.PI * 2);
+                    ctx.arc(x + s/2 + 5.5, y + 5, 1.4, 0, Math.PI * 2);
                     ctx.fill();
                     
                     // Static grey outline (top layer, crisp, no blur)
@@ -8128,7 +8449,7 @@
                     ctx.strokeStyle = '#888888';
                     ctx.lineWidth = 1;
                     ctx.beginPath();
-                    ctx.arc(x + s/2, y + s/2 + 2, s/2 - 4, 0, Math.PI * 2);
+                    ctx.arc(x + s/2, y + s/2 + 2, s * 0.36, 0, Math.PI * 2);
                     ctx.stroke();
                     ctx.shadowOffsetX = 0;
                     ctx.shadowOffsetY = 0;
@@ -8371,18 +8692,21 @@
                     ctx.closePath();
                     ctx.fill();
                     
-                    // Lightning arcs
-                    ctx.strokeStyle = `rgba(255, 255, 255, ${0.5 + Math.sin(time * 8 + tx) * 0.5})`;
-                    ctx.lineWidth = 1;
-                    for (let i = 0; i < 3; i++) {
-                        const boltAngle = time * 3 + i * Math.PI * 2 / 3;
-                        ctx.beginPath();
-                        ctx.moveTo(x + s/2, y + s/2);
-                        const midX = x + s/2 + Math.cos(boltAngle) * 6 + Math.sin(time * 10) * 2;
-                        const midY = y + s/2 + Math.sin(boltAngle) * 6;
-                        ctx.lineTo(midX, midY);
-                        ctx.lineTo(x + s/2 + Math.cos(boltAngle) * 11, y + s/2 + Math.sin(boltAngle) * 11);
-                        ctx.stroke();
+                    // Lightning arcs - show less frequently (every ~2.5 seconds for 0.8 seconds)
+                    const chainShinePhase = (time * 0.4 + tx * 0.7 + ty * 0.5) % 1; // Slowed cycle
+                    if (chainShinePhase < 0.32) { // Only show 32% of the time
+                        ctx.strokeStyle = `rgba(255, 255, 255, ${0.5 + Math.sin(time * 8 + tx) * 0.5})`;
+                        ctx.lineWidth = 1;
+                        for (let i = 0; i < 3; i++) {
+                            const boltAngle = time * 3 + i * Math.PI * 2 / 3;
+                            ctx.beginPath();
+                            ctx.moveTo(x + s/2, y + s/2);
+                            const midX = x + s/2 + Math.cos(boltAngle) * 6 + Math.sin(time * 10) * 2;
+                            const midY = y + s/2 + Math.sin(boltAngle) * 6;
+                            ctx.lineTo(midX, midY);
+                            ctx.lineTo(x + s/2 + Math.cos(boltAngle) * 11, y + s/2 + Math.sin(boltAngle) * 11);
+                            ctx.stroke();
+                        }
                     }
                     
                     // ⚡ symbol
@@ -8395,46 +8719,45 @@
                     break;
                 
                 case TILE.BOUNCE_PAD:
-                    // Neon green spring pad
-                    const bouncePulse = 0.7 + Math.sin(time * 5 + tx + ty) * 0.3;
-                    const springCompress = Math.sin(time * 3) * 2;
+                    // Green block with upward arrows (mirror of depth charge)
+                    const upPulse = 0.6 + Math.sin(time * 3 + tx + ty) * 0.4;
+                    const upArrowBob = Math.sin(time * 4) * 2;
                     
-                    // Dark base
-                    ctx.fillStyle = '#0a1a0a';
+                    // Dark green base
+                    ctx.fillStyle = '#0a2a0a';
                     ctx.fillRect(x, y, s, s);
                     
-                    // Platform top
-                    ctx.fillStyle = `rgba(50, 255, 100, ${bouncePulse})`;
-                    ctx.fillRect(x + 2, y + 3 + springCompress, s - 4, 5);
+                    // Green gradient fill (reversed direction from depth charge)
+                    const upGrad = ctx.createLinearGradient(x, y + s, x, y);
+                    upGrad.addColorStop(0, `rgba(50, 255, 100, ${upPulse * 0.7})`);
+                    upGrad.addColorStop(1, `rgba(0, 200, 50, ${upPulse})`);
+                    ctx.fillStyle = upGrad;
+                    ctx.fillRect(x + 2, y + 2, s - 4, s - 4);
                     
-                    // Spring coils
-                    ctx.strokeStyle = `rgba(100, 255, 150, ${bouncePulse})`;
+                    // Upward arrows
+                    ctx.fillStyle = `rgba(200, 255, 150, ${upPulse})`;
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('▲', x + s/2, y + s * 2/3 - upArrowBob);
+                    ctx.fillText('▲', x + s/2, y + s/3 - upArrowBob * 0.5);
+                    ctx.textBaseline = 'alphabetic';
+                    
+                    // Warning stripes (at top, mirrored)
+                    ctx.strokeStyle = `rgba(200, 255, 100, ${upPulse * 0.5})`;
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 3; i++) {
-                        const coilY = y + 10 + i * 6 + springCompress * (1 - i * 0.3);
                         ctx.beginPath();
-                        ctx.moveTo(x + 6, coilY);
-                        ctx.quadraticCurveTo(x + s/2, coilY - 3, x + s - 6, coilY);
+                        ctx.moveTo(x + 3 + i * 8, y + 2);
+                        ctx.lineTo(x + 7 + i * 8, y + 6);
                         ctx.stroke();
                     }
                     
-                    // Base plate
-                    ctx.fillStyle = '#2a5a2a';
-                    ctx.fillRect(x + 2, y + s - 5, s - 4, 4);
-                    
-                    // Glow effect
-                    ctx.fillStyle = `rgba(50, 255, 100, ${bouncePulse * 0.3})`;
+                    // Glow
+                    ctx.fillStyle = `rgba(100, 255, 100, ${upPulse * 0.2})`;
                     ctx.beginPath();
                     ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
                     ctx.fill();
-                    
-                    // Up arrow
-                    ctx.fillStyle = `rgba(200, 255, 200, ${bouncePulse})`;
-                    ctx.font = 'bold 12px sans-serif';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText('↑', x + s/2, y + s/2 - 2);
-                    ctx.textBaseline = 'alphabetic';
                     break;
                 
                 case TILE.MYSTERY_BLOCK:
@@ -8453,17 +8776,6 @@
                     ctx.fillRect(x, y, s, s);
                     ctx.fillStyle = mysteryGrad;
                     ctx.fillRect(x + 1, y + 1, s - 2, s - 2);
-                    
-                    // Sparkles
-                    for (let i = 0; i < 4; i++) {
-                        const sparkX = x + 5 + (i % 2) * (s - 10);
-                        const sparkY = y + 5 + Math.floor(i / 2) * (s - 10);
-                        const sparkAlpha = 0.5 + Math.sin(time * 5 + i * 2) * 0.5;
-                        ctx.fillStyle = `rgba(255, 255, 255, ${sparkAlpha})`;
-                        ctx.beginPath();
-                        ctx.arc(sparkX, sparkY, 2, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
                     
                     // Question mark
                     ctx.fillStyle = `rgba(255, 255, 255, ${mysteryPulse})`;
@@ -8522,7 +8834,7 @@
                     break;
                 
                 case TILE.MAGNET_ORE:
-                    // Purple/pink with magnetic field lines
+                    // Purple/pink with magnetic field lines and emoji
                     const magnetPulse = 0.6 + Math.sin(time * 2.5 + tx + ty) * 0.4;
                     const fieldRotation = time * 1.5;
                     
@@ -8530,16 +8842,21 @@
                     ctx.fillStyle = '#1a0a1a';
                     ctx.fillRect(x, y, s, s);
                     
+                    // Outer glow (draw first, behind everything)
+                    ctx.fillStyle = `rgba(255, 100, 255, ${magnetPulse * 0.15})`;
+                    ctx.beginPath();
+                    ctx.arc(x + s/2, y + s/2, s/2 + 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
                     // Magnetic field lines (radiating outward)
-                    ctx.strokeStyle = `rgba(255, 100, 200, ${magnetPulse * 0.6})`;
+                    ctx.strokeStyle = `rgba(255, 100, 200, ${magnetPulse * 0.5})`;
                     ctx.lineWidth = 1;
                     for (let i = 0; i < 6; i++) {
                         const angle = fieldRotation + i * Math.PI / 3;
-                        const innerR = 4;
+                        const innerR = 8;
                         const outerR = s/2 - 2;
                         ctx.beginPath();
                         ctx.moveTo(x + s/2 + Math.cos(angle) * innerR, y + s/2 + Math.sin(angle) * innerR);
-                        // Curved field line
                         const midAngle = angle + 0.3;
                         ctx.quadraticCurveTo(
                             x + s/2 + Math.cos(midAngle) * (outerR * 0.7),
@@ -8550,31 +8867,13 @@
                         ctx.stroke();
                     }
                     
-                    // Core ore
-                    const magnetGrad = ctx.createRadialGradient(x + s/2, y + s/2, 0, x + s/2, y + s/2, s/3);
-                    magnetGrad.addColorStop(0, `rgba(255, 150, 255, ${magnetPulse})`);
-                    magnetGrad.addColorStop(0.5, `rgba(200, 50, 200, ${magnetPulse})`);
-                    magnetGrad.addColorStop(1, `rgba(100, 20, 100, ${magnetPulse * 0.5})`);
-                    ctx.fillStyle = magnetGrad;
-                    ctx.beginPath();
-                    ctx.arc(x + s/2, y + s/2, s/3, 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // Magnetic poles (N/S indicators)
-                    ctx.fillStyle = `rgba(255, 100, 100, ${magnetPulse})`;
-                    ctx.beginPath();
-                    ctx.arc(x + s/2, y + 5, 3, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.fillStyle = `rgba(100, 100, 255, ${magnetPulse})`;
-                    ctx.beginPath();
-                    ctx.arc(x + s/2, y + s - 5, 3, 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // Outer glow
-                    ctx.fillStyle = `rgba(255, 100, 255, ${magnetPulse * 0.15})`;
-                    ctx.beginPath();
-                    ctx.arc(x + s/2, y + s/2, s/2 + 3, 0, Math.PI * 2);
-                    ctx.fill();
+                    // Magnet emoji in center (draw LAST so it's on top)
+                    const magnetEmojiSize = 12 + magnetPulse * 2; // Pulses 12-14px
+                    ctx.font = `${magnetEmojiSize}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('🧲', x + s/2, y + s/2);
+                    ctx.textBaseline = 'alphabetic';
                     break;
                     
                 case TILE.UNSTABLE:
@@ -9250,7 +9549,7 @@
                 ctx.restore();
                 
                 if (enemy.type === ENEMY_TYPE.WORM) {
-                    // Burrowing worm - always visible on top of blocks
+                    // Green worm - walks on surfaces
                     // Glow effect
                     ctx.shadowColor = '#44ff44';
                     ctx.shadowBlur = 15;
@@ -9504,7 +9803,7 @@
                 if (screenY < -50 || screenY > BASE_HEIGHT + 50) continue;
                 
                 ctx.globalAlpha = t.life;
-                ctx.font = `800 ${Math.round(16 * t.scale)}px Oxanium, monospace`;
+                ctx.font = `800 ${Math.round(14 * t.scale)}px Oxanium, monospace`;
                 ctx.fillStyle = t.color;
                 ctx.textAlign = 'center';
                 ctx.shadowColor = t.color;
@@ -9830,24 +10129,43 @@
             if (pauseOverlayEl) pauseOverlayEl.classList.remove('active');
             if (confirmOverlayEl) confirmOverlayEl.classList.remove('active');
             
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
-            ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
-            
-            ctx.font = '800 36px Oxanium, monospace';
-            ctx.fillStyle = '#ff00ff';
-            ctx.textAlign = 'center';
-            const deathText = deathReason === 'hull' ? 'HULL DESTROYED' : 'OUT OF FUEL';
-            ctx.fillText(deathText, BASE_WIDTH / 2, BASE_HEIGHT / 2 - 45);
-            
-            ctx.font = '600 20px "Exo 2", sans-serif';
-            ctx.fillStyle = '#00f0ff';
-            ctx.fillText(`Max Depth: ${maxDepthThisRun}m`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 5);
-            ctx.fillStyle = '#ff9500';
-            ctx.fillText(`Score: ${score}`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 35);
-            
             controlInstructions.classList.remove('visible');
             
-            setTimeout(showScoreModal, 1500);
+            // Phase 1: Show dramatic "GAME OVER" text
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+            ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+            
+            // Big "GAME OVER" text with glow effect
+            ctx.save();
+            ctx.shadowColor = '#ff0066';
+            ctx.shadowBlur = 30;
+            ctx.font = '800 52px Oxanium, monospace';
+            ctx.fillStyle = '#ff0066';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2);
+            ctx.shadowBlur = 15;
+            ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2);
+            ctx.restore();
+            
+            // After a moment, show the detailed death screen
+            setTimeout(() => {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
+                ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+                
+                ctx.font = '800 36px Oxanium, monospace';
+                ctx.fillStyle = '#ff00ff';
+                ctx.textAlign = 'center';
+                const deathText = deathReason === 'hull' ? 'HULL DESTROYED' : 'OUT OF FUEL';
+                ctx.fillText(deathText, BASE_WIDTH / 2, BASE_HEIGHT / 2 - 45);
+                
+                ctx.font = '600 20px "Exo 2", sans-serif';
+                ctx.fillStyle = '#00f0ff';
+                ctx.fillText(`Max Depth: ${maxDepthThisRun}m`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 5);
+                ctx.fillStyle = '#ff9500';
+                ctx.fillText(`Score: ${score}`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 35);
+                
+                setTimeout(showScoreModal, 1200);
+            }, 1000);
         }
         
         // ==================== SCORE SYSTEM ====================
@@ -9989,7 +10307,6 @@
             let portal = portalLocations.find(p => p.depth === targetDepth);
             if (!portal) {
                 // Portal should exist, but force generate area
-                console.log(`No portal at ${targetDepth}m, extending world...`);
                 while (world.length < targetDepth + 50) {
                     extendWorld();
                 }
@@ -10010,10 +10327,8 @@
                 updateFuelBar();
                 updateHullBar();
                 
-                console.log(`Teleported to ${targetDepth}m boss portal at tx=${portal.tx}`);
                 createFloatingText(`DEBUG: ${targetDepth}m`, player.x + player.width/2, player.y - 20, '#ffff00');
             } else {
-                console.log(`Could not find portal at ${targetDepth}m`);
                 // Fallback: just teleport to that depth
                 player.y = (targetDepth + 2) * TILE_SIZE - player.height;
                 player.x = BASE_WIDTH / 2 - player.width / 2;
@@ -10456,6 +10771,9 @@
             
             particles = [];
             floatingTexts = [];
+            floatingTextQueue = [];
+            floatingTextQueueTimer = 0;
+            lastTextShowTime = -100;
             
             // Reset luck protection system
             resetSpawnHistory();
