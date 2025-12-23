@@ -2597,9 +2597,14 @@
         let blockedTimer = 0; // Track time stuck against ceiling
         let blockedTimerLeft = 0; // Track time stuck against left wall
         let blockedTimerRight = 0; // Track time stuck against right wall
+        let upDigMomentum = 0; // Track momentum for continuous upward digging
+        let leftDigMomentum = 0; // Track momentum for continuous left digging in hover
+        let rightDigMomentum = 0; // Track momentum for continuous right digging in hover
         const HOVER_MODE_DELAY = 20; // ~0.33 seconds of unobstructed flight
         const GROUNDED_EXIT_DELAY = 15; // ~0.25 seconds on ground to exit hover
         const BLOCKED_DRILL_DELAY = 20; // ~0.33 seconds stuck to auto-drill
+        const UP_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum after completing an upward dig
+        const HORIZONTAL_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum for hover L/R drilling
         
         // ==================== VISUAL EFFECTS ====================
         let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
@@ -2975,11 +2980,11 @@
             fuel: 12,          // Fuel spread out more
             chest: 20,         // Chests well spaced
             upgradeChest: 40,  // Upgrade chests very spread out
-            mystery: 15,       // Mystery blocks moderately spaced
+            mystery: 35,       // Mystery blocks well spaced (was 15)
             chainCrystal: 8,   // Chain crystals can cluster a bit (it's fun!)
-            bouncePad: 25,     // Up charges well spaced
-            depthCharge: 20,   // Depth charges spread out
-            magnetOre: 18      // Magnet ore moderately spaced
+            bouncePad: 50,     // Up charges very spread out (was 25)
+            depthCharge: 45,   // Depth charges well spaced (was 20)
+            magnetOre: 40      // Magnet ore well spaced (was 18)
         };
         
         // GOOD LUCK PROTECTION - Pity windows (tiles without item before chance ramps up)
@@ -5157,6 +5162,15 @@
             
             player.digging = false;
             player.digTarget = null;
+            
+            // Grant momentum for continuous digging
+            if (lastDigDirection === 'up') {
+                upDigMomentum = UP_DIG_MOMENTUM_FRAMES;
+            } else if (lastDigDirection === 'left' && hoverMode) {
+                leftDigMomentum = HORIZONTAL_DIG_MOMENTUM_FRAMES;
+            } else if (lastDigDirection === 'right' && hoverMode) {
+                rightDigMomentum = HORIZONTAL_DIG_MOMENTUM_FRAMES;
+            }
             
             // Continue digging if direction key still held
             if (!fromMagnet && lastDigDirection) {
@@ -7350,11 +7364,12 @@
                                 
                                 // Don't drill in sky rows
                                 if (absoluteTy >= FIRST_DIGGABLE_ROW) {
-                                    // In hover mode, use delay before drilling (same as up-drilling)
+                                    // In hover mode, use delay before drilling (or momentum to skip)
                                     if (hoverMode) {
                                         if (dx > 0) {
                                             blockedTimerRight += deltaMultiplier;
-                                            if (blockedTimerRight >= BLOCKED_DRILL_DELAY) {
+                                            const hasRightMomentum = rightDigMomentum > 0;
+                                            if (hasRightMomentum || blockedTimerRight >= BLOCKED_DRILL_DELAY) {
                                                 lastDigDirection = 'right';
                                                 const checkX = newX + player.width;
                                                 const tx = Math.floor(checkX / TILE_SIZE);
@@ -7363,7 +7378,8 @@
                                             }
                                         } else {
                                             blockedTimerLeft += deltaMultiplier;
-                                            if (blockedTimerLeft >= BLOCKED_DRILL_DELAY) {
+                                            const hasLeftMomentum = leftDigMomentum > 0;
+                                            if (hasLeftMomentum || blockedTimerLeft >= BLOCKED_DRILL_DELAY) {
                                                 lastDigDirection = 'left';
                                                 const checkX = newX;
                                                 const tx = Math.floor(checkX / TILE_SIZE);
@@ -7388,11 +7404,22 @@
                                 }
                             }
                         }
+                        
+                        // Decay horizontal dig momentum while in hover mode
+                        if (hoverMode) {
+                            if (dx > 0 && rightDigMomentum > 0) {
+                                rightDigMomentum -= deltaMultiplier;
+                            } else if (dx < 0 && leftDigMomentum > 0) {
+                                leftDigMomentum -= deltaMultiplier;
+                            }
+                        }
                     }
                 } else {
-                    // Not pressing left or right, reset horizontal blocked timers
+                    // Not pressing left or right, reset horizontal blocked timers and momentum
                     blockedTimerLeft = 0;
                     blockedTimerRight = 0;
+                    leftDigMomentum = 0;
+                    rightDigMomentum = 0;
                 }
                 
                 if (dy < 0) {
@@ -7416,9 +7443,12 @@
                     // Handle blocked state - track time and eventually drill
                     if (blocked) {
                         blockedTimer += deltaMultiplier;
-                        // After 0.33s stuck, drill upward (but not into sky rows)
+                        // After 0.33s stuck (or immediately with momentum), drill upward
                         const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
-                        if (blockedTimer >= BLOCKED_DRILL_DELAY && !player.digging && absoluteTy >= FIRST_DIGGABLE_ROW) {
+                        const hasUpMomentum = upDigMomentum > 0;
+                        const delayMet = hasUpMomentum || blockedTimer >= BLOCKED_DRILL_DELAY;
+                        
+                        if (delayMet && !player.digging && absoluteTy >= FIRST_DIGGABLE_ROW) {
                             lastDigDirection = 'up';
                             const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
                             dig(tx, absoluteTy);
@@ -7426,6 +7456,11 @@
                         }
                     } else {
                         blockedTimer = 0; // Reset when not blocked
+                    }
+                    
+                    // Decay upward dig momentum while holding up
+                    if (upDigMomentum > 0) {
+                        upDigMomentum -= deltaMultiplier;
                     }
                     
                     if (newY < player.y && newY >= MIN_PLAYER_Y) {
@@ -7476,6 +7511,7 @@
                 if (!keys.up && !slideAnimation.active && !wallGripping && !holdingHorizontalDig) {
                     flightTimer = 0; // Reset flight timer when not holding up
                     blockedTimer = 0; // Reset blocked timer when not flying
+                    upDigMomentum = 0; // Clear upward dig momentum when not flying
                     
                     // Apply gravity acceleration
                     player.vy = Math.min(player.vy + GRAVITY * deltaMultiplier, MAX_FALL_SPEED);
@@ -10759,6 +10795,9 @@
             blockedTimer = 0;
             blockedTimerLeft = 0;
             blockedTimerRight = 0;
+            upDigMomentum = 0;
+            leftDigMomentum = 0;
+            rightDigMomentum = 0;
             
             // Reset visual effects
             screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
