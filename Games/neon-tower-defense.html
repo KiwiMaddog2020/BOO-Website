@@ -734,6 +734,16 @@
             opacity: 0.6;
         }
         
+        .shop-item.locked {
+            opacity: 0.35;
+            cursor: not-allowed;
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .shop-item.locked .shop-item-icon {
+            filter: grayscale(100%);
+        }
+        
         .shop-item-icon {
             font-size: 30px;
             margin-bottom: 5px;
@@ -5001,6 +5011,11 @@
                 }
             }
             
+            // Wave 10+ gets 5% easier
+            if (wave >= 10) {
+                healthMult *= 0.95;
+            }
+            
             // Base stats with scaling applied
             // Reduced base formula for gentler early game
             const baseHealth = (20 + wave * 10) * healthMult;
@@ -7737,21 +7752,27 @@
                 const cost = getUpgradeCost(type);
                 const isMaxed = level >= shop.maxLevel;
                 const canAfford = gold >= cost;
+                const isUnlocked = isTowerUnlocked(type);
                 
                 const item = document.createElement('div');
                 item.className = 'shop-item';
-                if (isMaxed) item.classList.add('maxed');
+                if (!isUnlocked) item.classList.add('locked');
+                else if (isMaxed) item.classList.add('maxed');
                 else if (!canAfford) item.classList.add('disabled');
+                
+                // Show unlock wave requirement for locked towers
+                const costDisplay = !isUnlocked ? `Wave ${TOWER_UNLOCKS[type]}` : (isMaxed ? '---' : '$' + cost);
+                const levelDisplay = !isUnlocked ? 'LOCKED' : `Lv.${level}${isMaxed ? ' MAX' : ` → ${level + 1}`}`;
                 
                 item.innerHTML = `
                     <div class="shop-item-icon">${shop.icon}</div>
                     <div class="shop-item-name">${shop.name}</div>
-                    <div class="shop-item-level">Lv.${level}${isMaxed ? ' MAX' : ` → ${level + 1}`}</div>
-                    <div class="shop-item-effect">${getUpgradeEffectText(type)}</div>
-                    <div class="shop-item-cost">${isMaxed ? '---' : '$' + cost}</div>
+                    <div class="shop-item-level">${levelDisplay}</div>
+                    <div class="shop-item-effect">${isUnlocked ? getUpgradeEffectText(type) : ''}</div>
+                    <div class="shop-item-cost">${costDisplay}</div>
                 `;
                 
-                if (!isMaxed && canAfford) {
+                if (isUnlocked && !isMaxed && canAfford) {
                     item.addEventListener('click', () => purchaseUpgrade(type));
                 }
                 
@@ -7762,6 +7783,7 @@
         function purchaseUpgrade(type) {
             const cost = getUpgradeCost(type);
             if (gold < cost) return;
+            if (!isTowerUnlocked(type)) return; // Extra safety check
             
             gold -= cost;
             towerLevels[type]++;
