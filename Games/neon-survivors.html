@@ -2772,7 +2772,7 @@
             height: auto;
             min-height: 80px;
             flex: 0 0 auto;
-            padding: 2px calc(8px * var(--scale, 1)) calc(15px * var(--scale, 1)) calc(8px * var(--scale, 1));
+            padding: 2px calc(4px * var(--scale, 1)) calc(15px * var(--scale, 1)) calc(4px * var(--scale, 1));
             box-sizing: border-box;
             /* Touch control */
             touch-action: none;
@@ -4260,7 +4260,7 @@
         <!-- Trackpad Zone -->
         <div class="trackpad-zone" id="trackpadZone">
             <div class="stats-display" id="statsDisplay">
-                <div class="xp-bar-container" style="width: calc(100% + 24px); margin: 0 -12px 4px -12px; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; background: transparent;">
+                <div class="xp-bar-container" style="width: calc(100% - 1px); margin: 0 auto 4px auto; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; background: transparent;">
                     <div class="xp-bar-fill" style="height: 100%; width: 0%; background: #a8b8c8; box-shadow: 0 0 4px rgba(168, 184, 200, 0.5); transition: width 0.25s ease-out;"></div>
                 </div>
                 <div class="stats-row-container" style="display: flex; align-items: center; justify-content: space-evenly; width: calc(100% + 24px); margin: 0 -12px 2px -12px;">
@@ -4723,37 +4723,41 @@
                 document.body.classList.add('fullscreen-active');
                 
                 // Universal margin system: border + safety padding
-                // iPad needs extra margin for status bar, home indicator, and close buttons
                 // Iframes have no borders so no margin needed
                 const borderWidth = isInIframe ? 0 : 3;
                 const safetyPadding = (isTablet || isIPad) ? 20 : 0;
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Account for trackpad zone below canvas
-                // Content: stats row ~25 + main row 158 + spacer 2 + instructions 18 ≈ 203
-                const TRACKPAD_BASE_HEIGHT = 205;
-                const totalGameHeight = BASE_HEIGHT + TRACKPAD_BASE_HEIGHT; // 520 + 205 = 725
-                const canvasHeightRatio = BASE_HEIGHT / totalGameHeight; // ~0.72
+                // Trackpad takes ~29% of total height (halfway between 1/4 and 1/3)
+                const TRACKPAD_MIN_HEIGHT = 80;
                 
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
-                // Use combined aspect ratio (canvas + trackpad) for fitting
-                const combinedAspect = BASE_WIDTH / totalGameHeight;
-                const screenAspect = availWidth / availHeight;
                 
-                // Fit game (canvas + trackpad) to available space, preserving aspect ratio
-                let totalCssHeight;
-                if (screenAspect > combinedAspect) {
-                    // Height-limited: total height fills available, width calculated from it
-                    totalCssHeight = Math.floor(availHeight);
-                    cssWidth = Math.floor(totalCssHeight * combinedAspect);
+                // Canvas aspect ratio (game logic coordinates)
+                const canvasAspect = BASE_WIDTH / BASE_HEIGHT; // 800/520 = 1.538
+                
+                // Trackpad = ~29% of available height (halfway between 1/4 and 1/3)
+                const trackpadCalc = Math.max(TRACKPAD_MIN_HEIGHT, Math.floor(availHeight / 3.5));
+                const canvasAreaHeight = availHeight - trackpadCalc;
+                
+                // Fit canvas to available width while maintaining aspect ratio
+                // If canvas would be taller than canvasAreaHeight, scale down width too
+                const canvasFromWidth = availWidth;
+                const canvasHeightFromWidth = canvasFromWidth / canvasAspect;
+                
+                if (canvasHeightFromWidth <= canvasAreaHeight) {
+                    // Width-limited: canvas fits in height
+                    cssWidth = Math.floor(canvasFromWidth);
+                    cssHeight = Math.floor(canvasHeightFromWidth);
                 } else {
-                    // Width-limited: width fills available, total height calculated from it
-                    cssWidth = Math.floor(availWidth);
-                    totalCssHeight = Math.floor(cssWidth / combinedAspect);
+                    // Height-limited: scale canvas to fit height
+                    cssHeight = Math.floor(canvasAreaHeight);
+                    cssWidth = Math.floor(cssHeight * canvasAspect);
                 }
-                // Canvas gets its proportional share of the total height
-                cssHeight = Math.floor(totalCssHeight * canvasHeightRatio);
+                
+                // Final trackpad height fills remaining space
+                const finalTrackpadHeight = availHeight - cssHeight;
                 
                 // Determine optimal buffer scale based on device
                 let bufferScale;
@@ -4792,12 +4796,11 @@
                 canvas.style.height = cssHeight + 'px';
                 
                 // Set trackpad zone dimensions to match calculated layout
-                const trackpadCssHeight = totalCssHeight - cssHeight;
                 const trackpadEl = document.getElementById('trackpadZone');
                 if (trackpadEl) {
                     trackpadEl.style.width = cssWidth + 'px';
-                    trackpadEl.style.height = trackpadCssHeight + 'px';
-                    trackpadEl.style.minHeight = trackpadCssHeight + 'px';
+                    trackpadEl.style.height = finalTrackpadHeight + 'px';
+                    trackpadEl.style.minHeight = finalTrackpadHeight + 'px';
                 }
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -7431,7 +7434,7 @@
                                     y: bestY,
                                     vx: (Math.random() - 0.5) * 0.8,
                                     vy: -1 - Math.random() * 1.2,
-                                    rotation: Math.random() * 0.1 - 0.05,
+                                    rotation: Math.random() * 0.02 - 0.01,
                                     angle: 0,
                                     life: 1,
                                     note: '♪',
@@ -16163,7 +16166,7 @@
             if (!xpBarContainer) {
                 // First time - create the structure
                 statsDisplay.innerHTML = `
-                    <div class="xp-bar-container" style="width: calc(100% + 24px); margin: 0 -12px 4px -12px; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; background: transparent;">
+                    <div class="xp-bar-container" style="width: calc(100% - 1px); margin: 0 auto 4px auto; height: 5px; border: 1px solid #0ff; border-radius: 3px; overflow: hidden; background: transparent;">
                         <div class="xp-bar-fill" style="height: 100%; width: 0%; background: #a8b8c8; box-shadow: 0 0 4px rgba(168, 184, 200, 0.5); transition: width 0.25s ease-out;"></div>
                     </div>
                     <div class="stats-row-container" style="display: flex; align-items: center; justify-content: space-evenly; width: calc(100% + 24px); margin: 0 -12px 2px -12px;"></div>
