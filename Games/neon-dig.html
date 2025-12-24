@@ -1990,7 +1990,7 @@
                 <div class="boss-intro-name" id="bossIntroName">UNKNOWN BOSS</div>
                 <div class="boss-intro-depth" id="bossIntroDepth">Depth: 100m</div>
                 <div class="boss-intro-objective">
-                    <div class="boss-intro-objective-title">⚔️ Objective</div>
+                    <div class="boss-intro-objective-title">Objective</div>
                     <div class="boss-intro-objective-text" id="bossIntroObjective">Defeat the boss to obtain a key!</div>
                 </div>
                 <div class="boss-intro-tip" id="bossIntroTip">💡 Tip: Watch for attack patterns!</div>
@@ -2448,7 +2448,7 @@
             "Green gas and lava hurt your hull!",
             "Upgrades appear every 50m depth!",
             "Spend points on permanent upgrades!",
-            "Chests hold powerful upgrades!"
+            "Blue chests hold powerful upgrades!"
         ];
         const alienTipSpecial = "Not such a long time 'till you see me again, eh?";
         let alienTipHistory = []; // Track shown tips for bad luck protection
@@ -2656,24 +2656,24 @@
         }
         
         // ==================== BOSS BATTLE SYSTEM ====================
-        const BOSS_PORTAL_INTERVAL = 100; // Portal every 100m
-        const BOSS_GATE_OFFSET = 50;      // Gate 50m below each portal
+        const BOSS_PORTAL_INTERVAL = 50;  // Portal every 50m (first at 50m)
+        const BOSS_GATE_OFFSET = 25;      // Gate 25m below each portal
         
         // Boss types
         const BOSS_TYPE = {
-            BURROWER: 'burrower',       // 100m - Dig to expose weak spot
-            CRYSTAL_GOLEM: 'golem',     // 200m - Break barriers + shockwaves
-            LAVA_WURM: 'wurm',          // 300m - Rising lava survival
-            HIVE_MIND: 'hive',          // 400m - Swarm management
-            COLLECTOR: 'collector'      // 500m+ - Combined mechanics
+            BURROWER: 'burrower',       // 50m - Dig to expose weak spot
+            CRYSTAL_GOLEM: 'golem',     // 100m - Break barriers + shockwaves
+            LAVA_WURM: 'wurm',          // 150m - Rising lava survival
+            HIVE_MIND: 'hive',          // 200m - Swarm management
+            COLLECTOR: 'collector'      // 250m+ - Combined mechanics
         };
         
         // Boss state
-        let bossKeys = [];              // Array of defeated boss depths (100, 200, etc.)
+        let bossKeys = [];              // Array of defeated boss depths (50, 100, etc.)
         let bossArenaActive = false;
         let bossTransitionTimer = 0;
         let bossTransitionPhase = 'none'; // 'entering', 'active', 'victory', 'exiting', 'none'
-        let currentBossDepth = 0;       // Which portal tier (100, 200, etc.)
+        let currentBossDepth = 0;       // Which portal tier (50, 100, etc.)
         
         // Portal cooldown (inactive until player moves away)
         let portalCooldown = {};        // { depth: true } if portal is on cooldown
@@ -2824,13 +2824,12 @@
         
         // Find a valid surface spawn position (AIR tile with solid ground below, outside player view)
         function findSurfaceSpawnPosition(aroundTx, aroundTy, searchRadius) {
-            const cameraTopRow = Math.floor(cameraY / TILE_SIZE);
             const cameraBottomRow = Math.ceil((cameraY + BASE_HEIGHT) / TILE_SIZE);
             
-            // Search for valid positions
-            for (let attempt = 0; attempt < 20; attempt++) {
+            // First try: find existing AIR tile with solid below
+            for (let attempt = 0; attempt < 30; attempt++) {
                 const offsetX = Math.floor(Math.random() * (searchRadius * 2 + 1)) - searchRadius;
-                const offsetY = Math.floor(Math.random() * searchRadius) + 2; // Always spawn below
+                const offsetY = Math.floor(Math.random() * searchRadius) + 2;
                 
                 const testTx = aroundTx + offsetX;
                 const testAbsTy = aroundTy + worldRowOffset + offsetY;
@@ -2843,25 +2842,50 @@
                 if (testTx < 1 || testTx >= WORLD_WIDTH - 1) continue;
                 if (testLocalTy < 0 || testLocalTy >= world.length - 1) continue;
                 
-                // Check for valid surface: AIR tile with solid ground below
                 const tileHere = world[testLocalTy][testTx];
                 const tileBelow = world[testLocalTy + 1] ? world[testLocalTy + 1][testTx] : TILE.AIR;
                 
-                // Must be standing in AIR with solid block below (not air, not lava for beetles)
                 if (tileHere === TILE.AIR && tileBelow !== TILE.AIR && tileBelow !== TILE.LAVA &&
                     tileBelow !== TILE.PORTAL && tileBelow !== TILE.PORTAL_PART) {
                     return { tx: testTx, ty: testLocalTy };
                 }
             }
             
-            return null; // No valid position found
+            // Second try: Create a spawn pocket by clearing a tile
+            for (let attempt = 0; attempt < 15; attempt++) {
+                const offsetX = Math.floor(Math.random() * (searchRadius * 2 + 1)) - searchRadius;
+                const offsetY = 3 + Math.floor(Math.random() * 5); // 3-8 rows below
+                
+                const testTx = aroundTx + offsetX;
+                const testAbsTy = aroundTy + worldRowOffset + offsetY;
+                const testLocalTy = testAbsTy - worldRowOffset;
+                
+                if (testAbsTy <= cameraBottomRow + 2) continue;
+                if (testTx < 1 || testTx >= WORLD_WIDTH - 1) continue;
+                if (testLocalTy < 0 || testLocalTy >= world.length - 1) continue;
+                
+                const tileHere = world[testLocalTy][testTx];
+                const tileBelow = world[testLocalTy + 1] ? world[testLocalTy + 1][testTx] : null;
+                
+                // Can carve if tile is diggable and has solid floor
+                if (tileBelow && tileHere !== TILE.AIR && tileHere !== TILE.BEDROCK && 
+                    tileHere !== TILE.HARD_ROCK && tileHere !== TILE.PORTAL && 
+                    tileHere !== TILE.PORTAL_PART && tileHere !== TILE.GAS &&
+                    tileBelow !== TILE.AIR && tileBelow !== TILE.LAVA) {
+                    // Carve out space for enemy
+                    world[testLocalTy][testTx] = TILE.AIR;
+                    return { tx: testTx, ty: testLocalTy };
+                }
+            }
+            
+            return null;
         }
         
         // Find surface spawn for lava slugs (can walk on lava)
         function findLavaSurfaceSpawnPosition(aroundTx, aroundTy, searchRadius) {
             const cameraBottomRow = Math.ceil((cameraY + BASE_HEIGHT) / TILE_SIZE);
             
-            for (let attempt = 0; attempt < 20; attempt++) {
+            for (let attempt = 0; attempt < 30; attempt++) {
                 const offsetX = Math.floor(Math.random() * (searchRadius * 2 + 1)) - searchRadius;
                 const offsetY = Math.floor(Math.random() * searchRadius) + 2;
                 
@@ -2879,6 +2903,31 @@
                 // Lava slugs can stand on any solid including lava
                 if (tileHere === TILE.AIR && tileBelow !== TILE.AIR &&
                     tileBelow !== TILE.PORTAL && tileBelow !== TILE.PORTAL_PART) {
+                    return { tx: testTx, ty: testLocalTy };
+                }
+            }
+            
+            // Fallback: Create a spawn point
+            for (let attempt = 0; attempt < 15; attempt++) {
+                const offsetX = Math.floor(Math.random() * (searchRadius * 2 + 1)) - searchRadius;
+                const offsetY = 3 + Math.floor(Math.random() * 5);
+                
+                const testTx = aroundTx + offsetX;
+                const testAbsTy = aroundTy + worldRowOffset + offsetY;
+                const testLocalTy = testAbsTy - worldRowOffset;
+                
+                if (testAbsTy <= cameraBottomRow + 2) continue;
+                if (testTx < 1 || testTx >= WORLD_WIDTH - 1) continue;
+                if (testLocalTy < 0 || testLocalTy >= world.length - 1) continue;
+                
+                const tileHere = world[testLocalTy][testTx];
+                const tileBelow = world[testLocalTy + 1] ? world[testLocalTy + 1][testTx] : null;
+                
+                if (tileBelow && tileHere !== TILE.AIR && tileHere !== TILE.BEDROCK && 
+                    tileHere !== TILE.HARD_ROCK && tileHere !== TILE.PORTAL &&
+                    tileHere !== TILE.PORTAL_PART && tileHere !== TILE.GAS &&
+                    tileBelow !== TILE.AIR) {
+                    world[testLocalTy][testTx] = TILE.AIR;
                     return { tx: testTx, ty: testLocalTy };
                 }
             }
@@ -3299,7 +3348,7 @@
                 
                 world.push(row);
                 
-                // Spawn portals at 100m intervals (same logic as extendWorld)
+                // Spawn portals at 50m intervals (same logic as extendWorld)
                 // We check for portalRow + 1 so both rows of the 2x2 portal exist
                 for (const portal of portalLocations) {
                     if (portal.spawned) continue;
@@ -3323,7 +3372,7 @@
                     }
                 }
                 
-                // Spawn gates at portal depth + 50m
+                // Spawn gates at portal depth + 25m
                 for (const gate of gateLocations) {
                     if (gate.spawned) continue;
                     
@@ -3759,7 +3808,7 @@
                 
                 const localY = world.length - 1;
                 
-                // Spawn portals at 100m intervals
+                // Spawn portals at 50m intervals
                 // Depth formula: depth = floor((playerY - 60) / TILE_SIZE)
                 // For depth D: row = floor((60 + D*TILE_SIZE) / TILE_SIZE) = D + 2
                 // We check for portalRow + 1 so both rows of the 2x2 portal exist
@@ -3791,7 +3840,7 @@
                     }
                 }
                 
-                // Spawn gates at portal depth + 50m
+                // Spawn gates at portal depth + 25m
                 for (const gate of gateLocations) {
                     if (gate.spawned) continue;
                     
@@ -4402,14 +4451,14 @@
                         gemValue = Math.floor(gemValue * (1 + totalGemBonus / 100) * getComboMultiplier());
                         if (feverMode) gemValue = Math.floor(gemValue * 1.5);
                         score += gemValue;
-                        createFloatingText(`🎲 +${gemValue}`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, gemColor);
+                        createFloatingText(`+${gemValue}`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, gemColor);
                         createGemParticles(item.tileCenterX, item.absoluteTy * TILE_SIZE + TILE_SIZE/2, gemColor);
                         addCombo();
                     } else if (roll < 0.50) {
                         // Fuel
                         const fuelGain = 7 + Math.floor(Math.random() * 5);
                         fuel = Math.min(fuel + fuelGain, maxFuel);
-                        createFloatingText(`🎲 +${fuelGain}⛽`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#ff9500');
+                        createFloatingText(`+${fuelGain}⛽`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#ff9500');
                     } else if (roll < 0.60) {
                         // Magnet
                         triggerMagnetPull(item.tx, item.absoluteTy);
@@ -4430,7 +4479,7 @@
                         // Jackpot
                         const jackpotValue = 100 + Math.floor(Math.random() * 50);
                         score += jackpotValue;
-                        createFloatingText(`🎲 JACKPOT! +${jackpotValue}`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#ffff00');
+                        createFloatingText(`JACKPOT! +${jackpotValue}`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#ffff00');
                         for (let i = 0; i < 5; i++) addCombo();
                     }
                     updateScoreDisplay();
@@ -4576,12 +4625,13 @@
         
         // Chain Crystal - breaks all adjacent chain crystals in a chain reaction
         function triggerChainCrystalExplosion(startTX, startAbsTY) {
+            const MAX_CHAIN_SIZE = 50; // Maximum blocks in a chain
             let crystalsToBreak = [{tx: startTX, absoluteTy: startAbsTY}];
             let brokenCrystals = new Set();
             let totalValue = 0;
             let chainCount = 0;
             
-            while (crystalsToBreak.length > 0) {
+            while (crystalsToBreak.length > 0 && chainCount < MAX_CHAIN_SIZE) {
                 const current = crystalsToBreak.shift();
                 const key = `${current.tx},${current.absoluteTy}`;
                 
@@ -4621,18 +4671,20 @@
                     });
                 }
                 
-                // Check all 8 neighbors for more chain crystals
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-                        const neighborTX = current.tx + dx;
-                        const neighborAbsTY = current.absoluteTy + dy;
-                        const neighborTY = getWorldRow(neighborAbsTY);
-                        
-                        if (neighborTY >= 0 && neighborTY < world.length && 
-                            neighborTX >= 0 && neighborTX < WORLD_WIDTH) {
-                            if (world[neighborTY][neighborTX] === TILE.CHAIN_CRYSTAL) {
-                                crystalsToBreak.push({tx: neighborTX, absoluteTy: neighborAbsTY});
+                // Check all 8 neighbors for more chain crystals (only if under limit)
+                if (chainCount < MAX_CHAIN_SIZE) {
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const neighborTX = current.tx + dx;
+                            const neighborAbsTY = current.absoluteTy + dy;
+                            const neighborTY = getWorldRow(neighborAbsTY);
+                            
+                            if (neighborTY >= 0 && neighborTY < world.length && 
+                                neighborTX >= 0 && neighborTX < WORLD_WIDTH) {
+                                if (world[neighborTY][neighborTX] === TILE.CHAIN_CRYSTAL) {
+                                    crystalsToBreak.push({tx: neighborTX, absoluteTy: neighborAbsTY});
+                                }
                             }
                         }
                     }
@@ -5417,20 +5469,20 @@
                 if (roll < 0.40) {
                     // 40% - Random gem
                     const gemRoll = Math.random();
-                    let gemValue, gemColor, gemName;
+                    let gemValue, gemColor;
                     if (gemRoll < 0.1) {
-                        gemValue = 50; gemColor = '#ff9500'; gemName = 'EPIC';
+                        gemValue = 50; gemColor = '#ff9500';
                     } else if (gemRoll < 0.4) {
-                        gemValue = 25; gemColor = '#ff00ff'; gemName = 'RARE';
+                        gemValue = 25; gemColor = '#ff00ff';
                     } else {
-                        gemValue = 10; gemColor = '#00f0ff'; gemName = 'COMMON';
+                        gemValue = 10; gemColor = '#00f0ff';
                     }
                     const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
                     gemValue = Math.floor(gemValue * (1 + totalGemBonus / 100) * getComboMultiplier());
                     if (feverMode) gemValue = Math.floor(gemValue * 1.5);
                     score += gemValue;
                     updateScoreDisplay();
-                    createFloatingText(`🎲 ${gemName}! +${gemValue}`, tileCenterX, worldY - 10, gemColor);
+                    createFloatingText(`+${gemValue}`, tileCenterX, worldY - 10, gemColor);
                     createGemParticles(tileCenterX, tileCenterY, gemColor);
                     addCombo();
                 } else if (roll < 0.50) {
@@ -5438,35 +5490,30 @@
                     const fuelGain = 7 + Math.floor(Math.random() * 5);
                     fuel = Math.min(fuel + fuelGain, maxFuel);
                     updateFuelBar();
-                    createFloatingText(`🎲 FUEL! +${fuelGain}`, tileCenterX, worldY - 10, '#ff9500');
+                    createFloatingText(`+${fuelGain}⛽`, tileCenterX, worldY - 10, '#ff9500');
                     createParticles(tileCenterX, tileCenterY, '#ff9500', 12);
                 } else if (roll < 0.60) {
                     // 10% - Magnet effect!
-                    createFloatingText('🎲 MAGNET!', tileCenterX, worldY - 10, '#ff66ff');
                     triggerMagnetPull(tx, absoluteTy);
                 } else if (roll < 0.70) {
                     // 10% - Up Charge effect (clears up)
-                    createFloatingText('🎲 UP CHARGE!', tileCenterX, worldY - 10, '#50ff64');
                     triggerUpCharge(tx, absoluteTy);
                 } else if (roll < 0.80) {
                     // 10% - Depth Charge effect (clears down)
-                    createFloatingText('🎲 DEPTH CHARGE!', tileCenterX, worldY - 10, '#ff6644');
                     triggerDepthCharge(tx, absoluteTy);
                 } else if (roll < 0.85) {
                     // 5% - Nothing (dud)
-                    createFloatingText('🎲 Empty...', tileCenterX, worldY - 10, '#888888');
+                    createFloatingText('Empty...', tileCenterX, worldY - 10, '#888888');
                     createParticles(tileCenterX, tileCenterY, '#555555', 5);
                 } else if (roll < 0.92) {
                     // 7% - Bomb (oops!)
-                    createFloatingText('🎲 BOMB!', tileCenterX, worldY - 10, '#ff4444');
                     explodeBomb(tx, absoluteTy);
                 } else {
                     // 8% - Jackpot! Big reward
                     const jackpotValue = 100 + Math.floor(Math.random() * 50);
                     score += jackpotValue;
                     updateScoreDisplay();
-                    createFloatingText(`🎲 JACKPOT! +${jackpotValue}`, tileCenterX, worldY - 15, '#ffff00');
-                    createFloatingText('⭐⭐⭐', tileCenterX, worldY - 5, '#ffff00');
+                    createFloatingText(`JACKPOT! +${jackpotValue}`, tileCenterX, worldY - 10, '#ffff00');
                     triggerScreenFlash('#ffff00', 0.4, 15);
                     screenShake = 8;
                     for (let i = 0; i < 5; i++) addCombo();
@@ -5525,23 +5572,22 @@
             updateFuelBar();
             
             // Chance to spawn beetle when digging creates tunnel
-            const depthM = absoluteTy * TILE_SIZE / 16;
+            const depthM = Math.max(0, absoluteTy - 2); // Depth in meters
             const spawnChances = getEnemySpawnChance(depthM, currentBiome);
             
-            // Guaranteed first enemy encounter between 25-35m depth
+            // Guaranteed first enemy encounter between 15-35m depth (was 20)
             let shouldSpawnBeetle = false;
-            if (!firstEnemySpawned && depthM >= 25 && depthM < 35) {
-                // High chance that increases as we approach 35m (guaranteed by 33m)
-                const urgency = (depthM - 25) / 8; // 0 at 25m, 1 at 33m
-                shouldSpawnBeetle = Math.random() < (0.15 + urgency * 0.85);
+            if (!firstEnemySpawned && depthM >= 15) {
+                // Very high chance starting at 15m
+                shouldSpawnBeetle = Math.random() < 0.5; // 50% per dig!
             } 
-            // Guaranteed second enemy encounter between 45-55m depth
-            else if (firstEnemySpawned && !secondEnemySpawned && depthM >= 45 && depthM < 55) {
-                const urgency = (depthM - 45) / 8; // 0 at 45m, 1 at 53m
-                shouldSpawnBeetle = Math.random() < (0.15 + urgency * 0.85);
+            // Guaranteed second enemy encounter between 40-55m depth
+            else if (firstEnemySpawned && !secondEnemySpawned && depthM >= 40 && depthM < 55) {
+                const urgency = (depthM - 40) / 10; // 0 at 40m, 1 at 50m
+                shouldSpawnBeetle = Math.random() < (0.25 + urgency * 0.75);
             }
             else if (spawnChances.beetle > 0) {
-                shouldSpawnBeetle = Math.random() < spawnChances.beetle * 0.3;
+                shouldSpawnBeetle = Math.random() < spawnChances.beetle * 0.5; // Increased from 0.3
             }
             
             if (shouldSpawnBeetle) {
@@ -5551,6 +5597,15 @@
                     spawnEnemy(ENEMY_TYPE.BEETLE, spawnPos.tx, spawnPos.ty);
                     if (!firstEnemySpawned) firstEnemySpawned = true;
                     else if (!secondEnemySpawned) secondEnemySpawned = true;
+                } else {
+                    // Forced spawn: create space directly below dig location
+                    const forcedTy = ty + 4;
+                    if (forcedTy < world.length - 1) {
+                        world[forcedTy][tx] = TILE.AIR;
+                        spawnEnemy(ENEMY_TYPE.BEETLE, tx, forcedTy);
+                        if (!firstEnemySpawned) firstEnemySpawned = true;
+                        else if (!secondEnemySpawned) secondEnemySpawned = true;
+                    }
                 }
             }
             
@@ -7001,13 +7056,10 @@
             bossTransitionPhase = 'exiting';
             bossTransitionTimer = 60;
             
-            // Teleport player back to portal location
-            const portalPixelX = bossArena.portalTx * TILE_SIZE + TILE_SIZE; // Center of 2x2 portal
-            const portalPixelY = bossArena.portalRow * TILE_SIZE;
-            
-            player.x = portalPixelX - player.width / 2;
-            player.y = portalPixelY + TILE_SIZE * 2; // Just below the portal
-            cameraY = portalPixelY - BASE_HEIGHT / 2;
+            // Teleport player back to saved position (where they entered the portal)
+            player.x = bossArena.savedPlayerX;
+            player.y = bossArena.savedPlayerY;
+            cameraY = bossArena.savedCameraY;
             
             // Set portal on cooldown (won't trigger until player moves 3 tiles away)
             // Portal remains visible but inactive until player moves away
@@ -9851,6 +9903,30 @@
             const cx = Math.round(player.x + player.width / 2);
             const heatPercent = drillHeat / maxDrillHeat;
             
+            // ===== LOW FUEL SMOKE EFFECT =====
+            const fuelPercent = fuel / maxFuel;
+            if (fuelPercent < 0.25 && !deathAnimationActive) {
+                // Spawn smoke puffs more frequently as fuel gets lower
+                const smokeChance = (0.25 - fuelPercent) * 0.4; // Max 10% per frame at 0 fuel
+                if (Math.random() < smokeChance) {
+                    // Calculate velocity based on player movement
+                    const isMoving = keys.up || keys.down || keys.left || keys.right || player.digging;
+                    if (isMoving || Math.random() < 0.3) { // Always some smoke, more when moving
+                        const grey = 60 + Math.floor(Math.random() * 40);
+                        particles.push({
+                            x: cx + (Math.random() - 0.5) * 16,
+                            y: player.y + player.height - 2,
+                            vx: (Math.random() - 0.5) * 1.5,
+                            vy: 0.5 + Math.random() * 1.5, // Drift downward/sideways
+                            size: 3 + Math.random() * 5,
+                            color: `rgba(${grey}, ${grey}, ${grey}, 0.7)`,
+                            life: 0.6 + Math.random() * 0.4,
+                            type: 'smoke'
+                        });
+                    }
+                }
+            }
+            
             // Death animation effects - machine powering down
             if (deathAnimationActive) {
                 const progress = 1 - (deathAnimationTimer / DEATH_ANIMATION_DURATION);
@@ -10069,6 +10145,66 @@
             ctx.fillStyle = feverMode ? '#450045' : (drillOverheated ? '#452020' : '#004550');
             ctx.fillRect(player.x - 1, screenY + 12, 4, 8);
             ctx.fillRect(player.x + player.width - 3, screenY + 12, 4, 8);
+            
+            // ===== LOW HULL CRACKING EFFECT =====
+            const hullPercent = hull / maxHull;
+            if (hullPercent < 0.5 && !deathAnimationActive) {
+                ctx.strokeStyle = '#111111';
+                ctx.lineWidth = 1.5;
+                
+                // Crack intensity increases as hull decreases
+                const crackIntensity = 1 - (hullPercent / 0.5); // 0 at 50%, 1 at 0%
+                
+                // First crack (appears at 50% hull) - diagonal from top-left
+                ctx.beginPath();
+                ctx.moveTo(player.x + 4, screenY + 5);
+                ctx.lineTo(player.x + 8, screenY + 10);
+                ctx.lineTo(player.x + 6, screenY + 14);
+                ctx.stroke();
+                
+                // Second crack (appears at 35% hull) - from top-right
+                if (hullPercent < 0.35) {
+                    ctx.beginPath();
+                    ctx.moveTo(player.x + player.width - 4, screenY + 6);
+                    ctx.lineTo(player.x + player.width - 7, screenY + 11);
+                    ctx.lineTo(player.x + player.width - 5, screenY + 15);
+                    ctx.stroke();
+                }
+                
+                // Third crack (appears at 20% hull) - across middle
+                if (hullPercent < 0.2) {
+                    ctx.beginPath();
+                    ctx.moveTo(player.x + 6, screenY + 12);
+                    ctx.lineTo(player.x + 10, screenY + 14);
+                    ctx.lineTo(player.x + player.width - 8, screenY + 13);
+                    ctx.stroke();
+                    
+                    // Sparking effect at very low hull
+                    if (Math.random() < 0.15) {
+                        const sparkX = player.x + 4 + Math.random() * (player.width - 8);
+                        const sparkY = screenY + 6 + Math.random() * 12;
+                        particles.push({
+                            x: sparkX,
+                            y: sparkY + cameraY, // Convert to world coords
+                            vx: (Math.random() - 0.5) * 3,
+                            vy: (Math.random() - 0.5) * 3,
+                            size: 1 + Math.random() * 2,
+                            color: Math.random() < 0.5 ? '#ffff00' : '#ff8800',
+                            life: 0.2 + Math.random() * 0.2,
+                            type: 'spark'
+                        });
+                    }
+                }
+                
+                // Pulsing red warning tint overlay at critical hull
+                if (hullPercent < 0.15) {
+                    const pulse = Math.sin(globalTime * 0.4) * 0.15 + 0.15;
+                    ctx.fillStyle = `rgba(255, 0, 0, ${pulse})`;
+                    ctx.beginPath();
+                    ctx.roundRect(player.x + 2, screenY + 4, player.width - 4, player.height - 10, 5);
+                    ctx.fill();
+                }
+            }
             
             // Restore context after body (drill has its own transform)
             ctx.restore();
