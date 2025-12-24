@@ -2987,7 +2987,7 @@
             chainCrystal: 8,   // Chain crystals can cluster a bit (it's fun!)
             bouncePad: 50,     // Up charges very spread out (was 25)
             depthCharge: 45,   // Depth charges well spaced (was 20)
-            magnetOre: 40      // Magnet ore well spaced (was 18)
+            magnetOre: 60      // Magnet ore more spread out (was 40)
         };
         
         // GOOD LUCK PROTECTION - Pity windows (tiles without item before chance ramps up)
@@ -3984,7 +3984,7 @@
             const shopDigBonus = 1 + getShopBonus('digSpeed') / 100;
             const speedMultiplier = 1 + getEffectiveUpgrade('digSpeed', 300) / 100;
             const feverBonus = feverMode ? 1.5 : 1;
-            const totalSpeed = speedMultiplier * feverBonus * shopDigBonus * 0.95; // 5% slower base
+            const totalSpeed = speedMultiplier * feverBonus * shopDigBonus * 1.045; // 10% faster than previous
             
             let digTime = 0.66 / totalSpeed; // Base dig time (10% faster)
             
@@ -4142,6 +4142,9 @@
             let fuelCollected = 0;
             let gemsCollected = 0;
             
+            // Collect triggerable tiles first (to trigger after clearing)
+            const triggerables = [];
+            
             for (let dy = -1; dy <= 1; dy++) {
                 for (let dx = -1; dx <= 1; dx++) {
                     const tx = centerTX + dx;
@@ -4235,6 +4238,17 @@
                                 addCombo();
                             }
                             
+                            // Collect triggerable items (will trigger AFTER clearing)
+                            if (tile === TILE.BOMB || tile === TILE.CHAIN_CRYSTAL || 
+                                tile === TILE.DEPTH_CHARGE || tile === TILE.BOUNCE_PAD ||
+                                tile === TILE.MAGNET_ORE || tile === TILE.MYSTERY_BLOCK ||
+                                tile === TILE.ALIEN_NODE) {
+                                // Skip the center bomb (already being processed)
+                                if (!(dx === 0 && dy === 0 && tile === TILE.BOMB)) {
+                                    triggerables.push({ tile, tx, absoluteTy, tileCenterX, tileCenterY });
+                                }
+                            }
+                            
                             world[ty][tx] = TILE.AIR;
                             createParticles(tileCenterX, tileCenterY, '#ff6600', 4);
                         }
@@ -4277,6 +4291,93 @@
             screenShake = 12;
             updateScoreDisplay();
             updateFuelBar();
+            
+            // Now trigger all collected special items
+            for (const item of triggerables) {
+                if (item.tile === TILE.BOMB) {
+                    // Chain bomb explosion
+                    explodeBomb(item.tx, item.absoluteTy);
+                } else if (item.tile === TILE.CHAIN_CRYSTAL) {
+                    // Trigger chain crystal reaction
+                    triggerChainCrystalExplosion(item.tx, item.absoluteTy);
+                } else if (item.tile === TILE.DEPTH_CHARGE) {
+                    // Trigger depth charge
+                    triggerDepthCharge(item.tx, item.absoluteTy);
+                } else if (item.tile === TILE.BOUNCE_PAD) {
+                    // Trigger up charge
+                    triggerUpCharge(item.tx, item.absoluteTy);
+                } else if (item.tile === TILE.MAGNET_ORE) {
+                    // Trigger magnet pull
+                    triggerMagnetPull(item.tx, item.absoluteTy);
+                } else if (item.tile === TILE.ALIEN_NODE) {
+                    // Trigger alien node (multi-gem burst)
+                    const nodeDepth = item.absoluteTy - 2;
+                    const baseGems = 4;
+                    const bonusGems = Math.min(Math.floor((nodeDepth - 100) / 100), 4);
+                    const gemCount = baseGems + bonusGems;
+                    const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
+                    const comboMult = getComboMultiplier();
+                    const feverMult = feverMode ? 2 : 1;
+                    let nodeValue = 0;
+                    for (let i = 0; i < gemCount; i++) {
+                        const gemType = Math.random();
+                        let gemValue, gemColor;
+                        if (gemType < 0.25) { gemValue = 75; gemColor = '#ff9500'; }
+                        else if (gemType < 0.6) { gemValue = 38; gemColor = '#ff00ff'; }
+                        else { gemValue = 15; gemColor = '#00f0ff'; }
+                        gemValue = Math.floor(gemValue * (1 + totalGemBonus / 100) * comboMult * feverMult);
+                        nodeValue += gemValue;
+                        const angle = (i / gemCount) * Math.PI * 2;
+                        createParticles(item.tileCenterX + Math.cos(angle) * 8, item.tileCenterY + Math.sin(angle) * 8, gemColor, 5);
+                    }
+                    score += nodeValue;
+                    createFloatingText(`✧ ALIEN NODE +${nodeValue}! ✧`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#cc88ff');
+                    updateScoreDisplay();
+                } else if (item.tile === TILE.MYSTERY_BLOCK) {
+                    // Trigger mystery block (inline handling)
+                    const roll = Math.random();
+                    if (roll < 0.40) {
+                        // Random gem
+                        const gemRoll = Math.random();
+                        let gemValue, gemColor;
+                        if (gemRoll < 0.1) { gemValue = 50; gemColor = '#ff9500'; }
+                        else if (gemRoll < 0.4) { gemValue = 25; gemColor = '#ff00ff'; }
+                        else { gemValue = 10; gemColor = '#00f0ff'; }
+                        const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
+                        gemValue = Math.floor(gemValue * (1 + totalGemBonus / 100) * getComboMultiplier());
+                        if (feverMode) gemValue = Math.floor(gemValue * 1.5);
+                        score += gemValue;
+                        createFloatingText(`🎲 +${gemValue}`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, gemColor);
+                        createGemParticles(item.tileCenterX, item.absoluteTy * TILE_SIZE + TILE_SIZE/2, gemColor);
+                        addCombo();
+                    } else if (roll < 0.50) {
+                        // Fuel
+                        const fuelGain = 7 + Math.floor(Math.random() * 5);
+                        fuel = Math.min(fuel + fuelGain, maxFuel);
+                        createFloatingText(`🎲 +${fuelGain}⛽`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#ff9500');
+                    } else if (roll < 0.60) {
+                        // Magnet
+                        triggerMagnetPull(item.tx, item.absoluteTy);
+                    } else if (roll < 0.70) {
+                        // Up Charge
+                        triggerUpCharge(item.tx, item.absoluteTy);
+                    } else if (roll < 0.80) {
+                        // Depth Charge
+                        triggerDepthCharge(item.tx, item.absoluteTy);
+                    } else if (roll < 0.92) {
+                        // Bomb
+                        explodeBomb(item.tx, item.absoluteTy);
+                    } else {
+                        // Jackpot
+                        const jackpotValue = 100 + Math.floor(Math.random() * 50);
+                        score += jackpotValue;
+                        createFloatingText(`🎲 JACKPOT! +${jackpotValue}`, item.tileCenterX, item.absoluteTy * TILE_SIZE - 10, '#ffff00');
+                        for (let i = 0; i < 5; i++) addCombo();
+                    }
+                    updateScoreDisplay();
+                    updateFuelBar();
+                }
+            }
         }
         
         // Chain Crystal - breaks all adjacent chain crystals in a chain reaction
