@@ -417,8 +417,8 @@
             justify-content: center;
             align-items: center;
             width: 100%;
-            height: 50px;
-            min-height: 50px;
+            height: 43px;
+            min-height: 43px;
             padding: 4px 16px 6px;
             touch-action: none;
             pointer-events: auto;
@@ -435,6 +435,7 @@
             text-transform: uppercase;
             font-weight: 500;
             display: none;
+            margin-top: -5px;
         }
 
         .control-instructions.visible {
@@ -881,7 +882,7 @@
             .hud-left, .hud-right { gap: 10px; min-width: 70px; }
             .fuel-bar-wrapper, .hull-bar-wrapper { width: 80px; height: 20px; }
             .fuel-percent, .hull-percent { font-size: 11px; }
-            .control-zone { height: 95px; min-height: 95px; }
+            .control-zone { height: 88px; min-height: 88px; }
             .menu-btn, .game-btn { padding: 8px 16px; font-size: 12px; width: 140px; }
             .game-title { font-size: 32px; letter-spacing: 2px; }
             .game-subtitle { font-size: 14px; margin-bottom: 30px; }
@@ -1547,7 +1548,7 @@
         /* Surface upgrade button */
         .surface-upgrade-btn {
             position: absolute;
-            bottom: 140px;
+            bottom: 95px;
             left: 50%;
             transform: translateX(-50%);
             background: linear-gradient(180deg, #cc00ff, #9900cc);
@@ -1967,7 +1968,7 @@
         <canvas id="gameCanvas" width="560" height="550"></canvas>
 
         <div class="control-zone" id="controlZone">
-            <div class="control-instructions" id="controlInstructions">Arrow Keys / WASD • Swipe on mobile</div>
+            <div class="control-instructions" id="controlInstructions">arrow keys/wasd - touch and drag on mobile</div>
             <div class="permanent-upgrades" id="permUpgrades"></div>
         </div>
 
@@ -2597,11 +2598,14 @@
         let blockedTimer = 0; // Track time stuck against ceiling
         let blockedTimerLeft = 0; // Track time stuck against left wall
         let blockedTimerRight = 0; // Track time stuck against right wall
+        let hoverUpDrillTimer = 0; // Dedicated timer for hover mode upward drilling
+        let hoverDrillMomentum = 0; // Momentum after drilling in hover mode - allows immediate chaining
         let upDigMomentum = 0; // Track momentum for continuous upward digging
         const HOVER_MODE_DELAY = 20; // ~0.33 seconds of unobstructed flight
         const GROUNDED_EXIT_DELAY = 15; // ~0.25 seconds on ground to exit hover
         const BLOCKED_DRILL_DELAY = 30; // ~0.5 seconds stuck to auto-drill (upward)
         const UP_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum after completing an upward dig
+        const HOVER_DRILL_MOMENTUM_FRAMES = 30; // ~0.5 seconds of momentum for chaining in hover mode
         
         // ==================== VISUAL EFFECTS ====================
         let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
@@ -5245,15 +5249,18 @@
             }
             
             // Continue digging if direction key still held
-            // For horizontal digging: only chain if NOT in hover mode
+            // In hover mode: first drill requires 0.5s delay, but chaining is immediate after that
             if (!fromMagnet && lastDigDirection) {
-                if (lastDigDirection === 'left' || lastDigDirection === 'right') {
-                    // Only chain horizontal digs when not in hover mode
-                    if (!hoverMode) {
-                        tryDigInDirection(lastDigDirection);
-                    }
+                // Grant hover drill momentum for chaining (allows bypassing delay)
+                if (hoverMode && (lastDigDirection === 'up' || lastDigDirection === 'left' || lastDigDirection === 'right')) {
+                    hoverDrillMomentum = HOVER_DRILL_MOMENTUM_FRAMES;
+                }
+                
+                if (lastDigDirection === 'down') {
+                    // Down can always chain
+                    tryDigInDirection(lastDigDirection);
                 } else {
-                    // Up/down can always chain
+                    // Up/Left/Right - chain immediately (delay only applies to FIRST drill)
                     tryDigInDirection(lastDigDirection);
                 }
             }
@@ -7459,8 +7466,29 @@
                                 // Don't drill in sky rows
                                 if (absoluteTy >= FIRST_DIGGABLE_ROW) {
                                     if (hoverMode) {
-                                        // In hover mode: NO horizontal drilling allowed
-                                        // Just wall grip and wait - must exit hover mode to drill
+                                        // In hover mode: 0.5s delay OR momentum for horizontal drilling
+                                        const hasMomentum = hoverDrillMomentum > 0;
+                                        if (dx > 0) {
+                                            blockedTimerRight += deltaMultiplier;
+                                            if (hasMomentum || blockedTimerRight >= BLOCKED_DRILL_DELAY) {
+                                                lastDigDirection = 'right';
+                                                const checkX = newX + player.width;
+                                                const tx = Math.floor(checkX / TILE_SIZE);
+                                                dig(tx, absoluteTy);
+                                                blockedTimerRight = 0;
+                                                if (hasMomentum) hoverDrillMomentum = 0;
+                                            }
+                                        } else {
+                                            blockedTimerLeft += deltaMultiplier;
+                                            if (hasMomentum || blockedTimerLeft >= BLOCKED_DRILL_DELAY) {
+                                                lastDigDirection = 'left';
+                                                const checkX = newX;
+                                                const tx = Math.floor(checkX / TILE_SIZE);
+                                                dig(tx, absoluteTy);
+                                                blockedTimerLeft = 0;
+                                                if (hasMomentum) hoverDrillMomentum = 0;
+                                            }
+                                        }
                                     } else if (keys.up) {
                                         // Flying upward: require 0.5s delay before horizontal drilling
                                         // Prevents accidental drilling when navigating narrow shafts
@@ -7525,15 +7553,28 @@
                         }
                     }
                     
+                    // IMPORTANT: Check if we moved BEFORE updating player.y
+                    const movedUp = newY < player.y;
+                    
                     // Handle blocked state - track time and eventually drill
                     if (blocked) {
-                        blockedTimer += deltaMultiplier;
+                        // Only accumulate timer when NOT already digging
+                        // This ensures a fresh 0.5s delay between each drill in hover mode
+                        if (!player.digging) {
+                            blockedTimer += deltaMultiplier;
+                            // Dedicated hover mode timer - only counts in hover mode
+                            if (hoverMode) {
+                                hoverUpDrillTimer += deltaMultiplier;
+                            }
+                        }
                         const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
                         
-                        // In hover mode: always 0.5s delay to drill upward
+                        // In hover mode: use dedicated hover timer for strict 0.5s delay
+                        // OR bypass with hover drill momentum (from completing previous drill)
                         // Not in hover mode: drill immediately (0s delay)
+                        const hasMomentum = hoverDrillMomentum > 0;
                         const canDrill = hoverMode ? 
-                            (blockedTimer >= BLOCKED_DRILL_DELAY) : 
+                            (hasMomentum || hoverUpDrillTimer >= BLOCKED_DRILL_DELAY) : 
                             true; // Always can drill immediately when not hovering
                         
                         if (canDrill && !player.digging && absoluteTy >= FIRST_DIGGABLE_ROW) {
@@ -7541,9 +7582,17 @@
                             const tx = Math.floor((player.x + player.width / 2) / TILE_SIZE);
                             dig(tx, absoluteTy);
                             blockedTimer = 0; // Reset after initiating dig
+                            hoverUpDrillTimer = 0; // Reset hover timer after drilling
+                            if (hasMomentum) hoverDrillMomentum = 0; // Consume momentum
                         }
                     } else {
                         blockedTimer = 0; // Reset when not blocked
+                        hoverUpDrillTimer = 0; // Reset hover timer when not blocked
+                    }
+                    
+                    // Decay hover drill momentum
+                    if (hoverDrillMomentum > 0 && !player.digging) {
+                        hoverDrillMomentum -= deltaMultiplier;
                     }
                     
                     // Decay upward dig momentum while holding up (used for non-hover chaining)
@@ -7560,20 +7609,6 @@
                         fuel -= climbCost * deltaMultiplier;
                         updateFuelBar();
                         
-                    // Track flight time for hover mode activation
-                        // Count time if: moving upward, digging, or blocked but about to auto-drill
-                        const movedUp = newY < player.y;
-                        const tryingToProgress = movedUp || player.digging || blocked;
-                        if (tryingToProgress) {
-                            flightTimer += deltaMultiplier;
-                            if (flightTimer >= HOVER_MODE_DELAY && !hoverMode) {
-                                hoverMode = true;
-                            }
-                        } else {
-                            flightTimer = 0;
-                        }
-                        groundedTimer = 0; // Reset grounded timer when flying
-                        
                         // Thruster particles
                         if (Math.random() < 0.4 && particles.length < MAX_PARTICLES) {
                             const color = feverMode ? '#ff00ff' : '#ff6600';
@@ -7589,6 +7624,24 @@
                             });
                         }
                     }
+                    
+                    // Track flight time for hover mode activation
+                    // MUST be outside the movement block so it still counts when blocked/drilling
+                    // movedUp was calculated BEFORE player.y was updated
+                    const tryingToProgress = movedUp || player.digging || blocked;
+                    if (tryingToProgress) {
+                        flightTimer += deltaMultiplier;
+                        if (flightTimer >= HOVER_MODE_DELAY && !hoverMode) {
+                            hoverMode = true;
+                            // Reset all drill timers to ensure fresh delays in hover mode
+                            blockedTimer = 0;
+                            hoverUpDrillTimer = 0;
+                            hoverDrillMomentum = 0; // No momentum when first entering hover
+                        }
+                    } else {
+                        flightTimer = 0;
+                    }
+                    groundedTimer = 0; // Reset grounded timer when flying
                 }
                 
                 // Gravity with acceleration (skip during slide animation or wall gripping)
@@ -7643,14 +7696,15 @@
                         // Reset velocity on landing
                         player.vy = 0;
                         
-                        // On ground
-                        groundedTimer += deltaMultiplier;
-                        if (groundedTimer >= GROUNDED_EXIT_DELAY && hoverMode) {
+                        // On ground - immediately disable hover mode
+                        if (hoverMode) {
                             hoverMode = false;
-                            groundedTimer = 0;
                             blockedTimerLeft = 0;
                             blockedTimerRight = 0;
+                            hoverUpDrillTimer = 0;
+                            hoverDrillMomentum = 0;
                         }
+                        groundedTimer = 0;
                     }
                 } else if (wallGripping) {
                     // Wall gripping - reset fall velocity to prevent accumulation
@@ -8490,29 +8544,29 @@
                     ctx.fillRect(x, y, s, s);
                     ctx.fillStyle = `rgba(80, 220, 80, ${gasAlpha})`;
                     ctx.fillRect(x, y, s, s);
-                    // Faint skull warning (35% larger than original)
+                    // Faint skull warning (38% larger than original)
                     const skullAlpha = 0.12 + Math.sin(time * 1.5 + tx * 2 + ty) * 0.06;
                     ctx.fillStyle = `rgba(255, 255, 200, ${skullAlpha})`;
-                    // Skull head (0.14 * 1.35 = 0.189)
+                    // Skull head (slightly larger)
                     ctx.beginPath();
-                    ctx.arc(x + s/2, y + s * 0.43, s * 0.189, 0, Math.PI * 2);
+                    ctx.arc(x + s/2, y + s * 0.43, s * 0.195, 0, Math.PI * 2);
                     ctx.fill();
-                    // Eye sockets (0.04 * 1.35 = 0.054)
+                    // Eye sockets (proportionally larger)
                     ctx.fillStyle = `rgba(20, 40, 20, ${skullAlpha + 0.15})`;
                     ctx.beginPath();
-                    ctx.arc(x + s * 0.42, y + s * 0.42, s * 0.054, 0, Math.PI * 2);
-                    ctx.arc(x + s * 0.58, y + s * 0.42, s * 0.054, 0, Math.PI * 2);
+                    ctx.arc(x + s * 0.42, y + s * 0.42, s * 0.056, 0, Math.PI * 2);
+                    ctx.arc(x + s * 0.58, y + s * 0.42, s * 0.056, 0, Math.PI * 2);
                     ctx.fill();
-                    // Jaw/teeth area (5% larger)
+                    // Jaw/teeth area (proportionally larger)
                     ctx.fillStyle = `rgba(255, 255, 200, ${skullAlpha * 0.8})`;
-                    ctx.fillRect(x + s * 0.39, y + s * 0.54, s * 0.205, s * 0.123);
+                    ctx.fillRect(x + s * 0.385, y + s * 0.54, s * 0.215, s * 0.128);
                     // Teeth lines (adjusted for larger jaw)
                     ctx.strokeStyle = `rgba(20, 40, 20, ${skullAlpha + 0.1})`;
                     ctx.lineWidth = 1;
                     for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
-                        ctx.moveTo(x + s * (0.43 + i * 0.07), y + s * 0.54);
-                        ctx.lineTo(x + s * (0.43 + i * 0.07), y + s * 0.65);
+                        ctx.moveTo(x + s * (0.43 + i * 0.072), y + s * 0.54);
+                        ctx.lineTo(x + s * (0.43 + i * 0.072), y + s * 0.66);
                         ctx.stroke();
                     }
                     break;
@@ -9021,45 +9075,78 @@
                         ctx.stroke();
                     }
                     
-                    // Draw horseshoe magnet symbol (cross-browser consistent)
+                    // Draw horseshoe magnet (curve at TOP, arms pointing DOWN, silver tips at bottom)
                     const magCX = x + s/2;
                     const magCY = y + s/2;
-                    const magScale = 0.35 + magnetPulse * 0.05; // Pulses slightly
-                    const magW = s * magScale;
-                    const magH = s * magScale * 1.1;
+                    // 10% smaller base, pulses in sync with background (magnetPulse ranges 0.2-1.0)
+                    const magScale = 0.27 + magnetPulse * 0.072;
+                    const outerR = s * magScale;
+                    const innerR = s * magScale * 0.45;
+                    const armLength = s * 0.225 * (0.85 + magnetPulse * 0.15); // Arms also pulse
                     
-                    // Horseshoe body (U-shape)
-                    ctx.lineWidth = 3;
-                    ctx.lineCap = 'round';
-                    
-                    // Left arm (red)
-                    ctx.strokeStyle = '#ff4444';
+                    // Draw filled U-shape horseshoe
                     ctx.beginPath();
-                    ctx.moveTo(magCX - magW/2, magCY - magH/2);
-                    ctx.lineTo(magCX - magW/2, magCY + magH/4);
-                    ctx.arc(magCX, magCY + magH/4, magW/2, Math.PI, Math.PI * 0.5, true);
-                    ctx.stroke();
+                    // Start at bottom of left arm (where silver tip will be)
+                    ctx.moveTo(magCX - outerR, magCY + armLength);
+                    // Up the left outer edge
+                    ctx.lineTo(magCX - outerR, magCY);
+                    // Outer curve at top
+                    ctx.arc(magCX, magCY, outerR, Math.PI, 0, false);
+                    // Down the right outer edge
+                    ctx.lineTo(magCX + outerR, magCY + armLength);
+                    // Across bottom of right arm (will be covered by silver tip)
+                    ctx.lineTo(magCX + innerR, magCY + armLength);
+                    // Up the right inner edge
+                    ctx.lineTo(magCX + innerR, magCY);
+                    // Inner curve at top
+                    ctx.arc(magCX, magCY, innerR, 0, Math.PI, true);
+                    // Down the left inner edge
+                    ctx.lineTo(magCX - innerR, magCY + armLength);
+                    ctx.closePath();
                     
-                    // Right arm (blue)  
-                    ctx.strokeStyle = '#4444ff';
+                    // Create gradient for left half (red) and right half (blue)
+                    // Fill left half red
+                    ctx.save();
+                    ctx.clip();
+                    ctx.fillStyle = '#e63333';
+                    ctx.fillRect(magCX - outerR - 1, magCY - outerR - 1, outerR + 1, outerR * 2 + armLength + 2);
+                    // Red highlight
+                    ctx.fillStyle = '#ff5555';
+                    ctx.fillRect(magCX - outerR + 1, magCY - outerR + 2, (outerR - innerR) * 0.4, outerR * 2 + armLength - 4);
+                    // Fill right half blue
+                    ctx.fillStyle = '#3366e6';
+                    ctx.fillRect(magCX, magCY - outerR - 1, outerR + 1, outerR * 2 + armLength + 2);
+                    // Blue highlight
+                    ctx.fillStyle = '#5588ff';
+                    ctx.fillRect(magCX + innerR + 1, magCY - outerR + 2, (outerR - innerR) * 0.4, outerR * 2 + armLength - 4);
+                    ctx.restore();
+                    
+                    // Silver tips at bottom of arms (scale with magnet)
+                    const tipHeight = s * 0.108 * (0.85 + magnetPulse * 0.15);
+                    const tipY = magCY + armLength - 1;
+                    
+                    // Left silver tip
+                    ctx.fillStyle = '#888899';
+                    ctx.fillRect(magCX - outerR - 1, tipY, outerR - innerR + 2, tipHeight + 1);
+                    ctx.fillStyle = '#aaaabc';
+                    ctx.fillRect(magCX - outerR, tipY + 1, outerR - innerR, tipHeight - 2);
+                    ctx.fillStyle = '#ccccdd';
+                    ctx.fillRect(magCX - outerR + 1, tipY + 1, (outerR - innerR) * 0.3, tipHeight - 2);
+                    
+                    // Right silver tip
+                    ctx.fillStyle = '#888899';
+                    ctx.fillRect(magCX + innerR - 1, tipY, outerR - innerR + 2, tipHeight + 1);
+                    ctx.fillStyle = '#aaaabc';
+                    ctx.fillRect(magCX + innerR, tipY + 1, outerR - innerR, tipHeight - 2);
+                    ctx.fillStyle = '#ccccdd';
+                    ctx.fillRect(magCX + innerR + 1, tipY + 1, (outerR - innerR) * 0.3, tipHeight - 2);
+                    
+                    // Subtle center glow (scales with magnet)
+                    ctx.fillStyle = `rgba(255, 150, 255, ${magnetPulse * 0.4})`;
                     ctx.beginPath();
-                    ctx.moveTo(magCX + magW/2, magCY - magH/2);
-                    ctx.lineTo(magCX + magW/2, magCY + magH/4);
-                    ctx.stroke();
-                    
-                    // Pole caps
-                    ctx.fillStyle = '#ff6666';
-                    ctx.fillRect(magCX - magW/2 - 2, magCY - magH/2 - 2, 6, 4);
-                    ctx.fillStyle = '#6666ff';
-                    ctx.fillRect(magCX + magW/2 - 4, magCY - magH/2 - 2, 6, 4);
-                    
-                    // Center glow
-                    ctx.fillStyle = `rgba(255, 150, 255, ${magnetPulse * 0.6})`;
-                    ctx.beginPath();
-                    ctx.arc(magCX, magCY + 2, 3, 0, Math.PI * 2);
+                    ctx.arc(magCX, magCY + 2, 1.8 + magnetPulse * 1.35, 0, Math.PI * 2);
                     ctx.fill();
                     
-                    ctx.lineCap = 'butt';
                     break;
                     
                 case TILE.UNSTABLE:
@@ -10888,6 +10975,8 @@
             blockedTimer = 0;
             blockedTimerLeft = 0;
             blockedTimerRight = 0;
+            hoverUpDrillTimer = 0;
+            hoverDrillMomentum = 0;
             upDigMomentum = 0;
             
             // Reset visual effects
