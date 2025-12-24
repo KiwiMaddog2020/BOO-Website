@@ -67,11 +67,12 @@ Six custom HTML5 games with global Firebase leaderboards:
 
 - **Frontend:** Vanilla HTML, CSS, JavaScript
 - **Games:** HTML5 Canvas with custom physics
-- **Leaderboards:** Firebase Realtime Database
-- **Fonts:** Bebas Neue, Rumble Brave, Poppins
+- **Leaderboards:** Firebase Firestore
+- **Analytics:** Google Analytics
+- **Palette:** Neon cyan (#0ff), magenta (#f0f), purple, orange on dark backgrounds
+- **Fonts:** Bebas Neue, Rumble Brave, Tilt Neon, Poppins, Oxanium, Exo 2
 
 ## Files
-
 ```
 index.html               # Main website
 neon-brickbreaker.html   # Brick breaker game
@@ -86,7 +87,6 @@ neon-space-shooter.html  # Space shooter (hidden)
 ## Running Locally
 
 Just open `index.html` in a browser. For iframe/CORS issues:
-
 ```bash
 python -m http.server 8000
 # http://localhost:8000
@@ -102,3 +102,5 @@ python -m http.server 8000
 ---
 
 © Bunch of Others. All rights reserved.
+
+*Last updated: December 24, 2025*
