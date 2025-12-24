@@ -2598,14 +2598,10 @@
         let blockedTimerLeft = 0; // Track time stuck against left wall
         let blockedTimerRight = 0; // Track time stuck against right wall
         let upDigMomentum = 0; // Track momentum for continuous upward digging
-        let leftDigMomentum = 0; // Track momentum for continuous left digging in hover
-        let rightDigMomentum = 0; // Track momentum for continuous right digging in hover
         const HOVER_MODE_DELAY = 20; // ~0.33 seconds of unobstructed flight
         const GROUNDED_EXIT_DELAY = 15; // ~0.25 seconds on ground to exit hover
         const BLOCKED_DRILL_DELAY = 30; // ~0.5 seconds stuck to auto-drill (upward)
-        const HORIZONTAL_DRILL_DELAY = 60; // ~1.0 seconds for left/right drilling
         const UP_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum after completing an upward dig
-        const HORIZONTAL_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum for hover L/R drilling
         
         // ==================== VISUAL EFFECTS ====================
         let screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
@@ -2947,12 +2943,13 @@
             vy: 0  // Vertical velocity for falling physics
         };
         
-        // Slide animation for smooth repositioning when drilling down
+        // Slide animation for smooth repositioning when drilling
         let slideAnimation = {
             active: false,
             targetX: 0,
             targetY: 0,
-            speed: 0.15  // Lerp factor (0-1, lower = slower slide)
+            speed: 0.15,  // Lerp factor (0-1, lower = slower slide)
+            direction: 'down' // 'down', 'left', 'right' - determines Y slide behavior
         };
         
         // Falling physics constants
@@ -5220,24 +5217,45 @@
                 slideAnimation.active = true;
                 slideAnimation.targetX = targetX; // Already snapped, but keep for reference
                 slideAnimation.targetY = targetY;
+                slideAnimation.direction = 'down';
+                player.vy = 0; // Reset fall velocity during slide
+            }
+            
+            // When drilling LEFT or RIGHT, slide player vertically to align with tile row
+            if (lastDigDirection === 'left' || lastDigDirection === 'right') {
+                // Target Y: center player vertically on the tile being drilled
+                const targetY = absoluteTy * TILE_SIZE + TILE_SIZE/2 - player.height/2;
+                const targetX = lastDigDirection === 'left' ? 
+                    (tx + 1) * TILE_SIZE - player.width + 4 : // Slide into the hole from right
+                    tx * TILE_SIZE - 4; // Slide into the hole from left
+                
+                slideAnimation.active = true;
+                slideAnimation.targetX = targetX;
+                slideAnimation.targetY = targetY;
+                slideAnimation.direction = lastDigDirection; // 'left' or 'right'
                 player.vy = 0; // Reset fall velocity during slide
             }
             
             player.digging = false;
             player.digTarget = null;
             
-            // Grant momentum for continuous digging
+            // Grant momentum for continuous upward digging only
             if (lastDigDirection === 'up') {
                 upDigMomentum = UP_DIG_MOMENTUM_FRAMES;
-            } else if (lastDigDirection === 'left' && hoverMode) {
-                leftDigMomentum = HORIZONTAL_DIG_MOMENTUM_FRAMES;
-            } else if (lastDigDirection === 'right' && hoverMode) {
-                rightDigMomentum = HORIZONTAL_DIG_MOMENTUM_FRAMES;
             }
             
             // Continue digging if direction key still held
+            // For horizontal digging: only chain if NOT in hover mode
             if (!fromMagnet && lastDigDirection) {
-                tryDigInDirection(lastDigDirection);
+                if (lastDigDirection === 'left' || lastDigDirection === 'right') {
+                    // Only chain horizontal digs when not in hover mode
+                    if (!hoverMode) {
+                        tryDigInDirection(lastDigDirection);
+                    }
+                } else {
+                    // Up/down can always chain
+                    tryDigInDirection(lastDigDirection);
+                }
             }
         }
         
@@ -7246,25 +7264,33 @@
             
             player.thrusterFlicker = Math.sin(globalTime * 0.3) * 0.3 + 0.7;
             
-            // ===== SLIDE ANIMATION (smooth repositioning when drilling down) =====
+            // ===== SLIDE ANIMATION (smooth repositioning when drilling) =====
             if (slideAnimation.active) {
                 // Lerp towards target position
                 const dx = slideAnimation.targetX - player.x;
                 const dy = slideAnimation.targetY - player.y;
                 
-                // Move towards target
+                // Move towards target X
                 player.x += dx * slideAnimation.speed * deltaMultiplier;
                 
-                // Only slide down, not up (for Y)
-                if (dy > 0) {
+                // Y sliding depends on direction:
+                // - 'down': only slide downward (prevents upward snap after down-drilling)
+                // - 'left'/'right': slide both directions to center on row
+                const isHorizontalDig = slideAnimation.direction === 'left' || slideAnimation.direction === 'right';
+                if (isHorizontalDig) {
+                    // Horizontal drilling: slide Y in both directions to align with tile
+                    player.y += dy * slideAnimation.speed * deltaMultiplier;
+                } else if (dy > 0) {
+                    // Down drilling: only slide down, not up
                     player.y += dy * slideAnimation.speed * deltaMultiplier;
                 }
                 
                 // Check if close enough to snap and end animation
-                const distSq = dx * dx + (dy > 0 ? dy * dy : 0);
+                const yDist = isHorizontalDig ? dy * dy : (dy > 0 ? dy * dy : 0);
+                const distSq = dx * dx + yDist;
                 if (distSq < 1) {
                     player.x = slideAnimation.targetX;
-                    if (dy > 0) player.y = slideAnimation.targetY;
+                    if (isHorizontalDig || dy > 0) player.y = slideAnimation.targetY;
                     slideAnimation.active = false;
                 }
             }
@@ -7376,6 +7402,11 @@
                 if (keys.left) dx = -moveSpeed;
                 if (keys.right) dx = moveSpeed;
                 if (keys.up) {
+                    // Cancel any active slide animation when flying up
+                    // This prevents the "invisible barrier" bug after drilling down
+                    if (slideAnimation.active) {
+                        slideAnimation.active = false;
+                    }
                     const shopClimbBonus = getShopBonus('climbSpeed');
                     dy = -moveSpeed * 0.7 * (1 + (permanentUpgrades.climbSpeed + shopClimbBonus) / 100);
                 }
@@ -7428,11 +7459,14 @@
                                 // Don't drill in sky rows
                                 if (absoluteTy >= FIRST_DIGGABLE_ROW) {
                                     if (hoverMode) {
-                                        // In hover mode: 1s delay OR momentum to drill horizontally
+                                        // In hover mode: NO horizontal drilling allowed
+                                        // Just wall grip and wait - must exit hover mode to drill
+                                    } else if (keys.up) {
+                                        // Flying upward: require 0.5s delay before horizontal drilling
+                                        // Prevents accidental drilling when navigating narrow shafts
                                         if (dx > 0) {
                                             blockedTimerRight += deltaMultiplier;
-                                            const hasRightMomentum = rightDigMomentum > 0 && lastDigDirection === 'right';
-                                            if (hasRightMomentum || blockedTimerRight >= HORIZONTAL_DRILL_DELAY) {
+                                            if (blockedTimerRight >= BLOCKED_DRILL_DELAY) {
                                                 lastDigDirection = 'right';
                                                 const checkX = newX + player.width;
                                                 const tx = Math.floor(checkX / TILE_SIZE);
@@ -7441,8 +7475,7 @@
                                             }
                                         } else {
                                             blockedTimerLeft += deltaMultiplier;
-                                            const hasLeftMomentum = leftDigMomentum > 0 && lastDigDirection === 'left';
-                                            if (hasLeftMomentum || blockedTimerLeft >= HORIZONTAL_DRILL_DELAY) {
+                                            if (blockedTimerLeft >= BLOCKED_DRILL_DELAY) {
                                                 lastDigDirection = 'left';
                                                 const checkX = newX;
                                                 const tx = Math.floor(checkX / TILE_SIZE);
@@ -7451,7 +7484,7 @@
                                             }
                                         }
                                     } else {
-                                        // Not hovering - drill immediately (0s delay)
+                                        // Not flying up - drill immediately
                                         if (dx > 0) {
                                             lastDigDirection = 'right';
                                             const checkX = newX + player.width;
@@ -7467,22 +7500,11 @@
                                 }
                             }
                         }
-                        
-                        // Decay horizontal dig momentum while in hover mode
-                        if (hoverMode) {
-                            if (dx > 0 && rightDigMomentum > 0) {
-                                rightDigMomentum -= deltaMultiplier;
-                            } else if (dx < 0 && leftDigMomentum > 0) {
-                                leftDigMomentum -= deltaMultiplier;
-                            }
-                        }
                     }
                 } else {
-                    // Not pressing left or right, reset horizontal blocked timers and momentum
+                    // Not pressing left or right, reset horizontal blocked timers
                     blockedTimerLeft = 0;
                     blockedTimerRight = 0;
-                    leftDigMomentum = 0;
-                    rightDigMomentum = 0;
                 }
                 
                 if (dy < 0) {
@@ -7507,12 +7529,11 @@
                     if (blocked) {
                         blockedTimer += deltaMultiplier;
                         const absoluteTy = Math.floor((player.y - 1) / TILE_SIZE);
-                        const hasUpMomentum = upDigMomentum > 0;
                         
-                        // In hover mode: 0.5s delay OR momentum to drill upward
+                        // In hover mode: always 0.5s delay to drill upward
                         // Not in hover mode: drill immediately (0s delay)
                         const canDrill = hoverMode ? 
-                            (hasUpMomentum || blockedTimer >= BLOCKED_DRILL_DELAY) : 
+                            (blockedTimer >= BLOCKED_DRILL_DELAY) : 
                             true; // Always can drill immediately when not hovering
                         
                         if (canDrill && !player.digging && absoluteTy >= FIRST_DIGGABLE_ROW) {
@@ -7525,7 +7546,7 @@
                         blockedTimer = 0; // Reset when not blocked
                     }
                     
-                    // Decay upward dig momentum while holding up
+                    // Decay upward dig momentum while holding up (used for non-hover chaining)
                     if (upDigMomentum > 0) {
                         upDigMomentum -= deltaMultiplier;
                     }
@@ -8224,7 +8245,7 @@
                 const warningAlpha = baseAlpha * pulse;
                 
                 // Full screen cyan flash overlay
-                ctx.fillStyle = `rgba(0, 180, 255, ${warningAlpha * 0.128})`;
+                ctx.fillStyle = `rgba(0, 180, 255, ${warningAlpha * 0.268})`;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
                 
                 // Cyan vignette from edges
@@ -8233,9 +8254,9 @@
                     BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.6
                 );
                 gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(0.4, `rgba(0, 80, 120, ${warningAlpha * 0.128})`);
-                gradient.addColorStop(0.7, `rgba(0, 150, 200, ${warningAlpha * 0.255})`);
-                gradient.addColorStop(1, `rgba(0, 200, 255, ${warningAlpha * 0.425})`);
+                gradient.addColorStop(0.4, `rgba(0, 80, 120, ${warningAlpha * 0.268})`);
+                gradient.addColorStop(0.7, `rgba(0, 150, 200, ${warningAlpha * 0.395})`);
+                gradient.addColorStop(1, `rgba(0, 200, 255, ${warningAlpha * 0.565})`);
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             }
@@ -8249,7 +8270,7 @@
                 const warningAlpha = baseAlpha * pulse;
                 
                 // Full screen orange flash overlay
-                ctx.fillStyle = `rgba(255, 100, 0, ${warningAlpha * 0.106})`;
+                ctx.fillStyle = `rgba(255, 100, 0, ${warningAlpha * 0.246})`;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
                 
                 // Orange vignette from edges
@@ -8258,9 +8279,9 @@
                     BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_HEIGHT * 0.6
                 );
                 gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-                gradient.addColorStop(0.4, `rgba(100, 50, 0, ${warningAlpha * 0.128})`);
-                gradient.addColorStop(0.7, `rgba(200, 100, 0, ${warningAlpha * 0.255})`);
-                gradient.addColorStop(1, `rgba(255, 140, 0, ${warningAlpha * 0.425})`);
+                gradient.addColorStop(0.4, `rgba(100, 50, 0, ${warningAlpha * 0.268})`);
+                gradient.addColorStop(0.7, `rgba(200, 100, 0, ${warningAlpha * 0.395})`);
+                gradient.addColorStop(1, `rgba(255, 140, 0, ${warningAlpha * 0.565})`);
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             }
@@ -8967,7 +8988,7 @@
                     break;
                 
                 case TILE.MAGNET_ORE:
-                    // Purple/pink with magnetic field lines and emoji
+                    // Purple/pink with magnetic field lines and drawn magnet symbol
                     const magnetPulse = 0.6 + Math.sin(time * 2.5 + tx + ty) * 0.4;
                     const fieldRotation = time * 1.5;
                     
@@ -9000,13 +9021,45 @@
                         ctx.stroke();
                     }
                     
-                    // Magnet emoji in center (draw LAST so it's on top)
-                    const magnetEmojiSize = 12 + magnetPulse * 2; // Pulses 12-14px
-                    ctx.font = `${magnetEmojiSize}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText('🧲', x + s/2, y + s/2);
-                    ctx.textBaseline = 'alphabetic';
+                    // Draw horseshoe magnet symbol (cross-browser consistent)
+                    const magCX = x + s/2;
+                    const magCY = y + s/2;
+                    const magScale = 0.35 + magnetPulse * 0.05; // Pulses slightly
+                    const magW = s * magScale;
+                    const magH = s * magScale * 1.1;
+                    
+                    // Horseshoe body (U-shape)
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = 'round';
+                    
+                    // Left arm (red)
+                    ctx.strokeStyle = '#ff4444';
+                    ctx.beginPath();
+                    ctx.moveTo(magCX - magW/2, magCY - magH/2);
+                    ctx.lineTo(magCX - magW/2, magCY + magH/4);
+                    ctx.arc(magCX, magCY + magH/4, magW/2, Math.PI, Math.PI * 0.5, true);
+                    ctx.stroke();
+                    
+                    // Right arm (blue)  
+                    ctx.strokeStyle = '#4444ff';
+                    ctx.beginPath();
+                    ctx.moveTo(magCX + magW/2, magCY - magH/2);
+                    ctx.lineTo(magCX + magW/2, magCY + magH/4);
+                    ctx.stroke();
+                    
+                    // Pole caps
+                    ctx.fillStyle = '#ff6666';
+                    ctx.fillRect(magCX - magW/2 - 2, magCY - magH/2 - 2, 6, 4);
+                    ctx.fillStyle = '#6666ff';
+                    ctx.fillRect(magCX + magW/2 - 4, magCY - magH/2 - 2, 6, 4);
+                    
+                    // Center glow
+                    ctx.fillStyle = `rgba(255, 150, 255, ${magnetPulse * 0.6})`;
+                    ctx.beginPath();
+                    ctx.arc(magCX, magCY + 2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.lineCap = 'butt';
                     break;
                     
                 case TILE.UNSTABLE:
@@ -10836,8 +10889,6 @@
             blockedTimerLeft = 0;
             blockedTimerRight = 0;
             upDigMomentum = 0;
-            leftDigMomentum = 0;
-            rightDigMomentum = 0;
             
             // Reset visual effects
             screenFlash = { active: false, color: '#ffffff', alpha: 0, duration: 0 };
