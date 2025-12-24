@@ -2603,7 +2603,7 @@
         let upDigMomentum = 0; // Track momentum for continuous upward digging
         const HOVER_MODE_DELAY = 20; // ~0.33 seconds of unobstructed flight
         const GROUNDED_EXIT_DELAY = 15; // ~0.25 seconds on ground to exit hover
-        const BLOCKED_DRILL_DELAY = 30; // ~0.5 seconds stuck to auto-drill (upward)
+        const BLOCKED_DRILL_DELAY = 24; // ~0.4 seconds stuck to auto-drill (upward)
         const UP_DIG_MOMENTUM_FRAMES = 25; // ~0.4 seconds of momentum after completing an upward dig
         const HOVER_DRILL_MOMENTUM_FRAMES = 30; // ~0.5 seconds of momentum for chaining in hover mode
         
@@ -2952,8 +2952,9 @@
             active: false,
             targetX: 0,
             targetY: 0,
-            speed: 0.15,  // Lerp factor (0-1, lower = slower slide)
-            direction: 'down' // 'down', 'left', 'right' - determines Y slide behavior
+            speed: 0.075,  // Lerp factor (0-1, lower = slower slide) - 50% slower than original
+            direction: 'down', // 'down', 'left', 'right' - determines Y slide behavior
+            timer: 0 // Safety timeout to prevent getting stuck
         };
         
         // Falling physics constants
@@ -3899,6 +3900,41 @@
                         player.y -= 1;
                     }
                 }
+            }
+        }
+        
+        // Periodic sanity check to clear stuck/orphaned states
+        let sanityCheckTimer = 0;
+        function sanityCheck() {
+            sanityCheckTimer++;
+            if (sanityCheckTimer < 30) return; // Run every ~0.5 seconds
+            sanityCheckTimer = 0;
+            
+            // If digging but no valid target, reset dig state
+            if (player.digging && !player.digTarget) {
+                player.digging = false;
+                player.digProgress = 0;
+            }
+            
+            // If digging but target tile is already AIR, reset
+            if (player.digging && player.digTarget) {
+                const ty = getWorldRow(player.digTarget.y);
+                if (ty >= 0 && ty < world.length) {
+                    const tile = world[ty][player.digTarget.x];
+                    if (tile === TILE.AIR) {
+                        player.digging = false;
+                        player.digTarget = null;
+                        player.digProgress = 0;
+                    }
+                }
+            }
+            
+            // If player is not pressing any movement key and not digging, 
+            // ensure they're not stuck in weird states
+            if (!keys.up && !keys.down && !keys.left && !keys.right && !player.digging) {
+                // Reset hover drill timers if not actively trying to move
+                hoverUpDrillTimer = 0;
+                blockedTimer = 0;
             }
         }
         
@@ -5222,6 +5258,7 @@
                 slideAnimation.targetX = targetX; // Already snapped, but keep for reference
                 slideAnimation.targetY = targetY;
                 slideAnimation.direction = 'down';
+                slideAnimation.timer = 0; // Reset timeout
                 player.vy = 0; // Reset fall velocity during slide
             }
             
@@ -5237,6 +5274,7 @@
                 slideAnimation.targetX = targetX;
                 slideAnimation.targetY = targetY;
                 slideAnimation.direction = lastDigDirection; // 'left' or 'right'
+                slideAnimation.timer = 0; // Reset timeout
                 player.vy = 0; // Reset fall velocity during slide
             }
             
@@ -7273,17 +7311,25 @@
             
             // ===== SLIDE ANIMATION (smooth repositioning when drilling) =====
             if (slideAnimation.active) {
+                // Safety timeout - cancel if taking too long (prevents invisible barriers)
+                slideAnimation.timer += deltaMultiplier;
+                if (slideAnimation.timer > 60) { // ~1 second max
+                    slideAnimation.active = false;
+                    slideAnimation.timer = 0;
+                }
+                
                 // Lerp towards target position
                 const dx = slideAnimation.targetX - player.x;
                 const dy = slideAnimation.targetY - player.y;
-                
-                // Move towards target X
-                player.x += dx * slideAnimation.speed * deltaMultiplier;
                 
                 // Y sliding depends on direction:
                 // - 'down': only slide downward (prevents upward snap after down-drilling)
                 // - 'left'/'right': slide both directions to center on row
                 const isHorizontalDig = slideAnimation.direction === 'left' || slideAnimation.direction === 'right';
+                
+                // Move towards target X
+                player.x += dx * slideAnimation.speed * deltaMultiplier;
+                
                 if (isHorizontalDig) {
                     // Horizontal drilling: slide Y in both directions to align with tile
                     player.y += dy * slideAnimation.speed * deltaMultiplier;
@@ -7299,6 +7345,7 @@
                     player.x = slideAnimation.targetX;
                     if (isHorizontalDig || dy > 0) player.y = slideAnimation.targetY;
                     slideAnimation.active = false;
+                    slideAnimation.timer = 0;
                 }
             }
             
@@ -7418,7 +7465,16 @@
                     dy = -moveSpeed * 0.7 * (1 + (permanentUpgrades.climbSpeed + shopClimbBonus) / 100);
                 }
                 
+                // Cancel slide animation when pressing left/right too
+                if ((keys.left || keys.right) && slideAnimation.active) {
+                    slideAnimation.active = false;
+                }
+                
                 if (keys.down && !player.digging) {
+                    // Cancel slide animation when pressing down
+                    if (slideAnimation.active) {
+                        slideAnimation.active = false;
+                    }
                     // Exit hover mode when pressing down to drill
                     if (hoverMode) {
                         hoverMode = false;
@@ -7645,9 +7701,9 @@
                 }
                 
                 // Gravity with acceleration (skip during slide animation or wall gripping)
-                // Also skip gravity when holding L/R to dig - prevents dropping between blocks
-                const holdingHorizontalDig = (keys.left || keys.right) && 
-                    (player.digging || lastDigDirection === 'left' || lastDigDirection === 'right');
+                // Also skip gravity when actively drilling horizontally - prevents dropping between blocks
+                const holdingHorizontalDig = (keys.left || keys.right) && player.digging && 
+                    (lastDigDirection === 'left' || lastDigDirection === 'right');
                 
                 if (!keys.up && !slideAnimation.active && !wallGripping && !holdingHorizontalDig) {
                     flightTimer = 0; // Reset flight timer when not holding up
@@ -7719,6 +7775,9 @@
                 
                 // Unstuck player if somehow inside a wall
                 unstuckPlayer();
+                
+                // Periodic check for stuck/orphaned states
+                sanityCheck();
             }
             
             // Update facing direction based on key presses (don't clear - retain for resting animation)
