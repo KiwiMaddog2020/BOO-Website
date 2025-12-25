@@ -6258,8 +6258,8 @@
                     type: bossType,
                     x: arenaPixelWidth * 2 / 3 + bossArena.offsetX,
                     y: arenaPixelHeight / 3 + bossArena.offsetY,
-                    width: 48,
-                    height: 48,
+                    width: 56,
+                    height: 56,
                     maxHealth: Math.floor(getBossBaseHealth(bossType) * difficulty),
                     health: Math.floor(getBossBaseHealth(bossType) * difficulty),
                     damage: Math.floor(getBossBaseDamage(bossType) * difficulty),
@@ -6267,7 +6267,7 @@
                     maxPhases: 3,
                     phaseTimer: 0,
                     attackTimer: 30, // Offset attack timing
-                    attackCooldown: 100,
+                    attackCooldown: 90,
                     state: 'idle',
                     stateTimer: 0,
                     animFrame: Math.PI, // Offset animation
@@ -6279,6 +6279,11 @@
                     hitsToStun: 3,
                     isSecondary: true
                 };
+                
+                // Fire breath tracking - first at 10s, then every 20s alternating
+                bossArena.fireBreathTimer = 10 * 60; // 10 seconds (600 frames)
+                bossArena.fireBreathNext = 1; // 1 = boss, 2 = boss2
+                bossArena.fireBreathActive = null; // Which wurm is currently breathing
             }
             
             // Position player at bottom of arena in cleared spawn zone
@@ -6313,7 +6318,7 @@
             switch(bossType) {
                 case BOSS_TYPE.BURROWER: return 'THE BURROWER';
                 case BOSS_TYPE.CRYSTAL_GOLEM: return 'CRYSTAL GOLEM';
-                case BOSS_TYPE.LAVA_WURM: return 'LAVA WURM';
+                case BOSS_TYPE.LAVA_WURM: return 'LAVA WURMS';
                 case BOSS_TYPE.HIVE_MIND: return 'HIVE MIND';
                 case BOSS_TYPE.COLLECTOR: return 'THE COLLECTOR';
                 default: return 'UNKNOWN ENTITY';
@@ -6338,7 +6343,7 @@
                 case BOSS_TYPE.CRYSTAL_GOLEM: 
                     return 'Dodge shockwaves and crystals! After it attacks, drill it while EXPOSED (yellow ring). Stun it to expose the core (cyan ring) for damage!';
                 case BOSS_TYPE.LAVA_WURM: 
-                    return 'Survive the rising lava while attacking the Wurm. Stay mobile and watch for its dive attacks!';
+                    return 'Twin Wurms hunt together! Dodge fireballs and avoid their FIRE BREATH attack. They turn GREEN after attacking - drill them then!';
                 case BOSS_TYPE.HIVE_MIND: 
                     return 'Destroy the smaller drones to weaken the Hive Mind. Target the core when its shields drop!';
                 case BOSS_TYPE.COLLECTOR: 
@@ -6355,7 +6360,7 @@
                 case BOSS_TYPE.CRYSTAL_GOLEM: 
                     return '💡 Tip: Jump shockwaves! Attack when you see EXPOSED, then drill the cyan core!';
                 case BOSS_TYPE.LAVA_WURM: 
-                    return '💡 Tip: Stay near the top but watch for ceiling attacks!';
+                    return '💡 Tip: Watch for the FIRE BREATH warning! Dodge fireballs, then drill when they turn GREEN!';
                 case BOSS_TYPE.HIVE_MIND: 
                     return '💡 Tip: Clear drones first - they heal the core!';
                 case BOSS_TYPE.COLLECTOR: 
@@ -6743,9 +6748,43 @@
                     updateCrystalGolemAI(playerCenterX, playerCenterY);
                     break;
                 case BOSS_TYPE.LAVA_WURM:
-                    updateLavaWurmAI(playerCenterX, playerCenterY, boss);
+                    // Fire breath timer countdown
+                    if (bossArena.fireBreathTimer !== undefined) {
+                        bossArena.fireBreathTimer -= deltaMultiplier;
+                        
+                        // Trigger fire breath when timer hits 0
+                        if (bossArena.fireBreathTimer <= 0 && !bossArena.fireBreathActive) {
+                            // Determine which wurm should fire (alternate, skip if dead)
+                            let targetWurm = null;
+                            if (bossArena.fireBreathNext === 1 && boss.health > 0) {
+                                targetWurm = boss;
+                                bossArena.fireBreathNext = 2;
+                            } else if (bossArena.fireBreathNext === 2 && boss2 && boss2.health > 0) {
+                                targetWurm = boss2;
+                                bossArena.fireBreathNext = 1;
+                            } else if (boss.health > 0) {
+                                targetWurm = boss;
+                            } else if (boss2 && boss2.health > 0) {
+                                targetWurm = boss2;
+                            }
+                            
+                            if (targetWurm && targetWurm.state !== 'firebreath' && targetWurm.state !== 'vulnerable' && targetWurm.state !== 'stunned') {
+                                targetWurm.state = 'firebreath';
+                                targetWurm.stateTimer = 0;
+                                targetWurm.fireBreathPhase = 0;
+                                bossArena.fireBreathActive = targetWurm;
+                                bossArena.fireBreathTimer = 20 * 60; // 20 seconds until next
+                            }
+                        }
+                    }
+                    
+                    // Get other wurm reference for separation
+                    const otherWurm1 = boss2 && boss2.health > 0 ? boss2 : null;
+                    const otherWurm2 = boss.health > 0 ? boss : null;
+                    
+                    updateLavaWurmAI(playerCenterX, playerCenterY, boss, otherWurm1);
                     if (boss2 && boss2.health > 0) {
-                        updateLavaWurmAI(playerCenterX, playerCenterY, boss2);
+                        updateLavaWurmAI(playerCenterX, playerCenterY, boss2, otherWurm2);
                     }
                     break;
                 // Other bosses will be added in future updates
@@ -7023,11 +7062,14 @@
             }
         }
         
-        function updateLavaWurmAI(playerX, playerY, wurm) {
-            // Lava Wurm: Similar to Burrower but with flame projectiles
+        function updateLavaWurmAI(playerX, playerY, wurm, otherWurm) {
+            // Lava Wurm: Similar to Burrower but with flame projectiles and fire breath
             wurm.animFrame = (wurm.animFrame + 0.12 * deltaMultiplier) % (Math.PI * 2);
             wurm.attackTimer += deltaMultiplier;
             wurm.stateTimer += deltaMultiplier;
+            
+            // Minimum separation distance from other wurm
+            const MIN_SEPARATION = 120;
             
             switch(wurm.state) {
                 case 'idle':
@@ -7047,18 +7089,40 @@
                         const arenaBottom = bossArena.offsetY + (bossArena.height - 4) * TILE_SIZE;
                         
                         for (let i = 0; i < numWaypoints; i++) {
-                            wurm.burrowWaypoints.push({
-                                x: arenaLeft + Math.random() * (arenaRight - arenaLeft),
-                                y: arenaTop + Math.random() * (arenaBottom - arenaTop)
-                            });
+                            let wpX = arenaLeft + Math.random() * (arenaRight - arenaLeft);
+                            let wpY = arenaTop + Math.random() * (arenaBottom - arenaTop);
+                            
+                            // Adjust waypoint to stay away from other wurm
+                            if (otherWurm) {
+                                const dx = wpX - otherWurm.x;
+                                const dy = wpY - otherWurm.y;
+                                const dist = Math.sqrt(dx * dx + dy * dy);
+                                if (dist < MIN_SEPARATION) {
+                                    // Push waypoint away from other wurm
+                                    wpX += (dx / dist) * (MIN_SEPARATION - dist);
+                                    wpY += (dy / dist) * (MIN_SEPARATION - dist);
+                                    // Clamp to arena bounds
+                                    wpX = Math.max(arenaLeft, Math.min(arenaRight, wpX));
+                                    wpY = Math.max(arenaTop, Math.min(arenaBottom, wpY));
+                                }
+                            }
+                            
+                            wurm.burrowWaypoints.push({ x: wpX, y: wpY });
                         }
                         
-                        // Final waypoint: predict where player will be
-                        const predictOffset = (Math.random() - 0.5) * 60;
-                        wurm.burrowWaypoints.push({
-                            x: playerX + predictOffset,
-                            y: playerY - 50 + (Math.random() - 0.5) * 30
-                        });
+                        // Final waypoint: predict where player will be, but offset from other wurm
+                        let finalX = playerX + (Math.random() - 0.5) * 60;
+                        let finalY = playerY - 50 + (Math.random() - 0.5) * 30;
+                        
+                        // If other wurm exists, approach from opposite side
+                        if (otherWurm) {
+                            const playerToOther = Math.atan2(otherWurm.y - playerY, otherWurm.x - playerX);
+                            // Approach from opposite direction
+                            finalX = playerX - Math.cos(playerToOther) * 80;
+                            finalY = playerY - Math.sin(playerToOther) * 60;
+                        }
+                        
+                        wurm.burrowWaypoints.push({ x: finalX, y: finalY });
                         
                         // Set first target
                         wurm.targetX = wurm.burrowWaypoints[0].x;
@@ -7067,23 +7131,37 @@
                     break;
                     
                 case 'burrowing':
-                    wurm.burrowProgress += 0.009 * deltaMultiplier;
+                    wurm.burrowProgress += 0.008 * deltaMultiplier;
                     
                     // Move toward current waypoint
-                    const dx = wurm.targetX - wurm.x;
-                    const dy = wurm.targetY - wurm.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    let dx = wurm.targetX - wurm.x;
+                    let dy = wurm.targetY - wurm.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Add separation force from other wurm
+                    if (otherWurm) {
+                        const sepDx = wurm.x - otherWurm.x;
+                        const sepDy = wurm.y - otherWurm.y;
+                        const sepDist = Math.sqrt(sepDx * sepDx + sepDy * sepDy);
+                        if (sepDist < MIN_SEPARATION && sepDist > 0) {
+                            const sepForce = (MIN_SEPARATION - sepDist) / MIN_SEPARATION * 2;
+                            dx += (sepDx / sepDist) * sepForce * 20;
+                            dy += (sepDy / sepDist) * sepForce * 20;
+                        }
+                    }
                     
                     const isLastWaypoint = wurm.burrowPhase >= wurm.burrowWaypoints.length - 1;
-                    const speed = isLastWaypoint ? 2.8 : 3.8;
+                    const speed = isLastWaypoint ? 2.5 : 3.5;
                     
                     if (dist > 10) {
                         const wobble = Math.sin(wurm.burrowProgress * 20) * 0.3;
-                        wurm.x += ((dx / dist) + wobble) * speed * deltaMultiplier;
-                        wurm.y += (dy / dist) * speed * deltaMultiplier;
+                        const moveX = dist > 0 ? (dx / dist) : 0;
+                        const moveY = dist > 0 ? (dy / dist) : 0;
+                        wurm.x += (moveX + wobble) * speed * deltaMultiplier;
+                        wurm.y += moveY * speed * deltaMultiplier;
                         
                         // Leave lava trail particles
-                        if (Math.random() < 0.5) {
+                        if (Math.random() < 0.4) {
                             bossArena.particles.push({
                                 x: wurm.x + (Math.random() - 0.5) * 40,
                                 y: wurm.y + (Math.random() - 0.5) * 40,
@@ -7108,9 +7186,16 @@
                             wurm.targetY = nextWP.y;
                             
                             if (wurm.burrowPhase === wurm.burrowWaypoints.length - 1) {
-                                const finalPredictOffset = (Math.random() - 0.5) * 40;
-                                wurm.targetX = playerX + finalPredictOffset;
-                                wurm.targetY = playerY - 40;
+                                // Re-adjust final waypoint based on current positions
+                                let finalX = playerX + (Math.random() - 0.5) * 40;
+                                let finalY = playerY - 40;
+                                if (otherWurm) {
+                                    const playerToOther = Math.atan2(otherWurm.y - playerY, otherWurm.x - playerX);
+                                    finalX = playerX - Math.cos(playerToOther) * 70;
+                                    finalY = playerY - Math.sin(playerToOther) * 50;
+                                }
+                                wurm.targetX = finalX;
+                                wurm.targetY = finalY;
                             }
                         }
                     }
@@ -7121,7 +7206,6 @@
                         wurm.stateTimer = 0;
                         wurm.firedShot1 = false;
                         wurm.firedShot2 = false;
-                        wurm.firedShot3 = false;
                         screenShake = 12;
                         triggerScreenFlash('#ff4400', 0.4, 12);
                         
@@ -7143,91 +7227,208 @@
                     break;
                     
                 case 'attacking':
-                    // Surface and attack - fire flame projectiles then become vulnerable
+                    // Surface and attack - fire 2 flame projectiles (like Burrower)
                     
-                    // Telegraph first shot
-                    if (wurm.stateTimer >= 5 && wurm.stateTimer < 15) {
-                        if (Math.random() < 0.5) {
+                    // Telegraph first shot (charging particles)
+                    if (wurm.stateTimer >= 5 && wurm.stateTimer < 18) {
+                        if (Math.random() < 0.4) {
                             const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
                             bossArena.particles.push({
                                 x: wurm.x + (Math.random() - 0.5) * 30,
                                 y: wurm.y + (Math.random() - 0.5) * 30,
                                 vx: Math.cos(angle) * 1 + (Math.random() - 0.5),
                                 vy: Math.sin(angle) * 1 + (Math.random() - 0.5),
-                                size: 2 + Math.random() * 3,
+                                size: 2 + Math.random() * 2,
                                 color: '#ffaa00',
                                 life: 0.4
                             });
                         }
                     }
                     
-                    // Fire first flame projectile
-                    if (wurm.stateTimer >= 15 && !wurm.firedShot1) {
-                        wurm.firedShot1 = true;
-                        const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
-                        bossArena.projectiles.push({
-                            x: wurm.x,
-                            y: wurm.y,
-                            vx: Math.cos(angle) * 3,
-                            vy: Math.sin(angle) * 3,
-                            radius: 12,
-                            damage: 10,
-                            life: 4,
-                            color: '#ff4400',
-                            isFlame: true
-                        });
-                        // Fire spit particles
-                        for (let i = 0; i < 8; i++) {
-                            bossArena.particles.push({
-                                x: wurm.x,
-                                y: wurm.y,
-                                vx: Math.cos(angle) * 4 + (Math.random() - 0.5) * 3,
-                                vy: Math.sin(angle) * 4 + (Math.random() - 0.5) * 3,
-                                size: 3 + Math.random() * 4,
-                                color: Math.random() < 0.5 ? '#ff6600' : '#ffcc00',
-                                life: 0.5
-                            });
-                        }
-                    }
-                    
-                    // Fire second flame projectile (spread)
-                    if (wurm.stateTimer >= 30 && !wurm.firedShot2) {
-                        wurm.firedShot2 = true;
-                        const baseAngle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
-                        // Fire 3 spread shots
-                        for (let i = -1; i <= 1; i++) {
-                            const angle = baseAngle + i * 0.3;
+                    // Fire first projectile
+                    if (wurm.stateTimer >= 18 && wurm.stateTimer < 20) {
+                        if (!wurm.firedShot1) {
+                            wurm.firedShot1 = true;
+                            const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
                             bossArena.projectiles.push({
                                 x: wurm.x,
                                 y: wurm.y,
                                 vx: Math.cos(angle) * 2.5,
                                 vy: Math.sin(angle) * 2.5,
                                 radius: 10,
-                                damage: 8,
-                                life: 3.5,
-                                color: '#ff6600',
+                                damage: 10,
+                                life: 4,
+                                color: '#ff4400',
                                 isFlame: true
                             });
+                            // Fire spit particles
+                            for (let i = 0; i < 6; i++) {
+                                bossArena.particles.push({
+                                    x: wurm.x,
+                                    y: wurm.y,
+                                    vx: Math.cos(angle) * 3 + (Math.random() - 0.5) * 2,
+                                    vy: Math.sin(angle) * 3 + (Math.random() - 0.5) * 2,
+                                    size: 2 + Math.random() * 3,
+                                    color: Math.random() < 0.5 ? '#ff6600' : '#ffcc00',
+                                    life: 0.5
+                                });
+                            }
                         }
-                        // Fire particles
-                        for (let i = 0; i < 12; i++) {
+                    }
+                    
+                    // Telegraph second shot (charging particles)
+                    if (wurm.stateTimer >= 38 && wurm.stateTimer < 50) {
+                        if (Math.random() < 0.4) {
+                            const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
                             bossArena.particles.push({
-                                x: wurm.x,
-                                y: wurm.y,
-                                vx: (Math.random() - 0.5) * 8,
-                                vy: (Math.random() - 0.5) * 8,
-                                size: 2 + Math.random() * 3,
+                                x: wurm.x + (Math.random() - 0.5) * 30,
+                                y: wurm.y + (Math.random() - 0.5) * 30,
+                                vx: Math.cos(angle) * 1 + (Math.random() - 0.5),
+                                vy: Math.sin(angle) * 1 + (Math.random() - 0.5),
+                                size: 2 + Math.random() * 2,
                                 color: '#ffaa00',
                                 life: 0.4
                             });
                         }
                     }
                     
+                    // Fire second projectile
+                    if (wurm.stateTimer >= 50 && wurm.stateTimer < 52) {
+                        if (!wurm.firedShot2) {
+                            wurm.firedShot2 = true;
+                            const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
+                            bossArena.projectiles.push({
+                                x: wurm.x,
+                                y: wurm.y,
+                                vx: Math.cos(angle) * 2.5,
+                                vy: Math.sin(angle) * 2.5,
+                                radius: 10,
+                                damage: 10,
+                                life: 4,
+                                color: '#ff4400',
+                                isFlame: true
+                            });
+                            // Fire spit particles
+                            for (let i = 0; i < 6; i++) {
+                                bossArena.particles.push({
+                                    x: wurm.x,
+                                    y: wurm.y,
+                                    vx: Math.cos(angle) * 3 + (Math.random() - 0.5) * 2,
+                                    vy: Math.sin(angle) * 3 + (Math.random() - 0.5) * 2,
+                                    size: 2 + Math.random() * 3,
+                                    color: Math.random() < 0.5 ? '#ff6600' : '#ffcc00',
+                                    life: 0.5
+                                });
+                            }
+                        }
+                    }
+                    
                     // Become vulnerable after attacks
-                    if (wurm.stateTimer >= 60) {
+                    if (wurm.stateTimer >= 70) {
                         wurm.state = 'vulnerable';
                         wurm.stateTimer = 0;
                         wurm.vulnerableTimer = 120; // 2 seconds vulnerable
+                    }
+                    break;
+                    
+                case 'firebreath':
+                    // Telegraphed fire breath attack
+                    wurm.fireBreathPhase = wurm.fireBreathPhase || 0;
+                    
+                    // Lock in target angle at start of telegraph
+                    if (wurm.stateTimer < 2) {
+                        wurm.breathTargetAngle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
+                        createFloatingText('🔥 FIRE BREATH! 🔥', wurm.x, wurm.y - 60, '#ff0000');
+                        screenShake = 8;
+                    }
+                    
+                    // Phase 0: Telegraph (0-120 frames = 2 seconds)
+                    if (wurm.stateTimer < 120) {
+                        // Charging particles building up
+                        if (Math.random() < 0.6) {
+                            const chargeAngle = Math.random() * Math.PI * 2;
+                            const chargeDist = 30 + Math.random() * 40;
+                            bossArena.particles.push({
+                                x: wurm.x + Math.cos(chargeAngle) * chargeDist,
+                                y: wurm.y + Math.sin(chargeAngle) * chargeDist,
+                                vx: -Math.cos(chargeAngle) * 2,
+                                vy: -Math.sin(chargeAngle) * 2,
+                                size: 3 + Math.random() * 4,
+                                color: ['#ff0000', '#ff4400', '#ff8800'][Math.floor(Math.random() * 3)],
+                                life: 0.5
+                            });
+                        }
+                        
+                        // Telegraph cone particles showing danger zone
+                        if (wurm.stateTimer % 3 === 0) {
+                            const coneSpread = 0.4; // ~45 degree cone
+                            for (let i = -2; i <= 2; i++) {
+                                const angle = wurm.breathTargetAngle + (i / 2) * coneSpread;
+                                const dist = 60 + (wurm.stateTimer / 120) * 120; // Grows outward
+                                bossArena.particles.push({
+                                    x: wurm.x + Math.cos(angle) * dist,
+                                    y: wurm.y + Math.sin(angle) * dist,
+                                    vx: 0,
+                                    vy: 0,
+                                    size: 4 + Math.random() * 3,
+                                    color: `rgba(255, ${100 + Math.floor(Math.random() * 100)}, 0, 0.6)`,
+                                    life: 0.3
+                                });
+                            }
+                        }
+                        
+                        // Pulsing glow - more intense as it builds
+                        const intensity = 0.1 + (wurm.stateTimer / 120) * 0.2;
+                        if (wurm.stateTimer % 15 < 8) {
+                            triggerScreenFlash('#ff4400', intensity, 5);
+                        }
+                    }
+                    // Phase 1: Fire breath cone (120-180 frames = 1 second)
+                    else if (wurm.stateTimer < 180) {
+                        // Use locked-in angle for fire breath
+                        const breathAngle = wurm.breathTargetAngle;
+                        
+                        // Spawn fire breath projectiles in a cone
+                        if (wurm.stateTimer % 3 < 2) {
+                            const spreadAngle = (Math.random() - 0.5) * 0.8; // ~45 degree cone
+                            const finalAngle = breathAngle + spreadAngle;
+                            bossArena.projectiles.push({
+                                x: wurm.x + Math.cos(breathAngle) * 20,
+                                y: wurm.y + Math.sin(breathAngle) * 20,
+                                vx: Math.cos(finalAngle) * (3.5 + Math.random()),
+                                vy: Math.sin(finalAngle) * (3.5 + Math.random()),
+                                radius: 7 + Math.random() * 5,
+                                damage: 8,
+                                life: 2.5,
+                                color: '#ff4400',
+                                isFlame: true
+                            });
+                        }
+                        
+                        // Fire breath particles - denser cone
+                        for (let i = 0; i < 4; i++) {
+                            const spreadAngle = (Math.random() - 0.5) * 0.9;
+                            const finalAngle = breathAngle + spreadAngle;
+                            bossArena.particles.push({
+                                x: wurm.x + Math.cos(breathAngle) * 25,
+                                y: wurm.y + Math.sin(breathAngle) * 25,
+                                vx: Math.cos(finalAngle) * (5 + Math.random() * 4),
+                                vy: Math.sin(finalAngle) * (5 + Math.random() * 4),
+                                size: 5 + Math.random() * 7,
+                                color: ['#ff2200', '#ff6600', '#ffaa00', '#ffff00'][Math.floor(Math.random() * 4)],
+                                life: 0.7
+                            });
+                        }
+                        
+                        screenShake = Math.max(screenShake, 5);
+                    }
+                    // Phase 2: Recovery (180+ frames)
+                    else {
+                        wurm.state = 'vulnerable';
+                        wurm.stateTimer = 0;
+                        wurm.vulnerableTimer = 150; // 2.5 seconds vulnerable after fire breath
+                        wurm.breathTargetAngle = null;
+                        bossArena.fireBreathActive = null;
                     }
                     break;
                     
@@ -7236,6 +7437,17 @@
                     
                     // Slowly drift upward
                     wurm.y -= 0.2 * deltaMultiplier;
+                    
+                    // Stay away from other wurm even when vulnerable
+                    if (otherWurm) {
+                        const sepDx = wurm.x - otherWurm.x;
+                        const sepDy = wurm.y - otherWurm.y;
+                        const sepDist = Math.sqrt(sepDx * sepDx + sepDy * sepDy);
+                        if (sepDist < MIN_SEPARATION && sepDist > 0) {
+                            wurm.x += (sepDx / sepDist) * 0.5 * deltaMultiplier;
+                            wurm.y += (sepDy / sepDist) * 0.5 * deltaMultiplier;
+                        }
+                    }
                     
                     if (wurm.vulnerableTimer <= 0) {
                         wurm.state = 'idle';
@@ -7558,7 +7770,7 @@
                     } else {
                         damageBoss(1);
                     }
-                } else if (boss.state === 'attacking' || boss.state === 'idle' || boss.state === 'slam' || boss.state === 'shooting') {
+                } else if (boss.state === 'attacking' || boss.state === 'idle' || boss.state === 'slam' || boss.state === 'shooting' || boss.state === 'firebreath') {
                     // Player takes damage from active boss
                     playerTakeDamage(boss.damage, dx, dy);
                 }
@@ -7588,7 +7800,7 @@
                         } else {
                             damageBoss2(1);
                         }
-                    } else if (boss2.state === 'attacking' || boss2.state === 'idle') {
+                    } else if (boss2.state === 'attacking' || boss2.state === 'idle' || boss2.state === 'firebreath') {
                         playerTakeDamage(boss2.damage, dx2, dy2);
                     }
                 }
@@ -7986,6 +8198,53 @@
                 ctx.stroke();
                 
                 ctx.globalAlpha = 1;
+            }
+            
+            // Draw fire breath telegraph cone
+            const breathingWurms = [boss, boss2].filter(w => w && w.state === 'firebreath' && w.breathTargetAngle !== null && w.stateTimer < 120);
+            for (const wurm of breathingWurms) {
+                const coneLength = 180;
+                const coneSpread = 0.4; // ~45 degree cone
+                const progress = wurm.stateTimer / 120; // 0 to 1 during telegraph
+                const alpha = 0.15 + progress * 0.25; // Gets more visible
+                
+                ctx.save();
+                ctx.translate(wurm.x, wurm.y);
+                ctx.rotate(wurm.breathTargetAngle);
+                
+                // Draw warning cone
+                const gradient = ctx.createLinearGradient(0, 0, coneLength, 0);
+                gradient.addColorStop(0, `rgba(255, 100, 0, ${alpha})`);
+                gradient.addColorStop(0.5, `rgba(255, 50, 0, ${alpha * 0.7})`);
+                gradient.addColorStop(1, `rgba(255, 0, 0, ${alpha * 0.3})`);
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.moveTo(20, 0);
+                ctx.lineTo(coneLength, Math.tan(coneSpread) * coneLength);
+                ctx.lineTo(coneLength, -Math.tan(coneSpread) * coneLength);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Pulsing outline
+                const pulseAlpha = 0.3 + Math.sin(globalTime * 0.4) * 0.2;
+                ctx.strokeStyle = `rgba(255, 200, 0, ${pulseAlpha})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Danger stripes animation
+                ctx.strokeStyle = `rgba(255, 0, 0, ${alpha * 1.5})`;
+                ctx.lineWidth = 3;
+                const stripeOffset = (globalTime * 3) % 30;
+                for (let d = stripeOffset; d < coneLength; d += 30) {
+                    const width = Math.tan(coneSpread) * d;
+                    ctx.beginPath();
+                    ctx.moveTo(d, -width);
+                    ctx.lineTo(d, width);
+                    ctx.stroke();
+                }
+                
+                ctx.restore();
             }
             
             // Draw boss
@@ -8442,11 +8701,12 @@
                 ctx.filter = 'brightness(2.5) saturate(0.3)';
             }
             
-            // Glow
+            // Glow - match boss1 purple outline
             const glowAlpha = wurm.state === 'vulnerable' ? 0.6 : 0.3;
-            const glowColor = wurm.state === 'vulnerable' ? '#00ff88' : '#ff4400';
-            ctx.shadowColor = glowColor;
-            ctx.shadowBlur = 20;
+            const glowColor = wurm.state === 'vulnerable' ? '#00ff88' : 
+                             wurm.state === 'stunned' ? '#ffaa00' : '#ff00ff';
+            ctx.shadowColor = bossHitFlash > 0 && wurm.justHit ? '#ffffff' : glowColor;
+            ctx.shadowBlur = bossHitFlash > 0 && wurm.justHit ? 40 : 20;
             
             const flameFlicker = Math.sin(globalTime * 0.4) * 0.3;
             
@@ -8525,7 +8785,7 @@
             switch(bossType) {
                 case BOSS_TYPE.BURROWER: return 'THE BURROWER';
                 case BOSS_TYPE.CRYSTAL_GOLEM: return 'CRYSTAL GOLEM';
-                case BOSS_TYPE.LAVA_WURM: return 'LAVA WURM';
+                case BOSS_TYPE.LAVA_WURM: return 'LAVA WURMS';
                 case BOSS_TYPE.HIVE_MIND: return 'HIVE MIND';
                 case BOSS_TYPE.COLLECTOR: return 'THE COLLECTOR';
                 default: return 'ALIEN BOSS';
