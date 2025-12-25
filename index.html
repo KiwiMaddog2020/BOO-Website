@@ -5216,8 +5216,9 @@
         }
 
         .game-container { 
-            /* Width/height set by JS for aspect ratio lock */
+            width: 100%; 
             max-width: 660px;
+            aspect-ratio: 640/718; /* Match default game (Brickbreaker) - JS updates per game */
             border-radius: 8px; 
             overflow: hidden; 
             border: 2px solid rgba(0, 255, 204, 0.4); 
@@ -5228,29 +5229,38 @@
             overscroll-behavior: none; 
             -webkit-overflow-scrolling: auto;
             box-sizing: border-box;
-            /* Flex centering for letterbox effect */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            /* Dark background for letterbox bars */
-            background: #0a0a0a;
         }
         
         .game-container iframe { 
-            /* Sized by JS, centered by flex */
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%; 
+            height: 100%; 
             border: none;
-            flex-shrink: 0;
         }
         
-        /* Desktop with fine pointer: aspect ratio controlled by JS */
+        /* Desktop with fine pointer: no additional rules needed */
+        
+        /* Desktop with zoom: ensure aspect-ratio is maintained even at narrow viewports */
+        @media (pointer: fine) {
+            .game-container {
+                aspect-ratio: 640/718 !important; /* JS will update per game */
+            }
+        }
         
         /* Tablet-specific game container - iPads and similar devices */
         @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) {
             .game-container {
+                width: 100% !important;
                 max-width: 100% !important;
-                /* Width/height controlled by JS for aspect ratio lock */
+                max-height: 90vh !important;
+                aspect-ratio: auto !important;
             }
-            /* Iframe dimensions controlled by JS */
+            .game-container iframe {
+                width: 100% !important;
+                height: 100% !important;
+            }
         }
         
         /* Tablet game section - reduce padding to maximize game space */
@@ -8852,69 +8862,17 @@
             });
         }
         
-        // ========== ASPECT RATIO ENFORCEMENT ==========
-        // Fixed bounding box sized to tallest game, iframe letterboxed per-game
-        function enforceGameAspectRatio() {
-            const container = document.querySelector('#game .game-container');
-            const iframe = document.getElementById('arcadeFrame');
-            const activePill = document.querySelector('.arcade-pill.active');
-            if (!container || !iframe || !activePill) return;
-            
-            // Skip on mobile (handled by fixed CSS)
-            if (window.innerWidth <= 768) return;
-            
-            // CONTAINER: Use tallest game ratio (Survivors 630/983) for consistent bounding box
-            const containerRatio = 630 / 983;
-            
-            // Get available space
-            const maxWidth = Math.min(660, window.innerWidth * 0.95);
-            const maxHeight = window.innerHeight * 0.75; // 75vh
-            
-            // Calculate container dimensions
-            let containerWidth = maxWidth;
-            let containerHeight = containerWidth / containerRatio;
-            
-            // If height exceeds max, scale down proportionally
-            if (containerHeight > maxHeight) {
-                containerHeight = maxHeight;
-                containerWidth = containerHeight * containerRatio;
-            }
-            
-            // Apply container dimensions
-            container.style.width = containerWidth + 'px';
-            container.style.height = containerHeight + 'px';
-            
-            // IFRAME: Size to fit within container while maintaining game's aspect ratio
-            const gameAspectStr = activePill.dataset.aspect || '640/718';
-            const [gw, gh] = gameAspectStr.split('/').map(Number);
-            const gameRatio = gw / gh;
-            
-            // Calculate iframe size to fit within container
-            let iframeWidth = containerWidth;
-            let iframeHeight = iframeWidth / gameRatio;
-            
-            // If iframe height exceeds container, scale down by height
-            if (iframeHeight > containerHeight) {
-                iframeHeight = containerHeight;
-                iframeWidth = iframeHeight * gameRatio;
-            }
-            
-            // Apply iframe dimensions
-            iframe.style.width = iframeWidth + 'px';
-            iframe.style.height = iframeHeight + 'px';
-        }
-        
-        // Run on resize
-        window.addEventListener('resize', enforceGameAspectRatio);
-        
         // ========== ARCADE GAME SELECTOR ==========
         const arcadePills = document.querySelectorAll('.arcade-pill');
         const arcadeFrame = document.getElementById('arcadeFrame');
         const arcadeGameContainer = document.querySelector('#game .game-container');
         
         if (arcadePills.length > 0 && arcadeFrame && arcadeGameContainer) {
-            // Set initial container size with aspect ratio enforcement
-            enforceGameAspectRatio();
+            // Set container aspect ratio to match initial game
+            const activePill = document.querySelector('.arcade-pill.active');
+            if (activePill && activePill.dataset.aspect && window.innerWidth > 768) {
+                arcadeGameContainer.style.setProperty('aspect-ratio', activePill.dataset.aspect, 'important');
+            }
             
             arcadePills.forEach(pill => {
                 // Click handler for desktop
@@ -8947,8 +8905,10 @@
                     arcadeFrame.src = gameSrc;
                     arcadeFrame.title = gameTitle;
                     
-                    // Enforce aspect ratio for new game
-                    enforceGameAspectRatio();
+                    // Set aspect ratio on CONTAINER, not iframe - desktop only
+                    if (gameAspect && window.innerWidth > 768) {
+                        arcadeGameContainer.style.setProperty('aspect-ratio', gameAspect, 'important');
+                    }
                     
                     // Fade back in
                     arcadeGameContainer.classList.remove('switching');
