@@ -5250,7 +5250,10 @@
             spectralArrows: 'uncommon',
             gravityWell: 'epic',
             ricochetDisc: 'rare',
-            caltrops: 'uncommon'
+            caltrops: 'uncommon',
+            pulseMine: 'rare',
+            phantomWhip: 'uncommon',
+            sentryDrone: 'rare'
         };
         
         // Tome rarities
@@ -5326,9 +5329,14 @@
                 name: 'Plasma Shield',
                 icon: '🛡️',
                 color: '#6688ee',
-                desc: 'Rotating shield damages enemies',
+                desc: 'Rotating shield blocks hits & damages enemies',
                 baseDamage: 10,
                 baseOrbs: 3,
+                baseCharges: 3,
+                chargeRegenTime: 8000,
+                knockbackForce: 120,
+                burstDamage: 20,
+                burstRadius: 50,
                 type: 'orbit'
             },
             boomBox: {
@@ -5461,7 +5469,7 @@
             },
             chainLightning: {
                 name: 'Chain Lightning',
-                icon: '⛓️',
+                icon: '⚡',
                 color: '#44ffff',
                 desc: 'Lightning jumps between enemies',
                 baseDamage: 17,
@@ -5520,6 +5528,42 @@
                 trapRadius: 30,
                 maxTraps: 8,
                 type: 'caltrops'
+            },
+            pulseMine: {
+                name: 'Pulse Mine',
+                icon: '💣',
+                color: '#ff4444',
+                desc: 'Drops mines that explode on contact',
+                baseDamage: 35,
+                baseFireRate: 2000,
+                blastRadius: 80,
+                armTime: 800,
+                maxMines: 5,
+                mineDuration: 12000,
+                type: 'mine'
+            },
+            phantomWhip: {
+                name: 'Phantom Whip',
+                icon: '👻',
+                color: '#aa44ff',
+                desc: 'Slashes enemies in an arc',
+                baseDamage: 22,
+                baseFireRate: 600,
+                arcAngle: 1.2,
+                range: 100,
+                type: 'whip'
+            },
+            sentryDrone: {
+                name: 'Sentry Drone',
+                icon: '🤖',
+                color: '#44ddff',
+                desc: 'Stationary turret fires at enemies',
+                baseDamage: 8,
+                turretFireRate: 400,
+                relocateTime: 6000,
+                range: 200,
+                baseTurrets: 1,
+                type: 'sentry'
             }
         };
 
@@ -5899,6 +5943,18 @@
             takeDamage(amount) {
                 if (this.invincible > 0) return;
                 
+                // Check plasma shield charges first
+                if (this.weapons.plasmaOrbit) {
+                    const shieldDef = WEAPONS.plasmaOrbit;
+                    const shieldState = this.weaponStates.plasmaOrbit;
+                    if (shieldState && shieldState.shieldCharges > 0) {
+                        // Block the hit with plasma shield
+                        this.tryShieldBlock(shieldState, shieldDef);
+                        this.invincible = this.invincibilityDuration;
+                        return; // Damage fully blocked
+                    }
+                }
+                
                 // Apply armor
                 const reducedDamage = amount * (1 - this.armor);
                 
@@ -6120,6 +6176,15 @@
                         case 'caltrops':
                             this.dropCaltrops(weaponId, weaponDef, weaponState, level, now);
                             break;
+                        case 'mine':
+                            this.dropMine(weaponId, weaponDef, weaponState, level, now);
+                            break;
+                        case 'whip':
+                            this.fireWhip(weaponId, weaponDef, weaponState, level, now);
+                            break;
+                        case 'sentry':
+                            this.updateSentry(weaponId, weaponDef, weaponState, level, now, dt);
+                            break;
                     }
                 }
             }
@@ -6155,25 +6220,56 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const radius = 70 + level * 5;
                 
+                // Initialize shield charges (one per orb)
+                const maxCharges = def.baseCharges ? def.baseCharges + Math.floor(level / 3) : orbCount;
+                if (state.shieldCharges === undefined) {
+                    state.shieldCharges = maxCharges;
+                    state.maxShieldCharges = maxCharges;
+                    state.chargeRegenTimers = [];
+                }
+                state.maxShieldCharges = maxCharges;
+                
+                // Regenerate charges over time
+                const regenTime = def.chargeRegenTime || 8000;
+                const now = Date.now();
+                for (let i = state.chargeRegenTimers.length - 1; i >= 0; i--) {
+                    if (now >= state.chargeRegenTimers[i]) {
+                        state.shieldCharges = Math.min(state.maxShieldCharges, state.shieldCharges + 1);
+                        state.chargeRegenTimers.splice(i, 1);
+                        spawnParticles(player.x, player.y, def.color, 8);
+                    }
+                }
+                
                 // Initialize angle if needed
                 if (state.angle === undefined) state.angle = 0;
-                state.angle += dt * 0.00225 * this.attackSpeedMultiplier;
+                state.angle += dt * 0.00225 * player.attackSpeedMultiplier;
                 
-                for (let i = 0; i < orbCount; i++) {
+                // Active orbs based on charges
+                const activeOrbs = Math.min(orbCount, state.shieldCharges);
+                
+                for (let i = 0; i < activeOrbs; i++) {
                     const angle = state.angle + (Math.PI * 2 / orbCount) * i;
-                    const ox = this.x + Math.cos(angle) * radius;
-                    const oy = this.y + Math.sin(angle) * radius;
+                    const ox = player.x + Math.cos(angle) * radius;
+                    const oy = player.y + Math.sin(angle) * radius;
                     
                     // Check collision with enemies
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
                         const dist = Math.hypot(enemy.x - ox, enemy.y - oy);
                         if (dist < enemy.radius + 14 && enemy.orbHitCooldown <= 0) {
-                            const { damage, isCrit } = this.calcDamage(baseDamage);
+                            const { damage, isCrit } = player.calcDamage(baseDamage);
                             enemy.takeDamage(damage, isCrit);
-                            this.onDealDamage(damage);
+                            player.onDealDamage(damage);
                             applyStatusEffects(enemy, damage);
                             enemy.orbHitCooldown = 250;
+                            
+                            // Knockback
+                            if (def.knockbackForce) {
+                                const knockAngle = Math.atan2(enemy.y - ox, enemy.x - ox);
+                                enemy.x += Math.cos(knockAngle) * def.knockbackForce;
+                                enemy.y += Math.sin(knockAngle) * def.knockbackForce;
+                            }
+                            
                             spawnParticles(ox, oy, def.color, 6);
                         }
                     }
@@ -6183,10 +6279,18 @@
                         if (lep.dead) continue;
                         const dist = Math.hypot(lep.x - ox, lep.y - oy);
                         if (dist < lep.radius + 14 && lep.orbHitCooldown <= 0) {
-                            const { damage, isCrit } = this.calcDamage(baseDamage);
+                            const { damage, isCrit } = player.calcDamage(baseDamage);
                             lep.takeDamage(damage, isCrit);
-                            this.onDealDamage(damage);
+                            player.onDealDamage(damage);
                             lep.orbHitCooldown = 250;
+                            
+                            // Knockback
+                            if (def.knockbackForce) {
+                                const knockAngle = Math.atan2(lep.y - ox, lep.x - ox);
+                                lep.x += Math.cos(knockAngle) * def.knockbackForce;
+                                lep.y += Math.sin(knockAngle) * def.knockbackForce;
+                            }
+                            
                             spawnParticles(ox, oy, COLORS.gold, 6);
                         }
                     }
@@ -6196,10 +6300,18 @@
                         if (boss.dead) continue;
                         const dist = Math.hypot(boss.x - ox, boss.y - oy);
                         if (dist < boss.radius + 14 && boss.orbHitCooldown <= 0) {
-                            const { damage, isCrit } = this.calcDamage(baseDamage);
+                            const { damage, isCrit } = player.calcDamage(baseDamage);
                             boss.takeDamage(damage, isCrit);
-                            this.onDealDamage(damage);
+                            player.onDealDamage(damage);
                             boss.orbHitCooldown = 250;
+                            
+                            // Knockback (reduced for bosses)
+                            if (def.knockbackForce) {
+                                const knockAngle = Math.atan2(boss.y - ox, boss.x - ox);
+                                boss.x += Math.cos(knockAngle) * def.knockbackForce * 0.3;
+                                boss.y += Math.sin(knockAngle) * def.knockbackForce * 0.3;
+                            }
+                            
                             spawnParticles(ox, oy, boss.color, 6);
                         }
                     }
@@ -6207,7 +6319,55 @@
                 
                 // Store for rendering
                 state.orbCount = orbCount;
+                state.activeOrbs = activeOrbs;
                 state.radius = radius;
+            }
+            
+            // Shield block helper - call this when player would take damage
+            tryShieldBlock(weaponState, def) {
+                if (!weaponState || weaponState.shieldCharges === undefined || weaponState.shieldCharges <= 0) {
+                    return false;
+                }
+                
+                // Consume a charge
+                weaponState.shieldCharges--;
+                
+                // Start regen timer for this charge
+                const regenTime = def.chargeRegenTime || 8000;
+                weaponState.chargeRegenTimers.push(Date.now() + regenTime);
+                
+                // AOE burst damage
+                if (def.burstDamage && def.burstRadius) {
+                    const burstDmg = def.burstDamage * (1 + (player.weaponLevels.plasmaOrbit || 1) * 0.05);
+                    for (const enemy of enemies) {
+                        if (enemy.dead) continue;
+                        const dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+                        if (dist < def.burstRadius + enemy.radius) {
+                            const { damage, isCrit } = player.calcDamage(burstDmg);
+                            enemy.takeDamage(damage, isCrit);
+                            player.onDealDamage(damage);
+                            
+                            // Knockback from burst
+                            const knockAngle = Math.atan2(enemy.y - player.y, enemy.x - player.x);
+                            enemy.x += Math.cos(knockAngle) * (def.knockbackForce || 80);
+                            enemy.y += Math.sin(knockAngle) * (def.knockbackForce || 80);
+                        }
+                    }
+                    for (const boss of bosses) {
+                        if (boss.dead) continue;
+                        const dist = Math.hypot(boss.x - player.x, boss.y - player.y);
+                        if (dist < def.burstRadius + boss.radius) {
+                            const { damage, isCrit } = player.calcDamage(burstDmg);
+                            boss.takeDamage(damage, isCrit);
+                            player.onDealDamage(damage);
+                        }
+                    }
+                }
+                
+                // Visual feedback
+                spawnParticles(player.x, player.y, def.color, 15);
+                
+                return true;
             }
 
             fireAOE(id, def, state, level, now) {
@@ -6311,9 +6471,9 @@
                     spawnParticles(target.x, target.y, def.color, 8);
                 }
                 
-                // Clean up old chain targets (slower fade - 280ms)
+                // Clean up old chain targets (slower fade - 380ms)
                 if (state.chainTargets) {
-                    state.chainTargets = state.chainTargets.filter(t => now - t.time < 280);
+                    state.chainTargets = state.chainTargets.filter(t => now - t.time < 380);
                 }
             }
 
@@ -7026,8 +7186,8 @@
                 
                 state.chains.push({ points: chainPoints, time: now });
                 
-                // Cleanup old chains
-                state.chains = state.chains.filter(c => now - c.time < 200);
+                // Cleanup old chains (300ms duration)
+                state.chains = state.chains.filter(c => now - c.time < 300);
             }
 
             // === SPECTRAL ARROWS ===
@@ -7176,6 +7336,228 @@
                     duration: trapDuration,
                     hitCooldowns: new Map()
                 });
+            }
+            
+            // === PULSE MINE ===
+            dropMine(id, def, state, level, now) {
+                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
+                if (now - state.lastFire < fireRate) return;
+                
+                // Initialize mines array
+                if (!state.mines) state.mines = [];
+                
+                // Remove expired mines
+                state.mines = state.mines.filter(m => !m.exploded && now - m.startTime < m.duration);
+                
+                // Remove oldest mine if at max
+                const maxMines = def.maxMines + Math.floor(level / 5);
+                while (state.mines.length >= maxMines) {
+                    state.mines.shift();
+                }
+                
+                state.lastFire = now;
+                
+                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const blastRadius = def.blastRadius + level * 5;
+                
+                // Drop behind player based on movement
+                const dropX = this.x - (this.lastMoveX || 0) * 40;
+                const dropY = this.y - (this.lastMoveY || 0) * 40;
+                
+                state.mines.push({
+                    x: dropX,
+                    y: dropY,
+                    damage: baseDamage,
+                    blastRadius: blastRadius,
+                    armTime: def.armTime,
+                    startTime: now,
+                    duration: def.mineDuration + level * 1000,
+                    exploded: false,
+                    armed: false
+                });
+            }
+            
+            // === PHANTOM WHIP ===
+            fireWhip(id, def, state, level, now) {
+                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
+                if (now - state.lastFire < fireRate) return;
+                
+                state.lastFire = now;
+                
+                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const range = def.range + level * 8;
+                const arcAngle = def.arcAngle + level * 0.05;
+                
+                // Direction based on last movement or facing
+                let whipAngle = this.lastAngle || 0;
+                if (this.lastMoveX || this.lastMoveY) {
+                    whipAngle = Math.atan2(this.lastMoveY || 0, this.lastMoveX || 0);
+                }
+                
+                // Store whip state for visual
+                state.whipActive = true;
+                state.whipTime = now;
+                state.whipAngle = whipAngle;
+                state.whipRange = range;
+                state.whipArc = arcAngle;
+                
+                // Hit all enemies in arc
+                const hitEnemies = new Set();
+                
+                for (const enemy of enemies) {
+                    if (enemy.dead) continue;
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (dist > range + enemy.radius) continue;
+                    
+                    // Check if in arc
+                    const angleToEnemy = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                    let angleDiff = angleToEnemy - whipAngle;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    
+                    if (Math.abs(angleDiff) <= arcAngle / 2) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        enemy.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        hitEnemies.add(enemy);
+                        
+                        // Small knockback
+                        const knockAngle = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                        enemy.x += Math.cos(knockAngle) * 30;
+                        enemy.y += Math.sin(knockAngle) * 30;
+                    }
+                }
+                
+                // Hit bosses too
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist > range + boss.radius) continue;
+                    
+                    const angleToEnemy = Math.atan2(boss.y - this.y, boss.x - this.x);
+                    let angleDiff = angleToEnemy - whipAngle;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    
+                    if (Math.abs(angleDiff) <= arcAngle / 2) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        boss.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                    }
+                }
+                
+                // Hit leprechauns
+                for (const lep of leprechauns) {
+                    if (lep.dead) continue;
+                    const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                    if (dist > range + lep.radius) continue;
+                    
+                    const angleToEnemy = Math.atan2(lep.y - this.y, lep.x - this.x);
+                    let angleDiff = angleToEnemy - whipAngle;
+                    while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                    while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                    
+                    if (Math.abs(angleDiff) <= arcAngle / 2) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        lep.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                    }
+                }
+                
+                spawnParticles(this.x + Math.cos(whipAngle) * range * 0.5, this.y + Math.sin(whipAngle) * range * 0.5, def.color, 10);
+            }
+            
+            // === SENTRY DRONE ===
+            updateSentry(id, def, state, level, now, dt) {
+                // Initialize sentries
+                if (!state.sentries) state.sentries = [];
+                
+                const maxSentries = def.baseTurrets + Math.floor(level / 5);
+                
+                // Spawn sentries if needed
+                while (state.sentries.length < maxSentries) {
+                    // Place near player with offset
+                    const angle = (state.sentries.length / maxSentries) * Math.PI * 2;
+                    const dist = 80 + Math.random() * 40;
+                    state.sentries.push({
+                        x: this.x + Math.cos(angle) * dist,
+                        y: this.y + Math.sin(angle) * dist,
+                        lastFire: 0,
+                        lastRelocate: now,
+                        angle: 0
+                    });
+                }
+                
+                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const range = def.range + level * 10;
+                const fireRate = def.turretFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
+                const relocateTime = def.relocateTime - level * 200;
+                
+                for (const sentry of state.sentries) {
+                    // Relocate to player periodically
+                    if (now - sentry.lastRelocate > Math.max(2000, relocateTime)) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const dist = 60 + Math.random() * 40;
+                        sentry.x = this.x + Math.cos(angle) * dist;
+                        sentry.y = this.y + Math.sin(angle) * dist;
+                        sentry.lastRelocate = now;
+                        spawnParticles(sentry.x, sentry.y, def.color, 5);
+                    }
+                    
+                    // Find target
+                    let target = null;
+                    let minDist = range;
+                    
+                    for (const enemy of enemies) {
+                        if (enemy.dead) continue;
+                        const dist = Math.hypot(enemy.x - sentry.x, enemy.y - sentry.y);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            target = enemy;
+                        }
+                    }
+                    for (const boss of bosses) {
+                        if (boss.dead) continue;
+                        const dist = Math.hypot(boss.x - sentry.x, boss.y - sentry.y);
+                        if (dist < minDist * 0.8) { // Prefer bosses
+                            minDist = dist;
+                            target = boss;
+                        }
+                    }
+                    for (const lep of leprechauns) {
+                        if (lep.dead) continue;
+                        const dist = Math.hypot(lep.x - sentry.x, lep.y - sentry.y);
+                        if (dist < minDist * 0.7) { // Prefer leprechauns
+                            minDist = dist;
+                            target = lep;
+                        }
+                    }
+                    
+                    if (target) {
+                        sentry.angle = Math.atan2(target.y - sentry.y, target.x - sentry.x);
+                        
+                        // Fire at target
+                        if (now - sentry.lastFire > fireRate) {
+                            sentry.lastFire = now;
+                            
+                            // Spawn projectile
+                            const speed = 8;
+                            projectiles.push(new Projectile(
+                                sentry.x,
+                                sentry.y,
+                                Math.cos(sentry.angle) * speed,
+                                Math.sin(sentry.angle) * speed,
+                                baseDamage,
+                                def.color,
+                                1,
+                                5,
+                                'sentryBullet'
+                            ));
+                        }
+                    }
+                }
+                
+                state.range = range;
             }
 
             draw() {
@@ -7335,6 +7717,7 @@
                     const def = WEAPONS[weaponId];
                     if (def.type === 'orbit' && state.orbCount) {
                         const orbitR = camera.scale(state.radius);
+                        const activeOrbs = state.activeOrbs || state.orbCount;
                         
                         // Draw faint connecting ring
                         ctx.strokeStyle = def.color;
@@ -7345,26 +7728,52 @@
                         ctx.stroke();
                         ctx.globalAlpha = 1;
                         
-                        // Draw orbs
-                        ctx.fillStyle = def.color;
+                        // Draw orbs (active ones are bright, inactive are dim)
                         ctx.shadowColor = def.color;
                         ctx.shadowBlur = 15;
                         for (let i = 0; i < state.orbCount; i++) {
                             const angle = state.angle + (Math.PI * 2 / state.orbCount) * i;
                             const ox = sx + Math.cos(angle) * orbitR;
                             const oy = sy + Math.sin(angle) * orbitR;
+                            const isActive = i < activeOrbs;
+                            
+                            // Orb body
+                            ctx.globalAlpha = isActive ? 1 : 0.25;
+                            ctx.fillStyle = isActive ? def.color : '#444';
                             ctx.beginPath();
                             ctx.arc(ox, oy, camera.scale(12), 0, Math.PI * 2);
                             ctx.fill();
                             
-                            // Inner bright core
-                            ctx.fillStyle = '#fff';
-                            ctx.beginPath();
-                            ctx.arc(ox, oy, camera.scale(4), 0, Math.PI * 2);
-                            ctx.fill();
-                            ctx.fillStyle = def.color;
+                            // Inner bright core (only on active)
+                            if (isActive) {
+                                ctx.fillStyle = '#fff';
+                                ctx.beginPath();
+                                ctx.arc(ox, oy, camera.scale(4), 0, Math.PI * 2);
+                                ctx.fill();
+                            }
                         }
+                        ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
+                        
+                        // Shield charge indicator (below player)
+                        if (state.shieldCharges !== undefined) {
+                            const charges = state.shieldCharges;
+                            const maxCharges = state.maxShieldCharges;
+                            const indicatorY = sy + camera.scale(45);
+                            const indicatorWidth = camera.scale(40);
+                            const segmentWidth = indicatorWidth / maxCharges;
+                            
+                            // Background
+                            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                            ctx.fillRect(sx - indicatorWidth / 2 - 2, indicatorY - 4, indicatorWidth + 4, 8);
+                            
+                            // Charge segments
+                            for (let i = 0; i < maxCharges; i++) {
+                                const segX = sx - indicatorWidth / 2 + i * segmentWidth;
+                                ctx.fillStyle = i < charges ? def.color : '#333';
+                                ctx.fillRect(segX + 1, indicatorY - 2, segmentWidth - 2, 4);
+                            }
+                        }
                     }
                     
                     // AOE wave visual - enhanced neon effect
@@ -7781,8 +8190,8 @@
                         
                         for (const chain of state.chains) {
                             const age = now - chain.time;
-                            if (age > 200) continue;
-                            ctx.globalAlpha = 1 - age / 200;
+                            if (age > 300) continue;
+                            ctx.globalAlpha = 1 - age / 300;
                             
                             // Draw jagged lines between each chain point
                             for (let i = 0; i < chain.points.length - 1; i++) {
@@ -11461,11 +11870,11 @@
                 ctx.arc(sx, sy, r * 1.1, 0, Math.PI * 2);
                 ctx.stroke();
                 
-                // Icon
+                // Icon (with vertical offset for Firefox emoji rendering)
                 ctx.font = `${camera.scale(20)}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(typeInfo.icon, sx, sy);
+                ctx.fillText(typeInfo.icon, sx, sy + camera.scale(2));
                 
                 // Pulsing outer ring
                 const pulse = 0.5 + Math.sin(now * 0.006 + drop.bobOffset) * 0.5;
@@ -12419,6 +12828,97 @@
                     }
                 }
             }
+        }
+        
+        // Update pulse mines
+        function updateMines() {
+            if (!player || !player.weapons.pulseMine) return;
+            
+            const state = player.weapons.pulseMine;
+            const def = WEAPONS.pulseMine;
+            if (!state.mines) return;
+            
+            const now = Date.now();
+            
+            for (const mine of state.mines) {
+                if (mine.exploded) continue;
+                
+                // Check if armed
+                const armed = now - mine.startTime > mine.armTime;
+                mine.armed = armed;
+                
+                if (!armed) continue;
+                
+                // Check collision with enemies for explosion
+                let shouldExplode = false;
+                
+                for (const enemy of enemies) {
+                    if (enemy.dead) continue;
+                    const dist = Math.hypot(enemy.x - mine.x, enemy.y - mine.y);
+                    if (dist < 25 + enemy.radius) {
+                        shouldExplode = true;
+                        break;
+                    }
+                }
+                
+                if (!shouldExplode) {
+                    for (const boss of bosses) {
+                        if (boss.dead) continue;
+                        const dist = Math.hypot(boss.x - mine.x, boss.y - mine.y);
+                        if (dist < 25 + boss.radius) {
+                            shouldExplode = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (shouldExplode) {
+                    mine.exploded = true;
+                    
+                    // AOE damage
+                    for (const enemy of enemies) {
+                        if (enemy.dead) continue;
+                        const dist = Math.hypot(enemy.x - mine.x, enemy.y - mine.y);
+                        if (dist < mine.blastRadius + enemy.radius) {
+                            const { damage, isCrit } = player.calcDamage(mine.damage);
+                            enemy.takeDamage(damage, isCrit);
+                            player.onDealDamage(damage);
+                            
+                            // Knockback
+                            const knockAngle = Math.atan2(enemy.y - mine.y, enemy.x - mine.x);
+                            enemy.x += Math.cos(knockAngle) * 60;
+                            enemy.y += Math.sin(knockAngle) * 60;
+                        }
+                    }
+                    
+                    for (const boss of bosses) {
+                        if (boss.dead) continue;
+                        const dist = Math.hypot(boss.x - mine.x, boss.y - mine.y);
+                        if (dist < mine.blastRadius + boss.radius) {
+                            const { damage, isCrit } = player.calcDamage(mine.damage);
+                            boss.takeDamage(damage, isCrit);
+                            player.onDealDamage(damage);
+                        }
+                    }
+                    
+                    for (const lep of leprechauns) {
+                        if (lep.dead) continue;
+                        const dist = Math.hypot(lep.x - mine.x, lep.y - mine.y);
+                        if (dist < mine.blastRadius + lep.radius) {
+                            const { damage, isCrit } = player.calcDamage(mine.damage);
+                            lep.takeDamage(damage, isCrit);
+                            player.onDealDamage(damage);
+                        }
+                    }
+                    
+                    // Explosion visual
+                    spawnParticles(mine.x, mine.y, def.color, 25);
+                    spawnParticles(mine.x, mine.y, '#ff8844', 15);
+                }
+            }
+            
+            // Remove exploded mines
+            state.mines = state.mines.filter(m => !m.exploded);
         }
 
         // ===== TERRAIN OBSTACLES (Lakes & Mountains) =====
@@ -16725,6 +17225,7 @@
                 updateTombstones();
                 updateGravityWells(effectiveDt);
                 updateCaltrops();
+                updateMines();
                 
                 // Clean up dead entities (in-place for performance)
                 cleanupArray(enemies, e => e.dead);
@@ -17014,6 +17515,167 @@
                             ctx.lineTo(sx + Math.cos(angle + 0.3) * r * 0.3, sy + Math.sin(angle + 0.3) * r * 0.3);
                             ctx.closePath();
                             ctx.fill();
+                        }
+                        
+                        ctx.restore();
+                    }
+                }
+            }
+            
+            // Draw pulse mines (under player)
+            if (player && player.weapons.pulseMine) {
+                const state = player.weapons.pulseMine;
+                const def = WEAPONS.pulseMine;
+                if (state.mines) {
+                    const now = Date.now();
+                    for (const mine of state.mines) {
+                        if (mine.exploded) continue;
+                        if (!camera.isVisible(mine.x, mine.y, 30)) continue;
+                        const sx = camera.screenX(mine.x);
+                        const sy = camera.screenY(mine.y);
+                        const r = camera.scale(18);
+                        const armed = now - mine.startTime > mine.armTime;
+                        
+                        ctx.save();
+                        
+                        // Pulsing glow when armed
+                        if (armed) {
+                            const pulse = 0.5 + Math.sin(now * 0.01) * 0.5;
+                            ctx.shadowBlur = 15 + pulse * 10;
+                            ctx.shadowColor = def.color;
+                            ctx.fillStyle = def.color;
+                        } else {
+                            ctx.shadowBlur = 8;
+                            ctx.shadowColor = '#666';
+                            ctx.fillStyle = '#666';
+                        }
+                        
+                        // Mine body
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Inner core
+                        ctx.fillStyle = armed ? '#fff' : '#888';
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r * 0.4, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Spikes
+                        ctx.fillStyle = armed ? def.color : '#555';
+                        for (let i = 0; i < 4; i++) {
+                            const angle = (i / 4) * Math.PI * 2 + now * 0.002;
+                            ctx.beginPath();
+                            ctx.moveTo(sx + Math.cos(angle) * r, sy + Math.sin(angle) * r);
+                            ctx.lineTo(sx + Math.cos(angle - 0.3) * r * 0.7, sy + Math.sin(angle - 0.3) * r * 0.7);
+                            ctx.lineTo(sx + Math.cos(angle + 0.3) * r * 0.7, sy + Math.sin(angle + 0.3) * r * 0.7);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        
+                        ctx.restore();
+                    }
+                }
+            }
+            
+            // Draw phantom whip effect
+            if (player && player.weapons.phantomWhip) {
+                const state = player.weapons.phantomWhip;
+                const def = WEAPONS.phantomWhip;
+                const now = Date.now();
+                if (state.whipActive && now - state.whipTime < 200) {
+                    const progress = (now - state.whipTime) / 200;
+                    const sx = camera.screenX(player.x);
+                    const sy = camera.screenY(player.y);
+                    const range = camera.scale(state.whipRange);
+                    const arc = state.whipArc;
+                    
+                    ctx.save();
+                    ctx.globalAlpha = 1 - progress;
+                    ctx.strokeStyle = def.color;
+                    ctx.lineWidth = 4;
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = def.color;
+                    ctx.lineCap = 'round';
+                    
+                    // Draw arc sweep
+                    const startAngle = state.whipAngle - arc / 2;
+                    const endAngle = state.whipAngle + arc / 2;
+                    
+                    // Multiple curved lines for whip effect
+                    for (let i = 0; i < 3; i++) {
+                        const r = range * (0.6 + i * 0.2) * (0.5 + progress * 0.5);
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r, startAngle, endAngle);
+                        ctx.stroke();
+                    }
+                    
+                    // Ghost trail
+                    ctx.globalAlpha = (1 - progress) * 0.5;
+                    ctx.fillStyle = def.color;
+                    for (let a = startAngle; a <= endAngle; a += 0.2) {
+                        const dist = range * (0.7 + Math.random() * 0.3);
+                        ctx.beginPath();
+                        ctx.arc(sx + Math.cos(a) * dist, sy + Math.sin(a) * dist, camera.scale(5), 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                }
+            }
+            
+            // Draw sentry drones
+            if (player && player.weapons.sentryDrone) {
+                const state = player.weapons.sentryDrone;
+                const def = WEAPONS.sentryDrone;
+                if (state.sentries) {
+                    const now = Date.now();
+                    for (const sentry of state.sentries) {
+                        if (!camera.isVisible(sentry.x, sentry.y, 40)) continue;
+                        const sx = camera.screenX(sentry.x);
+                        const sy = camera.screenY(sentry.y);
+                        const r = camera.scale(14);
+                        
+                        ctx.save();
+                        ctx.shadowBlur = 12;
+                        ctx.shadowColor = def.color;
+                        
+                        // Base
+                        ctx.fillStyle = '#334';
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Turret body
+                        ctx.fillStyle = def.color;
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r * 0.7, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Gun barrel
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy);
+                        ctx.lineTo(sx + Math.cos(sentry.angle) * r * 1.5, sy + Math.sin(sentry.angle) * r * 1.5);
+                        ctx.stroke();
+                        
+                        // Eye/sensor
+                        ctx.fillStyle = '#fff';
+                        ctx.beginPath();
+                        ctx.arc(sx, sy, r * 0.25, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Range indicator (faint)
+                        if (state.range) {
+                            ctx.globalAlpha = 0.1;
+                            ctx.strokeStyle = def.color;
+                            ctx.lineWidth = 1;
+                            ctx.setLineDash([5, 5]);
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, camera.scale(state.range), 0, Math.PI * 2);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
                         }
                         
                         ctx.restore();
@@ -17348,9 +18010,10 @@
         // Available starting weapons
         const STARTING_WEAPONS = [
             'energyBolt', 'boomBox', 'plasmaOrbit', 'blackSquirrel', 
-            'laserBeam', 'voidDaggers', 'flameThrower', 'starField',
+            'laserBeam', 'voidDaggers', 'flameThrower', 'chainLightning',
             'thunderStrike', 'toxicAura', 'iceShard', 'boomerang',
-            'spectralArrows', 'gravityWell', 'ricochetDisc', 'caltrops'
+            'spectralArrows', 'gravityWell', 'ricochetDisc', 'caltrops',
+            'starField'
         ];
         
         // Player color options (neon palette, cold to hot)

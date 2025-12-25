@@ -2624,6 +2624,7 @@
         let enemies = [];
         let firstEnemySpawned = false; // Track if player has encountered first enemy
         let secondEnemySpawned = false; // Track if player has encountered second enemy
+        let drillKillGracePeriod = 0;   // Brief invulnerability after killing enemy with drill
         
         // Spawn rates per 100 tiles generated (very low, scales with depth)
         function getEnemySpawnChance(depth, biome) {
@@ -5834,7 +5835,7 @@
         function createFloatingText(text, x, worldY, color, immediate = false) {
             // Check for existing texts at similar position and offset vertically
             const STACK_THRESHOLD = 20; // Pixels - if texts are this close, stack them
-            const STACK_OFFSET = 18; // Pixels to offset each stacked text
+            const STACK_OFFSET = 16; // Pixels to offset each stacked text
             
             let yOffset = 0;
             for (const existingText of floatingTexts) {
@@ -5854,7 +5855,7 @@
             }
             
             // Clamp X position to keep text visible on screen (accounting for centered text)
-            const TEXT_MARGIN = 50; // Margin from edges to account for text width
+            const TEXT_MARGIN = 70; // Margin from edges to account for text width
             const clampedX = Math.max(TEXT_MARGIN, Math.min(BASE_WIDTH - TEXT_MARGIN, x));
             
             const textData = {
@@ -5947,6 +5948,11 @@
             const playerCenterX = player.x + player.width / 2;
             const playerCenterY = player.y + player.height / 2;
             
+            // Decrement drill kill grace period
+            if (drillKillGracePeriod > 0) {
+                drillKillGracePeriod -= deltaMultiplier;
+            }
+            
             for (let i = enemies.length - 1; i >= 0; i--) {
                 const enemy = enemies[i];
                 
@@ -6009,15 +6015,39 @@
                 
                 if (distX < (enemy.width + player.width) / 2 && distY < (enemy.height + player.height) / 2) {
                     // Player hit by enemy!
-                    // But if player is digging toward enemy, kill the enemy instead
-                    if (player.digging && player.digTarget) {
-                        const digTx = player.digTarget.x;
-                        const digTy = player.digTarget.y;
-                        if (enemy.tx === digTx && enemy.ty === digTy) {
-                            // Drilling into enemy - kill it!
-                            killEnemy(i);
-                            continue;
-                        }
+                    // Check if drill is facing the enemy (works even after dig completes)
+                    const enemyDx = enemy.x - playerCenterX;
+                    const enemyDy = enemy.y - playerCenterY;
+                    let drillFacingEnemy = false;
+                    
+                    // Check based on last dig direction OR current key held
+                    const effectiveDirection = player.digging ? lastDigDirection : 
+                        (keys.down ? 'down' : keys.up ? 'up' : keys.left ? 'left' : keys.right ? 'right' : lastDigDirection);
+                    
+                    if (effectiveDirection === 'down' && enemyDy > 0) drillFacingEnemy = true;
+                    else if (effectiveDirection === 'up' && enemyDy < 0) drillFacingEnemy = true;
+                    else if (effectiveDirection === 'left' && enemyDx < 0) drillFacingEnemy = true;
+                    else if (effectiveDirection === 'right' && enemyDx > 0) drillFacingEnemy = true;
+                    
+                    // Also check if in slide animation toward enemy
+                    if (slideAnimation.active) {
+                        if (slideAnimation.direction === 'down' && enemyDy > 0) drillFacingEnemy = true;
+                        else if (slideAnimation.direction === 'left' && enemyDx < 0) drillFacingEnemy = true;
+                        else if (slideAnimation.direction === 'right' && enemyDx > 0) drillFacingEnemy = true;
+                    }
+                    
+                    if (drillFacingEnemy) {
+                        // Drill facing enemy - kill it and set grace period
+                        killEnemy(i);
+                        drillKillGracePeriod = 20; // ~0.33 second grace period
+                        continue;
+                    }
+                    
+                    // Check if we're in grace period from recent drill kill
+                    if (drillKillGracePeriod > 0) {
+                        // Still in grace period - kill enemy without taking damage
+                        killEnemy(i);
+                        continue;
                     }
                     
                     // Take damage from enemy
@@ -6037,13 +6067,14 @@
                     continue;
                 }
                 
-                // Check if player is drilling into enemy's tile
+                // Check if player is drilling into enemy's tile (for enemies not yet colliding)
                 if (player.digging && player.digTarget) {
                     const digTx = player.digTarget.x;
                     const digTy = player.digTarget.y;
                     if (enemy.tx === digTx && enemy.ty === digTy) {
                         // Player drilling into enemy tile - kill enemy
                         killEnemy(i);
+                        drillKillGracePeriod = 15; // ~0.25 second grace period
                         continue;
                     }
                 }
@@ -10632,7 +10663,7 @@
                 if (screenY < -50 || screenY > BASE_HEIGHT + 50) continue;
                 
                 ctx.globalAlpha = t.life;
-                ctx.font = `800 ${Math.round(14 * t.scale)}px Oxanium, monospace`;
+                ctx.font = `800 ${Math.round(13 * t.scale)}px Oxanium, monospace`;
                 ctx.fillStyle = t.color;
                 ctx.textAlign = 'center';
                 ctx.shadowColor = t.color;
@@ -11542,6 +11573,7 @@
             enemies = [];
             firstEnemySpawned = false;
             secondEnemySpawned = false;
+            drillKillGracePeriod = 0;
             
             // Reset boss system
             initBossSystem();
