@@ -5228,15 +5228,18 @@
             overscroll-behavior: none; 
             -webkit-overflow-scrolling: auto;
             box-sizing: border-box;
+            /* Flex centering for letterbox effect */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* Dark background for letterbox bars */
+            background: #0a0a0a;
         }
         
         .game-container iframe { 
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%; 
-            height: 100%; 
+            /* Sized by JS, centered by flex */
             border: none;
+            flex-shrink: 0;
         }
         
         /* Desktop with fine pointer: aspect ratio controlled by JS */
@@ -5247,10 +5250,7 @@
                 max-width: 100% !important;
                 /* Width/height controlled by JS for aspect ratio lock */
             }
-            .game-container iframe {
-                width: 100% !important;
-                height: 100% !important;
-            }
+            /* Iframe dimensions controlled by JS */
         }
         
         /* Tablet game section - reduce padding to maximize game space */
@@ -8853,37 +8853,55 @@
         }
         
         // ========== ASPECT RATIO ENFORCEMENT ==========
-        // Maintains game aspect ratio during resize/zoom while respecting 75vh max
+        // Fixed bounding box sized to tallest game, iframe letterboxed per-game
         function enforceGameAspectRatio() {
             const container = document.querySelector('#game .game-container');
+            const iframe = document.getElementById('arcadeFrame');
             const activePill = document.querySelector('.arcade-pill.active');
-            if (!container || !activePill) return;
+            if (!container || !iframe || !activePill) return;
             
             // Skip on mobile (handled by fixed CSS)
             if (window.innerWidth <= 768) return;
             
-            // Get aspect ratio from active game
-            const aspectStr = activePill.dataset.aspect || '640/718';
-            const [w, h] = aspectStr.split('/').map(Number);
-            const ratio = w / h;
+            // CONTAINER: Use tallest game ratio (Survivors 630/983) for consistent bounding box
+            const containerRatio = 630 / 983;
             
             // Get available space
             const maxWidth = Math.min(660, window.innerWidth * 0.95);
             const maxHeight = window.innerHeight * 0.75; // 75vh
             
-            // Calculate dimensions that fit within constraints while preserving ratio
-            let finalWidth = maxWidth;
-            let finalHeight = finalWidth / ratio;
+            // Calculate container dimensions
+            let containerWidth = maxWidth;
+            let containerHeight = containerWidth / containerRatio;
             
             // If height exceeds max, scale down proportionally
-            if (finalHeight > maxHeight) {
-                finalHeight = maxHeight;
-                finalWidth = finalHeight * ratio;
+            if (containerHeight > maxHeight) {
+                containerHeight = maxHeight;
+                containerWidth = containerHeight * containerRatio;
             }
             
-            // Apply dimensions
-            container.style.width = finalWidth + 'px';
-            container.style.height = finalHeight + 'px';
+            // Apply container dimensions
+            container.style.width = containerWidth + 'px';
+            container.style.height = containerHeight + 'px';
+            
+            // IFRAME: Size to fit within container while maintaining game's aspect ratio
+            const gameAspectStr = activePill.dataset.aspect || '640/718';
+            const [gw, gh] = gameAspectStr.split('/').map(Number);
+            const gameRatio = gw / gh;
+            
+            // Calculate iframe size to fit within container
+            let iframeWidth = containerWidth;
+            let iframeHeight = iframeWidth / gameRatio;
+            
+            // If iframe height exceeds container, scale down by height
+            if (iframeHeight > containerHeight) {
+                iframeHeight = containerHeight;
+                iframeWidth = iframeHeight * gameRatio;
+            }
+            
+            // Apply iframe dimensions
+            iframe.style.width = iframeWidth + 'px';
+            iframe.style.height = iframeHeight + 'px';
         }
         
         // Run on resize
