@@ -2673,6 +2673,7 @@
         
         // Current boss data (populated when arena active)
         let boss = null;
+        let boss2 = null; // Second boss for Lava Wurm fight
         let bossArena = {
             width: 14,                  // Arena width in tiles
             height: 16,                 // Arena height in tiles  
@@ -2805,10 +2806,10 @@
                 width: 14,
                 height: 14,
                 moveTimer: 0,
-                moveDelay: type === ENEMY_TYPE.WORM ? 180 : (type === ENEMY_TYPE.LAVA_SLUG ? 240 : 120),
+                moveDelay: type === ENEMY_TYPE.WORM ? 90 : (type === ENEMY_TYPE.LAVA_SLUG ? 120 : 60),
                 direction: Math.random() < 0.5 ? -1 : 1, // For beetles/slugs
                 health: 1,
-                damage: type === ENEMY_TYPE.LAVA_SLUG ? 15 : 8,
+                damage: type === ENEMY_TYPE.LAVA_SLUG ? 22 : 12,
                 inGround: false, // Enemies now spawn on surface
                 animFrame: 0
             };
@@ -6248,6 +6249,38 @@
                 hitsToStun: 3
             };
             
+            // Create second boss for Lava Wurm fight
+            boss2 = null;
+            if (bossType === BOSS_TYPE.LAVA_WURM) {
+                // Position wurms on opposite sides
+                boss.x = arenaPixelWidth / 3 + bossArena.offsetX;
+                boss2 = {
+                    type: bossType,
+                    x: arenaPixelWidth * 2 / 3 + bossArena.offsetX,
+                    y: arenaPixelHeight / 3 + bossArena.offsetY,
+                    width: 48,
+                    height: 48,
+                    maxHealth: Math.floor(getBossBaseHealth(bossType) * difficulty),
+                    health: Math.floor(getBossBaseHealth(bossType) * difficulty),
+                    damage: Math.floor(getBossBaseDamage(bossType) * difficulty),
+                    phase: 1,
+                    maxPhases: 3,
+                    phaseTimer: 0,
+                    attackTimer: 30, // Offset attack timing
+                    attackCooldown: 100,
+                    state: 'idle',
+                    stateTimer: 0,
+                    animFrame: Math.PI, // Offset animation
+                    targetX: 0,
+                    targetY: 0,
+                    burrowProgress: 0,
+                    vulnerableTimer: 0,
+                    hitCount: 0,
+                    hitsToStun: 3,
+                    isSecondary: true
+                };
+            }
+            
             // Position player at bottom of arena in cleared spawn zone
             const spawnTileY = bossArena.height - 3; // Match the cleared zone
             player.x = arenaPixelWidth / 2 - player.width / 2 + bossArena.offsetX;
@@ -6504,6 +6537,9 @@
             if (bossInvulnerable > 0) {
                 bossInvulnerable--;
             }
+            if (boss2Invulnerable > 0) {
+                boss2Invulnerable--;
+            }
             
             // Boss AI
             updateBossAI();
@@ -6533,8 +6569,11 @@
             }
         }
         
-        // Healing pickup system for boss fights
+        // Healing pickup system for boss fights - DISABLED
         function updateHealingPickups() {
+            // No healing pickups during boss fights - player must survive on their own
+            return;
+            
             // Countdown to spawn new healing pickup
             bossArena.healingTimer--;
             
@@ -6702,6 +6741,12 @@
                     break;
                 case BOSS_TYPE.CRYSTAL_GOLEM:
                     updateCrystalGolemAI(playerCenterX, playerCenterY);
+                    break;
+                case BOSS_TYPE.LAVA_WURM:
+                    updateLavaWurmAI(playerCenterX, playerCenterY, boss);
+                    if (boss2 && boss2.health > 0) {
+                        updateLavaWurmAI(playerCenterX, playerCenterY, boss2);
+                    }
                     break;
                 // Other bosses will be added in future updates
                 default:
@@ -6973,6 +7018,239 @@
                         boss.stateTimer = 0;
                         boss.attackTimer = 0;
                         boss.hitCount = 0;
+                    }
+                    break;
+            }
+        }
+        
+        function updateLavaWurmAI(playerX, playerY, wurm) {
+            // Lava Wurm: Similar to Burrower but with flame projectiles
+            wurm.animFrame = (wurm.animFrame + 0.12 * deltaMultiplier) % (Math.PI * 2);
+            wurm.attackTimer += deltaMultiplier;
+            wurm.stateTimer += deltaMultiplier;
+            
+            switch(wurm.state) {
+                case 'idle':
+                    // Choose next action
+                    if (wurm.attackTimer >= wurm.attackCooldown) {
+                        wurm.state = 'burrowing';
+                        wurm.stateTimer = 0;
+                        wurm.burrowProgress = 0;
+                        wurm.burrowPhase = 0;
+                        wurm.burrowWaypoints = [];
+                        
+                        // Create 2-3 random waypoints before targeting player
+                        const numWaypoints = 2 + Math.floor(Math.random() * 2);
+                        const arenaLeft = bossArena.offsetX + TILE_SIZE * 3;
+                        const arenaRight = bossArena.offsetX + (bossArena.width - 3) * TILE_SIZE;
+                        const arenaTop = bossArena.offsetY + TILE_SIZE * 3;
+                        const arenaBottom = bossArena.offsetY + (bossArena.height - 4) * TILE_SIZE;
+                        
+                        for (let i = 0; i < numWaypoints; i++) {
+                            wurm.burrowWaypoints.push({
+                                x: arenaLeft + Math.random() * (arenaRight - arenaLeft),
+                                y: arenaTop + Math.random() * (arenaBottom - arenaTop)
+                            });
+                        }
+                        
+                        // Final waypoint: predict where player will be
+                        const predictOffset = (Math.random() - 0.5) * 60;
+                        wurm.burrowWaypoints.push({
+                            x: playerX + predictOffset,
+                            y: playerY - 50 + (Math.random() - 0.5) * 30
+                        });
+                        
+                        // Set first target
+                        wurm.targetX = wurm.burrowWaypoints[0].x;
+                        wurm.targetY = wurm.burrowWaypoints[0].y;
+                    }
+                    break;
+                    
+                case 'burrowing':
+                    wurm.burrowProgress += 0.009 * deltaMultiplier;
+                    
+                    // Move toward current waypoint
+                    const dx = wurm.targetX - wurm.x;
+                    const dy = wurm.targetY - wurm.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    const isLastWaypoint = wurm.burrowPhase >= wurm.burrowWaypoints.length - 1;
+                    const speed = isLastWaypoint ? 2.8 : 3.8;
+                    
+                    if (dist > 10) {
+                        const wobble = Math.sin(wurm.burrowProgress * 20) * 0.3;
+                        wurm.x += ((dx / dist) + wobble) * speed * deltaMultiplier;
+                        wurm.y += (dy / dist) * speed * deltaMultiplier;
+                        
+                        // Leave lava trail particles
+                        if (Math.random() < 0.5) {
+                            bossArena.particles.push({
+                                x: wurm.x + (Math.random() - 0.5) * 40,
+                                y: wurm.y + (Math.random() - 0.5) * 40,
+                                vx: (Math.random() - 0.5) * 3,
+                                vy: -Math.random() * 3 - 1,
+                                size: 3 + Math.random() * 5,
+                                color: Math.random() < 0.5 ? '#ff4400' : '#ff8800',
+                                life: 0.9
+                            });
+                        }
+                        
+                        // Ground rumble indicator
+                        if (Math.random() < 0.15) {
+                            screenShake = Math.max(screenShake, 2);
+                        }
+                    } else {
+                        wurm.burrowPhase++;
+                        
+                        if (wurm.burrowPhase < wurm.burrowWaypoints.length) {
+                            const nextWP = wurm.burrowWaypoints[wurm.burrowPhase];
+                            wurm.targetX = nextWP.x;
+                            wurm.targetY = nextWP.y;
+                            
+                            if (wurm.burrowPhase === wurm.burrowWaypoints.length - 1) {
+                                const finalPredictOffset = (Math.random() - 0.5) * 40;
+                                wurm.targetX = playerX + finalPredictOffset;
+                                wurm.targetY = playerY - 40;
+                            }
+                        }
+                    }
+                    
+                    // Surface when progress complete OR reached final waypoint
+                    if (wurm.burrowProgress >= 1 || (wurm.burrowPhase >= wurm.burrowWaypoints.length && dist <= 15)) {
+                        wurm.state = 'attacking';
+                        wurm.stateTimer = 0;
+                        wurm.firedShot1 = false;
+                        wurm.firedShot2 = false;
+                        wurm.firedShot3 = false;
+                        screenShake = 12;
+                        triggerScreenFlash('#ff4400', 0.4, 12);
+                        
+                        // Spawn fire explosion
+                        for (let i = 0; i < 18; i++) {
+                            bossArena.particles.push({
+                                x: wurm.x,
+                                y: wurm.y,
+                                vx: (Math.random() - 0.5) * 10,
+                                vy: -2 - Math.random() * 7,
+                                size: 4 + Math.random() * 6,
+                                color: ['#ff2200', '#ff6600', '#ffaa00'][Math.floor(Math.random() * 3)],
+                                life: 1.2
+                            });
+                        }
+                        
+                        createFloatingText('🔥 SURFACE!', wurm.x, wurm.y - 50, '#ff4400');
+                    }
+                    break;
+                    
+                case 'attacking':
+                    // Surface and attack - fire flame projectiles then become vulnerable
+                    
+                    // Telegraph first shot
+                    if (wurm.stateTimer >= 5 && wurm.stateTimer < 15) {
+                        if (Math.random() < 0.5) {
+                            const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
+                            bossArena.particles.push({
+                                x: wurm.x + (Math.random() - 0.5) * 30,
+                                y: wurm.y + (Math.random() - 0.5) * 30,
+                                vx: Math.cos(angle) * 1 + (Math.random() - 0.5),
+                                vy: Math.sin(angle) * 1 + (Math.random() - 0.5),
+                                size: 2 + Math.random() * 3,
+                                color: '#ffaa00',
+                                life: 0.4
+                            });
+                        }
+                    }
+                    
+                    // Fire first flame projectile
+                    if (wurm.stateTimer >= 15 && !wurm.firedShot1) {
+                        wurm.firedShot1 = true;
+                        const angle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
+                        bossArena.projectiles.push({
+                            x: wurm.x,
+                            y: wurm.y,
+                            vx: Math.cos(angle) * 3,
+                            vy: Math.sin(angle) * 3,
+                            radius: 12,
+                            damage: 10,
+                            life: 4,
+                            color: '#ff4400',
+                            isFlame: true
+                        });
+                        // Fire spit particles
+                        for (let i = 0; i < 8; i++) {
+                            bossArena.particles.push({
+                                x: wurm.x,
+                                y: wurm.y,
+                                vx: Math.cos(angle) * 4 + (Math.random() - 0.5) * 3,
+                                vy: Math.sin(angle) * 4 + (Math.random() - 0.5) * 3,
+                                size: 3 + Math.random() * 4,
+                                color: Math.random() < 0.5 ? '#ff6600' : '#ffcc00',
+                                life: 0.5
+                            });
+                        }
+                    }
+                    
+                    // Fire second flame projectile (spread)
+                    if (wurm.stateTimer >= 30 && !wurm.firedShot2) {
+                        wurm.firedShot2 = true;
+                        const baseAngle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
+                        // Fire 3 spread shots
+                        for (let i = -1; i <= 1; i++) {
+                            const angle = baseAngle + i * 0.3;
+                            bossArena.projectiles.push({
+                                x: wurm.x,
+                                y: wurm.y,
+                                vx: Math.cos(angle) * 2.5,
+                                vy: Math.sin(angle) * 2.5,
+                                radius: 10,
+                                damage: 8,
+                                life: 3.5,
+                                color: '#ff6600',
+                                isFlame: true
+                            });
+                        }
+                        // Fire particles
+                        for (let i = 0; i < 12; i++) {
+                            bossArena.particles.push({
+                                x: wurm.x,
+                                y: wurm.y,
+                                vx: (Math.random() - 0.5) * 8,
+                                vy: (Math.random() - 0.5) * 8,
+                                size: 2 + Math.random() * 3,
+                                color: '#ffaa00',
+                                life: 0.4
+                            });
+                        }
+                    }
+                    
+                    // Become vulnerable after attacks
+                    if (wurm.stateTimer >= 60) {
+                        wurm.state = 'vulnerable';
+                        wurm.stateTimer = 0;
+                        wurm.vulnerableTimer = 120; // 2 seconds vulnerable
+                    }
+                    break;
+                    
+                case 'vulnerable':
+                    wurm.vulnerableTimer -= deltaMultiplier;
+                    
+                    // Slowly drift upward
+                    wurm.y -= 0.2 * deltaMultiplier;
+                    
+                    if (wurm.vulnerableTimer <= 0) {
+                        wurm.state = 'idle';
+                        wurm.stateTimer = 0;
+                        wurm.attackTimer = 0;
+                        wurm.hitCount = 0;
+                    }
+                    break;
+                    
+                case 'stunned':
+                    if (wurm.stateTimer >= 60) {
+                        wurm.state = 'idle';
+                        wurm.stateTimer = 0;
+                        wurm.attackTimer = 0;
+                        wurm.hitCount = 0;
                     }
                     break;
             }
@@ -7286,6 +7564,36 @@
                 }
             }
             
+            // Check collision with second boss (Lava Wurm fight)
+            if (boss2 && boss2.health > 0) {
+                const dx2 = playerCenterX - boss2.x;
+                const dy2 = playerCenterY - boss2.y;
+                const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+                
+                if (dist2 < (boss2.width / 2 + player.width / 2) && boss2.state !== 'stunned') {
+                    if (player.digging && (boss2.state === 'vulnerable' || boss2.state === 'recovery')) {
+                        if (boss2.state === 'recovery') {
+                            boss2.hitCount++;
+                            bossHitFlash = 12;
+                            boss2.justHit = true;
+                            screenShake = 10;
+                            triggerScreenFlash('#ffff00', 0.3, 10);
+                            createFloatingText('💥 HIT!', boss2.x, boss2.y - 40, '#ffff00');
+                            
+                            if (boss2.hitCount >= boss2.hitsToStun) {
+                                boss2.state = 'stunned';
+                                boss2.stateTimer = 0;
+                                createFloatingText('⚡ STUNNED!', boss2.x, boss2.y - 55, '#00ffff');
+                            }
+                        } else {
+                            damageBoss2(1);
+                        }
+                    } else if (boss2.state === 'attacking' || boss2.state === 'idle') {
+                        playerTakeDamage(boss2.damage, dx2, dy2);
+                    }
+                }
+            }
+            
             // Check weak points (dig to damage)
             if (player.digging) {
                 for (const wp of bossArena.weakPoints) {
@@ -7351,6 +7659,7 @@
         let bossHitFlash = 0;
         // Boss invulnerability timer (cooldown between taking damage)
         let bossInvulnerable = 0;
+        let boss2Invulnerable = 0;
         
         function damageBoss(amount) {
             // Check if boss is invulnerable
@@ -7395,6 +7704,70 @@
                 boss.stateTimer = 0;
                 bossArena.weakPoints = [];
                 createFloatingText('⚡ STUNNED!', boss.x, boss.y - 70, '#ffff00');
+            }
+            
+            // Check if both bosses dead (Lava Wurm fight)
+            checkDualBossVictory();
+        }
+        
+        function damageBoss2(amount) {
+            if (!boss2 || boss2Invulnerable > 0) return;
+            
+            boss2.health -= amount;
+            boss2.hitCount++;
+            boss2Invulnerable = 60;
+            boss2.justHit = true;
+            
+            screenShake = 18;
+            triggerScreenFlash('#ff6600', 0.5, 18);
+            
+            // Spawn fire particles
+            for (let i = 0; i < 30; i++) {
+                const angle = (i / 30) * Math.PI * 2;
+                const speed = 5 + Math.random() * 10;
+                bossArena.particles.push({
+                    x: boss2.x,
+                    y: boss2.y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 3 + Math.random() * 6,
+                    color: ['#ff4400', '#ff8800', '#ffcc00', '#ffffff'][Math.floor(Math.random() * 4)],
+                    life: 1.2
+                });
+            }
+            
+            const healthPercent = Math.floor((boss2.health / boss2.maxHealth) * 100);
+            createFloatingText(`💥 -1 HP`, boss2.x, boss2.y - 40, '#ff6600');
+            createFloatingText(`${boss2.health}/${boss2.maxHealth} (${healthPercent}%)`, boss2.x, boss2.y - 55, '#ffaa00');
+            
+            if (boss2.hitCount >= boss2.hitsToStun && boss2.health > 0) {
+                boss2.state = 'stunned';
+                boss2.stateTimer = 0;
+                createFloatingText('⚡ STUNNED!', boss2.x, boss2.y - 70, '#ffff00');
+            }
+            
+            // Check victory after short delay
+            setTimeout(() => { boss2.justHit = false; }, 200);
+            
+            checkDualBossVictory();
+        }
+        
+        function checkDualBossVictory() {
+            // For Lava Wurm: both must be dead
+            if (boss.type === BOSS_TYPE.LAVA_WURM) {
+                if (boss.health <= 0 && (!boss2 || boss2.health <= 0)) {
+                    triggerBossVictory();
+                } else if (boss.health <= 0 && boss2 && boss2.health > 0) {
+                    // First wurm dead, announce
+                    createFloatingText('🔥 ONE DOWN!', boss.x, boss.y - 60, '#ff4400');
+                } else if (boss2 && boss2.health <= 0 && boss.health > 0) {
+                    createFloatingText('🔥 ONE DOWN!', boss2.x, boss2.y - 60, '#ff4400');
+                }
+            } else {
+                // Normal boss - check single boss health
+                if (boss.health <= 0) {
+                    triggerBossVictory();
+                }
             }
         }
         
@@ -7633,6 +8006,48 @@
                     ctx.beginPath();
                     ctx.ellipse(proj.x, proj.y - 2, proj.radius * 0.8, proj.radius * 0.3, 0, 0, Math.PI * 2);
                     ctx.fill();
+                } else if (proj.isFlame) {
+                    // Flame projectile - fiery glow effect
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 15;
+                    
+                    // Outer flame glow
+                    ctx.fillStyle = 'rgba(255, 100, 0, 0.4)';
+                    ctx.beginPath();
+                    ctx.arc(proj.x, proj.y, proj.radius + 6, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Main fireball
+                    const gradient = ctx.createRadialGradient(proj.x, proj.y, 0, proj.x, proj.y, proj.radius);
+                    gradient.addColorStop(0, '#ffff00');
+                    gradient.addColorStop(0.3, '#ff8800');
+                    gradient.addColorStop(0.7, '#ff4400');
+                    gradient.addColorStop(1, '#aa2200');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Hot core
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(proj.x, proj.y, proj.radius * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.shadowBlur = 0;
+                    
+                    // Spawn trail particles
+                    if (Math.random() < 0.4) {
+                        bossArena.particles.push({
+                            x: proj.x + (Math.random() - 0.5) * 8,
+                            y: proj.y + (Math.random() - 0.5) * 8,
+                            vx: -proj.vx * 0.3 + (Math.random() - 0.5) * 2,
+                            vy: -proj.vy * 0.3 + (Math.random() - 0.5) * 2,
+                            size: 2 + Math.random() * 4,
+                            color: ['#ff4400', '#ff8800', '#ffcc00'][Math.floor(Math.random() * 3)],
+                            life: 0.4
+                        });
+                    }
                 } else {
                     ctx.beginPath();
                     ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
@@ -7647,29 +8062,66 @@
             if (boss) {
                 const hpBarWidth = 200;
                 const hpBarHeight = 16;
-                const hpBarX = (BASE_WIDTH - hpBarWidth) / 2;
                 const hpBarY = 25;
-                const hpPercent = boss.health / boss.maxHealth;
                 
-                // Background
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.fillRect(hpBarX - 2, hpBarY - 2, hpBarWidth + 4, hpBarHeight + 4);
-                
-                // HP bar
-                const hpColor = hpPercent > 0.5 ? '#00ff88' : hpPercent > 0.25 ? '#ffaa00' : '#ff3355';
-                ctx.fillStyle = hpColor;
-                ctx.fillRect(hpBarX, hpBarY, hpBarWidth * hpPercent, hpBarHeight);
-                
-                // Border
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
-                
-                // Boss name
-                ctx.font = 'bold 14px Oxanium, monospace';
-                ctx.fillStyle = '#ff00ff';
-                ctx.textAlign = 'center';
-                ctx.fillText(getBossName(boss.type), BASE_WIDTH / 2, hpBarY + hpBarHeight + 18);
+                // For dual boss fights (Lava Wurm), show two HP bars
+                if (boss.type === BOSS_TYPE.LAVA_WURM && boss2) {
+                    const barSpacing = 20;
+                    const totalWidth = hpBarWidth * 2 + barSpacing;
+                    const startX = (BASE_WIDTH - totalWidth) / 2;
+                    
+                    // Boss 1 HP bar (left)
+                    const hp1Percent = Math.max(0, boss.health / boss.maxHealth);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    ctx.fillRect(startX - 2, hpBarY - 2, hpBarWidth + 4, hpBarHeight + 4);
+                    const hp1Color = hp1Percent > 0.5 ? '#ff6600' : hp1Percent > 0.25 ? '#ffaa00' : '#ff3355';
+                    ctx.fillStyle = boss.health <= 0 ? '#333333' : hp1Color;
+                    ctx.fillRect(startX, hpBarY, hpBarWidth * hp1Percent, hpBarHeight);
+                    ctx.strokeStyle = boss.health <= 0 ? '#666666' : '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(startX, hpBarY, hpBarWidth, hpBarHeight);
+                    
+                    // Boss 2 HP bar (right)
+                    const hp2Percent = Math.max(0, boss2.health / boss2.maxHealth);
+                    const bar2X = startX + hpBarWidth + barSpacing;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    ctx.fillRect(bar2X - 2, hpBarY - 2, hpBarWidth + 4, hpBarHeight + 4);
+                    const hp2Color = hp2Percent > 0.5 ? '#ff6600' : hp2Percent > 0.25 ? '#ffaa00' : '#ff3355';
+                    ctx.fillStyle = boss2.health <= 0 ? '#333333' : hp2Color;
+                    ctx.fillRect(bar2X, hpBarY, hpBarWidth * hp2Percent, hpBarHeight);
+                    ctx.strokeStyle = boss2.health <= 0 ? '#666666' : '#ffffff';
+                    ctx.strokeRect(bar2X, hpBarY, hpBarWidth, hpBarHeight);
+                    
+                    // Boss name centered below
+                    ctx.font = 'bold 14px Oxanium, monospace';
+                    ctx.fillStyle = '#ff4400';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🔥 LAVA WURMS 🔥', BASE_WIDTH / 2, hpBarY + hpBarHeight + 18);
+                } else {
+                    // Single boss HP bar
+                    const hpBarX = (BASE_WIDTH - hpBarWidth) / 2;
+                    const hpPercent = boss.health / boss.maxHealth;
+                    
+                    // Background
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    ctx.fillRect(hpBarX - 2, hpBarY - 2, hpBarWidth + 4, hpBarHeight + 4);
+                    
+                    // HP bar
+                    const hpColor = hpPercent > 0.5 ? '#00ff88' : hpPercent > 0.25 ? '#ffaa00' : '#ff3355';
+                    ctx.fillStyle = hpColor;
+                    ctx.fillRect(hpBarX, hpBarY, hpBarWidth * hpPercent, hpBarHeight);
+                    
+                    // Border
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(hpBarX, hpBarY, hpBarWidth, hpBarHeight);
+                    
+                    // Boss name
+                    ctx.font = 'bold 14px Oxanium, monospace';
+                    ctx.fillStyle = '#ff00ff';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(getBossName(boss.type), BASE_WIDTH / 2, hpBarY + hpBarHeight + 18);
+                }
             }
             
             // Transition overlay
@@ -7859,6 +8311,103 @@
                         ctx.stroke();
                     }
                     break;
+                
+                case BOSS_TYPE.LAVA_WURM:
+                    // Fiery worm creature
+                    const flameFlicker = Math.sin(globalTime * 0.4) * 0.3;
+                    
+                    // Body segments (fiery/molten)
+                    for (let i = 4; i >= 0; i--) {
+                        const segOffset = Math.sin(boss.animFrame + i * 0.6) * 6;
+                        const segSize = halfW - i * 4;
+                        const heatIntensity = 0.7 + Math.sin(globalTime * 0.3 + i) * 0.3;
+                        
+                        // Outer glow
+                        ctx.fillStyle = `rgba(255, 100, 0, ${heatIntensity * 0.3})`;
+                        ctx.beginPath();
+                        ctx.ellipse(x + segOffset, y + i * 10, segSize + 4, (segSize + 4) * 0.7, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Main segment
+                        const segColor = boss.state === 'vulnerable' ? 
+                            `rgb(255, ${180 + i * 15}, ${80 + i * 20})` : 
+                            `rgb(${180 - i * 20}, ${60 + i * 10}, ${20})`;
+                        ctx.fillStyle = segColor;
+                        ctx.beginPath();
+                        ctx.ellipse(x + segOffset, y + i * 10, segSize, segSize * 0.7, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Molten cracks
+                        ctx.strokeStyle = `rgba(255, ${150 + i * 20}, 0, ${heatIntensity})`;
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(x + segOffset - segSize * 0.3, y + i * 10 - 2);
+                        ctx.lineTo(x + segOffset + segSize * 0.2, y + i * 10 + 2);
+                        ctx.stroke();
+                    }
+                    
+                    // Head
+                    ctx.fillStyle = boss.state === 'vulnerable' ? '#ffaa44' : '#aa4400';
+                    ctx.beginPath();
+                    ctx.ellipse(x, y - 15, halfW + 8, halfH * 0.9, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Molten head glow
+                    ctx.fillStyle = `rgba(255, 150, 0, ${0.5 + flameFlicker})`;
+                    ctx.beginPath();
+                    ctx.ellipse(x, y - 15, halfW, halfH * 0.6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Eyes (glowing yellow/white)
+                    ctx.fillStyle = '#ffff00';
+                    ctx.shadowColor = '#ff6600';
+                    ctx.shadowBlur = 10;
+                    ctx.beginPath();
+                    ctx.arc(x - 14, y - 20, 7, 0, Math.PI * 2);
+                    ctx.arc(x + 14, y - 20, 7, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Pupils (slitted, reptilian)
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#000';
+                    ctx.beginPath();
+                    ctx.ellipse(x - 14, y - 20, 2, 5, 0, 0, Math.PI * 2);
+                    ctx.ellipse(x + 14, y - 20, 2, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Mouth/maw (open, fiery inside)
+                    ctx.fillStyle = '#330000';
+                    ctx.beginPath();
+                    ctx.ellipse(x, y - 5, 12, 8, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = `rgba(255, 100, 0, ${0.7 + flameFlicker})`;
+                    ctx.beginPath();
+                    ctx.ellipse(x, y - 5, 8, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Fire particles emanating from head
+                    if (boss.state === 'attacking' && Math.random() < 0.3) {
+                        bossArena.particles.push({
+                            x: x + (Math.random() - 0.5) * 20,
+                            y: y - 20,
+                            vx: (Math.random() - 0.5) * 2,
+                            vy: -1 - Math.random() * 2,
+                            size: 2 + Math.random() * 3,
+                            color: ['#ff4400', '#ff8800', '#ffcc00'][Math.floor(Math.random() * 3)],
+                            life: 0.5
+                        });
+                    }
+                    
+                    // Weak point indicator when vulnerable
+                    if (boss.state === 'vulnerable') {
+                        const pulseSize = 5 + Math.sin(globalTime * 0.3) * 3;
+                        ctx.strokeStyle = '#00ff88';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.arc(x, y, halfW + pulseSize + 5, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                    break;
                     
                 default:
                     // Default boss shape
@@ -7866,6 +8415,107 @@
                     ctx.beginPath();
                     ctx.arc(x, y, halfW, 0, Math.PI * 2);
                     ctx.fill();
+            }
+            
+            ctx.restore();
+            
+            // Draw second wurm if exists
+            if (boss2 && boss.type === BOSS_TYPE.LAVA_WURM && boss2.health > 0) {
+                drawLavaWurm(boss2);
+            }
+        }
+        
+        function drawLavaWurm(wurm) {
+            if (!wurm) return;
+            
+            const wobble = Math.sin(wurm.animFrame) * 3;
+            const x = wurm.x;
+            const y = wurm.y + wobble;
+            const halfW = wurm.width / 2;
+            const halfH = wurm.height / 2;
+            
+            ctx.save();
+            
+            // Hit flash effect
+            if (bossHitFlash > 0 && wurm.justHit) {
+                ctx.globalAlpha = 0.6 + (bossHitFlash / 12) * 0.4;
+                ctx.filter = 'brightness(2.5) saturate(0.3)';
+            }
+            
+            // Glow
+            const glowAlpha = wurm.state === 'vulnerable' ? 0.6 : 0.3;
+            const glowColor = wurm.state === 'vulnerable' ? '#00ff88' : '#ff4400';
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 20;
+            
+            const flameFlicker = Math.sin(globalTime * 0.4) * 0.3;
+            
+            // Body segments
+            for (let i = 4; i >= 0; i--) {
+                const segOffset = Math.sin(wurm.animFrame + i * 0.6) * 6;
+                const segSize = halfW - i * 3;
+                const heatIntensity = 0.7 + Math.sin(globalTime * 0.3 + i) * 0.3;
+                
+                ctx.fillStyle = `rgba(255, 100, 0, ${heatIntensity * 0.3})`;
+                ctx.beginPath();
+                ctx.ellipse(x + segOffset, y + i * 8, segSize + 3, (segSize + 3) * 0.7, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                const segColor = wurm.state === 'vulnerable' ? 
+                    `rgb(255, ${180 + i * 15}, ${80 + i * 20})` : 
+                    `rgb(${180 - i * 20}, ${60 + i * 10}, ${20})`;
+                ctx.fillStyle = segColor;
+                ctx.beginPath();
+                ctx.ellipse(x + segOffset, y + i * 8, segSize, segSize * 0.7, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Head
+            ctx.fillStyle = wurm.state === 'vulnerable' ? '#ffaa44' : '#aa4400';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 12, halfW + 6, halfH * 0.85, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Molten head glow
+            ctx.fillStyle = `rgba(255, 150, 0, ${0.5 + flameFlicker})`;
+            ctx.beginPath();
+            ctx.ellipse(x, y - 12, halfW - 2, halfH * 0.5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eyes
+            ctx.fillStyle = '#ffff00';
+            ctx.shadowColor = '#ff6600';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(x - 10, y - 16, 5, 0, Math.PI * 2);
+            ctx.arc(x + 10, y - 16, 5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.ellipse(x - 10, y - 16, 1.5, 4, 0, 0, Math.PI * 2);
+            ctx.ellipse(x + 10, y - 16, 1.5, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Mouth
+            ctx.fillStyle = '#330000';
+            ctx.beginPath();
+            ctx.ellipse(x, y - 4, 9, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = `rgba(255, 100, 0, ${0.7 + flameFlicker})`;
+            ctx.beginPath();
+            ctx.ellipse(x, y - 4, 6, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Vulnerable indicator
+            if (wurm.state === 'vulnerable') {
+                const pulseSize = 5 + Math.sin(globalTime * 0.3) * 3;
+                ctx.strokeStyle = '#00ff88';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(x, y, halfW + pulseSize + 5, 0, Math.PI * 2);
+                ctx.stroke();
             }
             
             ctx.restore();
@@ -11742,9 +12392,9 @@
             if ((e.key === 'b' || e.key === 'B') && gameRunning && !bossArenaActive) {
                 debugTeleportToDepth(0);
             }
-            // DEBUG: Press N to teleport to 45m, M for 95m
+            // DEBUG: Press N to teleport to 145m, M for 95m
             if ((e.key === 'n' || e.key === 'N') && gameRunning && !bossArenaActive) {
-                debugTeleportToDepth(45);
+                debugTeleportToDepth(145);
             }
             if ((e.key === 'm' || e.key === 'M') && gameRunning && !bossArenaActive) {
                 debugTeleportToDepth(95);
