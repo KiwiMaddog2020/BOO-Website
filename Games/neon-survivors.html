@@ -5251,9 +5251,8 @@
             spectralArrows: 'uncommon',
             gravityWell: 'epic',
             ricochetDisc: 'rare',
-            caltrops: 'uncommon',
             pulseMine: 'rare',
-            skullLegion: 'epic'
+            bones: 'epic'
         };
         
         // Tome rarities
@@ -5517,18 +5516,6 @@
                 bounceRange: 150,
                 type: 'ricochet'
             },
-            caltrops: {
-                name: 'Caltrops',
-                icon: '📌',
-                color: '#cc8844',
-                desc: 'Drops spikes that damage enemies',
-                baseDamage: 8,
-                baseFireRate: 900,
-                trapDuration: 8000,
-                trapRadius: 30,
-                maxTraps: 8,
-                type: 'caltrops'
-            },
             pulseMine: {
                 name: 'Pulse Mine',
                 icon: '💣',
@@ -5542,11 +5529,11 @@
                 mineDuration: 12000,
                 type: 'mine'
             },
-            skullLegion: {
-                name: 'Skull Legion',
-                icon: '💀',
+            bones: {
+                name: 'Bones',
+                icon: '🦴',
                 color: '#88ff88',
-                desc: 'Summons skulls that hunt enemies',
+                desc: 'Summons bones that hunt enemies',
                 baseDamage: 12,
                 baseSkullCount: 3,
                 attackCooldown: 1200,
@@ -5935,7 +5922,7 @@
                 // Check plasma shield charges first
                 if (this.weapons.plasmaOrbit) {
                     const shieldDef = WEAPONS.plasmaOrbit;
-                    const shieldState = this.weaponStates.plasmaOrbit;
+                    const shieldState = this.weapons.plasmaOrbit;
                     if (shieldState && shieldState.shieldCharges > 0) {
                         // Block the hit with plasma shield
                         this.tryShieldBlock(shieldState, shieldDef);
@@ -6162,9 +6149,6 @@
                         case 'ricochet':
                             this.fireRicochetDisc(weaponId, weaponDef, weaponState, level, now);
                             break;
-                        case 'caltrops':
-                            this.dropCaltrops(weaponId, weaponDef, weaponState, level, now);
-                            break;
                         case 'mine':
                             this.dropMine(weaponId, weaponDef, weaponState, level, now);
                             break;
@@ -6324,7 +6308,8 @@
                 
                 // AOE burst damage
                 if (def.burstDamage && def.burstRadius) {
-                    const burstDmg = def.burstDamage * (1 + (player.weaponLevels.plasmaOrbit || 1) * 0.05);
+                    const level = weaponState.level || 1;
+                    const burstDmg = def.burstDamage * (1 + level * 0.05);
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
                         const dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
@@ -7287,43 +7272,6 @@
             }
 
             // === CALTROPS ===
-            dropCaltrops(id, def, state, level, now) {
-                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
-                if (now - state.lastFire < fireRate) return;
-                
-                // Initialize traps array
-                if (!state.traps) state.traps = [];
-                
-                // Remove expired traps
-                state.traps = state.traps.filter(t => now - t.startTime < t.duration);
-                
-                // Remove oldest trap if at max (ensures consistent placement)
-                const maxTraps = def.maxTraps + Math.floor(level / 4);
-                while (state.traps.length >= maxTraps) {
-                    state.traps.shift(); // Remove oldest
-                }
-                
-                state.lastFire = now;
-                
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                const trapDuration = def.trapDuration + level * 500;
-                const trapRadius = def.trapRadius + level * 2;
-                
-                // Drop slightly behind player
-                const dropX = this.x - (this.lastMoveX || 0) * 30;
-                const dropY = this.y - (this.lastMoveY || 0) * 30;
-                
-                state.traps.push({
-                    x: dropX,
-                    y: dropY,
-                    damage: baseDamage,
-                    radius: trapRadius,
-                    startTime: now,
-                    duration: trapDuration,
-                    hitCooldowns: new Map()
-                });
-            }
-            
             // === PULSE MINE ===
             dropMine(id, def, state, level, now) {
                 const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
@@ -7373,30 +7321,37 @@
                 const attackCooldown = def.attackCooldown * Math.pow(0.97, level - 1) / this.attackSpeedMultiplier;
                 const attackRange = def.attackRange + level * 10;
                 const attackSpeed = def.attackSpeed + level * 0.3;
+                const maxBounces = 2 + Math.floor(level / 3); // Bounces increase with level
+                const bounceRange = 120 + level * 5; // Range to find next target
                 
                 // Spawn skulls if needed
                 while (state.skulls.length < maxSkulls) {
                     const angle = Math.random() * Math.PI * 2;
                     const orbitDist = 50 + Math.random() * 30;
+                    // Each bone gets a unique orbit speed (0.8x to 1.4x base speed)
+                    const orbitSpeed = 0.0012 + Math.random() * 0.0008;
                     state.skulls.push({
                         x: this.x + Math.cos(angle) * orbitDist,
                         y: this.y + Math.sin(angle) * orbitDist,
                         orbitAngle: angle,
                         orbitDist: orbitDist,
+                        orbitSpeed: orbitSpeed,
                         state: 'orbit', // 'orbit', 'attack', 'return'
                         target: null,
                         lastAttack: now - Math.random() * attackCooldown, // Stagger initial attacks
                         vx: 0,
                         vy: 0,
-                        bobOffset: Math.random() * Math.PI * 2
+                        bobOffset: Math.random() * Math.PI * 2,
+                        bounceCount: 0,
+                        hitTargets: new Set() // Track hit targets to avoid re-hitting
                     });
                 }
                 
                 // Update each skull
                 for (const skull of state.skulls) {
                     if (skull.state === 'orbit') {
-                        // Orbit around player
-                        skull.orbitAngle += dt * 0.0015;
+                        // Orbit around player at unique speed
+                        skull.orbitAngle += dt * skull.orbitSpeed;
                         const targetX = this.x + Math.cos(skull.orbitAngle) * skull.orbitDist;
                         const targetY = this.y + Math.sin(skull.orbitAngle) * skull.orbitDist;
                         
@@ -7442,6 +7397,8 @@
                             if (bestTarget) {
                                 skull.state = 'attack';
                                 skull.target = bestTarget;
+                                skull.bounceCount = 0;
+                                skull.hitTargets = new Set();
                                 const angle = Math.atan2(bestTarget.y - skull.y, bestTarget.x - skull.x);
                                 skull.vx = Math.cos(angle) * attackSpeed;
                                 skull.vy = Math.sin(angle) * attackSpeed;
@@ -7465,54 +7422,106 @@
                         }
                         
                         // Check hit on enemies
-                        let hitSomething = false;
+                        let hitTarget = null;
                         for (const enemy of enemies) {
-                            if (enemy.dead) continue;
+                            if (enemy.dead || skull.hitTargets.has(enemy)) continue;
                             const dist = Math.hypot(enemy.x - skull.x, enemy.y - skull.y);
                             if (dist < enemy.radius + 15) {
                                 const { damage, isCrit } = this.calcDamage(baseDamage);
                                 enemy.takeDamage(damage, isCrit);
                                 this.onDealDamage(damage);
                                 spawnParticles(skull.x, skull.y, def.color, 8);
-                                hitSomething = true;
+                                skull.hitTargets.add(enemy);
+                                hitTarget = enemy;
                                 break;
                             }
                         }
                         
-                        if (!hitSomething) {
+                        if (!hitTarget) {
                             for (const boss of bosses) {
-                                if (boss.dead) continue;
+                                if (boss.dead || skull.hitTargets.has(boss)) continue;
                                 const dist = Math.hypot(boss.x - skull.x, boss.y - skull.y);
                                 if (dist < boss.radius + 15) {
                                     const { damage, isCrit } = this.calcDamage(baseDamage);
                                     boss.takeDamage(damage, isCrit);
                                     this.onDealDamage(damage);
                                     spawnParticles(skull.x, skull.y, def.color, 8);
-                                    hitSomething = true;
+                                    skull.hitTargets.add(boss);
+                                    hitTarget = boss;
                                     break;
                                 }
                             }
                         }
                         
-                        if (!hitSomething) {
+                        if (!hitTarget) {
                             for (const lep of leprechauns) {
-                                if (lep.dead) continue;
+                                if (lep.dead || skull.hitTargets.has(lep)) continue;
                                 const dist = Math.hypot(lep.x - skull.x, lep.y - skull.y);
                                 if (dist < lep.radius + 15) {
                                     const { damage, isCrit } = this.calcDamage(baseDamage);
                                     lep.takeDamage(damage, isCrit);
                                     this.onDealDamage(damage);
                                     spawnParticles(skull.x, skull.y, COLORS.gold, 8);
-                                    hitSomething = true;
+                                    skull.hitTargets.add(lep);
+                                    hitTarget = lep;
                                     break;
                                 }
                             }
                         }
                         
-                        if (hitSomething) {
-                            skull.state = 'return';
-                            skull.lastAttack = now;
-                            skull.target = null;
+                        if (hitTarget) {
+                            skull.bounceCount++;
+                            
+                            // Try to find next target to bounce to
+                            if (skull.bounceCount < maxBounces) {
+                                let nextTarget = null;
+                                let nextDist = bounceRange;
+                                
+                                for (const enemy of enemies) {
+                                    if (enemy.dead || skull.hitTargets.has(enemy)) continue;
+                                    const dist = Math.hypot(enemy.x - skull.x, enemy.y - skull.y);
+                                    if (dist < nextDist) {
+                                        nextDist = dist;
+                                        nextTarget = enemy;
+                                    }
+                                }
+                                
+                                for (const boss of bosses) {
+                                    if (boss.dead || skull.hitTargets.has(boss)) continue;
+                                    const dist = Math.hypot(boss.x - skull.x, boss.y - skull.y);
+                                    if (dist < nextDist * 0.8) {
+                                        nextDist = dist;
+                                        nextTarget = boss;
+                                    }
+                                }
+                                
+                                for (const lep of leprechauns) {
+                                    if (lep.dead || skull.hitTargets.has(lep)) continue;
+                                    const dist = Math.hypot(lep.x - skull.x, lep.y - skull.y);
+                                    if (dist < nextDist * 0.7) {
+                                        nextDist = dist;
+                                        nextTarget = lep;
+                                    }
+                                }
+                                
+                                if (nextTarget) {
+                                    // Bounce to next target
+                                    skull.target = nextTarget;
+                                    const angle = Math.atan2(nextTarget.y - skull.y, nextTarget.x - skull.x);
+                                    skull.vx = Math.cos(angle) * attackSpeed;
+                                    skull.vy = Math.sin(angle) * attackSpeed;
+                                } else {
+                                    // No more targets, return
+                                    skull.state = 'return';
+                                    skull.lastAttack = now;
+                                    skull.target = null;
+                                }
+                            } else {
+                                // Max bounces reached, return
+                                skull.state = 'return';
+                                skull.lastAttack = now;
+                                skull.target = null;
+                            }
                         }
                         
                         // Return if too far from player
@@ -12765,53 +12774,6 @@
                 }
             }
         }
-
-        // ===== CALTROP UPDATE =====
-        function updateCaltrops() {
-            if (!player || !player.weapons.caltrops) return;
-            
-            const state = player.weapons.caltrops;
-            if (!state.traps) return;
-            
-            const now = Date.now();
-            
-            for (const trap of state.traps) {
-                // Check collision with enemies
-                for (const enemy of enemies) {
-                    if (enemy.dead) continue;
-                    const dist = Math.hypot(enemy.x - trap.x, enemy.y - trap.y);
-                    
-                    if (dist < trap.radius + enemy.radius) {
-                        // Check cooldown per enemy
-                        const lastHit = trap.hitCooldowns.get(enemy) || 0;
-                        if (now - lastHit > 500) { // 0.5s cooldown per enemy
-                            const { damage, isCrit } = player.calcDamage(trap.damage);
-                            enemy.takeDamage(damage, isCrit);
-                            player.onDealDamage(damage);
-                            trap.hitCooldowns.set(enemy, now);
-                            spawnParticles(trap.x, trap.y, '#cc8844', 3);
-                        }
-                    }
-                }
-                
-                // Also damage bosses
-                for (const boss of bosses) {
-                    if (boss.dead) continue;
-                    const dist = Math.hypot(boss.x - trap.x, boss.y - trap.y);
-                    
-                    if (dist < trap.radius + boss.radius) {
-                        const lastHit = trap.hitCooldowns.get(boss) || 0;
-                        if (now - lastHit > 500) {
-                            const { damage, isCrit } = player.calcDamage(trap.damage);
-                            boss.takeDamage(damage, isCrit);
-                            player.onDealDamage(damage);
-                            trap.hitCooldowns.set(boss, now);
-                            spawnParticles(trap.x, trap.y, '#cc8844', 3);
-                        }
-                    }
-                }
-            }
-        }
         
         // Update pulse mines
         function updateMines() {
@@ -17217,7 +17179,6 @@
                 updateMagnetPickups();
                 updateTombstones();
                 updateGravityWells(effectiveDt);
-                updateCaltrops();
                 updateMines();
                 
                 // Clean up dead entities (in-place for performance)
@@ -17490,43 +17451,6 @@
                 }
             }
             
-            // Draw caltrops (under player)
-            if (player && player.weapons.caltrops) {
-                const state = player.weapons.caltrops;
-                if (state.traps) {
-                    for (const trap of state.traps) {
-                        if (!camera.isVisible(trap.x, trap.y, trap.radius)) continue;
-                        const sx = camera.screenX(trap.x);
-                        const sy = camera.screenY(trap.y);
-                        const r = camera.scale(trap.radius);
-                        const now = Date.now();
-                        const age = (now - trap.startTime) / trap.duration;
-                        const alpha = age > 0.8 ? (1 - age) * 5 : 1;
-                        
-                        ctx.save();
-                        ctx.globalAlpha = alpha * 0.8;
-                        ctx.fillStyle = '#cc8844';
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = '#cc8844';
-                        
-                        const spikes = 6;
-                        for (let i = 0; i < spikes; i++) {
-                            const angle = (i / spikes) * Math.PI * 2;
-                            const spikeX = sx + Math.cos(angle) * r * 0.6;
-                            const spikeY = sy + Math.sin(angle) * r * 0.6;
-                            ctx.beginPath();
-                            ctx.moveTo(sx, sy);
-                            ctx.lineTo(spikeX, spikeY);
-                            ctx.lineTo(sx + Math.cos(angle + 0.3) * r * 0.3, sy + Math.sin(angle + 0.3) * r * 0.3);
-                            ctx.closePath();
-                            ctx.fill();
-                        }
-                        
-                        ctx.restore();
-                    }
-                }
-            }
-            
             // Draw pulse mines (under player)
             if (player && player.weapons.pulseMine) {
                 const state = player.weapons.pulseMine;
@@ -17583,70 +17507,92 @@
                 }
             }
             
-            // Draw skull legion
-            if (player && player.weapons.skullLegion) {
-                const state = player.weapons.skullLegion;
-                const def = WEAPONS.skullLegion;
+            // Draw bones
+            if (player && player.weapons.bones) {
+                const state = player.weapons.bones;
+                const def = WEAPONS.bones;
                 if (state.skulls) {
                     const now = Date.now();
-                    for (const skull of state.skulls) {
-                        if (!camera.isVisible(skull.x, skull.y, 30)) continue;
-                        const sx = camera.screenX(skull.x);
-                        const sy = camera.screenY(skull.y);
-                        const bob = Math.sin(now * 0.005 + skull.bobOffset) * 3;
-                        const r = camera.scale(12);
+                    for (const bone of state.skulls) {
+                        if (!camera.isVisible(bone.x, bone.y, 30)) continue;
+                        const sx = camera.screenX(bone.x);
+                        const sy = camera.screenY(bone.y);
+                        const bob = Math.sin(now * 0.005 + bone.bobOffset) * 3;
                         
                         ctx.save();
                         ctx.shadowBlur = 15;
                         ctx.shadowColor = def.color;
                         
                         // Glow intensity based on state
-                        if (skull.state === 'attack') {
+                        if (bone.state === 'attack') {
                             ctx.shadowBlur = 25;
                         }
                         
-                        // Skull body (rounded)
-                        ctx.fillStyle = skull.state === 'attack' ? '#fff' : '#ddd';
-                        ctx.beginPath();
-                        ctx.arc(sx, sy + bob, r, 0, Math.PI * 2);
-                        ctx.fill();
+                        // Wiggle rotation - 30 degrees back and forth
+                        const wiggleSpeed = 0.003; // Slow wiggle
+                        const wiggleAmount = Math.PI / 6; // 30 degrees
+                        const wiggle = Math.sin(now * wiggleSpeed + bone.bobOffset * 2) * wiggleAmount;
                         
-                        // Eye sockets
-                        ctx.fillStyle = skull.state === 'attack' ? def.color : '#222';
-                        ctx.beginPath();
-                        ctx.arc(sx - r * 0.35, sy + bob - r * 0.1, r * 0.25, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.beginPath();
-                        ctx.arc(sx + r * 0.35, sy + bob - r * 0.1, r * 0.25, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        // Nose hole
-                        ctx.beginPath();
-                        ctx.arc(sx, sy + bob + r * 0.2, r * 0.12, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        // Teeth (jagged line)
-                        ctx.strokeStyle = '#222';
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath();
-                        ctx.moveTo(sx - r * 0.5, sy + bob + r * 0.5);
-                        for (let i = 0; i < 5; i++) {
-                            const tx = sx - r * 0.5 + (i + 0.5) * r * 0.25;
-                            const ty = sy + bob + r * (i % 2 === 0 ? 0.55 : 0.65);
-                            ctx.lineTo(tx, ty);
+                        // Base angle: horizontal for orbit/return, velocity-based for attack
+                        let baseAngle;
+                        if (bone.state === 'attack' && (bone.vx !== 0 || bone.vy !== 0)) {
+                            baseAngle = Math.atan2(bone.vy, bone.vx);
+                        } else {
+                            // Horizontal orientation (0) for orbit and return states
+                            baseAngle = 0;
                         }
+                        
+                        const rotation = baseAngle + wiggle;
+                        
+                        ctx.translate(sx, sy + bob);
+                        ctx.rotate(rotation);
+                        
+                        const boneLength = camera.scale(20);
+                        const knobRadius = camera.scale(5);
+                        const shaftWidth = camera.scale(4);
+                        
+                        // Bone color
+                        ctx.fillStyle = bone.state === 'attack' ? '#fff' : '#e8e8d8';
+                        ctx.strokeStyle = bone.state === 'attack' ? def.color : '#ccc';
+                        ctx.lineWidth = 1;
+                        
+                        // Left knob (two circles for bone end)
+                        ctx.beginPath();
+                        ctx.arc(-boneLength / 2, -knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(-boneLength / 2, knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
+                        ctx.fill();
                         ctx.stroke();
                         
+                        // Right knob (two circles for bone end)
+                        ctx.beginPath();
+                        ctx.arc(boneLength / 2, -knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(boneLength / 2, knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                        
+                        // Shaft (center part)
+                        ctx.fillRect(-boneLength / 2 + knobRadius * 0.3, -shaftWidth / 2, boneLength - knobRadius * 0.6, shaftWidth);
+                        ctx.strokeRect(-boneLength / 2 + knobRadius * 0.3, -shaftWidth / 2, boneLength - knobRadius * 0.6, shaftWidth);
+                        
+                        ctx.rotate(-rotation);
+                        ctx.translate(-sx, -(sy + bob));
+                        
                         // Trail when attacking
-                        if (skull.state === 'attack') {
+                        if (bone.state === 'attack') {
                             ctx.globalAlpha = 0.4;
                             ctx.fillStyle = def.color;
                             for (let i = 1; i <= 3; i++) {
-                                const trailX = sx - skull.vx * i * 3;
-                                const trailY = sy - skull.vy * i * 3 + bob;
+                                const trailX = sx - bone.vx * i * 3;
+                                const trailY = sy - bone.vy * i * 3 + bob;
                                 ctx.globalAlpha = 0.4 - i * 0.1;
                                 ctx.beginPath();
-                                ctx.arc(trailX, trailY, r * (1 - i * 0.2), 0, Math.PI * 2);
+                                ctx.arc(trailX, trailY, camera.scale(6) * (1 - i * 0.2), 0, Math.PI * 2);
                                 ctx.fill();
                             }
                         }
@@ -18025,9 +17971,9 @@
             'energyBolt', 'boomBox', 'plasmaOrbit', 'blackSquirrel', 
             'laserBeam', 'voidDaggers', 'flameThrower', 'iceShard',
             'thunderStrike', 'chainLightning', 'toxicAura', 'boomerang',
-            'spectralArrows', 'gravityWell', 'ricochetDisc', 'caltrops',
+            'spectralArrows', 'gravityWell', 'ricochetDisc',
             'starField', 'pulseMine', 'meteorStrike', 'spiritOrbs',
-            'skullLegion'
+            'bones'
         ];
         
         // Player color options (neon palette, cold to hot)

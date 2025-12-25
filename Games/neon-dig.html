@@ -502,7 +502,7 @@
         .upgrade-header { text-align: center; margin-bottom: 24px; }
 
         .upgrade-title {
-            font-size: 26px;
+            font-size: 27px;
             font-weight: 800;
             font-family: 'Oxanium', monospace;
             color: var(--cyan);
@@ -512,7 +512,7 @@
         }
 
         .upgrade-subtitle {
-            font-size: 11px;
+            font-size: 12px;
             color: rgba(255, 255, 255, 0.4);
             margin-top: 13px;
             letter-spacing: 4px;
@@ -864,15 +864,15 @@
         }
 
         .upgrade-icon { font-size: 38px; margin-bottom: 12px; filter: drop-shadow(0 0 15px currentColor); }
-        .upgrade-name { font-size: 12px; font-weight: 700; font-family: 'Oxanium', monospace; color: #fff; margin-bottom: 8px; text-shadow: 0 0 10px rgba(255,255,255,0.4); }
-        .upgrade-desc { font-size: 10px; color: rgba(255, 255, 255, 0.5); line-height: 1.4; }
+        .upgrade-name { font-size: 13px; font-weight: 700; font-family: 'Oxanium', monospace; color: #fff; margin-bottom: 8px; text-shadow: 0 0 10px rgba(255,255,255,0.4); }
+        .upgrade-desc { font-size: 11px; color: rgba(255, 255, 255, 0.5); line-height: 1.4; }
 
         @media (max-width: 500px) {
             .upgrade-slot { width: 100px; height: 145px; }
             .upgrade-icon { font-size: 30px; }
-            .upgrade-name { font-size: 10px; }
-            .upgrade-desc { font-size: 9px; }
-            .upgrade-title { font-size: 20px; letter-spacing: 4px; }
+            .upgrade-name { font-size: 11px; }
+            .upgrade-desc { font-size: 10px; }
+            .upgrade-title { font-size: 21px; letter-spacing: 4px; }
             .upgrade-slots { gap: 8px; }
             .hud { padding: 8px 10px; }
             .hud-value { font-size: 12px; }
@@ -1468,7 +1468,7 @@
         /* Keys display - bottom center */
         .keys-display {
             position: absolute;
-            bottom: 145px;
+            bottom: 115px;
             left: 50%;
             transform: translateX(-50%);
             display: flex;
@@ -6261,7 +6261,7 @@
                 case BOSS_TYPE.BURROWER: 
                     return 'The Burrower turns GREEN and is vulnerable for a moment after attacking. Strike its glowing weak point to deal damage!';
                 case BOSS_TYPE.CRYSTAL_GOLEM: 
-                    return 'Break the crystal barriers protecting the Golem. Dodge its shockwaves and strike when vulnerable!';
+                    return 'Dodge shockwaves and crystals! After it attacks, drill it while EXPOSED (yellow ring). Stun it to expose the core (cyan ring) for damage!';
                 case BOSS_TYPE.LAVA_WURM: 
                     return 'Survive the rising lava while attacking the Wurm. Stay mobile and watch for its dive attacks!';
                 case BOSS_TYPE.HIVE_MIND: 
@@ -6278,7 +6278,7 @@
                 case BOSS_TYPE.BURROWER: 
                     return '💡 Tip: The dirt patches show where it might emerge!';
                 case BOSS_TYPE.CRYSTAL_GOLEM: 
-                    return '💡 Tip: Jump over shockwaves and dig the barriers!';
+                    return '💡 Tip: Jump shockwaves! Attack when you see EXPOSED, then drill the cyan core!';
                 case BOSS_TYPE.LAVA_WURM: 
                     return '💡 Tip: Stay near the top but watch for ceiling attacks!';
                 case BOSS_TYPE.HIVE_MIND: 
@@ -6661,6 +6661,9 @@
                 case BOSS_TYPE.BURROWER:
                     updateBurrowerAI(playerCenterX, playerCenterY);
                     break;
+                case BOSS_TYPE.CRYSTAL_GOLEM:
+                    updateCrystalGolemAI(playerCenterX, playerCenterY);
+                    break;
                 // Other bosses will be added in future updates
                 default:
                     updateBurrowerAI(playerCenterX, playerCenterY);
@@ -6784,6 +6787,218 @@
             }
         }
         
+        function updateCrystalGolemAI(playerX, playerY) {
+            // Crystal Golem: Walks side to side, slams ground for shockwaves, shoots crystals
+            // Hit it during recovery to stun, then drill the core
+            
+            // Initialize golem-specific properties if needed
+            if (boss.walkDirection === undefined) {
+                boss.walkDirection = 1;
+                boss.slamCount = 0;
+                boss.shotsFired = 0;
+            }
+            
+            const arenaLeft = bossArena.offsetX + TILE_SIZE * 2;
+            const arenaRight = bossArena.offsetX + (bossArena.width - 2) * TILE_SIZE;
+            const groundY = bossArena.offsetY + (bossArena.height - 3) * TILE_SIZE;
+            
+            // Keep golem on ground for most states
+            if (boss.state !== 'windup') {
+                boss.y = groundY;
+            }
+            
+            switch(boss.state) {
+                case 'idle':
+                    // Walk side to side
+                    boss.x += boss.walkDirection * 1.5 * deltaMultiplier;
+                    
+                    // Bounce off walls
+                    if (boss.x <= arenaLeft) {
+                        boss.x = arenaLeft;
+                        boss.walkDirection = 1;
+                    } else if (boss.x >= arenaRight) {
+                        boss.x = arenaRight;
+                        boss.walkDirection = -1;
+                    }
+                    
+                    // Attack pattern
+                    if (boss.attackTimer >= boss.attackCooldown) {
+                        boss.attackTimer = 0;
+                        boss.slamCount++;
+                        
+                        // Alternate between slam and shoot
+                        if (boss.slamCount % 3 === 0) {
+                            boss.state = 'shooting';
+                            boss.stateTimer = 0;
+                            boss.shotsFired = 0;
+                        } else {
+                            boss.state = 'windup';
+                            boss.stateTimer = 0;
+                        }
+                    }
+                    break;
+                    
+                case 'windup':
+                    // Pause before slam - small hop
+                    boss.y = groundY - Math.sin(boss.stateTimer * 0.1) * 8;
+                    
+                    if (boss.stateTimer >= 25) {
+                        boss.state = 'slam';
+                        boss.stateTimer = 0;
+                    }
+                    break;
+                    
+                case 'slam':
+                    // Ground slam - create shockwave on first frame
+                    if (boss.stateTimer < 2) {
+                        screenShake = 15;
+                        triggerScreenFlash('#8844ff', 0.4, 12);
+                        
+                        // Create shockwave projectiles that travel along ground
+                        const shockwaveY = groundY + 15;
+                        bossArena.projectiles.push({
+                            x: boss.x - 25,
+                            y: shockwaveY,
+                            vx: -3.5,
+                            vy: 0,
+                            radius: 14,
+                            damage: 12,
+                            life: 2.5,
+                            color: '#aa66ff',
+                            type: 'shockwave'
+                        });
+                        bossArena.projectiles.push({
+                            x: boss.x + 25,
+                            y: shockwaveY,
+                            vx: 3.5,
+                            vy: 0,
+                            radius: 14,
+                            damage: 12,
+                            life: 2.5,
+                            color: '#aa66ff',
+                            type: 'shockwave'
+                        });
+                        
+                        // Ground particles
+                        for (let i = 0; i < 10; i++) {
+                            bossArena.particles.push({
+                                x: boss.x + (Math.random() - 0.5) * 50,
+                                y: groundY,
+                                vx: (Math.random() - 0.5) * 5,
+                                vy: -2 - Math.random() * 3,
+                                size: 3 + Math.random() * 4,
+                                color: Math.random() < 0.5 ? '#7744cc' : '#553388',
+                                life: 0.7
+                            });
+                        }
+                    }
+                    
+                    // Recovery period - CAN BE HIT during this time
+                    if (boss.stateTimer >= 35) {
+                        boss.state = 'recovery';
+                        boss.stateTimer = 0;
+                        createFloatingText('💫 EXPOSED!', boss.x, boss.y - 50, '#ffff00');
+                    }
+                    break;
+                    
+                case 'shooting':
+                    // Fire crystal projectiles at player
+                    if (Math.floor(boss.stateTimer) % 18 === 0 && boss.shotsFired < 3) {
+                        const angle = Math.atan2(playerY - boss.y, playerX - boss.x);
+                        const spread = (Math.random() - 0.5) * 0.2;
+                        
+                        bossArena.projectiles.push({
+                            x: boss.x,
+                            y: boss.y - 15,
+                            vx: Math.cos(angle + spread) * 3.5,
+                            vy: Math.sin(angle + spread) * 3.5,
+                            radius: 10,
+                            damage: 10,
+                            life: 3,
+                            color: '#00ffff'
+                        });
+                        
+                        boss.shotsFired++;
+                        
+                        // Crystal particles
+                        for (let i = 0; i < 4; i++) {
+                            bossArena.particles.push({
+                                x: boss.x,
+                                y: boss.y - 15,
+                                vx: Math.cos(angle) * 2 + (Math.random() - 0.5) * 2,
+                                vy: Math.sin(angle) * 2 + (Math.random() - 0.5) * 2,
+                                size: 2 + Math.random() * 2,
+                                color: '#66ffff',
+                                life: 0.4
+                            });
+                        }
+                    }
+                    
+                    if (boss.stateTimer >= 55) {
+                        boss.state = 'recovery';
+                        boss.stateTimer = 0;
+                        createFloatingText('💫 EXPOSED!', boss.x, boss.y - 50, '#ffff00');
+                    }
+                    break;
+                
+                case 'recovery':
+                    // Brief window where golem can be hit by drilling into it
+                    // Wobble to show vulnerability
+                    boss.x += Math.sin(boss.stateTimer * 0.3) * 0.5;
+                    
+                    if (boss.stateTimer >= 60) {
+                        boss.state = 'idle';
+                        boss.stateTimer = 0;
+                    }
+                    break;
+                    
+                case 'vulnerable':
+                    // Exposed crystal core - can be drilled for damage
+                    boss.vulnerableTimer -= deltaMultiplier;
+                    
+                    // Pulse effect
+                    const pulse = Math.sin(globalTime * 0.3) * 0.3;
+                    boss.width = 56 + pulse * 8;
+                    boss.height = 56 + pulse * 8;
+                    
+                    // Weak point for drilling
+                    if (bossArena.weakPoints.length === 0) {
+                        bossArena.weakPoints = [{
+                            x: boss.x,
+                            y: boss.y,
+                            radius: 30,
+                            active: true
+                        }];
+                        createFloatingText('⚠️ DRILL THE CORE!', boss.x, boss.y - 50, '#00ff88');
+                    } else {
+                        // Update weak point position
+                        bossArena.weakPoints[0].x = boss.x;
+                        bossArena.weakPoints[0].y = boss.y;
+                        bossArena.weakPoints[0].active = true;
+                    }
+                    
+                    if (boss.vulnerableTimer <= 0) {
+                        boss.state = 'idle';
+                        boss.stateTimer = 0;
+                        boss.attackTimer = 0;
+                        boss.width = 56;
+                        boss.height = 56;
+                        bossArena.weakPoints = [];
+                    }
+                    break;
+                    
+                case 'stunned':
+                    // Brief stun after being hit during recovery
+                    if (boss.stateTimer >= 30) {
+                        boss.state = 'vulnerable';
+                        boss.stateTimer = 0;
+                        boss.vulnerableTimer = 120; // 2 seconds to drill
+                        boss.hitCount = 0;
+                    }
+                    break;
+            }
+        }
+        
         function updateBossProjectiles() {
             for (let i = bossArena.projectiles.length - 1; i >= 0; i--) {
                 const proj = bossArena.projectiles[i];
@@ -6857,11 +7072,25 @@
             
             if (dist < (boss.width / 2 + player.width / 2) && boss.state !== 'stunned') {
                 // Check if player is digging (attacking)
-                if (player.digging && boss.state === 'vulnerable') {
-                    // Hit the boss!
-                    damageBoss(1);
-                } else if (boss.state === 'attacking' || boss.state === 'idle') {
-                    // Player takes damage
+                if (player.digging && (boss.state === 'vulnerable' || boss.state === 'recovery')) {
+                    // Hit the boss! Recovery hits stun, vulnerable hits damage
+                    if (boss.state === 'recovery') {
+                        boss.hitCount++;
+                        bossHitFlash = 12;
+                        screenShake = 10;
+                        triggerScreenFlash('#ffff00', 0.3, 10);
+                        createFloatingText('💥 HIT!', boss.x, boss.y - 40, '#ffff00');
+                        
+                        if (boss.hitCount >= boss.hitsToStun) {
+                            boss.state = 'stunned';
+                            boss.stateTimer = 0;
+                            createFloatingText('⚡ STUNNED!', boss.x, boss.y - 55, '#00ffff');
+                        }
+                    } else {
+                        damageBoss(1);
+                    }
+                } else if (boss.state === 'attacking' || boss.state === 'idle' || boss.state === 'slam' || boss.state === 'shooting') {
+                    // Player takes damage from active boss
                     playerTakeDamage(boss.damage, dx, dy);
                 }
             }
@@ -7203,9 +7432,21 @@
             // Draw projectiles
             for (const proj of bossArena.projectiles) {
                 ctx.fillStyle = proj.color || '#ff6600';
-                ctx.beginPath();
-                ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
-                ctx.fill();
+                if (proj.type === 'shockwave') {
+                    // Shockwave - wider, flatter shape
+                    ctx.beginPath();
+                    ctx.ellipse(proj.x, proj.y, proj.radius * 1.5, proj.radius * 0.6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Inner glow
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.beginPath();
+                    ctx.ellipse(proj.x, proj.y - 2, proj.radius * 0.8, proj.radius * 0.3, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(proj.x, proj.y, proj.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
             }
             
             // Draw player in arena
@@ -7216,7 +7457,7 @@
                 const hpBarWidth = 200;
                 const hpBarHeight = 16;
                 const hpBarX = (BASE_WIDTH - hpBarWidth) / 2;
-                const hpBarY = 10;
+                const hpBarY = 25;
                 const hpPercent = boss.health / boss.maxHealth;
                 
                 // Background
@@ -7340,6 +7581,90 @@
                         ctx.lineWidth = 3;
                         ctx.beginPath();
                         ctx.arc(x, y, halfW + pulseSize, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                    break;
+                
+                case BOSS_TYPE.CRYSTAL_GOLEM:
+                    // Rocky golem with crystal core
+                    const stompOffset = boss.state === 'slam' ? Math.sin(boss.stateTimer * 0.5) * 3 : 0;
+                    const recoveryWobble = boss.state === 'recovery' ? Math.sin(boss.stateTimer * 0.4) * 4 : 0;
+                    const isExposed = boss.state === 'vulnerable' || boss.state === 'recovery';
+                    
+                    // Body (rocky shape)
+                    ctx.fillStyle = isExposed ? '#5588aa' : '#445566';
+                    ctx.beginPath();
+                    ctx.moveTo(x - halfW + recoveryWobble, y + halfH);
+                    ctx.lineTo(x - halfW * 0.8 + recoveryWobble, y - halfH * 0.3);
+                    ctx.lineTo(x - halfW * 0.3, y - halfH);
+                    ctx.lineTo(x + halfW * 0.3, y - halfH);
+                    ctx.lineTo(x + halfW * 0.8 - recoveryWobble, y - halfH * 0.3);
+                    ctx.lineTo(x + halfW - recoveryWobble, y + halfH);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Rock texture lines
+                    ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(x - halfW * 0.5, y - halfH * 0.5);
+                    ctx.lineTo(x - halfW * 0.2, y + halfH * 0.5);
+                    ctx.moveTo(x + halfW * 0.4, y - halfH * 0.3);
+                    ctx.lineTo(x + halfW * 0.3, y + halfH * 0.6);
+                    ctx.stroke();
+                    
+                    // Crystal core (center)
+                    const coreGlow = isExposed ? 0.9 : 0.5 + Math.sin(globalTime * 0.15) * 0.3;
+                    ctx.fillStyle = `rgba(0, 255, 255, ${coreGlow})`;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y - 15);
+                    ctx.lineTo(x + 12, y);
+                    ctx.lineTo(x, y + 15);
+                    ctx.lineTo(x - 12, y);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Core highlight
+                    ctx.fillStyle = `rgba(200, 255, 255, ${coreGlow * 0.8})`;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y - 8);
+                    ctx.lineTo(x + 5, y);
+                    ctx.lineTo(x, y + 8);
+                    ctx.lineTo(x - 5, y);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    // Eyes (glowing)
+                    ctx.fillStyle = isExposed ? '#ffff00' : '#ff44aa';
+                    ctx.beginPath();
+                    ctx.arc(x - 15, y - halfH * 0.4, 5, 0, Math.PI * 2);
+                    ctx.arc(x + 15, y - halfH * 0.4, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Arms (blocky)
+                    ctx.fillStyle = isExposed ? '#6699bb' : '#556677';
+                    ctx.fillRect(x - halfW - 12, y - 10 + stompOffset, 14, 30);
+                    ctx.fillRect(x + halfW - 2, y - 10 + stompOffset, 14, 30);
+                    
+                    // Fists
+                    ctx.fillStyle = '#334455';
+                    ctx.fillRect(x - halfW - 14, y + 15 + stompOffset, 18, 15);
+                    ctx.fillRect(x + halfW - 4, y + 15 + stompOffset, 18, 15);
+                    
+                    // Recovery/Vulnerable indicator
+                    if (boss.state === 'recovery') {
+                        const pulseSize = 5 + Math.sin(globalTime * 0.5) * 3;
+                        ctx.strokeStyle = '#ffff00';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.arc(x, y, pulseSize + 20, 0, Math.PI * 2);
+                        ctx.stroke();
+                    } else if (boss.state === 'vulnerable') {
+                        const pulseSize = 8 + Math.sin(globalTime * 0.3) * 4;
+                        ctx.strokeStyle = '#00ffff';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.arc(x, y, pulseSize + 15, 0, Math.PI * 2);
                         ctx.stroke();
                     }
                     break;
@@ -11076,61 +11401,59 @@
             if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keys.up = true;
             if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keys.down = true;
             
-            // DEBUG: Press B to teleport to boss portal at 100m
+            // DEBUG: Press B to teleport to surface
             if ((e.key === 'b' || e.key === 'B') && gameRunning && !bossArenaActive) {
-                debugTeleportToBoss(100);
+                debugTeleportToDepth(0);
             }
-            // DEBUG: Press N to teleport to 200m boss, M for 300m
+            // DEBUG: Press N to teleport to 45m, M for 95m
             if ((e.key === 'n' || e.key === 'N') && gameRunning && !bossArenaActive) {
-                debugTeleportToBoss(200);
+                debugTeleportToDepth(45);
             }
             if ((e.key === 'm' || e.key === 'M') && gameRunning && !bossArenaActive) {
-                debugTeleportToBoss(300);
+                debugTeleportToDepth(95);
             }
         });
         
-        // DEBUG: Teleport player near a boss portal
-        function debugTeleportToBoss(targetDepth) {
+        // DEBUG: Teleport player to specific depth
+        function debugTeleportToDepth(targetDepth) {
             // Extend world to target depth if needed
             while (world.length < targetDepth + 20) {
                 extendWorld();
             }
             
-            // Find or create portal at target depth
-            let portal = portalLocations.find(p => p.depth === targetDepth);
-            if (!portal) {
-                // Portal should exist, but force generate area
-                while (world.length < targetDepth + 50) {
-                    extendWorld();
+            // Calculate target row (depth + 2 for surface offset)
+            const targetRow = targetDepth + 2;
+            const targetTx = Math.floor(WORLD_WIDTH / 2);
+            
+            // Clear a small area for player to spawn in
+            for (let dy = -1; dy <= 1; dy++) {
+                const row = targetRow + dy;
+                if (row >= 0 && row < world.length) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const col = targetTx + dx;
+                        if (col >= 1 && col < WORLD_WIDTH - 1) {
+                            const tile = world[row][col];
+                            if (tile !== TILE.BEDROCK && tile !== TILE.PORTAL && tile !== TILE.PORTAL_PART && tile !== TILE.GATE) {
+                                world[row][col] = TILE.AIR;
+                            }
+                        }
+                    }
                 }
-                portal = portalLocations.find(p => p.depth === targetDepth);
             }
             
-            if (portal) {
-                // Teleport player above the portal
-                const portalY = (targetDepth + 2) * TILE_SIZE;
-                player.x = portal.tx * TILE_SIZE + TILE_SIZE/2 - player.width/2;
-                player.y = portalY - player.height - TILE_SIZE * 2;
-                player.vy = 0;
-                cameraY = player.y - BASE_HEIGHT / 3;
-                
-                // Refill resources for testing
-                fuel = 100;
-                hull = 100;
-                updateFuelBar();
-                updateHullBar();
-                
-                createFloatingText(`DEBUG: ${targetDepth}m`, player.x + player.width/2, player.y - 20, '#ffff00');
-            } else {
-                // Fallback: just teleport to that depth
-                player.y = (targetDepth + 2) * TILE_SIZE - player.height;
-                player.x = BASE_WIDTH / 2 - player.width / 2;
-                cameraY = player.y - BASE_HEIGHT / 3;
-                fuel = 100;
-                hull = 100;
-                updateFuelBar();
-                updateHullBar();
-            }
+            // Teleport player
+            player.x = targetTx * TILE_SIZE + TILE_SIZE / 2 - player.width / 2;
+            player.y = targetRow * TILE_SIZE;
+            cameraY = player.y - BASE_HEIGHT / 2;
+            
+            // Reset movement state
+            player.vy = 0;
+            player.digging = false;
+            player.digTarget = null;
+            slideAnimation.active = false;
+            hoverMode = false;
+            
+            createFloatingText(`Teleported to ${targetDepth}m`, player.x + player.width/2, player.y - 20, '#00ffff');
         }
         
         document.addEventListener('keyup', (e) => {
