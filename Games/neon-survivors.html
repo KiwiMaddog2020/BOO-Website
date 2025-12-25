@@ -5252,7 +5252,7 @@
             gravityWell: 'epic',
             ricochetDisc: 'rare',
             pulseMine: 'rare',
-            bones: 'epic'
+            shotgun: 'epic'
         };
         
         // Tome rarities
@@ -5333,7 +5333,7 @@
                 baseOrbs: 3,
                 baseCharges: 3,
                 chargeRegenTime: 8000,
-                knockbackForce: 120,
+                knockbackForce: 80,
                 burstDamage: 20,
                 burstRadius: 50,
                 type: 'orbit'
@@ -5529,17 +5529,18 @@
                 mineDuration: 12000,
                 type: 'mine'
             },
-            bones: {
-                name: 'Bones',
-                icon: '🦴',
-                color: '#88ff88',
-                desc: 'Summons bones that hunt enemies',
-                baseDamage: 12,
-                baseSkullCount: 3,
-                attackCooldown: 1200,
-                attackRange: 180,
-                attackSpeed: 6,
-                type: 'skulls'
+            shotgun: {
+                name: 'Shotgun',
+                icon: '🔫',
+                color: '#ff8844',
+                desc: 'Spread shot, deadly up close',
+                baseDamage: 8,
+                baseFireRate: 1100,
+                pelletCount: 6,
+                spreadAngle: 0.5,
+                maxRange: 180,
+                knockback: 60,
+                type: 'shotgun'
             }
         };
 
@@ -6004,14 +6005,14 @@
                     this.x += this.knockbackVelX * (dt / 16);
                     this.y += this.knockbackVelY * (dt / 16);
                     
-                    // Apply friction to slow down knockback
-                    const friction = 0.92;
+                    // Apply friction to slow down knockback (higher = slower decay = smoother)
+                    const friction = 0.88;
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
                     
                     // Stop when very slow
-                    if (Math.abs(this.knockbackVelX) < 0.1) this.knockbackVelX = 0;
-                    if (Math.abs(this.knockbackVelY) < 0.1) this.knockbackVelY = 0;
+                    if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
+                    if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
                 }
                 
                 // World bounds
@@ -6152,8 +6153,9 @@
                         case 'mine':
                             this.dropMine(weaponId, weaponDef, weaponState, level, now);
                             break;
-                        case 'skulls':
-                            this.updateSkullLegion(weaponId, weaponDef, weaponState, level, now, dt);
+                        case 'shotgun':
+                            this.fireShotgun(weaponId, weaponDef, weaponState, level, now);
+                            this.updateShotgunPellets(weaponState, weaponDef, level, now, dt);
                             break;
                     }
                 }
@@ -6233,11 +6235,10 @@
                             applyStatusEffects(enemy, damage);
                             enemy.orbHitCooldown = 250;
                             
-                            // Knockback
+                            // Knockback (smooth)
                             if (def.knockbackForce) {
                                 const knockAngle = Math.atan2(enemy.y - ox, enemy.x - ox);
-                                enemy.x += Math.cos(knockAngle) * def.knockbackForce;
-                                enemy.y += Math.sin(knockAngle) * def.knockbackForce;
+                                enemy.applyKnockback(knockAngle, def.knockbackForce);
                             }
                             
                             spawnParticles(ox, oy, def.color, 6);
@@ -6254,11 +6255,10 @@
                             player.onDealDamage(damage);
                             lep.orbHitCooldown = 250;
                             
-                            // Knockback
+                            // Knockback (smooth)
                             if (def.knockbackForce) {
                                 const knockAngle = Math.atan2(lep.y - ox, lep.x - ox);
-                                lep.x += Math.cos(knockAngle) * def.knockbackForce;
-                                lep.y += Math.sin(knockAngle) * def.knockbackForce;
+                                lep.applyKnockback(knockAngle, def.knockbackForce);
                             }
                             
                             spawnParticles(ox, oy, COLORS.gold, 6);
@@ -6275,11 +6275,10 @@
                             player.onDealDamage(damage);
                             boss.orbHitCooldown = 250;
                             
-                            // Knockback (reduced for bosses)
+                            // Knockback (reduced for bosses, smooth)
                             if (def.knockbackForce) {
                                 const knockAngle = Math.atan2(boss.y - ox, boss.x - ox);
-                                boss.x += Math.cos(knockAngle) * def.knockbackForce * 0.3;
-                                boss.y += Math.sin(knockAngle) * def.knockbackForce * 0.3;
+                                boss.applyKnockback(knockAngle, def.knockbackForce * 0.3);
                             }
                             
                             spawnParticles(ox, oy, boss.color, 6);
@@ -6318,10 +6317,9 @@
                             enemy.takeDamage(damage, isCrit);
                             player.onDealDamage(damage);
                             
-                            // Knockback from burst
+                            // Knockback from burst (smooth)
                             const knockAngle = Math.atan2(enemy.y - player.y, enemy.x - player.x);
-                            enemy.x += Math.cos(knockAngle) * (def.knockbackForce || 80);
-                            enemy.y += Math.sin(knockAngle) * (def.knockbackForce || 80);
+                            enemy.applyKnockback(knockAngle, def.knockbackForce || 60);
                         }
                     }
                     for (const boss of bosses) {
@@ -7311,245 +7309,175 @@
                 });
             }
             
-            // === SKULL LEGION ===
-            updateSkullLegion(id, def, state, level, now, dt) {
-                // Initialize skulls
-                if (!state.skulls) state.skulls = [];
+            // === SHOTGUN ===
+            fireShotgun(id, def, state, level, now) {
+                const fireRate = def.baseFireRate * Math.pow(0.97, level - 1) / this.attackSpeedMultiplier;
+                if (now - (state.lastFire || 0) < fireRate) return;
                 
-                const maxSkulls = def.baseSkullCount + Math.floor(level / 2);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                const attackCooldown = def.attackCooldown * Math.pow(0.97, level - 1) / this.attackSpeedMultiplier;
-                const attackRange = def.attackRange + level * 10;
-                const attackSpeed = def.attackSpeed + level * 0.3;
-                const maxBounces = 2 + Math.floor(level / 3); // Bounces increase with level
-                const bounceRange = 120 + level * 5; // Range to find next target
+                // Find nearest enemy to aim at
+                let bestTarget = null;
+                let bestDist = def.maxRange + level * 15;
                 
-                // Spawn skulls if needed
-                while (state.skulls.length < maxSkulls) {
-                    const angle = Math.random() * Math.PI * 2;
-                    const orbitDist = 50 + Math.random() * 30;
-                    // Each bone gets a unique orbit speed (0.8x to 1.4x base speed)
-                    const orbitSpeed = 0.0012 + Math.random() * 0.0008;
-                    state.skulls.push({
-                        x: this.x + Math.cos(angle) * orbitDist,
-                        y: this.y + Math.sin(angle) * orbitDist,
-                        orbitAngle: angle,
-                        orbitDist: orbitDist,
-                        orbitSpeed: orbitSpeed,
-                        state: 'orbit', // 'orbit', 'attack', 'return'
-                        target: null,
-                        lastAttack: now - Math.random() * attackCooldown, // Stagger initial attacks
-                        vx: 0,
-                        vy: 0,
-                        bobOffset: Math.random() * Math.PI * 2,
-                        bounceCount: 0,
-                        hitTargets: new Set() // Track hit targets to avoid re-hitting
+                for (const enemy of enemies) {
+                    if (enemy.dead) continue;
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestTarget = enemy;
+                    }
+                }
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist < bestDist * 1.2) {
+                        bestDist = dist;
+                        bestTarget = boss;
+                    }
+                }
+                for (const lep of leprechauns) {
+                    if (lep.dead) continue;
+                    const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                    if (dist < bestDist * 1.1) {
+                        bestDist = dist;
+                        bestTarget = lep;
+                    }
+                }
+                
+                if (!bestTarget) return;
+                
+                state.lastFire = now;
+                
+                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.06);
+                const pelletCount = def.pelletCount + Math.floor(level / 3);
+                const spreadAngle = def.spreadAngle + level * 0.02;
+                const maxRange = def.maxRange + level * 15;
+                const knockback = def.knockback + level * 5;
+                
+                // Base angle toward target
+                const baseAngle = Math.atan2(bestTarget.y - this.y, bestTarget.x - this.x);
+                
+                // Initialize pellets array for rendering
+                if (!state.pellets) state.pellets = [];
+                
+                // Store muzzle flash
+                state.muzzleFlash = {
+                    x: this.x,
+                    y: this.y,
+                    angle: baseAngle,
+                    startTime: now
+                };
+                
+                // Fire pellets in a spread pattern
+                for (let i = 0; i < pelletCount; i++) {
+                    // Distribute pellets across spread angle
+                    const offsetAngle = (i - (pelletCount - 1) / 2) * (spreadAngle / pelletCount);
+                    const pelletAngle = baseAngle + offsetAngle + (Math.random() - 0.5) * 0.1;
+                    
+                    const speed = 12 + Math.random() * 3;
+                    state.pellets.push({
+                        x: this.x,
+                        y: this.y,
+                        vx: Math.cos(pelletAngle) * speed,
+                        vy: Math.sin(pelletAngle) * speed,
+                        damage: baseDamage,
+                        maxRange: maxRange,
+                        knockback: knockback,
+                        distTraveled: 0,
+                        startTime: now,
+                        hit: false
                     });
                 }
                 
-                // Update each skull
-                for (const skull of state.skulls) {
-                    if (skull.state === 'orbit') {
-                        // Orbit around player at unique speed
-                        skull.orbitAngle += dt * skull.orbitSpeed;
-                        const targetX = this.x + Math.cos(skull.orbitAngle) * skull.orbitDist;
-                        const targetY = this.y + Math.sin(skull.orbitAngle) * skull.orbitDist;
-                        
-                        // Smooth follow
-                        skull.x += (targetX - skull.x) * 0.1;
-                        skull.y += (targetY - skull.y) * 0.1;
-                        
-                        // Check if should attack
-                        if (now - skull.lastAttack > attackCooldown) {
-                            // Find target
-                            let bestTarget = null;
-                            let bestDist = attackRange;
+                // Screen shake for shotgun feel
+                if (camera.shake) camera.shake(3, 80);
+            }
+            
+            // Update shotgun pellets (called from main update)
+            updateShotgunPellets(state, def, level, now, dt) {
+                if (!state.pellets) return;
+                
+                const maxRange = def.maxRange + level * 15;
+                
+                for (const pellet of state.pellets) {
+                    if (pellet.hit) continue;
+                    
+                    // Move pellet
+                    pellet.x += pellet.vx;
+                    pellet.y += pellet.vy;
+                    pellet.distTraveled += Math.hypot(pellet.vx, pellet.vy);
+                    
+                    // Check if max range reached
+                    if (pellet.distTraveled > maxRange) {
+                        pellet.hit = true;
+                        continue;
+                    }
+                    
+                    // Distance-based damage multiplier (2x at point blank, 0.5x at max range)
+                    const distRatio = pellet.distTraveled / maxRange;
+                    const damageMultiplier = 2 - distRatio * 1.5;
+                    
+                    // Check hits
+                    for (const enemy of enemies) {
+                        if (enemy.dead) continue;
+                        const dist = Math.hypot(enemy.x - pellet.x, enemy.y - pellet.y);
+                        if (dist < enemy.radius + 8) {
+                            const { damage, isCrit } = this.calcDamage(pellet.damage * damageMultiplier);
+                            enemy.takeDamage(damage, isCrit);
+                            this.onDealDamage(damage);
                             
-                            for (const enemy of enemies) {
-                                if (enemy.dead) continue;
-                                const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
-                                if (dist < bestDist) {
-                                    bestDist = dist;
-                                    bestTarget = enemy;
-                                }
-                            }
+                            // Knockback (smooth)
+                            const kbAngle = Math.atan2(pellet.vy, pellet.vx);
+                            enemy.applyKnockback(kbAngle, pellet.knockback * (1 - distRatio * 0.5));
                             
-                            // Prefer bosses
-                            for (const boss of bosses) {
-                                if (boss.dead) continue;
-                                const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
-                                if (dist < bestDist * 1.2) {
-                                    bestDist = dist;
-                                    bestTarget = boss;
-                                }
-                            }
-                            
-                            // Prefer leprechauns
-                            for (const lep of leprechauns) {
-                                if (lep.dead) continue;
-                                const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
-                                if (dist < bestDist * 1.1) {
-                                    bestDist = dist;
-                                    bestTarget = lep;
-                                }
-                            }
-                            
-                            if (bestTarget) {
-                                skull.state = 'attack';
-                                skull.target = bestTarget;
-                                skull.bounceCount = 0;
-                                skull.hitTargets = new Set();
-                                const angle = Math.atan2(bestTarget.y - skull.y, bestTarget.x - skull.x);
-                                skull.vx = Math.cos(angle) * attackSpeed;
-                                skull.vy = Math.sin(angle) * attackSpeed;
-                            }
+                            spawnParticles(pellet.x, pellet.y, def.color, 4);
+                            pellet.hit = true;
+                            break;
                         }
-                    } else if (skull.state === 'attack') {
-                        // Move toward target
-                        skull.x += skull.vx;
-                        skull.y += skull.vy;
-                        
-                        // Re-aim toward target if still alive
-                        if (skull.target && !skull.target.dead) {
-                            const angle = Math.atan2(skull.target.y - skull.y, skull.target.x - skull.x);
-                            skull.vx += Math.cos(angle) * 0.3;
-                            skull.vy += Math.sin(angle) * 0.3;
-                            const speed = Math.hypot(skull.vx, skull.vy);
-                            if (speed > attackSpeed) {
-                                skull.vx = (skull.vx / speed) * attackSpeed;
-                                skull.vy = (skull.vy / speed) * attackSpeed;
-                            }
-                        }
-                        
-                        // Check hit on enemies
-                        let hitTarget = null;
-                        for (const enemy of enemies) {
-                            if (enemy.dead || skull.hitTargets.has(enemy)) continue;
-                            const dist = Math.hypot(enemy.x - skull.x, enemy.y - skull.y);
-                            if (dist < enemy.radius + 15) {
-                                const { damage, isCrit } = this.calcDamage(baseDamage);
-                                enemy.takeDamage(damage, isCrit);
+                    }
+                    
+                    if (!pellet.hit) {
+                        for (const boss of bosses) {
+                            if (boss.dead) continue;
+                            const dist = Math.hypot(boss.x - pellet.x, boss.y - pellet.y);
+                            if (dist < boss.radius + 8) {
+                                const { damage, isCrit } = this.calcDamage(pellet.damage * damageMultiplier);
+                                boss.takeDamage(damage, isCrit);
                                 this.onDealDamage(damage);
-                                spawnParticles(skull.x, skull.y, def.color, 8);
-                                skull.hitTargets.add(enemy);
-                                hitTarget = enemy;
+                                
+                                // Reduced knockback on bosses (smooth)
+                                const kbAngle = Math.atan2(pellet.vy, pellet.vx);
+                                boss.applyKnockback(kbAngle, pellet.knockback * 0.3 * (1 - distRatio * 0.5));
+                                
+                                spawnParticles(pellet.x, pellet.y, def.color, 4);
+                                pellet.hit = true;
                                 break;
                             }
                         }
-                        
-                        if (!hitTarget) {
-                            for (const boss of bosses) {
-                                if (boss.dead || skull.hitTargets.has(boss)) continue;
-                                const dist = Math.hypot(boss.x - skull.x, boss.y - skull.y);
-                                if (dist < boss.radius + 15) {
-                                    const { damage, isCrit } = this.calcDamage(baseDamage);
-                                    boss.takeDamage(damage, isCrit);
-                                    this.onDealDamage(damage);
-                                    spawnParticles(skull.x, skull.y, def.color, 8);
-                                    skull.hitTargets.add(boss);
-                                    hitTarget = boss;
-                                    break;
-                                }
+                    }
+                    
+                    if (!pellet.hit) {
+                        for (const lep of leprechauns) {
+                            if (lep.dead) continue;
+                            const dist = Math.hypot(lep.x - pellet.x, lep.y - pellet.y);
+                            if (dist < lep.radius + 8) {
+                                const { damage, isCrit } = this.calcDamage(pellet.damage * damageMultiplier);
+                                lep.takeDamage(damage, isCrit);
+                                this.onDealDamage(damage);
+                                
+                                // Knockback (smooth)
+                                const kbAngle = Math.atan2(pellet.vy, pellet.vx);
+                                lep.applyKnockback(kbAngle, pellet.knockback * 0.5 * (1 - distRatio * 0.5));
+                                
+                                spawnParticles(pellet.x, pellet.y, COLORS.gold, 4);
+                                pellet.hit = true;
+                                break;
                             }
-                        }
-                        
-                        if (!hitTarget) {
-                            for (const lep of leprechauns) {
-                                if (lep.dead || skull.hitTargets.has(lep)) continue;
-                                const dist = Math.hypot(lep.x - skull.x, lep.y - skull.y);
-                                if (dist < lep.radius + 15) {
-                                    const { damage, isCrit } = this.calcDamage(baseDamage);
-                                    lep.takeDamage(damage, isCrit);
-                                    this.onDealDamage(damage);
-                                    spawnParticles(skull.x, skull.y, COLORS.gold, 8);
-                                    skull.hitTargets.add(lep);
-                                    hitTarget = lep;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if (hitTarget) {
-                            skull.bounceCount++;
-                            
-                            // Try to find next target to bounce to
-                            if (skull.bounceCount < maxBounces) {
-                                let nextTarget = null;
-                                let nextDist = bounceRange;
-                                
-                                for (const enemy of enemies) {
-                                    if (enemy.dead || skull.hitTargets.has(enemy)) continue;
-                                    const dist = Math.hypot(enemy.x - skull.x, enemy.y - skull.y);
-                                    if (dist < nextDist) {
-                                        nextDist = dist;
-                                        nextTarget = enemy;
-                                    }
-                                }
-                                
-                                for (const boss of bosses) {
-                                    if (boss.dead || skull.hitTargets.has(boss)) continue;
-                                    const dist = Math.hypot(boss.x - skull.x, boss.y - skull.y);
-                                    if (dist < nextDist * 0.8) {
-                                        nextDist = dist;
-                                        nextTarget = boss;
-                                    }
-                                }
-                                
-                                for (const lep of leprechauns) {
-                                    if (lep.dead || skull.hitTargets.has(lep)) continue;
-                                    const dist = Math.hypot(lep.x - skull.x, lep.y - skull.y);
-                                    if (dist < nextDist * 0.7) {
-                                        nextDist = dist;
-                                        nextTarget = lep;
-                                    }
-                                }
-                                
-                                if (nextTarget) {
-                                    // Bounce to next target
-                                    skull.target = nextTarget;
-                                    const angle = Math.atan2(nextTarget.y - skull.y, nextTarget.x - skull.x);
-                                    skull.vx = Math.cos(angle) * attackSpeed;
-                                    skull.vy = Math.sin(angle) * attackSpeed;
-                                } else {
-                                    // No more targets, return
-                                    skull.state = 'return';
-                                    skull.lastAttack = now;
-                                    skull.target = null;
-                                }
-                            } else {
-                                // Max bounces reached, return
-                                skull.state = 'return';
-                                skull.lastAttack = now;
-                                skull.target = null;
-                            }
-                        }
-                        
-                        // Return if too far from player
-                        const distToPlayer = Math.hypot(skull.x - this.x, skull.y - this.y);
-                        if (distToPlayer > attackRange * 1.5) {
-                            skull.state = 'return';
-                            skull.lastAttack = now;
-                            skull.target = null;
-                        }
-                    } else if (skull.state === 'return') {
-                        // Return to orbit
-                        const targetX = this.x + Math.cos(skull.orbitAngle) * skull.orbitDist;
-                        const targetY = this.y + Math.sin(skull.orbitAngle) * skull.orbitDist;
-                        const dx = targetX - skull.x;
-                        const dy = targetY - skull.y;
-                        const dist = Math.hypot(dx, dy);
-                        
-                        if (dist < 10) {
-                            skull.state = 'orbit';
-                        } else {
-                            skull.x += (dx / dist) * attackSpeed * 0.8;
-                            skull.y += (dy / dist) * attackSpeed * 0.8;
                         }
                     }
                 }
                 
-                // Store for rendering
-                state.skullCount = maxSkulls;
+                // Remove old pellets
+                state.pellets = state.pellets.filter(p => !p.hit && now - p.startTime < 500);
             }
 
             draw() {
@@ -7746,26 +7674,6 @@
                         }
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
-                        
-                        // Shield charge indicator (below player)
-                        if (state.shieldCharges !== undefined) {
-                            const charges = state.shieldCharges;
-                            const maxCharges = state.maxShieldCharges;
-                            const indicatorY = sy + camera.scale(45);
-                            const indicatorWidth = camera.scale(40);
-                            const segmentWidth = indicatorWidth / maxCharges;
-                            
-                            // Background
-                            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                            ctx.fillRect(sx - indicatorWidth / 2 - 2, indicatorY - 4, indicatorWidth + 4, 8);
-                            
-                            // Charge segments
-                            for (let i = 0; i < maxCharges; i++) {
-                                const segX = sx - indicatorWidth / 2 + i * segmentWidth;
-                                ctx.fillStyle = i < charges ? def.color : '#333';
-                                ctx.fillRect(segX + 1, indicatorY - 2, segmentWidth - 2, 4);
-                            }
-                        }
                     }
                     
                     // AOE wave visual - enhanced neon effect
@@ -7778,6 +7686,69 @@
                             const baseAlpha = 1 - progress * 0.8; // Fade out slower
                             
                             ctx.save();
+                            
+                            // Draw boombox icon above player (only for boomBox weapon)
+                            if (weaponId === 'boomBox') {
+                                const boomboxAlpha = 1 - progress * 0.7; // Fade out slowly over full wave
+                                const boomboxY = sy - camera.scale(35); // 35px above player center
+                                const boomboxSize = camera.scale(23.4); // 30% larger
+                                const bounce = Math.sin(Date.now() * 0.015) * camera.scale(2);
+                                
+                                ctx.globalAlpha = boomboxAlpha;
+                                ctx.shadowBlur = 15;
+                                ctx.shadowColor = def.color;
+                                
+                                // Boombox body
+                                ctx.fillStyle = '#444';
+                                ctx.strokeStyle = def.color;
+                                ctx.lineWidth = 2;
+                                const bw = boomboxSize * 2;
+                                const bh = boomboxSize * 1.2;
+                                ctx.fillRect(sx - bw/2, boomboxY + bounce - bh/2, bw, bh);
+                                ctx.strokeRect(sx - bw/2, boomboxY + bounce - bh/2, bw, bh);
+                                
+                                // Handle
+                                ctx.strokeStyle = '#666';
+                                ctx.lineWidth = 3;
+                                ctx.beginPath();
+                                ctx.moveTo(sx - bw * 0.3, boomboxY + bounce - bh/2);
+                                ctx.quadraticCurveTo(sx, boomboxY + bounce - bh/2 - boomboxSize * 0.5, sx + bw * 0.3, boomboxY + bounce - bh/2);
+                                ctx.stroke();
+                                
+                                // Left speaker
+                                ctx.fillStyle = '#222';
+                                ctx.strokeStyle = def.color;
+                                ctx.lineWidth = 1.5;
+                                ctx.beginPath();
+                                ctx.arc(sx - bw * 0.28, boomboxY + bounce, boomboxSize * 0.35, 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.stroke();
+                                // Speaker cone
+                                ctx.fillStyle = def.color;
+                                ctx.globalAlpha = boomboxAlpha * 0.5;
+                                ctx.beginPath();
+                                ctx.arc(sx - bw * 0.28, boomboxY + bounce, boomboxSize * 0.15, 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.globalAlpha = boomboxAlpha;
+                                
+                                // Right speaker
+                                ctx.fillStyle = '#222';
+                                ctx.beginPath();
+                                ctx.arc(sx + bw * 0.28, boomboxY + bounce, boomboxSize * 0.35, 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.stroke();
+                                // Speaker cone
+                                ctx.fillStyle = def.color;
+                                ctx.globalAlpha = boomboxAlpha * 0.5;
+                                ctx.beginPath();
+                                ctx.arc(sx + bw * 0.28, boomboxY + bounce, boomboxSize * 0.15, 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.globalAlpha = boomboxAlpha;
+                                
+                                // Center cassette area
+                                ctx.fillStyle = '#333';
+                                ctx.fillRect(sx - boomboxSize * 0.3, boomboxY + bounce - bh * 0.2, boomboxSize * 0.6, bh * 0.4);
+                            }
                             
                             // Outer glow ring (wider)
                             ctx.strokeStyle = def.color;
@@ -8484,6 +8455,10 @@
                 this.speed = this.speed * enemySpeedBonus;
                 this.baseSpeed = this.speed; // Store for freeze effect
                 
+                // Knockback velocity (for smooth knockback)
+                this.knockbackVelX = 0;
+                this.knockbackVelY = 0;
+                
                 // XP scales slightly with time to keep leveling relevant
                 const xpScale = 1 + Math.floor(gameTime / 120) * 0.5; // +50% XP every 2 min
                 this.xpValue = Math.ceil(this.xpValue * xpScale * killRewardBonus);
@@ -8519,6 +8494,12 @@
                 this.poisonTicks = 5;
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
+            }
+            
+            applyKnockback(angle, force) {
+                // Add to knockback velocity for smooth knockback
+                this.knockbackVelX += Math.cos(angle) * force * 0.15;
+                this.knockbackVelY += Math.sin(angle) * force * 0.15;
             }
 
             update(dt) {
@@ -8653,6 +8634,22 @@
                             }
                         }
                     }
+                }
+                
+                // Apply knockback velocity (smooth knockback)
+                if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
+                    const dtScale = dt / 16;
+                    this.x += this.knockbackVelX * dtScale;
+                    this.y += this.knockbackVelY * dtScale;
+                    
+                    // Apply friction (higher = slower decay = smoother)
+                    const friction = 0.88;
+                    this.knockbackVelX *= friction;
+                    this.knockbackVelY *= friction;
+                    
+                    // Stop when very slow
+                    if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
+                    if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
                 }
                 
                 // Collision with player
@@ -9015,6 +9012,10 @@
                 this.poisonDamage = 0;
                 this.poisonTicks = 0;
                 this.poisonTickTimer = 0;
+                
+                // Knockback velocity (smooth knockback)
+                this.knockbackVelX = 0;
+                this.knockbackVelY = 0;
             }
             
             applyPoison(damage) {
@@ -9022,6 +9023,11 @@
                 this.poisonTicks = 5;
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
+            }
+            
+            applyKnockback(angle, force) {
+                this.knockbackVelX += Math.cos(angle) * force * 0.12;
+                this.knockbackVelY += Math.sin(angle) * force * 0.12;
             }
 
             update(dt) {
@@ -9115,6 +9121,20 @@
                     }
                 }
                 
+                // Apply knockback velocity (smooth knockback)
+                if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
+                    const dtScale2 = dt / 16;
+                    this.x += this.knockbackVelX * dtScale2;
+                    this.y += this.knockbackVelY * dtScale2;
+                    
+                    const friction = 0.88;
+                    this.knockbackVelX *= friction;
+                    this.knockbackVelY *= friction;
+                    
+                    if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
+                    if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
+                }
+                
                 // Clamp to world
                 this.x = Math.max(30, Math.min(WORLD.width - 30, this.x));
                 this.y = Math.max(30, Math.min(WORLD.height - 30, this.y));
@@ -9142,7 +9162,7 @@
                 
                 if (dist > 0) {
                     // Apply knockback velocity for smooth animated push
-                    const knockbackForce = 18;
+                    const knockbackForce = 14;
                     player.knockbackVelX = (dx / dist) * knockbackForce;
                     player.knockbackVelY = (dy / dist) * knockbackForce;
                     
@@ -9716,6 +9736,10 @@
                 this.poisonDamage = 0;
                 this.poisonTicks = 0;
                 this.poisonTickTimer = 0;
+                
+                // Knockback velocity (smooth knockback)
+                this.knockbackVelX = 0;
+                this.knockbackVelY = 0;
             }
             
             applyPoison(damage) {
@@ -9723,6 +9747,12 @@
                 this.poisonTicks = 5;
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
+            }
+            
+            applyKnockback(angle, force) {
+                // Bosses resist knockback more
+                this.knockbackVelX += Math.cos(angle) * force * 0.08;
+                this.knockbackVelY += Math.sin(angle) * force * 0.08;
             }
             
             update(dt) {
@@ -9778,6 +9808,20 @@
                             this.y = slideY;
                         }
                     }
+                }
+                
+                // Apply knockback velocity (smooth knockback)
+                if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
+                    const dtScale2 = dt / 16;
+                    this.x += this.knockbackVelX * dtScale2;
+                    this.y += this.knockbackVelY * dtScale2;
+                    
+                    const friction = 0.88;
+                    this.knockbackVelX *= friction;
+                    this.knockbackVelY *= friction;
+                    
+                    if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
+                    if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
                 }
                 
                 // Clamp to world
@@ -10067,6 +10111,10 @@
                 this.poisonDamage = 0;
                 this.poisonTicks = 0;
                 this.poisonTickTimer = 0;
+                
+                // Knockback velocity (smooth knockback)
+                this.knockbackVelX = 0;
+                this.knockbackVelY = 0;
             }
             
             applyPoison(damage) {
@@ -10074,6 +10122,12 @@
                 this.poisonTicks = 5;
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
+            }
+            
+            applyKnockback(angle, force) {
+                // Major bosses resist knockback even more
+                this.knockbackVelX += Math.cos(angle) * force * 0.05;
+                this.knockbackVelY += Math.sin(angle) * force * 0.05;
             }
             
             update(dt) {
@@ -10175,6 +10229,20 @@
                             }
                         }
                     }
+                }
+                
+                // Apply knockback velocity (smooth knockback)
+                if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
+                    const dtScale2 = dt / 16;
+                    this.x += this.knockbackVelX * dtScale2;
+                    this.y += this.knockbackVelY * dtScale2;
+                    
+                    const friction = 0.88;
+                    this.knockbackVelX *= friction;
+                    this.knockbackVelY *= friction;
+                    
+                    if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
+                    if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
                 }
                 
                 // Clamp to world
@@ -12505,8 +12573,8 @@
                         continue;
                     }
                     
-                    // Check not in terrain
-                    if (isInTerrain(x, y, 80)) {
+                    // Check not in terrain or lake
+                    if (isInTerrain(x, y, 80) || isInLake(x, y, 100)) {
                         attempts++;
                         continue;
                     }
@@ -15831,7 +15899,7 @@
                         x = Math.max(20, Math.min(WORLD.width - 20, x));
                         y = Math.max(20, Math.min(WORLD.height - 20, y));
                         spawnAttempts++;
-                    } while ((isInTerrain(x, y, 30) || isInPlayerView(x, y, 50)) && spawnAttempts < 15);
+                    } while ((isInTerrain(x, y, 30) || isInLake(x, y, 50) || isInPlayerView(x, y, 50)) && spawnAttempts < 15);
                     
                     enemies.push(new Enemy(type, x, y));
                 }
@@ -16071,23 +16139,32 @@
             const angle = Math.random() * Math.PI * 2;
             const spawnDist = 350;
             
-            let x = player.x + Math.cos(angle) * spawnDist;
-            let y = player.y + Math.sin(angle) * spawnDist;
-            
-            // Clamp to world bounds
-            x = Math.max(100, Math.min(WORLD.width - 100, x));
-            y = Math.max(100, Math.min(WORLD.height - 100, y));
+            let x, y, attempts = 0;
+            do {
+                const a = angle + (attempts * 0.5);
+                x = player.x + Math.cos(a) * spawnDist;
+                y = player.y + Math.sin(a) * spawnDist;
+                
+                // Clamp to world bounds
+                x = Math.max(100, Math.min(WORLD.width - 100, x));
+                y = Math.max(100, Math.min(WORLD.height - 100, y));
+                attempts++;
+            } while ((isInTerrain(x, y, 60) || isInLake(x, y, 80)) && attempts < 12);
             
             bosses.push(new MiniBoss(x, y));
             showBossWarning('MINI BOSS', '#ff6600');
             
             // Spawn extra bosses from tombstone curse
             for (let i = 0; i < extraBossMultiplier; i++) {
-                const extraAngle = Math.random() * Math.PI * 2;
-                let ex = player.x + Math.cos(extraAngle) * (spawnDist + 100);
-                let ey = player.y + Math.sin(extraAngle) * (spawnDist + 100);
-                ex = Math.max(100, Math.min(WORLD.width - 100, ex));
-                ey = Math.max(100, Math.min(WORLD.height - 100, ey));
+                let ex, ey, extraAttempts = 0;
+                do {
+                    const extraAngle = Math.random() * Math.PI * 2;
+                    ex = player.x + Math.cos(extraAngle) * (spawnDist + 100);
+                    ey = player.y + Math.sin(extraAngle) * (spawnDist + 100);
+                    ex = Math.max(100, Math.min(WORLD.width - 100, ex));
+                    ey = Math.max(100, Math.min(WORLD.height - 100, ey));
+                    extraAttempts++;
+                } while ((isInTerrain(ex, ey, 60) || isInLake(ex, ey, 80)) && extraAttempts < 12);
                 bosses.push(new MiniBoss(ex, ey));
             }
         }
@@ -16096,23 +16173,32 @@
             const angle = Math.random() * Math.PI * 2;
             const spawnDist = 400;
             
-            let x = player.x + Math.cos(angle) * spawnDist;
-            let y = player.y + Math.sin(angle) * spawnDist;
-            
-            // Clamp to world bounds
-            x = Math.max(150, Math.min(WORLD.width - 150, x));
-            y = Math.max(150, Math.min(WORLD.height - 150, y));
+            let x, y, attempts = 0;
+            do {
+                const a = angle + (attempts * 0.5);
+                x = player.x + Math.cos(a) * spawnDist;
+                y = player.y + Math.sin(a) * spawnDist;
+                
+                // Clamp to world bounds
+                x = Math.max(150, Math.min(WORLD.width - 150, x));
+                y = Math.max(150, Math.min(WORLD.height - 150, y));
+                attempts++;
+            } while ((isInTerrain(x, y, 80) || isInLake(x, y, 100)) && attempts < 12);
             
             bosses.push(new MajorBoss(x, y));
             showBossWarning('🔥 INFERNO BOSS 🔥', '#ff4400');
             
             // Spawn extra bosses from tombstone curse
             for (let i = 0; i < extraBossMultiplier; i++) {
-                const extraAngle = Math.random() * Math.PI * 2;
-                let ex = player.x + Math.cos(extraAngle) * (spawnDist + 100);
-                let ey = player.y + Math.sin(extraAngle) * (spawnDist + 100);
-                ex = Math.max(150, Math.min(WORLD.width - 150, ex));
-                ey = Math.max(150, Math.min(WORLD.height - 150, ey));
+                let ex, ey, extraAttempts = 0;
+                do {
+                    const extraAngle = Math.random() * Math.PI * 2;
+                    ex = player.x + Math.cos(extraAngle) * (spawnDist + 100);
+                    ey = player.y + Math.sin(extraAngle) * (spawnDist + 100);
+                    ex = Math.max(150, Math.min(WORLD.width - 150, ex));
+                    ey = Math.max(150, Math.min(WORLD.height - 150, ey));
+                    extraAttempts++;
+                } while ((isInTerrain(ex, ey, 80) || isInLake(ex, ey, 100)) && extraAttempts < 12);
                 bosses.push(new MajorBoss(ex, ey));
             }
         }
@@ -17507,95 +17593,106 @@
                 }
             }
             
-            // Draw bones
-            if (player && player.weapons.bones) {
-                const state = player.weapons.bones;
-                const def = WEAPONS.bones;
-                if (state.skulls) {
-                    const now = Date.now();
-                    for (const bone of state.skulls) {
-                        if (!camera.isVisible(bone.x, bone.y, 30)) continue;
-                        const sx = camera.screenX(bone.x);
-                        const sy = camera.screenY(bone.y);
-                        const bob = Math.sin(now * 0.005 + bone.bobOffset) * 3;
+            // Draw shotgun effects
+            if (player && player.weapons.shotgun) {
+                const state = player.weapons.shotgun;
+                const def = WEAPONS.shotgun;
+                const now = Date.now();
+                
+                // Draw muzzle flash
+                if (state.muzzleFlash) {
+                    const flash = state.muzzleFlash;
+                    const age = now - flash.startTime;
+                    if (age < 100) {
+                        const progress = age / 100;
+                        const flashAlpha = 1 - progress;
+                        const flashSize = camera.scale(25 + progress * 30);
+                        
+                        const sx = camera.screenX(flash.x);
+                        const sy = camera.screenY(flash.y);
+                        const flashX = sx + Math.cos(flash.angle) * camera.scale(20);
+                        const flashY = sy + Math.sin(flash.angle) * camera.scale(20);
                         
                         ctx.save();
-                        ctx.shadowBlur = 15;
+                        ctx.globalAlpha = flashAlpha;
+                        
+                        // Outer orange glow
+                        ctx.shadowBlur = 40;
+                        ctx.shadowColor = def.color;
+                        ctx.fillStyle = def.color;
+                        ctx.beginPath();
+                        ctx.arc(flashX, flashY, flashSize * 0.8, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Inner white-yellow flash
+                        ctx.fillStyle = '#ffff88';
+                        ctx.beginPath();
+                        ctx.arc(flashX, flashY, flashSize * 0.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Core white
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.arc(flashX, flashY, flashSize * 0.25, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Spread lines (shotgun blast effect)
+                        ctx.strokeStyle = '#ffcc44';
+                        ctx.lineWidth = 2;
+                        for (let i = 0; i < 8; i++) {
+                            const lineAngle = flash.angle + (i - 3.5) * 0.15;
+                            const lineLength = flashSize * (1.5 + Math.random() * 0.5) * (1 - progress * 0.5);
+                            ctx.globalAlpha = flashAlpha * 0.8;
+                            ctx.beginPath();
+                            ctx.moveTo(flashX, flashY);
+                            ctx.lineTo(
+                                flashX + Math.cos(lineAngle) * lineLength,
+                                flashY + Math.sin(lineAngle) * lineLength
+                            );
+                            ctx.stroke();
+                        }
+                        
+                        ctx.restore();
+                    }
+                }
+                
+                // Draw pellets
+                if (state.pellets) {
+                    for (const pellet of state.pellets) {
+                        if (pellet.hit) continue;
+                        if (!camera.isVisible(pellet.x, pellet.y, 10)) continue;
+                        
+                        const sx = camera.screenX(pellet.x);
+                        const sy = camera.screenY(pellet.y);
+                        const age = now - pellet.startTime;
+                        const fadeAlpha = Math.max(0, 1 - age / 400);
+                        
+                        ctx.save();
+                        ctx.globalAlpha = fadeAlpha;
+                        
+                        // Pellet glow
+                        ctx.shadowBlur = 10;
                         ctx.shadowColor = def.color;
                         
-                        // Glow intensity based on state
-                        if (bone.state === 'attack') {
-                            ctx.shadowBlur = 25;
-                        }
-                        
-                        // Wiggle rotation - 30 degrees back and forth
-                        const wiggleSpeed = 0.003; // Slow wiggle
-                        const wiggleAmount = Math.PI / 6; // 30 degrees
-                        const wiggle = Math.sin(now * wiggleSpeed + bone.bobOffset * 2) * wiggleAmount;
-                        
-                        // Base angle: horizontal for orbit/return, velocity-based for attack
-                        let baseAngle;
-                        if (bone.state === 'attack' && (bone.vx !== 0 || bone.vy !== 0)) {
-                            baseAngle = Math.atan2(bone.vy, bone.vx);
-                        } else {
-                            // Horizontal orientation (0) for orbit and return states
-                            baseAngle = 0;
-                        }
-                        
-                        const rotation = baseAngle + wiggle;
-                        
-                        ctx.translate(sx, sy + bob);
-                        ctx.rotate(rotation);
-                        
-                        const boneLength = camera.scale(20);
-                        const knobRadius = camera.scale(5);
-                        const shaftWidth = camera.scale(4);
-                        
-                        // Bone color
-                        ctx.fillStyle = bone.state === 'attack' ? '#fff' : '#e8e8d8';
-                        ctx.strokeStyle = bone.state === 'attack' ? def.color : '#ccc';
-                        ctx.lineWidth = 1;
-                        
-                        // Left knob (two circles for bone end)
+                        // Trail
+                        const trailLength = camera.scale(12);
+                        const angle = Math.atan2(pellet.vy, pellet.vx);
+                        ctx.strokeStyle = def.color;
+                        ctx.lineWidth = camera.scale(3);
+                        ctx.lineCap = 'round';
                         ctx.beginPath();
-                        ctx.arc(-boneLength / 2, -knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ctx.arc(-boneLength / 2, knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
-                        ctx.fill();
+                        ctx.moveTo(sx, sy);
+                        ctx.lineTo(
+                            sx - Math.cos(angle) * trailLength,
+                            sy - Math.sin(angle) * trailLength
+                        );
                         ctx.stroke();
                         
-                        // Right knob (two circles for bone end)
+                        // Pellet core
+                        ctx.fillStyle = '#ffffff';
                         ctx.beginPath();
-                        ctx.arc(boneLength / 2, -knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
+                        ctx.arc(sx, sy, camera.scale(3), 0, Math.PI * 2);
                         ctx.fill();
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ctx.arc(boneLength / 2, knobRadius * 0.4, knobRadius * 0.7, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.stroke();
-                        
-                        // Shaft (center part)
-                        ctx.fillRect(-boneLength / 2 + knobRadius * 0.3, -shaftWidth / 2, boneLength - knobRadius * 0.6, shaftWidth);
-                        ctx.strokeRect(-boneLength / 2 + knobRadius * 0.3, -shaftWidth / 2, boneLength - knobRadius * 0.6, shaftWidth);
-                        
-                        ctx.rotate(-rotation);
-                        ctx.translate(-sx, -(sy + bob));
-                        
-                        // Trail when attacking
-                        if (bone.state === 'attack') {
-                            ctx.globalAlpha = 0.4;
-                            ctx.fillStyle = def.color;
-                            for (let i = 1; i <= 3; i++) {
-                                const trailX = sx - bone.vx * i * 3;
-                                const trailY = sy - bone.vy * i * 3 + bob;
-                                ctx.globalAlpha = 0.4 - i * 0.1;
-                                ctx.beginPath();
-                                ctx.arc(trailX, trailY, camera.scale(6) * (1 - i * 0.2), 0, Math.PI * 2);
-                                ctx.fill();
-                            }
-                        }
                         
                         ctx.restore();
                     }
@@ -17971,9 +18068,9 @@
             'energyBolt', 'boomBox', 'plasmaOrbit', 'blackSquirrel', 
             'laserBeam', 'voidDaggers', 'flameThrower', 'iceShard',
             'thunderStrike', 'chainLightning', 'toxicAura', 'boomerang',
-            'spectralArrows', 'gravityWell', 'ricochetDisc',
-            'starField', 'pulseMine', 'meteorStrike', 'spiritOrbs',
-            'bones'
+            'spectralArrows', 'ricochetDisc', 'gravityWell',
+            'starField', 'meteorStrike', 'spiritOrbs', 'pulseMine',
+            'shotgun'
         ];
         
         // Player color options (neon palette, cold to hot)
