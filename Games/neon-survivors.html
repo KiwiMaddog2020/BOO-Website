@@ -6867,6 +6867,7 @@
                 // Check if any walking squirrels are ready to pounce
                 // Stagger attacks: only one squirrel can start pouncing every 200ms
                 if (!state.lastSquirrelPounceTime) state.lastSquirrelPounceTime = 0;
+                if (!state.lastHighPriorityTarget) state.lastHighPriorityTarget = false; // Track if last pounce was high priority
                 const squirrelStaggerDelay = 200; // 0.2 seconds between squirrel attacks
                 
                 for (const sq of existingSquirrels) {
@@ -6878,6 +6879,10 @@
                     const pounceRange = sq.maxDist * 0.85; // Must be within 85% of max pounce distance from player
                     let bestTarget = null;
                     let bestScore = -1;
+                    let bestHighPriorityTarget = null;
+                    let bestHighPriorityScore = -1;
+                    let bestRegularTarget = null;
+                    let bestRegularScore = -1;
                     
                     // Score enemies by distance from PLAYER and clustering
                     for (const enemy of enemies) {
@@ -6896,23 +6901,60 @@
                             if (clusterDist < 80) score += 0.5;
                         }
                         
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestTarget = enemy;
+                        // Bonus for higher health targets
+                        score += (enemy.hp / (enemy.maxHp || 100)) * 0.5;
+                        
+                        if (score > bestRegularScore) {
+                            bestRegularScore = score;
+                            bestRegularTarget = enemy;
                         }
                     }
                     
-                    // Also check bosses (higher priority)
+                    // Check leprechauns (high priority)
+                    for (const lep of leprechauns) {
+                        if (lep.dead) continue;
+                        const distFromPlayer = Math.hypot(lep.x - this.x, lep.y - this.y);
+                        if (distFromPlayer > pounceRange) continue;
+                        
+                        const score = 8 + (1 - distFromPlayer / pounceRange) * 3; // High base priority
+                        if (score > bestHighPriorityScore) {
+                            bestHighPriorityScore = score;
+                            bestHighPriorityTarget = lep;
+                        }
+                    }
+                    
+                    // Check bosses (high priority)
                     for (const boss of bosses) {
                         if (boss.dead) continue;
                         const distFromPlayer = Math.hypot(boss.x - this.x, boss.y - this.y);
                         if (distFromPlayer > pounceRange) continue; // Must be in pounce range from player
                         
-                        const score = 5 + (1 - distFromPlayer / pounceRange) * 3;
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestTarget = boss;
+                        let score = 6 + (1 - distFromPlayer / pounceRange) * 3;
+                        // Bonus for higher health bosses
+                        score += (boss.hp / (boss.maxHp || 1000)) * 2;
+                        
+                        if (score > bestHighPriorityScore) {
+                            bestHighPriorityScore = score;
+                            bestHighPriorityTarget = boss;
                         }
+                    }
+                    
+                    // Alternating target selection: bounce between high priority and regular enemies
+                    if (bestHighPriorityTarget && bestRegularTarget) {
+                        // If last was high priority, go for regular (highest health), else go for high priority
+                        if (state.lastHighPriorityTarget) {
+                            bestTarget = bestRegularTarget;
+                            state.lastHighPriorityTarget = false;
+                        } else {
+                            bestTarget = bestHighPriorityTarget;
+                            state.lastHighPriorityTarget = true;
+                        }
+                    } else if (bestHighPriorityTarget) {
+                        bestTarget = bestHighPriorityTarget;
+                        state.lastHighPriorityTarget = true;
+                    } else if (bestRegularTarget) {
+                        bestTarget = bestRegularTarget;
+                        state.lastHighPriorityTarget = false;
                     }
                     
                     if (bestTarget) {
@@ -12840,8 +12882,8 @@
                     const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
                     if (centerDist < 800 + Math.max(radiusX, radiusY)) continue;
                     
-                    // Check no overlap with existing lakes
-                    if (overlapsExisting(x, y, radiusX, radiusY, MIN_CORRIDOR)) continue;
+                    // Check no overlap with existing lakes (increased spacing)
+                    if (overlapsExisting(x, y, radiusX, radiusY, MIN_CORRIDOR + 200)) continue;
                     
                     // Check this doesn't create blocking corridors
                     if (createsBlockage(x, y, radiusX, radiusY)) continue;
@@ -13763,6 +13805,30 @@
                                     }
                                 }
                                 
+                                // Splash damage to nearby leprechauns
+                                for (const lep of leprechauns) {
+                                    if (lep.dead || this.hitEnemies.has(lep)) continue;
+                                    const splashDist = Math.hypot(lep.x - splashX, lep.y - splashY);
+                                    if (splashDist < splashRadius + lep.radius) {
+                                        this.hitEnemies.add(lep);
+                                        const { damage: sDmg, isCrit: sCrit } = player.calcDamage(splashDamage);
+                                        lep.takeDamage(sDmg, sCrit);
+                                        player.onDealDamage(sDmg);
+                                    }
+                                }
+                                
+                                // Splash damage to nearby bosses
+                                for (const boss of bosses) {
+                                    if (boss.dead || this.hitEnemies.has(boss)) continue;
+                                    const splashDist = Math.hypot(boss.x - splashX, boss.y - splashY);
+                                    if (splashDist < splashRadius + boss.radius) {
+                                        this.hitEnemies.add(boss);
+                                        const { damage: sDmg, isCrit: sCrit } = player.calcDamage(splashDamage);
+                                        boss.takeDamage(sDmg, sCrit);
+                                        player.onDealDamage(sDmg);
+                                    }
+                                }
+                                
                                 // === RED TWO-STAGE SWIPE ANIMATION (left then right) ===
                                 const swipeBaseAngle = this.angle; // Direction squirrel is facing
                                 
@@ -13822,6 +13888,56 @@
                             }
                         }
                         
+                        // Check for hits on leprechauns during pounce
+                        for (const lep of leprechauns) {
+                            if (lep.dead || this.hitEnemies.has(lep)) continue;
+                            const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                            if (dist < lep.radius + 25) {
+                                this.hitEnemies.add(lep);
+                                const { damage, isCrit } = player.calcDamage(this.pounceDamage);
+                                lep.takeDamage(damage, isCrit);
+                                player.onDealDamage(damage);
+                                
+                                // Particles
+                                for (let i = 0; i < 5; i++) {
+                                    const scratchAngle = Math.random() * Math.PI * 2;
+                                    particles.push({
+                                        x: this.x + Math.cos(scratchAngle) * 8,
+                                        y: this.y + Math.sin(scratchAngle) * 8,
+                                        vx: Math.cos(scratchAngle) * 4,
+                                        vy: Math.sin(scratchAngle) * 4,
+                                        life: 0.5, maxLife: 0.5,
+                                        color: '#ffd700', size: 4, isScratch: true
+                                    });
+                                }
+                            }
+                        }
+                        
+                        // Check for hits on bosses during pounce
+                        for (const boss of bosses) {
+                            if (boss.dead || this.hitEnemies.has(boss)) continue;
+                            const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                            if (dist < boss.radius + 25) {
+                                this.hitEnemies.add(boss);
+                                const { damage, isCrit } = player.calcDamage(this.pounceDamage);
+                                boss.takeDamage(damage, isCrit);
+                                player.onDealDamage(damage);
+                                
+                                // Particles
+                                for (let i = 0; i < 5; i++) {
+                                    const scratchAngle = Math.random() * Math.PI * 2;
+                                    particles.push({
+                                        x: this.x + Math.cos(scratchAngle) * 8,
+                                        y: this.y + Math.sin(scratchAngle) * 8,
+                                        vx: Math.cos(scratchAngle) * 4,
+                                        vy: Math.sin(scratchAngle) * 4,
+                                        life: 0.5, maxLife: 0.5,
+                                        color: boss.color || '#ff0000', size: 4, isScratch: true
+                                    });
+                                }
+                            }
+                        }
+                        
                         // End pounce when we reach target position OR hit max distance (safety)
                         if (distToTarget < 20 || distFromStart >= this.maxDist) {
                             // Look for next enemy to pounce
@@ -13837,6 +13953,16 @@
                                     nextEnemy = enemy;
                                 }
                             }
+                            // Check leprechauns (high priority)
+                            for (const lep of leprechauns) {
+                                if (lep.dead) continue;
+                                const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                                if (dist < closestDist * 0.7) { // Prefer leprechauns
+                                    closestDist = dist;
+                                    nextEnemy = lep;
+                                }
+                            }
+                            // Check bosses (high priority)
                             for (const boss of bosses) {
                                 if (boss.dead) continue;
                                 const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
