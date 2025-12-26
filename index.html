@@ -12,7 +12,7 @@
       gtag('config', 'G-ELVHNXC9MJ');
     </script>
     
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=overlays-content, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=overlays-content">
     <meta name="theme-color" content="#000000">
     <meta name="msapplication-navbutton-color" content="#000000">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -39,14 +39,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&family=Bebas+Neue&display=swap" rel="stylesheet">
     <link href="https://fonts.cdnfonts.com/css/rumble-brave" rel="stylesheet">
     <style>
-        /* Safe area insets for notched devices (iPhone X+, etc.) */
-        :root {
-            --sat: env(safe-area-inset-top, 0px);
-            --sab: env(safe-area-inset-bottom, 0px);
-            --sal: env(safe-area-inset-left, 0px);
-            --sar: env(safe-area-inset-right, 0px);
-        }
-        
         /* Loading screen with animated logo */
         .page-loader {
             position: fixed;
@@ -2192,9 +2184,6 @@
                 scroll-snap-stop: always !important;
                 -webkit-scroll-snap-stop: always !important;
                 contain: layout style !important;
-                /* Align content at top instead of center for more game space */
-                justify-content: flex-start !important;
-                padding-top: 60px !important;
             }
             
             /* Ensure photos section (before game) also snaps properly */
@@ -2309,8 +2298,12 @@
             }
             
             .game-container {
-                /* Dimensions controlled by JS for smooth aspect-locked scaling */
-                position: relative !important;
+                /* Match desktop aspect ratio for consistency */
+                width: 95% !important;
+                max-width: 400px !important;
+                aspect-ratio: 640/718 !important;
+                height: auto !important;
+                max-height: 70vh !important; /* Prevent overflow beyond section */
                 min-height: unset !important;
                 padding: 0 !important;
                 border-radius: 5px !important;
@@ -2327,13 +2320,6 @@
                 /* Prevent scroll bleed */
                 overscroll-behavior: contain !important;
                 -webkit-overscroll-behavior: contain !important;
-                /* DEBUG: Make container visible */
-                background: rgba(255, 0, 0, 0.3) !important;
-                border: 3px solid yellow !important;
-                /* Ensure it displays */
-                display: block !important;
-                visibility: visible !important;
-                opacity: 1 !important;
             }
             
             /* Disable touch blockers - they interfere with game controls */
@@ -2350,7 +2336,9 @@
             
             .game-container iframe {
                 width: 100% !important;
-                height: 100% !important;
+                /* Fixed aspect ratio - ignore per-game data-aspect on mobile */
+                aspect-ratio: 640/718 !important;
+                height: auto !important;
                 min-height: unset !important;
                 border-radius: 5px !important;
                 touch-action: none !important;
@@ -2360,10 +2348,7 @@
                 overscroll-behavior: contain !important;
                 /* Lower z-index so button can be tapped */
                 z-index: 1 !important;
-                /* Absolute position to fill container */
-                position: absolute !important;
-                top: 0 !important;
-                left: 0 !important;
+                position: relative !important;
             }
             
             /* Mobile fullscreen button - larger tap target */
@@ -5231,7 +5216,10 @@
         }
 
         .game-container { 
-            /* Width/height set by JS for smooth aspect-locked scaling */
+            width: 100%; 
+            max-width: 660px;
+            max-height: 75vh; /* Constrain height for smaller viewports */
+            aspect-ratio: 640/718; /* Match default game (Brickbreaker) - JS updates per game */
             border-radius: 8px; 
             overflow: hidden; 
             border: 2px solid rgba(0, 255, 204, 0.4); 
@@ -5253,11 +5241,23 @@
             border: none;
         }
         
-        /* Desktop: aspect ratio controlled by JS */
+        /* Desktop with fine pointer: no additional rules needed */
+        
+        /* Desktop with zoom: ensure aspect-ratio is maintained even at narrow viewports */
+        @media (pointer: fine) {
+            .game-container {
+                aspect-ratio: 640/718 !important; /* JS will update per game */
+            }
+        }
         
         /* Tablet-specific game container - iPads and similar devices */
         @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) {
-            /* Dimensions controlled by JS for smooth aspect-locked scaling */
+            .game-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                max-height: 90vh !important;
+                aspect-ratio: auto !important;
+            }
             .game-container iframe {
                 width: 100% !important;
                 height: 100% !important;
@@ -5647,7 +5647,7 @@
             
             .game-container {
                 max-width: 100% !important;
-                /* aspect-ratio controlled by JS per game */
+                max-height: 75vh !important;
             }
             
             /* Arcade selector - more compact */
@@ -5729,7 +5729,7 @@
             }
             
             .game-container {
-                /* aspect-ratio controlled by JS per game */
+                max-height: 70vh !important;
             }
         }
         
@@ -7046,7 +7046,7 @@
             }
             .game-container {
                 max-width: 520px;
-                /* aspect-ratio controlled by JS per game */
+                max-height: 72vh;
             }
             
             /* Other sections */
@@ -7103,7 +7103,7 @@
             }
             .game-container {
                 max-width: 450px;
-                /* aspect-ratio controlled by JS per game */
+                max-height: 68vh;
             }
             
             h2 { font-size: 1.8rem; }
@@ -8863,224 +8863,55 @@
             });
         }
         
-        // ========== ROBUST MOBILE + DESKTOP SCALING SYSTEM ==========
-        (function() {
-            // DEBUG MODE - set to true to show debug overlay
-            const DEBUG_SCALING = true;
+        // ========== DESKTOP-ONLY SMOOTH ASPECT-LOCKED SCALING ==========
+        // Calculates largest size that fits viewport while maintaining fixed 640/740 aspect ratio
+        // Only runs on desktop (>768px) - mobile uses pure CSS
+        function enforceGameAspectRatio() {
+            // Skip on mobile - let CSS handle it
+            if (window.innerWidth <= 768) return;
             
-            // Device detection
-            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            const isAndroid = /Android/.test(navigator.userAgent);
-            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-            const isDuckDuckGo = /DuckDuckGo/.test(navigator.userAgent);
+            const container = document.querySelector('#game .game-container');
+            if (!container) return;
             
-            // Visual Viewport API (more accurate on mobile)
-            const vv = window.visualViewport;
+            // Fixed aspect ratio for all games
+            const gameRatio = 640 / 740;
             
-            // Get accurate viewport dimensions
-            function getViewportWidth() {
-                // DuckDuckGo and some browsers may not have visualViewport
-                if (vv && vv.width) return vv.width;
-                return Math.min(window.innerWidth, document.documentElement.clientWidth);
-            }
+            // Calculate available space
+            const maxWidthCap = 660;
+            const widthMargin = 0.95;
+            const overhead = 220;
             
-            function getViewportHeight() {
-                // DuckDuckGo and some browsers may not have visualViewport
-                if (vv && vv.height) return vv.height;
-                // Use the smaller of innerHeight and clientHeight for safety
-                return Math.min(window.innerHeight, document.documentElement.clientHeight);
-            }
+            const availableWidth = Math.min(maxWidthCap, window.innerWidth * widthMargin);
+            const availableHeight = window.innerHeight - overhead;
             
-            // Detect if mobile based on width OR touch + reasonable size
-            function isMobileView() {
-                const width = getViewportWidth();
-                return width <= 768 || (isTouchDevice && width <= 1024);
-            }
+            // Calculate size that fits both constraints while preserving ratio
+            let finalWidth, finalHeight;
             
-            // Get safe area insets (for notches, home indicators)
-            function getSafeAreaInsets() {
-                const style = getComputedStyle(document.documentElement);
-                return {
-                    top: parseInt(style.getPropertyValue('--sat')) || 0,
-                    bottom: parseInt(style.getPropertyValue('--sab')) || 0,
-                    left: parseInt(style.getPropertyValue('--sal')) || 0,
-                    right: parseInt(style.getPropertyValue('--sar')) || 0
-                };
-            }
-            
-            // Debug overlay
-            function updateDebugOverlay(info) {
-                if (!DEBUG_SCALING) return;
-                let overlay = document.getElementById('scaling-debug');
-                if (!overlay) {
-                    overlay = document.createElement('div');
-                    overlay.id = 'scaling-debug';
-                    overlay.style.cssText = 'position:fixed;bottom:10px;left:10px;background:rgba(0,0,0,0.85);color:#0f0;padding:10px;font:11px monospace;z-index:999999;border-radius:5px;max-width:90vw;pointer-events:none;';
-                    document.body.appendChild(overlay);
-                }
-                overlay.innerHTML = info;
-            }
-            
-            // Main scaling function
-            window.enforceGameAspectRatio = function() {
-                const container = document.querySelector('#game .game-container');
-                if (!container) return;
-                
-                // Fixed aspect ratio for all games
-                const gameRatio = 640 / 730;
-                
-                const viewportWidth = getViewportWidth();
-                const viewportHeight = getViewportHeight();
-                const mobile = isMobileView();
-                const isLandscape = viewportWidth > viewportHeight;
-                
-                // Safe areas
-                const safeArea = getSafeAreaInsets();
-                
-                let availableWidth, availableHeight, overhead;
-                
-                if (mobile) {
-                    // Mobile-specific calculations
-                    const widthMargin = 0.98;
-                    const maxWidthCap = isLandscape ? viewportWidth * 0.7 : 600;
-                    
-                    // Dynamic overhead based on orientation and device
-                    // Content is now aligned to top, so we have more height available
-                    if (isLandscape) {
-                        overhead = 70 + safeArea.top + safeArea.bottom;
-                    } else {
-                        // Portrait: nav (~55px) + selector (~50px) + padding + margins
-                        overhead = 120 + safeArea.top + safeArea.bottom;
-                        if (isIOS && isSafari) {
-                            overhead += 15;
-                        }
-                    }
-                    
-                    availableWidth = Math.min(maxWidthCap, (viewportWidth - safeArea.left - safeArea.right) * widthMargin);
-                    availableHeight = viewportHeight - overhead;
-                    
-                } else {
-                    // Desktop calculations
-                    const maxWidthCap = 660;
-                    const widthMargin = 0.95;
-                    overhead = 220;
-                    
-                    availableWidth = Math.min(maxWidthCap, viewportWidth * widthMargin);
-                    availableHeight = viewportHeight - overhead;
-                }
-                
-                // Calculate size that fits both constraints while preserving ratio
-                let finalWidth, finalHeight;
-                let constraint = '';
-                
-                if (availableWidth / gameRatio <= availableHeight) {
-                    // Width-constrained
-                    finalWidth = availableWidth;
-                    finalHeight = availableWidth / gameRatio;
-                    constraint = 'WIDTH';
-                } else {
-                    // Height-constrained
-                    finalHeight = availableHeight;
-                    finalWidth = availableHeight * gameRatio;
-                    constraint = 'HEIGHT';
-                }
-                
-                // Ensure minimum size
-                finalWidth = Math.max(finalWidth, 200);
-                finalHeight = Math.max(finalHeight, 200 / gameRatio);
-                
-                // Apply dimensions
-                container.style.width = Math.floor(finalWidth) + 'px';
-                container.style.height = Math.floor(finalHeight) + 'px';
-                container.style.maxWidth = Math.floor(finalWidth) + 'px';
-                container.style.maxHeight = Math.floor(finalHeight) + 'px';
-                
-                // DEBUG: Force inline styles to ensure visibility
-                container.style.display = 'block';
-                container.style.visibility = 'visible';
-                container.style.opacity = '1';
-                container.style.background = '#111';
-                container.style.border = '3px solid #00ffcc';
-                container.style.position = 'relative';
-                container.style.boxSizing = 'border-box';
-                
-                // Ensure iframe fills container
-                const iframe = container.querySelector('iframe');
-                if (iframe) {
-                    iframe.style.position = 'absolute';
-                    iframe.style.top = '0';
-                    iframe.style.left = '0';
-                    iframe.style.width = '100%';
-                    iframe.style.height = '100%';
-                    iframe.style.border = 'none';
-                    iframe.style.display = 'block';
-                    iframe.style.visibility = 'visible';
-                    iframe.style.opacity = '1';
-                }
-                
-                // Debug output
-                const actualRect = container.getBoundingClientRect();
-                updateDebugOverlay(`
-                    <b>SCALING DEBUG</b><br>
-                    Browser: ${isDuckDuckGo ? 'DuckDuckGo' : isAndroid ? 'Android' : isIOS ? 'iOS' : 'Other'}<br>
-                    VV API: ${vv ? 'Yes' : 'No'}<br>
-                    Viewport: ${Math.round(viewportWidth)}×${Math.round(viewportHeight)}<br>
-                    Mobile: ${mobile} | Landscape: ${isLandscape}<br>
-                    Overhead: ${overhead}px<br>
-                    Available: ${Math.round(availableWidth)}×${Math.round(availableHeight)}<br>
-                    Calculated: ${Math.floor(finalWidth)}×${Math.floor(finalHeight)}<br>
-                    <span style="color:yellow">ACTUAL: ${Math.round(actualRect.width)}×${Math.round(actualRect.height)}</span><br>
-                    Constraint: ${constraint}<br>
-                    Ratio: ${gameRatio.toFixed(4)}
-                `);
-            };
-            
-            // Debounced resize handler
-            let resizeTimeout;
-            function debouncedResize() {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(window.enforceGameAspectRatio, 50);
-            }
-            
-            // Listen for resize events
-            window.addEventListener('resize', debouncedResize);
-            
-            // Visual Viewport API events (more reliable on mobile)
-            if (vv) {
-                vv.addEventListener('resize', debouncedResize);
-                vv.addEventListener('scroll', debouncedResize); // iOS toolbar changes
-            }
-            
-            // Orientation change (with delay for iOS)
-            window.addEventListener('orientationchange', function() {
-                // iOS needs a delay after orientation change
-                setTimeout(window.enforceGameAspectRatio, 100);
-                setTimeout(window.enforceGameAspectRatio, 300); // Second pass for safety
-            });
-            
-            // iOS Safari: recalc when scrolling stops (toolbar may have changed)
-            if (isIOS && isSafari) {
-                let scrollTimeout;
-                document.addEventListener('scroll', function() {
-                    clearTimeout(scrollTimeout);
-                    scrollTimeout = setTimeout(window.enforceGameAspectRatio, 150);
-                }, { passive: true });
-            }
-            
-            // Initial calculation
-            if (document.readyState === 'complete') {
-                window.enforceGameAspectRatio();
+            if (availableWidth / gameRatio <= availableHeight) {
+                // Width-constrained: use full width, calculate height
+                finalWidth = availableWidth;
+                finalHeight = availableWidth / gameRatio;
             } else {
-                window.addEventListener('load', window.enforceGameAspectRatio);
+                // Height-constrained: use full height, calculate width
+                finalHeight = availableHeight;
+                finalWidth = availableHeight * gameRatio;
             }
             
-            // Also run after fonts load (can affect layout)
-            if (document.fonts && document.fonts.ready) {
-                document.fonts.ready.then(window.enforceGameAspectRatio);
+            // Apply dimensions
+            container.style.width = finalWidth + 'px';
+            container.style.height = finalHeight + 'px';
+            container.style.maxWidth = finalWidth + 'px';
+            container.style.maxHeight = finalHeight + 'px';
+        }
+        
+        // Run on resize (debounced for performance) - desktop only
+        let resizeTimeout;
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(enforceGameAspectRatio, 50);
             }
-        })();
+        });
         
         // ========== ARCADE GAME SELECTOR ==========
         const arcadePills = document.querySelectorAll('.arcade-pill');
@@ -9088,8 +8919,8 @@
         const arcadeGameContainer = document.querySelector('#game .game-container');
         
         if (arcadePills.length > 0 && arcadeFrame && arcadeGameContainer) {
-            // Set initial size
-            window.enforceGameAspectRatio();
+            // Set initial size (desktop only)
+            enforceGameAspectRatio();
             
             arcadePills.forEach(pill => {
                 // Click handler for desktop
@@ -9108,6 +8939,7 @@
                 
                 const gameSrc = pill.dataset.game;
                 const gameTitle = pill.dataset.title;
+                const gameAspect = pill.dataset.aspect;
                 
                 // Update active pill
                 arcadePills.forEach(p => p.classList.remove('active'));
@@ -9121,8 +8953,8 @@
                     arcadeFrame.src = gameSrc;
                     arcadeFrame.title = gameTitle;
                     
-                    // Recalculate size for new game's aspect ratio
-                    window.enforceGameAspectRatio();
+                    // Recalculate size (desktop only)
+                    enforceGameAspectRatio();
                     
                     // Fade back in
                     arcadeGameContainer.classList.remove('switching');
@@ -9181,8 +9013,13 @@
                         if (isMobile || isTabletFS) {
                             // MOBILE/TABLET: Calculate dimensions and center with absolute positioning
                             
-                            // Fixed aspect ratio for all games
-                            const gameAspect = 640 / 730;
+                            // Get aspect ratio from active pill
+                            const activePill = document.querySelector('.arcade-pill.active');
+                            const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
+                            const aspectParts = aspectStr.split('/');
+                            const aspectW = parseFloat(aspectParts[0]) || 630;
+                            const aspectH = parseFloat(aspectParts[1]) || 773;
+                            const gameAspect = aspectW / aspectH;
                             
                             // Calculate size to fit screen while maintaining aspect ratio
                             let targetW, targetH;
@@ -9211,7 +9048,7 @@
                             debugParent.innerHTML = `
                                 <b>Parent Debug (Tablet)</b><br>
                                 screen: ${screenW}×${screenH}<br>
-                                aspect: 640/730 = ${gameAspect.toFixed(3)}<br>
+                                aspect: ${aspectStr} = ${gameAspect.toFixed(3)}<br>
                                 target: ${Math.round(targetW)}×${Math.round(targetH)}<br>
                                 pos: L${Math.round(leftPos)} T${Math.round(topPos)}<br>
                                 isIPad: ${isIPadFS}<br>
@@ -9258,8 +9095,8 @@
                         const debugParent = document.getElementById('parent-debug');
                         if (debugParent) debugParent.remove();
                         
-                        // Restore container sizing
-                        window.enforceGameAspectRatio();
+                        // Restore container sizing (desktop only)
+                        enforceGameAspectRatio();
                     }
                 }
             }
@@ -9312,8 +9149,13 @@
                 const isLandscape = screenW > screenH;
                 const isPhone = Math.min(screenW, screenH) < 500;
                 
-                // Fixed aspect ratio for all games
-                const gameAspect = 640 / 730;
+                // Get game aspect ratio from active pill
+                const activePill = document.querySelector('.arcade-pill.active');
+                const aspectStr = activePill ? activePill.dataset.aspect : '630/773';
+                const aspectParts = aspectStr.split('/');
+                const aspectW = parseFloat(aspectParts[0]) || 630;
+                const aspectH = parseFloat(aspectParts[1]) || 773;
+                const gameAspect = aspectW / aspectH;
                 
                 // Safe area padding - ensure entire game border visible
                 // Increased padding for tablets to show full cyan border
@@ -9392,8 +9234,11 @@
                 arcadeFrameFS.style.transform = '';
                 arcadeFrameFS.style.border = '';
                 
-                // Restore container sizing
-                window.enforceGameAspectRatio();
+                // Restore aspect ratio on CONTAINER
+                const activePill = document.querySelector('.arcade-pill.active');
+                if (activePill && activePill.dataset.aspect && arcadeGameContainerFS) {
+                    arcadeGameContainerFS.style.setProperty('aspect-ratio', activePill.dataset.aspect, 'important');
+                }
             }
             
             fullscreenBtn.addEventListener('click', function(e) {

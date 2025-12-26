@@ -7553,18 +7553,19 @@
                             });
                         }
                         
-                        // Fire breath particles - denser cone
-                        for (let i = 0; i < 4; i++) {
+                        // Fire breath particles - Dragon Fire style (denser, varied sizes)
+                        for (let i = 0; i < 6; i++) {
                             const spreadAngle = (Math.random() - 0.5) * 0.9;
                             const finalAngle = breathAngle + spreadAngle;
+                            const speed = 4 + Math.random() * 5;
                             bossArena.particles.push({
                                 x: wurm.x + Math.cos(breathAngle) * 25,
                                 y: wurm.y + Math.sin(breathAngle) * 25,
-                                vx: Math.cos(finalAngle) * (5 + Math.random() * 4),
-                                vy: Math.sin(finalAngle) * (5 + Math.random() * 4),
-                                size: 5 + Math.random() * 7,
-                                color: ['#ff2200', '#ff6600', '#ffaa00', '#ffff00'][Math.floor(Math.random() * 4)],
-                                life: 0.7
+                                vx: Math.cos(finalAngle) * speed,
+                                vy: Math.sin(finalAngle) * speed,
+                                size: 4 + Math.random() * 8,
+                                color: ['#ff2200', '#ff4400', '#ff6600', '#ff8800', '#ffaa00', '#ffdd00'][Math.floor(Math.random() * 6)],
+                                life: 0.5 + Math.random() * 0.4
                             });
                         }
                         
@@ -8376,7 +8377,7 @@
                 ctx.globalAlpha = 1;
             }
             
-            // Draw fire breath telegraph cone
+            // Draw fire breath telegraph cone - Dragon Fire style
             const breathingWurms = [boss, boss2].filter(w => w && w.state === 'firebreath' && w.breathTargetAngle !== null && w.stateTimer < 120);
             for (const wurm of breathingWurms) {
                 const coneLength = 180;
@@ -8388,35 +8389,63 @@
                 ctx.translate(wurm.x, wurm.y);
                 ctx.rotate(wurm.breathTargetAngle);
                 
-                // Draw warning cone
-                const gradient = ctx.createLinearGradient(0, 0, coneLength, 0);
-                gradient.addColorStop(0, `rgba(255, 100, 0, ${alpha})`);
-                gradient.addColorStop(0.5, `rgba(255, 50, 0, ${alpha * 0.7})`);
-                gradient.addColorStop(1, `rgba(255, 0, 0, ${alpha * 0.3})`);
+                // Draw layered Dragon Fire cone (4 layers)
+                for (let layer = 0; layer < 4; layer++) {
+                    const layerColors = [
+                        `rgba(255, 34, 0, ${alpha})`,
+                        `rgba(255, 102, 0, ${alpha * 0.9})`,
+                        `rgba(255, 170, 0, ${alpha * 0.8})`,
+                        `rgba(255, 238, 102, ${alpha * 0.7})`
+                    ];
+                    const layerScale = 1 - layer * 0.18;
+                    const layerLength = coneLength * layerScale;
+                    const layerSpread = coneSpread * layerScale;
+                    
+                    ctx.fillStyle = layerColors[layer];
+                    ctx.beginPath();
+                    ctx.moveTo(20, 0);
+                    
+                    // Wavy top edge with multiple segments
+                    const segments = 10;
+                    const maxWidth = Math.tan(layerSpread) * layerLength;
+                    for (let i = 0; i <= segments; i++) {
+                        const t = i / segments;
+                        const x = 20 + t * (layerLength - 20);
+                        const baseWidth = Math.tan(layerSpread) * x;
+                        const wobble = Math.sin(globalTime * 0.4 + i * 0.8 + layer) * (5 + t * 10);
+                        ctx.lineTo(x, -baseWidth + wobble);
+                    }
+                    // Wavy bottom edge
+                    for (let i = segments; i >= 0; i--) {
+                        const t = i / segments;
+                        const x = 20 + t * (layerLength - 20);
+                        const baseWidth = Math.tan(layerSpread) * x;
+                        const wobble = Math.sin(globalTime * 0.4 + i * 0.8 + layer + 2) * (5 + t * 10);
+                        ctx.lineTo(x, baseWidth + wobble);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                }
                 
-                ctx.fillStyle = gradient;
+                // Pulsing hot core line
+                const coreAlpha = 0.4 + Math.sin(globalTime * 0.5) * 0.2;
+                ctx.strokeStyle = `rgba(255, 255, 200, ${coreAlpha * progress})`;
+                ctx.lineWidth = 3;
                 ctx.beginPath();
                 ctx.moveTo(20, 0);
-                ctx.lineTo(coneLength, Math.tan(coneSpread) * coneLength);
-                ctx.lineTo(coneLength, -Math.tan(coneSpread) * coneLength);
-                ctx.closePath();
-                ctx.fill();
-                
-                // Pulsing outline
-                const pulseAlpha = 0.3 + Math.sin(globalTime * 0.4) * 0.2;
-                ctx.strokeStyle = `rgba(255, 200, 0, ${pulseAlpha})`;
-                ctx.lineWidth = 2;
+                const wobbleEnd = Math.sin(globalTime * 0.5) * 8;
+                ctx.lineTo(coneLength * 0.7, wobbleEnd);
                 ctx.stroke();
                 
                 // Danger stripes animation
-                ctx.strokeStyle = `rgba(255, 0, 0, ${alpha * 1.5})`;
-                ctx.lineWidth = 3;
+                ctx.strokeStyle = `rgba(255, 50, 0, ${alpha * 1.2})`;
+                ctx.lineWidth = 2;
                 const stripeOffset = (globalTime * 3) % 30;
-                for (let d = stripeOffset; d < coneLength; d += 30) {
+                for (let d = stripeOffset + 30; d < coneLength; d += 30) {
                     const width = Math.tan(coneSpread) * d;
                     ctx.beginPath();
-                    ctx.moveTo(d, -width);
-                    ctx.lineTo(d, width);
+                    ctx.moveTo(d, -width * 0.8);
+                    ctx.lineTo(d, width * 0.8);
                     ctx.stroke();
                 }
                 
@@ -8442,50 +8471,63 @@
                     ctx.ellipse(proj.x, proj.y - 2, proj.radius * 0.8, proj.radius * 0.3, 0, 0, Math.PI * 2);
                     ctx.fill();
                 } else if (proj.isFlame) {
-                    // Flame projectile - simple cartoon fire style
-                    ctx.shadowColor = '#ff6600';
-                    ctx.shadowBlur = 8;
+                    // Dragon Fire projectile - realistic layered flames
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 20;
                     
                     const r = proj.radius;
                     const fx = proj.x;
                     const fy = proj.y;
+                    const time = globalTime;
                     
-                    // Outer orange flame shape (teardrop/flame)
-                    ctx.fillStyle = '#ff6600';
-                    ctx.beginPath();
-                    ctx.moveTo(fx, fy - r * 1.4);
-                    ctx.quadraticCurveTo(fx + r * 1.2, fy - r * 0.3, fx + r * 0.8, fy + r * 0.6);
-                    ctx.quadraticCurveTo(fx, fy + r * 1.1, fx - r * 0.8, fy + r * 0.6);
-                    ctx.quadraticCurveTo(fx - r * 1.2, fy - r * 0.3, fx, fy - r * 1.4);
-                    ctx.fill();
-                    
-                    // Inner yellow flame
-                    ctx.fillStyle = '#ffcc00';
-                    ctx.beginPath();
-                    ctx.moveTo(fx, fy - r * 0.9);
-                    ctx.quadraticCurveTo(fx + r * 0.7, fy, fx + r * 0.5, fy + r * 0.5);
-                    ctx.quadraticCurveTo(fx, fy + r * 0.7, fx - r * 0.5, fy + r * 0.5);
-                    ctx.quadraticCurveTo(fx - r * 0.7, fy, fx, fy - r * 0.9);
-                    ctx.fill();
-                    
-                    // Hot white core
-                    ctx.fillStyle = '#ffffff';
-                    ctx.beginPath();
-                    ctx.ellipse(fx, fy + r * 0.2, r * 0.3, r * 0.4, 0, 0, Math.PI * 2);
-                    ctx.fill();
+                    // Multiple flickering flame tongues with 4 layers
+                    for (let layer = 0; layer < 4; layer++) {
+                        const layerColors = ['#ff2200', '#ff6600', '#ffaa00', '#ffee88'];
+                        const layerScale = 1 - layer * 0.2;
+                        
+                        ctx.fillStyle = layerColors[layer];
+                        ctx.beginPath();
+                        
+                        // Create organic flame shape with multiple tips
+                        const tips = 3;
+                        for (let t = 0; t <= tips; t++) {
+                            const tipAngle = -Math.PI / 2 + (t / tips - 0.5) * Math.PI * 0.8;
+                            const tipWobble = Math.sin(time * 0.5 + t * 2 + layer) * 3;
+                            const tipLen = r * (1.5 + Math.sin(time * 0.4 + t) * 0.3) * layerScale;
+                            
+                            if (t === 0) {
+                                ctx.moveTo(fx + Math.cos(tipAngle) * tipLen + tipWobble, 
+                                           fy + Math.sin(tipAngle) * tipLen);
+                            } else {
+                                const cp1x = fx + Math.cos(tipAngle - 0.3) * r * layerScale;
+                                const cp1y = fy + Math.sin(tipAngle - 0.3) * r * layerScale;
+                                ctx.quadraticCurveTo(cp1x, cp1y,
+                                                    fx + Math.cos(tipAngle) * tipLen + tipWobble,
+                                                    fy + Math.sin(tipAngle) * tipLen);
+                            }
+                        }
+                        // Close bottom
+                        ctx.quadraticCurveTo(fx + r * 0.8 * layerScale, fy + r * 0.5 * layerScale,
+                                            fx, fy + r * 0.8 * layerScale);
+                        ctx.quadraticCurveTo(fx - r * 0.8 * layerScale, fy + r * 0.5 * layerScale,
+                                            fx + Math.cos(-Math.PI / 2 - Math.PI * 0.4) * r * 1.2 * layerScale,
+                                            fy + Math.sin(-Math.PI / 2 - Math.PI * 0.4) * r * 1.2 * layerScale);
+                        ctx.fill();
+                    }
                     
                     ctx.shadowBlur = 0;
                     
-                    // Simple trail particles
-                    if (Math.random() < 0.3) {
+                    // Enhanced trail particles
+                    if (Math.random() < 0.4) {
+                        const colors = ['#ff2200', '#ff6600', '#ffaa00', '#ffdd00'];
                         bossArena.particles.push({
-                            x: proj.x,
+                            x: proj.x + (Math.random() - 0.5) * r,
                             y: proj.y + proj.radius,
-                            vx: (Math.random() - 0.5) * 1.5,
-                            vy: 1 + Math.random(),
-                            size: 3 + Math.random() * 3,
-                            color: Math.random() < 0.5 ? '#ff6600' : '#ffcc00',
-                            life: 0.3
+                            vx: (Math.random() - 0.5) * 2,
+                            vy: 1.5 + Math.random() * 1.5,
+                            size: 2 + Math.random() * 4,
+                            color: colors[Math.floor(Math.random() * colors.length)],
+                            life: 0.4
                         });
                     }
                 } else {
