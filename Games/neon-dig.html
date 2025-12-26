@@ -6916,12 +6916,15 @@
                                 targetWurm = boss2;
                             }
                             
-                            if (targetWurm && targetWurm.state !== 'firebreath' && targetWurm.state !== 'vulnerable' && targetWurm.state !== 'stunned') {
+                            if (targetWurm && (targetWurm.state === 'attacking' || targetWurm.state === 'idle')) {
                                 targetWurm.state = 'firebreath';
                                 targetWurm.stateTimer = 0;
                                 targetWurm.fireBreathPhase = 0;
                                 bossArena.fireBreathActive = targetWurm;
                                 bossArena.fireBreathTimer = 20 * 60; // 20 seconds until next
+                            } else {
+                                // Wurm not ready, try again soon
+                                bossArena.fireBreathTimer = 60; // Check again in 1 second
                             }
                         }
                     }
@@ -7483,6 +7486,22 @@
                     // Telegraphed fire breath attack
                     wurm.fireBreathPhase = wurm.fireBreathPhase || 0;
                     
+                    // Keep wurm above ground during entire firebreath animation
+                    // Calculate proper surface position in the arena
+                    const arenaTop = bossArena.offsetY + TILE_SIZE * 2;
+                    const arenaMiddleY = bossArena.offsetY + bossArena.height * TILE_SIZE / 3;
+                    
+                    // Store surface position at start, maintain it throughout
+                    if (wurm.stateTimer < 2) {
+                        // Ensure wurm is at a visible surface position
+                        // Clamp Y to be in the upper portion of the arena (visible area)
+                        wurm.firebreathY = Math.max(arenaTop, Math.min(arenaMiddleY + 50, wurm.y));
+                        wurm.y = wurm.firebreathY;
+                    }
+                    // Maintain surface position (slight hover wobble for visual interest)
+                    const hoverWobble = Math.sin(globalTime * 0.3) * 2;
+                    wurm.y = wurm.firebreathY + hoverWobble;
+                    
                     // Lock in target angle at start of telegraph
                     if (wurm.stateTimer < 2) {
                         wurm.breathTargetAngle = Math.atan2(playerY - wurm.y, playerX - wurm.x);
@@ -7577,6 +7596,7 @@
                         wurm.stateTimer = 0;
                         wurm.vulnerableTimer = 150; // 2.5 seconds vulnerable after fire breath
                         wurm.breathTargetAngle = null;
+                        wurm.firebreathY = null; // Clear locked position
                         bossArena.fireBreathActive = null;
                     }
                     break;
@@ -8453,8 +8473,22 @@
             }
             
             // Draw boss
-            if (boss && boss.state !== 'burrowing') {
-                drawBoss();
+            if (boss) {
+                // For Lava Wurm, draw each wurm independently based on their state
+                if (boss.type === BOSS_TYPE.LAVA_WURM) {
+                    if (boss.state !== 'burrowing') {
+                        drawBoss();
+                    }
+                    // Draw second wurm if it exists and is not burrowing
+                    if (boss2 && boss2.health > 0 && boss2.state !== 'burrowing') {
+                        drawLavaWurm(boss2);
+                    }
+                } else {
+                    // Other bosses - original logic
+                    if (boss.state !== 'burrowing') {
+                        drawBoss();
+                    }
+                }
             }
             
             // Draw projectiles
@@ -8517,14 +8551,20 @@
                     
                     ctx.shadowBlur = 0;
                     
-                    // Enhanced trail particles
+                    // Enhanced trail particles - spawn behind projectile based on velocity
                     if (Math.random() < 0.4) {
                         const colors = ['#ff2200', '#ff6600', '#ffaa00', '#ffdd00'];
+                        // Calculate direction opposite to movement
+                        const speed = Math.sqrt(proj.vx * proj.vx + proj.vy * proj.vy);
+                        const normX = speed > 0 ? -proj.vx / speed : 0;
+                        const normY = speed > 0 ? -proj.vy / speed : 1;
+                        // Spawn behind the projectile
+                        const spawnDist = proj.radius * 0.8;
                         bossArena.particles.push({
-                            x: proj.x + (Math.random() - 0.5) * r,
-                            y: proj.y + proj.radius,
-                            vx: (Math.random() - 0.5) * 2,
-                            vy: 1.5 + Math.random() * 1.5,
+                            x: proj.x + normX * spawnDist + (Math.random() - 0.5) * r * 0.5,
+                            y: proj.y + normY * spawnDist + (Math.random() - 0.5) * r * 0.5,
+                            vx: normX * (1.5 + Math.random() * 1.5) + (Math.random() - 0.5) * 0.5,
+                            vy: normY * (1.5 + Math.random() * 1.5) + (Math.random() - 0.5) * 0.5,
                             size: 2 + Math.random() * 4,
                             color: colors[Math.floor(Math.random() * colors.length)],
                             life: 0.4
@@ -8901,10 +8941,7 @@
             
             ctx.restore();
             
-            // Draw second wurm if exists
-            if (boss2 && boss.type === BOSS_TYPE.LAVA_WURM && boss2.health > 0) {
-                drawLavaWurm(boss2);
-            }
+            // Note: boss2 drawing is now handled separately in drawBossArena
         }
         
         function drawLavaWurm(wurm) {

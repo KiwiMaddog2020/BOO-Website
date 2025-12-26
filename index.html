@@ -2334,6 +2334,13 @@
                 pointer-events: none !important;
             }
             
+            /* Additional scroll lock when game is being touched (JS adds inline styles) */
+            body.arcade-active #game {
+                /* Reinforce no-scroll when game section is active */
+                overscroll-behavior: none !important;
+                -webkit-overscroll-behavior: none !important;
+            }
+            
             .game-container iframe {
                 width: 100% !important;
                 /* Fixed aspect ratio - ignore per-game data-aspect on mobile */
@@ -8383,9 +8390,8 @@
             isDesktop = window.innerWidth > 768;
         });
         
-        // Arcade mode functions (desktop only)
+        // Arcade mode functions (works on both desktop and mobile)
         function enableArcadeMode() {
-            if (!isDesktop) return;
             document.body.classList.add('arcade-active');
         }
         
@@ -8409,12 +8415,10 @@
                             // Update URL hash to reflect current section
                             updateUrlHash(entry.target.id);
                             
-                            // ARCADE MODE: Disable overlays on desktop
+                            // ARCADE MODE: Enable for both desktop and mobile
                             if (entry.target.id === 'game') {
                                 isArcadeActive = true;
-                                if (isDesktop) {
-                                    enableArcadeMode();
-                                }
+                                enableArcadeMode();
                             } else {
                                 // Leaving arcade - restore normal behavior
                                 if (isArcadeActive) {
@@ -8862,6 +8866,108 @@
                 pauseAllAudioExcept('musicPlayer', 'audio-player');
             });
         }
+        
+        // ========== MOBILE SCROLL LOCK FOR GAME ==========
+        // Prevents page from scrolling when user interacts with game iframe
+        (function() {
+            const gameContainer = document.querySelector('#game .game-container');
+            const gameSection = document.getElementById('game');
+            const scrollContainer = document.querySelector('.scroll-container');
+            if (!gameContainer) return;
+            
+            let isTouchingGame = false;
+            let scrollLocked = false;
+            
+            // Lock scroll when touching game container
+            function lockScroll() {
+                if (scrollLocked) return;
+                scrollLocked = true;
+                document.body.style.overflow = 'hidden';
+                document.body.style.touchAction = 'none';
+                if (gameSection) {
+                    gameSection.style.overflow = 'hidden';
+                    gameSection.style.touchAction = 'none';
+                }
+                if (scrollContainer) {
+                    scrollContainer.style.overflow = 'hidden';
+                    scrollContainer.style.touchAction = 'none';
+                }
+            }
+            
+            // Unlock scroll when not touching game
+            function unlockScroll() {
+                if (!scrollLocked) return;
+                scrollLocked = false;
+                document.body.style.overflow = '';
+                document.body.style.touchAction = '';
+                if (gameSection) {
+                    gameSection.style.overflow = '';
+                    gameSection.style.touchAction = '';
+                }
+                if (scrollContainer) {
+                    scrollContainer.style.overflow = '';
+                    scrollContainer.style.touchAction = '';
+                }
+            }
+            
+            // Touch start on game container
+            gameContainer.addEventListener('touchstart', function(e) {
+                isTouchingGame = true;
+                lockScroll();
+            }, { passive: true });
+            
+            // Touch end anywhere
+            document.addEventListener('touchend', function(e) {
+                if (isTouchingGame) {
+                    isTouchingGame = false;
+                    // Delay unlock slightly to prevent scroll jump
+                    setTimeout(unlockScroll, 100);
+                }
+            }, { passive: true });
+            
+            // Touch cancel
+            document.addEventListener('touchcancel', function(e) {
+                if (isTouchingGame) {
+                    isTouchingGame = false;
+                    setTimeout(unlockScroll, 100);
+                }
+            }, { passive: true });
+            
+            // Prevent touchmove on game container from scrolling page
+            gameContainer.addEventListener('touchmove', function(e) {
+                // Check if the event target is inside the game container
+                if (gameContainer.contains(e.target)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, { passive: false });
+            
+            // Also handle the iframe directly (for browsers that pass events through)
+            const iframe = gameContainer.querySelector('iframe');
+            if (iframe) {
+                iframe.addEventListener('touchstart', function(e) {
+                    isTouchingGame = true;
+                    lockScroll();
+                }, { passive: true });
+                
+                iframe.addEventListener('touchmove', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }, { passive: false });
+            }
+            
+            // Intersection observer to auto-unlock when leaving game section
+            const observer = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (!entry.isIntersecting && scrollLocked) {
+                        isTouchingGame = false;
+                        unlockScroll();
+                    }
+                });
+            }, { threshold: 0.1 });
+            
+            observer.observe(gameContainer);
+        })();
         
         // ========== DESKTOP-ONLY SMOOTH ASPECT-LOCKED SCALING ==========
         // Calculates largest size that fits viewport while maintaining fixed 640/740 aspect ratio

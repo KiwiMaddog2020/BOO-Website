@@ -1221,7 +1221,7 @@
             background: rgba(180, 30, 30, 0.8);
             border: 2px solid #cc2222;
             border-radius: 6px;
-            color: #ff3333;
+            color: #bbb;
             font-size: 12px;
             font-weight: bold;
             cursor: pointer;
@@ -1238,7 +1238,7 @@
         .banish-button:hover {
             background: rgba(200, 40, 40, 0.9);
             border-color: #ff3333;
-            color: #ff5555;
+            color: #fff;
             transform: scale(1.05);
         }
         
@@ -7004,17 +7004,19 @@
                 state.waveRadius = 0;
                 state.waveMaxRadius = radius;
                 state.waveActive = true;
+                state.waveStartTime = now;
+                state.waveFadeOutStart = null;
                 
-                // Pulse boombox icon (grow on wave, stays visible always)
+                // Initialize boombox icon to fade in
                 if (!state.boomboxIcon) {
                     state.boomboxIcon = {
-                        y: -35,
-                        alpha: 1,
+                        y: -55,
+                        alpha: 0,
                         scale: 1
                     };
                 }
                 state.boomboxIcon.scale = 1.4; // Grow on fire
-                state.boomboxIcon.alpha = 1;
+                state.boomboxIcon.targetAlpha = 1; // Will fade to this
                 
                 for (const enemy of enemies) {
                     if (enemy.dead) continue; // Skip dead enemies
@@ -8497,9 +8499,10 @@
                     
                     // AOE wave visual - enhanced neon effect
                     if (def.type === 'aoe' && state.waveActive) {
-                        state.waveRadius += 5; // Slower expansion
+                        state.waveRadius += 3; // Slower expansion
                         if (state.waveRadius >= state.waveMaxRadius) {
                             state.waveActive = false;
+                            state.waveFadeOutStart = Date.now(); // Start fade-out timer
                         } else {
                             const progress = state.waveRadius / state.waveMaxRadius;
                             const baseAlpha = 1 - progress * 0.8; // Fade out slower
@@ -8523,14 +8526,16 @@
                             ctx.arc(sx, sy, camera.scale(state.waveRadius), 0, Math.PI * 2);
                             ctx.stroke();
                             
-                            // Inner bright ring
-                            ctx.strokeStyle = '#ffffff';
-                            ctx.shadowColor = '#ffffff';
-                            ctx.lineWidth = 2;
-                            ctx.globalAlpha = baseAlpha * 0.7;
-                            ctx.beginPath();
-                            ctx.arc(sx, sy, camera.scale(state.waveRadius - 5), 0, Math.PI * 2);
-                            ctx.stroke();
+                            // Inner bright ring (only when radius is big enough)
+                            if (state.waveRadius > 5) {
+                                ctx.strokeStyle = '#ffffff';
+                                ctx.shadowColor = '#ffffff';
+                                ctx.lineWidth = 2;
+                                ctx.globalAlpha = baseAlpha * 0.7;
+                                ctx.beginPath();
+                                ctx.arc(sx, sy, camera.scale(state.waveRadius - 5), 0, Math.PI * 2);
+                                ctx.stroke();
+                            }
                             
                             // Trailing secondary wave
                             if (state.waveRadius > 25) {
@@ -8659,102 +8664,127 @@
                         ctx.restore();
                     }
                     
-                    // Draw boombox icon above player (always visible, pulses on fire)
+                    // Draw boombox icon above player (fades in before wave, fades out after)
                     if (def.type === 'aoe') {
                         // Initialize boombox icon if not exists
                         if (!state.boomboxIcon) {
                             state.boomboxIcon = {
-                                y: -35,
-                                alpha: 1,
+                                y: -55,
+                                alpha: 0,
                                 scale: 1
                             };
                         }
                         
-                        ctx.save();
-                        ctx.globalAlpha = state.boomboxIcon.alpha;
+                        const now = Date.now();
                         
-                        const boomSize = camera.scale(28 * state.boomboxIcon.scale);
-                        const boomX = sx - boomSize / 2;
-                        const boomY = sy + camera.scale(state.boomboxIcon.y) - boomSize / 2;
-                        const s = boomSize / 48; // Scale factor
+                        // Handle fade-in when wave is active
+                        if (state.waveActive && state.boomboxIcon.alpha < 1) {
+                            state.boomboxIcon.alpha = Math.min(1, state.boomboxIcon.alpha + 0.08);
+                        }
                         
-                        // Draw boombox SVG manually
-                        ctx.shadowBlur = 15;
-                        ctx.shadowColor = def.color;
+                        // Handle fade-out after wave ends
+                        if (state.waveFadeOutStart && !state.waveActive) {
+                            const fadeOutDuration = 400; // ms to fade out
+                            const elapsed = now - state.waveFadeOutStart;
+                            if (elapsed < fadeOutDuration) {
+                                state.boomboxIcon.alpha = 1 - (elapsed / fadeOutDuration);
+                            } else {
+                                state.boomboxIcon.alpha = 0;
+                                state.waveFadeOutStart = null;
+                            }
+                        }
                         
-                        // Handle/antenna
-                        ctx.strokeStyle = '#666';
-                        ctx.lineWidth = 3 * s;
-                        ctx.lineCap = 'round';
-                        ctx.beginPath();
-                        ctx.moveTo(boomX + 12 * s, boomY + 8 * s);
-                        ctx.quadraticCurveTo(boomX + 24 * s, boomY + 2 * s, boomX + 36 * s, boomY + 8 * s);
-                        ctx.stroke();
-                        
-                        // Main body
-                        ctx.fillStyle = '#444';
-                        ctx.strokeStyle = def.color;
-                        ctx.lineWidth = 1.5 * s;
-                        ctx.beginPath();
-                        const rx = 3 * s;
-                        const bx = boomX + 4 * s, by = boomY + 8 * s, bw = 40 * s, bh = 24 * s;
-                        ctx.moveTo(bx + rx, by);
-                        ctx.lineTo(bx + bw - rx, by);
-                        ctx.arcTo(bx + bw, by, bx + bw, by + rx, rx);
-                        ctx.lineTo(bx + bw, by + bh - rx);
-                        ctx.arcTo(bx + bw, by + bh, bx + bw - rx, by + bh, rx);
-                        ctx.lineTo(bx + rx, by + bh);
-                        ctx.arcTo(bx, by + bh, bx, by + bh - rx, rx);
-                        ctx.lineTo(bx, by + rx);
-                        ctx.arcTo(bx, by, bx + rx, by, rx);
-                        ctx.closePath();
-                        ctx.fill();
-                        ctx.stroke();
-                        
-                        // Left speaker
-                        ctx.fillStyle = '#222';
-                        ctx.lineWidth = 1 * s;
-                        ctx.beginPath();
-                        ctx.arc(boomX + 14 * s, boomY + 20 * s, 8 * s, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.stroke();
-                        
-                        // Left speaker center
-                        ctx.fillStyle = def.color;
-                        ctx.globalAlpha = state.boomboxIcon.alpha * 0.6;
-                        ctx.beginPath();
-                        ctx.arc(boomX + 14 * s, boomY + 20 * s, 3 * s, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.globalAlpha = state.boomboxIcon.alpha;
-                        
-                        // Right speaker
-                        ctx.fillStyle = '#222';
-                        ctx.strokeStyle = def.color;
-                        ctx.beginPath();
-                        ctx.arc(boomX + 34 * s, boomY + 20 * s, 8 * s, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.stroke();
-                        
-                        // Right speaker center
-                        ctx.fillStyle = def.color;
-                        ctx.globalAlpha = state.boomboxIcon.alpha * 0.6;
-                        ctx.beginPath();
-                        ctx.arc(boomX + 34 * s, boomY + 20 * s, 3 * s, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.globalAlpha = state.boomboxIcon.alpha;
-                        
-                        // Center display
-                        ctx.fillStyle = '#333';
-                        ctx.strokeStyle = '#555';
-                        ctx.lineWidth = 0.5 * s;
-                        ctx.fillRect(boomX + 20 * s, boomY + 15 * s, 8 * s, 10 * s);
-                        ctx.strokeRect(boomX + 20 * s, boomY + 15 * s, 8 * s, 10 * s);
-                        
-                        ctx.restore();
-                        
-                        // Shrink back to normal size after pulse
-                        if (state.boomboxIcon.scale > 1) {
-                            state.boomboxIcon.scale = Math.max(1, state.boomboxIcon.scale - 0.02);
+                        // Only draw if visible and scale is valid
+                        const scale = state.boomboxIcon.scale || 1;
+                        if (state.boomboxIcon.alpha > 0.01 && scale > 0) {
+                            const boomSize = camera.scale(36 * scale);
+                            if (boomSize > 0) {
+                                ctx.save();
+                                ctx.globalAlpha = state.boomboxIcon.alpha;
+                                
+                                const boomX = sx - boomSize / 2;
+                                const boomY = sy + camera.scale(state.boomboxIcon.y) - boomSize / 2;
+                                const s = boomSize / 48; // Scale factor
+                            
+                            // Draw boombox SVG manually
+                            ctx.shadowBlur = 15;
+                            ctx.shadowColor = def.color;
+                            
+                            // Handle/antenna
+                            ctx.strokeStyle = '#666';
+                            ctx.lineWidth = 3 * s;
+                            ctx.lineCap = 'round';
+                            ctx.beginPath();
+                            ctx.moveTo(boomX + 12 * s, boomY + 8 * s);
+                            ctx.quadraticCurveTo(boomX + 24 * s, boomY + 2 * s, boomX + 36 * s, boomY + 8 * s);
+                            ctx.stroke();
+                            
+                            // Main body
+                            ctx.fillStyle = '#444';
+                            ctx.strokeStyle = def.color;
+                            ctx.lineWidth = 1.5 * s;
+                            ctx.beginPath();
+                            const rx = 3 * s;
+                            const bx = boomX + 4 * s, by = boomY + 8 * s, bw = 40 * s, bh = 24 * s;
+                            ctx.moveTo(bx + rx, by);
+                            ctx.lineTo(bx + bw - rx, by);
+                            ctx.arcTo(bx + bw, by, bx + bw, by + rx, rx);
+                            ctx.lineTo(bx + bw, by + bh - rx);
+                            ctx.arcTo(bx + bw, by + bh, bx + bw - rx, by + bh, rx);
+                            ctx.lineTo(bx + rx, by + bh);
+                            ctx.arcTo(bx, by + bh, bx, by + bh - rx, rx);
+                            ctx.lineTo(bx, by + rx);
+                            ctx.arcTo(bx, by, bx + rx, by, rx);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.stroke();
+                            
+                            // Left speaker
+                            ctx.fillStyle = '#222';
+                            ctx.lineWidth = 1 * s;
+                            ctx.beginPath();
+                            ctx.arc(boomX + 14 * s, boomY + 20 * s, 8 * s, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                            
+                            // Left speaker center
+                            ctx.fillStyle = def.color;
+                            ctx.globalAlpha = state.boomboxIcon.alpha * 0.6;
+                            ctx.beginPath();
+                            ctx.arc(boomX + 14 * s, boomY + 20 * s, 3 * s, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.globalAlpha = state.boomboxIcon.alpha;
+                            
+                            // Right speaker
+                            ctx.fillStyle = '#222';
+                            ctx.strokeStyle = def.color;
+                            ctx.beginPath();
+                            ctx.arc(boomX + 34 * s, boomY + 20 * s, 8 * s, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                            
+                            // Right speaker center
+                            ctx.fillStyle = def.color;
+                            ctx.globalAlpha = state.boomboxIcon.alpha * 0.6;
+                            ctx.beginPath();
+                            ctx.arc(boomX + 34 * s, boomY + 20 * s, 3 * s, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.globalAlpha = state.boomboxIcon.alpha;
+                            
+                            // Center display
+                            ctx.fillStyle = '#333';
+                            ctx.strokeStyle = '#555';
+                            ctx.lineWidth = 0.5 * s;
+                            ctx.fillRect(boomX + 20 * s, boomY + 15 * s, 8 * s, 10 * s);
+                            ctx.strokeRect(boomX + 20 * s, boomY + 15 * s, 8 * s, 10 * s);
+                            
+                            ctx.restore();
+                            
+                                // Shrink back to normal size after pulse
+                                if (state.boomboxIcon.scale > 1) {
+                                    state.boomboxIcon.scale = Math.max(1, state.boomboxIcon.scale - 0.02);
+                                }
+                            }
                         }
                     }
                     
@@ -8875,9 +8905,10 @@
                             }
                             
                             // Impact flash
+                            const impactRadius = Math.max(1, 30 - age/12);
                             ctx.fillStyle = 'rgba(255, 255, 100, ' + (0.6 - age/600) + ')';
                             ctx.beginPath();
-                            ctx.arc(camera.screenX(strike.x), camera.screenY(strike.y), camera.scale(30 - age/12), 0, Math.PI * 2);
+                            ctx.arc(camera.screenX(strike.x), camera.screenY(strike.y), camera.scale(impactRadius), 0, Math.PI * 2);
                             ctx.fill();
                             
                             // Ground sparks/particles at impact point
@@ -8887,7 +8918,7 @@
                                 const sparkDist = camera.scale(15 + age * 0.08);
                                 const sparkX = camera.screenX(strike.x) + Math.cos(sparkAngle) * sparkDist;
                                 const sparkY = camera.screenY(strike.y) + Math.sin(sparkAngle) * sparkDist * 0.5;
-                                const sparkSize = camera.scale(3) * (1 - age / 400);
+                                const sparkSize = Math.max(0.5, camera.scale(3) * (1 - age / 400));
                                 
                                 ctx.fillStyle = i % 2 === 0 ? '#ffff00' : '#ffffff';
                                 ctx.beginPath();
@@ -9107,9 +9138,10 @@
                                 if (progress >= 1 && fadeOut > 0.3) {
                                     ctx.globalAlpha = fadeOut * 0.7;
                                     const sparkSize = camera.scale(3);
+                                    const sparkRadius = Math.max(0.5, sparkSize * (1 - fadeOut + 0.3));
                                     ctx.fillStyle = '#fff';
                                     ctx.beginPath();
-                                    ctx.arc(starX, starY, sparkSize * (1 - fadeOut + 0.3), 0, Math.PI * 2);
+                                    ctx.arc(starX, starY, sparkRadius, 0, Math.PI * 2);
                                     ctx.fill();
                                 }
                             }
@@ -12577,23 +12609,26 @@
         
         function showHatPickupNotification() {
             const notification = document.createElement('div');
+            const gameCanvas = document.getElementById('gameCanvas');
+            const canvasRect = gameCanvas.getBoundingClientRect();
+            
             notification.style.cssText = `
                 position: fixed;
-                top: 20%;
+                bottom: ${window.innerHeight - canvasRect.bottom + 15}px;
                 left: 50%;
                 transform: translateX(-50%);
                 background: rgba(139, 69, 19, 0.9);
                 border: 2px solid #ffd700;
-                padding: 15px 30px;
+                padding: 12px 25px;
                 border-radius: 10px;
                 color: #fff;
-                font-size: 18px;
+                font-size: 16px;
                 font-weight: bold;
                 z-index: 1000;
                 text-align: center;
                 pointer-events: none;
             `;
-            notification.innerHTML = '🤠 COWBOY HAT FOUND!<br><span style="font-size: 14px; color: #ffd700;">+20% Movement Speed</span>';
+            notification.innerHTML = '🤠 COWBOY HAT FOUND!<br><span style="font-size: 13px; color: #ffd700;">+20% Movement Speed</span>';
             document.body.appendChild(notification);
             
             setTimeout(() => {
@@ -12866,7 +12901,7 @@
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 // Small horizontal offset to visually center emojis
-                ctx.fillText(typeInfo.icon, sx + camera.scale(4), sy + camera.scale(1));
+                ctx.fillText(typeInfo.icon, sx + camera.scale(3), sy + camera.scale(1));
                 
                 // Pulsing outer ring
                 const pulse = 0.5 + Math.sin(now * 0.006 + drop.bobOffset) * 0.5;
@@ -19335,7 +19370,7 @@
                 // Custom boombox SVG icon
                 let iconContent = weapon.icon;
                 if (weaponId === 'boomBox') {
-                    iconContent = `<svg viewBox="0 0 48 36" width="53" height="40" style="filter: drop-shadow(0 0 4px ${weapon.color});">
+                    iconContent = `<svg viewBox="0 0 48 36" width="73" height="55" style="filter: drop-shadow(0 0 4px ${weapon.color});">
                         <!-- Handle -->
                         <path d="M12 8 Q24 2 36 8" stroke="#666" stroke-width="3" fill="none" stroke-linecap="round"/>
                         <!-- Body -->
