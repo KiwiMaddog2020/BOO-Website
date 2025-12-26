@@ -597,7 +597,7 @@
             display: flex;
             flex-direction: column;
             gap: calc(4px * var(--scale, 1));
-            padding: calc(6px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(8px * var(--scale, 1)) calc(10px * var(--scale, 1));
+            padding: calc(7px * var(--scale, 1)) calc(10px * var(--scale, 1)) calc(8px * var(--scale, 1)) calc(10px * var(--scale, 1));
             background: rgba(0, 0, 0, 0.7);
             border: calc(2px * var(--scale, 1)) solid rgba(0, 255, 255, 0.3);
             border-radius: calc(8px * var(--scale, 1));
@@ -3292,7 +3292,7 @@
             box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
             flex-shrink: 0;
             aspect-ratio: 1;
-            height: 100%;
+            height: calc(100% - 8px);
             width: auto !important;
         }
         
@@ -3433,7 +3433,7 @@
             
             .trackpad-minimap-wrapper .minimap-canvas {
                 width: auto !important;
-                height: 100% !important;
+                height: calc(100% - 8px) !important;
                 aspect-ratio: 1;
             }
             
@@ -3445,7 +3445,7 @@
                 height: 100%;
                 min-height: unset;
                 max-height: unset;
-                padding: 6px 6px 8px 6px;
+                padding: 7px 6px 8px 6px;
                 gap: 0;
                 border-width: 1px;
                 border-radius: 5px;
@@ -3602,7 +3602,7 @@
                 height: 100%;
                 min-height: unset;
                 max-height: unset;
-                padding: 4px 4px 6px 4px;
+                padding: 5px 4px 6px 4px;
                 gap: 0;
                 justify-content: space-between;
             }
@@ -3622,7 +3622,7 @@
             /* Smaller minimap - fill height */
             .trackpad-minimap-wrapper .minimap-canvas {
                 width: auto !important;
-                height: 100% !important;
+                height: calc(100% - 8px) !important;
                 aspect-ratio: 1;
             }
             
@@ -5641,7 +5641,7 @@
             energyBolt: 'common',
             plasmaOrbit: 'common',
             boomBox: 'uncommon',
-            laserBeam: 'uncommon',
+            beam: 'uncommon',
             starField: 'uncommon',
             voidDaggers: 'rare',
             flameThrower: 'rare',
@@ -5783,15 +5783,15 @@
                 baseFireRate: 1440,
                 type: 'aoe'
             },
-            laserBeam: {
-                name: 'Laser Beam',
+            beam: {
+                name: 'Beam',
                 icon: '📡',
                 color: COLORS.pink,
-                desc: 'Piercing laser shots',
-                baseDamage: 21,
-                baseFireRate: 1080,
-                pierce: 4,
-                type: 'laser'
+                desc: 'Continuous beam, damage ramps up',
+                baseDamage: 8,
+                baseRange: 200,
+                acquireTime: 600,
+                type: 'beam'
             },
             starField: {
                 name: 'Star Field',
@@ -6537,8 +6537,8 @@
                         case 'aoe':
                             this.fireAOE(weaponId, weaponDef, weaponState, level, now);
                             break;
-                        case 'laser':
-                            this.fireLaser(weaponId, weaponDef, weaponState, level, now);
+                        case 'beam':
+                            this.updateBeam(weaponId, weaponDef, weaponState, level, now, dt);
                             break;
                         case 'chain':
                             this.fireChain(weaponId, weaponDef, weaponState, level, now);
@@ -6829,23 +6829,75 @@
                 }
             }
 
-            fireLaser(id, def, state, level, now) {
-                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
-                if (now - state.lastFire < fireRate) return;
+            updateBeam(id, def, state, level, now, dt) {
+                const range = def.baseRange + level * 15;
                 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                const pierce = def.pierce + Math.floor(level / 4);
-                const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
+                // Find target within range
+                const aliveEnemies = enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < range);
+                const aliveBosses = bosses.filter(b => !b.dead && Math.hypot(b.x - this.x, b.y - this.y) < range);
+                const allTargets = [...aliveEnemies, ...aliveBosses];
                 
-                const target = findNearestEnemy(this.x, this.y);
-                if (!target) return;
+                // Find nearest target
+                let bestTarget = null;
+                let bestDist = Infinity;
+                for (const t of allTargets) {
+                    const dist = Math.hypot(t.x - this.x, t.y - this.y);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestTarget = t;
+                    }
+                }
                 
-                state.lastFire = now;
+                // Track beam target
+                if (!bestTarget) {
+                    state.beamTarget = null;
+                    state.beamLockTime = null;
+                    state.beamActive = false;
+                    return;
+                }
                 
-                const angle = Math.atan2(target.y - this.y, target.x - this.x);
-                projectiles.push(new Projectile(
-                    this.x, this.y, angle, 6, baseDamage, def.color, 'laser', pierce, sizeScale
-                ));
+                // Check if target changed
+                if (state.beamTarget !== bestTarget) {
+                    state.beamTarget = bestTarget;
+                    state.beamLockTime = now;
+                    state.beamRetargetTime = now;
+                }
+                
+                // Acquiring delay before damage starts
+                const acquireTime = def.acquireTime * Math.pow(0.97, level - 1);
+                const isAcquiring = now - state.beamRetargetTime < acquireTime;
+                
+                // Store beam state for rendering
+                state.beamActive = true;
+                state.beamIsAcquiring = isAcquiring;
+                state.beamTargetX = bestTarget.x;
+                state.beamTargetY = bestTarget.y;
+                
+                if (isAcquiring) return;
+                
+                // Calculate ramp multiplier - starts at 0.5x, accelerates over time
+                const lockDuration = Math.max(0, (now - state.beamLockTime - acquireTime) / 1000);
+                const rampMultiplier = 0.5 + Math.pow(lockDuration * 0.8, 1.8);
+                
+                // Store ramp for visual thickness
+                state.beamRamp = Math.min(rampMultiplier, 8);
+                
+                // Deal damage (tick every 100ms)
+                if (!state.lastBeamTick || now - state.lastBeamTick >= 100) {
+                    state.lastBeamTick = now;
+                    
+                    const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
+                    const tickDamage = baseDamage * rampMultiplier * 0.1; // DPS / 10 ticks per second
+                    
+                    const { damage, isCrit } = this.calcDamage(tickDamage);
+                    bestTarget.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    
+                    // Occasional particles
+                    if (Math.random() < 0.3) {
+                        spawnParticles(bestTarget.x, bestTarget.y, def.color, 3);
+                    }
+                }
             }
 
             fireChain(id, def, state, level, now) {
@@ -8776,6 +8828,77 @@
                             ctx.stroke();
                             ctx.setLineDash([]);
                         }
+                        ctx.globalAlpha = 1;
+                        ctx.shadowBlur = 0;
+                    }
+                    
+                    // Beam weapon rendering
+                    if (def.type === 'beam' && state.beamActive && state.beamTargetX !== undefined) {
+                        const now = performance.now();
+                        const tx = camera.screenX(state.beamTargetX);
+                        const ty = camera.screenY(state.beamTargetY);
+                        
+                        if (state.beamIsAcquiring) {
+                            // Thin flickering dotted "acquiring" beam
+                            const flicker = Math.random() > 0.3 ? 1 : 0.4;
+                            ctx.strokeStyle = def.color;
+                            ctx.globalAlpha = 0.5 * flicker;
+                            ctx.lineWidth = camera.scale(2);
+                            ctx.shadowBlur = camera.scale(6);
+                            ctx.shadowColor = def.color;
+                            ctx.setLineDash([camera.scale(6), camera.scale(6)]);
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(tx, ty);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        } else {
+                            // Full powered beam with thickness based on ramp
+                            const ramp = state.beamRamp || 1;
+                            const beamPulse = 0.8 + Math.sin(now / 40) * 0.2;
+                            const thickness = Math.min(ramp, 6);
+                            
+                            // Outer glow beam
+                            ctx.strokeStyle = def.color;
+                            ctx.globalAlpha = 0.3;
+                            ctx.lineWidth = camera.scale((4 + thickness * 1.5) * beamPulse);
+                            ctx.shadowBlur = camera.scale(15);
+                            ctx.shadowColor = def.color;
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(tx, ty);
+                            ctx.stroke();
+                            
+                            // Middle beam
+                            ctx.globalAlpha = 0.6;
+                            ctx.lineWidth = camera.scale((2 + thickness * 0.8) * beamPulse);
+                            ctx.shadowBlur = camera.scale(10);
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(tx, ty);
+                            ctx.stroke();
+                            
+                            // Core beam (bright white)
+                            ctx.strokeStyle = '#fff';
+                            ctx.globalAlpha = 0.9;
+                            ctx.lineWidth = camera.scale(1.5 + thickness * 0.3);
+                            ctx.shadowBlur = camera.scale(4);
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(tx, ty);
+                            ctx.stroke();
+                            
+                            // Impact sparks at target
+                            if (Math.random() < 0.4) {
+                                ctx.fillStyle = '#fff';
+                                ctx.globalAlpha = 0.8;
+                                const sparkSize = camera.scale(2 + ramp * 0.5);
+                                ctx.beginPath();
+                                ctx.arc(tx, ty, sparkSize, 0, Math.PI * 2);
+                                ctx.fill();
+                            }
+                        }
+                        
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
                     }
@@ -16909,10 +17032,6 @@
                     reel.classList.remove('spinning');
                     reel.classList.add('stopped');
                     
-                    const levelText = upgrade.currentLevel > 0 
-                        ? `Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}` 
-                        : '<br>NEW!';
-                    
                     const content = reel.querySelector('.slot-content');
                     const iconHtml = upgrade.type === 'tome' 
                         ? `<span style="position:relative;display:inline-block;"><span style="font-size:1.2em;opacity:0.6;">📖</span><span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0.7em;filter:drop-shadow(0 0 2px #000);">${upgrade.icon}</span></span>`
@@ -16923,13 +17042,16 @@
                     const rarityInfo = rarity ? RARITIES[rarity] : null;
                     const borderColor = rarityInfo ? rarityInfo.color : upgrade.color;
                     
-                    // Only show rarity label for weapons
-                    const rarityLabel = rarityInfo 
-                        ? `<div class="slot-rarity" style="color:${rarityInfo.color};font-size:9px;text-transform:uppercase;">${rarityInfo.name}</div>`
-                        : '';
+                    // Show NEW or rarity in same position (mutually exclusive)
+                    const isNew = upgrade.currentLevel === 0;
+                    const topLabel = isNew
+                        ? `<div class="slot-rarity" style="color:#0ff;font-size:9px;text-transform:uppercase;">NEW</div>`
+                        : (rarityInfo ? `<div class="slot-rarity" style="color:${rarityInfo.color};font-size:9px;text-transform:uppercase;">${rarityInfo.name}</div>` : '');
+                    
+                    const levelText = isNew ? '' : `Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}`;
                     
                     content.innerHTML = `
-                        ${rarityLabel}
+                        ${topLabel}
                         <div class="slot-icon">${iconHtml}</div>
                         <div class="slot-name">${upgrade.name}</div>
                         <div class="slot-value">${levelText}</div>
@@ -16998,9 +17120,9 @@
                 card.style.boxShadow = `0 0 20px ${borderColor}40`;
                 card.style.cursor = 'pointer';
                 
-                const levelText = upgrade.currentLevel > 0 
-                    ? ` (Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1})` 
-                    : '<br>(NEW)';
+                // Show NEW or rarity in same position (mutually exclusive)
+                const isNew = upgrade.currentLevel === 0;
+                const levelText = isNew ? '' : ` (Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1})`;
                 
                 // Custom boombox icon
                 let upgradeIcon = upgrade.icon;
@@ -17022,10 +17144,10 @@
                     ? `<span style="position:relative;display:inline-block;"><span style="font-size:1.2em;opacity:0.6;">📖</span><span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0.6em;filter:drop-shadow(0 0 2px #000);">${upgrade.icon}</span></span>`
                     : upgradeIcon;
                 
-                // Only show rarity badge for weapons
-                const rarityBadge = rarityInfo 
-                    ? `<div class="rarity-badge" style="color:${rarityInfo.color};font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${rarityInfo.name}</div>`
-                    : '';
+                // Show NEW or rarity badge in same position (mutually exclusive)
+                const rarityBadge = isNew
+                    ? `<div class="rarity-badge" style="color:#0ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">NEW</div>`
+                    : (rarityInfo ? `<div class="rarity-badge" style="color:${rarityInfo.color};font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${rarityInfo.name}</div>` : '');
                 
                 card.innerHTML = `
                     ${rarityBadge}
@@ -18686,7 +18808,7 @@
         // Available starting weapons
         const STARTING_WEAPONS = [
             'energyBolt', 'boomBox', 'plasmaOrbit', 'blackSquirrel', 
-            'laserBeam', 'voidDaggers', 'flameThrower', 'iceShard',
+            'beam', 'voidDaggers', 'flameThrower', 'iceShard',
             'thunderStrike', 'chainLightning', 'toxicAura', 'boomerang',
             'spectralArrows', 'ricochetDisc', 'gravityWell',
             'starField', 'meteorStrike', 'spiritOrbs', 'pulseMine',
