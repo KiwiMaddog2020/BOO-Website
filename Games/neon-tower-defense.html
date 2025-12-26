@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>BOO Defense Force</title>
+    <title>BOO Tower Defense</title>
     <script>
         // Immediate iframe detection - runs before CSS layout
         if (window.self !== window.top) {
@@ -2476,8 +2476,8 @@
 <body>
     <!-- Menu Overlay -->
     <div class="menu-overlay" id="menuOverlay">
-        <div class="game-title">BOO DEFENSE FORCE</div>
-        <div class="game-subtitle">Tower Defense Roguelite</div>
+        <div class="game-title">BOO TOWER DEFENSE</div>
+        <div class="game-subtitle">Place towers, upgrade and defend</div>
         <div class="menu-buttons" id="mainMenuButtons">
             <button class="menu-btn" id="startBtn">START GAME</button>
             <button class="menu-btn btn-tutorial" id="tutorialBtn">HOW TO PLAY</button>
@@ -3333,9 +3333,9 @@
                 range: 180,
                 damage: 40,
                 fireRate: 1200,
-                color: '#ff6600',
+                color: '#ff0000',
                 projectileSpeed: 15,
-                projectileColor: '#ff6600',
+                projectileColor: '#ff0000',
                 icon: '🎯'
             },
             freeze: {
@@ -3455,9 +3455,12 @@
                 fireRate: 3000,
                 color: '#ff4400',
                 isInferno: true,
-                infernoRadius: 45,
-                infernoDamage: 8,
-                infernoDuration: 4000,
+                infernoRadius: 32,
+                infernoDamage: 7,
+                infernoDuration: 12000,
+                infernoMaxZones: 3,
+                projectileSpeed: 120,
+                projectileColor: '#8B4513',
                 icon: '🌋'
             }
         };
@@ -3664,19 +3667,19 @@
         
         // Base rarity configuration - starts common-heavy, luck shifts weights
         const RARITY_CONFIG = {
-            common:    { weight: 65, color: '#aaaaaa', glow: 'rgba(170, 170, 170, 0.4)', label: 'COMMON' },
-            uncommon:  { weight: 20, color: '#55ff55', glow: 'rgba(85, 255, 85, 0.5)', label: 'UNCOMMON' },
-            rare:      { weight: 10, color: '#5555ff', glow: 'rgba(85, 85, 255, 0.6)', label: 'RARE' },
-            epic:      { weight: 4,  color: '#aa55ff', glow: 'rgba(170, 85, 255, 0.6)', label: 'EPIC' },
-            legendary: { weight: 1,  color: '#ffaa00', glow: 'rgba(255, 170, 0, 0.7)', label: 'LEGENDARY' }
+            common:    { weight: 78, color: '#aaaaaa', glow: 'rgba(170, 170, 170, 0.4)', label: 'COMMON' },
+            uncommon:  { weight: 14, color: '#55ff55', glow: 'rgba(85, 255, 85, 0.5)', label: 'UNCOMMON' },
+            rare:      { weight: 6,  color: '#5555ff', glow: 'rgba(85, 85, 255, 0.6)', label: 'RARE' },
+            epic:      { weight: 1.5, color: '#aa55ff', glow: 'rgba(170, 85, 255, 0.6)', label: 'EPIC' },
+            legendary: { weight: 0.5, color: '#ffaa00', glow: 'rgba(255, 170, 0, 0.7)', label: 'LEGENDARY' }
         };
         
         // Luck protection system
         const LUCK_PROTECTION = {
             // Bad luck protection (pity) - rolls since last rare+ upgrade
-            rarePity: 3,        // After 3 common/uncommon, start boosting rare+
-            epicPity: 7,        // After 7 without epic+, start boosting epic+
-            legendaryPity: 15,  // After 15 without legendary, start boosting
+            rarePity: 5,        // After 5 common/uncommon, start boosting rare+
+            epicPity: 10,       // After 10 without epic+, start boosting epic+
+            legendaryPity: 20,  // After 20 without legendary, start boosting
             // Good luck protection (caps) - max per run
             maxEpic: 5,         // Cap epic upgrades per run
             maxLegendary: 2     // Cap legendary upgrades per run
@@ -3700,17 +3703,17 @@
                 legendary: RARITY_CONFIG.legendary.weight
             };
             
-            // Apply player luck stat - boosts uncommon+ weights, reduces common
+            // Apply player luck stat - boosts uncommon+ weights with scaling effect
             const luckBonus = permUpgrades.luck || 0;
             if (luckBonus > 0) {
-                // Each 1% luck adds to higher rarity weights
-                const luckMult = 1 + luckBonus;
-                weights.uncommon *= luckMult;
-                weights.rare *= luckMult;
-                weights.epic *= luckMult;
-                weights.legendary *= luckMult;
+                // Luck scales 5:1, with boost for rare+
+                const luckPercent = luckBonus / 100; // Convert to decimal (e.g., 5% -> 0.05)
+                weights.uncommon *= (1 + luckPercent * 5.0);
+                weights.rare *= (1 + luckPercent * 9.0);
+                weights.epic *= (1 + luckPercent * 12.0);
+                weights.legendary *= (1 + luckPercent * 15.0);
                 // Reduce common weight proportionally
-                weights.common = Math.max(20, weights.common - (luckBonus * 30));
+                weights.common = Math.max(30, weights.common - (luckBonus * 2));
             }
             
             // Bad luck protection - boost higher rarities based on pity counter
@@ -4048,16 +4051,16 @@
         // Path waypoints - aligned to grid cell centers (GRID_SIZE=36, centers at 18+n*36)
         // Cell centers at: 18, 54, 90, 126, 162, 198, 234, 270, 306, 342, 378, 414, 450, 486, 522, 558, 594, 630
         const PATH = [
-            { x: 0, y: 54 },      // Entry (row 2 center)
-            { x: 162, y: 54 },    // First corner
-            { x: 162, y: 162 },   // Down
-            { x: 486, y: 162 },   // Across to right
-            { x: 486, y: 54 },    // Up
-            { x: 594, y: 54 },    // Right side
-            { x: 594, y: 306 },   // Down
-            { x: 54, y: 306 },    // Across to left
-            { x: 54, y: 414 },    // Down
-            { x: 486, y: 414 },   // Across to right
+            { x: 0, y: 90 },      // Entry (row 3 center) - shifted down for HUD clearance
+            { x: 162, y: 90 },    // First corner
+            { x: 162, y: 198 },   // Down
+            { x: 486, y: 198 },   // Across to right
+            { x: 486, y: 90 },    // Up
+            { x: 594, y: 90 },    // Right side
+            { x: 594, y: 342 },   // Down
+            { x: 54, y: 342 },    // Across to left
+            { x: 54, y: 450 },    // Down
+            { x: 486, y: 450 },   // Across to right
             { x: 486, y: 522 },   // Down
             { x: 644, y: 522 }    // Exit
         ];
@@ -5459,7 +5462,7 @@
             document.getElementById('towerActionTitle').textContent = def.name;
             document.getElementById('towerActionSubtitle').textContent = TOWER_DESCRIPTIONS[tower.type];
             document.getElementById('towerActionConfirm').style.display = 'none';
-            document.getElementById('towerActionMove').style.display = '';
+            document.getElementById('towerActionMove').style.display = waveInProgress ? 'none' : ''; // Hide during active wave
             document.getElementById('championFocusToggle').style.display = 'none';
             panel.classList.remove('move-mode');
             panel.classList.add('active');
@@ -5541,6 +5544,7 @@
         
         function startTowerMove() {
             if (!inspectedTower) return;
+            if (waveInProgress) return; // Can't move towers during active wave
             
             movingTower = inspectedTower;
             const panel = document.getElementById('towerActionPanel');
@@ -5703,7 +5707,7 @@
                     x: x,
                     y: y,
                     type: selectedTower,
-                    lastFire: 0,
+                    lastFire: -99999, // Allow immediate first shot
                     target: null,
                     angle: -Math.PI / 2, // Default pointing up
                     targetAngle: -Math.PI / 2
@@ -5951,7 +5955,17 @@
             
             // Fire at target
             const now = performance.now();
-            if (bestTarget && now - tower.lastFire >= fireInterval) {
+            // Inferno towers can fire at path points even without a direct target
+            // But check zone limit before entering the firing block
+            let canFire = bestTarget;
+            if (def.isInferno) {
+                const maxZones = def.infernoMaxZones || 3;
+                const inFlightBoulders = projectiles.filter(p => p.isBoulder && p.alive).length;
+                const totalActive = infernoZones.length + inFlightBoulders;
+                // Inferno can fire preemptively as soon as wave starts, doesn't need enemies in range
+                canFire = waveInProgress && totalActive < maxZones;
+            }
+            if (canFire && now - tower.lastFire >= fireInterval) {
                 tower.lastFire = now;
                 
                 if (def.isBeam) {
@@ -6011,68 +6025,133 @@
                         createParticles(t.enemy.x, t.enemy.y, def.arcColor, 3);
                     }
                 } else if (def.isInferno) {
-                    // Inferno - creates lingering fire zones on the path
+                    // Inferno - fires slow boulder projectile that creates AOE zone on impact
+                    // Zone limit already checked in canFire above
+                    
                     const damageMultiplier = upgrades.damage || 1;
                     const infernoRadius = def.infernoRadius * (1 + permUpgrades.splashBonus * 0.5);
                     const infernoDamage = def.infernoDamage * damageMultiplier * (1 + permUpgrades.damageBonus + buffDamageBonus);
                     const infernoDuration = def.infernoDuration;
                     
-                    // Find a point on the path within range that has enemies nearby
-                    let bestPathPoint = null;
-                    let bestEnemyCount = 0;
+                    // Find all valid path points within range
+                    let validPoints = [];
                     
                     for (let i = 0; i < currentPath.length - 1; i++) {
                         const p1 = currentPath[i];
                         const p2 = currentPath[i + 1];
                         
-                        // Check multiple points along this segment
-                        for (let t = 0; t <= 1; t += 0.25) {
+                        for (let t = 0; t <= 1; t += 0.1) {
                             const px = p1.x + (p2.x - p1.x) * t;
                             const py = p1.y + (p2.y - p1.y) * t;
                             
-                            // Check if point is in tower range
                             const dx = px - tower.x;
                             const dy = py - tower.y;
                             const dist = Math.sqrt(dx * dx + dy * dy);
                             
                             if (dist <= range) {
-                                // Count enemies near this point
-                                let nearbyEnemies = 0;
-                                for (const enemy of enemies) {
-                                    if (!enemy.alive) continue;
-                                    const ex = enemy.x - px;
-                                    const ey = enemy.y - py;
-                                    if (Math.sqrt(ex * ex + ey * ey) <= infernoRadius * 1.5) {
-                                        nearbyEnemies++;
+                                // Calculate path progress for this point
+                                const pathProgress = i + t;
+                                
+                                // Check not too close to existing zones or incoming boulders
+                                let tooClose = false;
+                                for (const zone of infernoZones) {
+                                    const zd = Math.sqrt((px - zone.x) ** 2 + (py - zone.y) ** 2);
+                                    if (zd < infernoRadius * 1.8) {
+                                        tooClose = true;
+                                        break;
+                                    }
+                                }
+                                if (!tooClose) {
+                                    for (const proj of projectiles) {
+                                        if (proj.isBoulder && proj.alive) {
+                                            const pd = Math.sqrt((px - proj.targetX) ** 2 + (py - proj.targetY) ** 2);
+                                            if (pd < infernoRadius * 1.8) {
+                                                tooClose = true;
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                                 
-                                if (nearbyEnemies > bestEnemyCount) {
-                                    bestEnemyCount = nearbyEnemies;
-                                    bestPathPoint = { x: px, y: py };
+                                if (!tooClose) {
+                                    validPoints.push({ x: px, y: py, pathProgress: pathProgress });
                                 }
                             }
                         }
                     }
                     
-                    // Create fire zone if we found a good spot (even with 0 enemies for preemptive placement)
-                    if (bestPathPoint || bestTarget) {
-                        const targetPoint = bestPathPoint || { x: bestTarget.x, y: bestTarget.y };
+                    // Find the frontmost enemy's progress on path
+                    let frontmostProgress = -1;
+                    for (const enemy of enemies) {
+                        if (!enemy.alive) continue;
+                        const enemyProgress = enemy.pathIndex + (enemy.pathProgress || 0);
+                        if (enemyProgress > frontmostProgress) {
+                            frontmostProgress = enemyProgress;
+                        }
+                    }
+                    
+                    let aheadPoints;
+                    
+                    // If no enemies yet, target early parts of the path to prepare
+                    if (frontmostProgress < 0) {
+                        // Sort by path progress and pick from earlier points
+                        aheadPoints = validPoints.sort((a, b) => a.pathProgress - b.pathProgress);
+                        // Take the first third of valid points (earliest on path)
+                        aheadPoints = aheadPoints.slice(0, Math.max(1, Math.ceil(aheadPoints.length / 3)));
+                    } else {
+                        // Filter to points that are AHEAD of the frontmost enemy
+                        const leadAmount = 0.5; // How far ahead on the path to target
+                        aheadPoints = validPoints.filter(p => p.pathProgress > frontmostProgress + leadAmount);
                         
-                        infernoZones.push({
-                            x: targetPoint.x,
-                            y: targetPoint.y,
-                            radius: infernoRadius,
-                            damage: infernoDamage,
-                            duration: infernoDuration,
-                            startTime: now,
-                            color: def.color,
-                            lastDamageTick: now
-                        });
+                        // If no points ahead, use points near the front
+                        if (aheadPoints.length === 0) {
+                            aheadPoints = validPoints.filter(p => p.pathProgress >= frontmostProgress - 0.5);
+                        }
                         
-                        // Visual effect on creation
-                        createParticles(targetPoint.x, targetPoint.y, '#ff4400', 15);
-                        createParticles(targetPoint.x, targetPoint.y, '#ffaa00', 10);
+                        // If still no points, use any valid point
+                        if (aheadPoints.length === 0) {
+                            aheadPoints = validPoints;
+                        }
+                    }
+                    
+                    // Pick a random point from valid points
+                    let bestPathPoint = null;
+                    if (aheadPoints.length > 0) {
+                        const randomIndex = Math.floor(Math.random() * aheadPoints.length);
+                        bestPathPoint = aheadPoints[randomIndex];
+                    }
+                    
+                    // Fire boulder projectile at the target point
+                    if (bestPathPoint) {
+                        const dx = bestPathPoint.x - tower.x;
+                        const dy = bestPathPoint.y - tower.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (dist > 0) {
+                            tower.lastFired = now;
+                            
+                            // Create slow-moving boulder projectile
+                            projectiles.push({
+                                x: tower.x,
+                                y: tower.y - 5,
+                                vx: (dx / dist) * def.projectileSpeed,
+                                vy: (dy / dist) * def.projectileSpeed,
+                                targetX: bestPathPoint.x,
+                                targetY: bestPathPoint.y,
+                                damage: 0,
+                                color: def.projectileColor,
+                                type: 'inferno',
+                                alive: true,
+                                isBoulder: true,
+                                infernoRadius: infernoRadius,
+                                infernoDamage: infernoDamage,
+                                infernoDuration: infernoDuration,
+                                infernoColor: def.color,
+                                hitEnemies: [],
+                                trail: [{x: tower.x, y: tower.y - 5}],
+                                rotation: 0
+                            });
+                        }
                     }
                 } else {
                     fireProjectile(tower, bestTarget);
@@ -6082,6 +6161,10 @@
 
         function fireProjectile(tower, target) {
             const def = TOWERS[tower.type];
+            
+            // Inferno towers only fire boulder projectiles, not regular ones
+            if (def.isInferno) return;
+            
             const upgrades = tower.upgrades || getTowerUpgrades(tower.type);
             
             // Calculate damage this projectile would do
@@ -6611,11 +6694,73 @@
             // Check bounds
             if (proj.x < -20 || proj.x > BASE_WIDTH + 20 || proj.y < -20 || proj.y > BASE_HEIGHT + 20) {
                 proj.alive = false;
+                
+                // Boulders going out of bounds should still create their AOE at target
+                if (proj.isBoulder) {
+                    const now = performance.now();
+                    infernoZones.push({
+                        x: proj.targetX,
+                        y: proj.targetY,
+                        radius: proj.infernoRadius,
+                        damage: proj.infernoDamage,
+                        duration: proj.infernoDuration,
+                        startTime: now,
+                        color: proj.infernoColor,
+                        lastDamageTick: now
+                    });
+                    createParticles(proj.targetX, proj.targetY, '#ff4400', 20);
+                    createParticles(proj.targetX, proj.targetY, '#ffaa00', 15);
+                    createSplashRing(proj.targetX, proj.targetY, '#ff4400', proj.infernoRadius);
+                    return;
+                }
+                
                 // Clear incoming damage tracking from intended target
                 if (proj.intendedTarget && proj.intendedTarget.incomingDamage) {
                     proj.intendedTarget.incomingDamage = Math.max(0, proj.intendedTarget.incomingDamage - proj.damage);
                 }
                 return;
+            }
+            
+            // Handle boulder projectiles (inferno tower)
+            if (proj.isBoulder) {
+                // Update rotation for visual spin
+                proj.rotation = (proj.rotation || 0) + 0.15;
+                
+                // Check if reached target (or passed it)
+                const dx = proj.targetX - proj.x;
+                const dy = proj.targetY - proj.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                // Check if we've passed the target (dot product of velocity and remaining distance)
+                const dotProduct = dx * proj.vx + dy * proj.vy;
+                const passedTarget = dotProduct < 0;
+                
+                // Impact if close enough OR passed the target
+                if (dist < 25 || passedTarget) {
+                    // Impact! Create inferno zone at target location
+                    proj.alive = false;
+                    
+                    const now = performance.now();
+                    infernoZones.push({
+                        x: proj.targetX,
+                        y: proj.targetY,
+                        radius: proj.infernoRadius,
+                        damage: proj.infernoDamage,
+                        duration: proj.infernoDuration,
+                        startTime: now,
+                        color: proj.infernoColor,
+                        lastDamageTick: now
+                    });
+                    
+                    // Impact explosion particles
+                    createParticles(proj.targetX, proj.targetY, '#ff4400', 20);
+                    createParticles(proj.targetX, proj.targetY, '#ffaa00', 15);
+                    createParticles(proj.targetX, proj.targetY, '#8B4513', 10);
+                    
+                    // Create impact ring
+                    createSplashRing(proj.targetX, proj.targetY, '#ff4400', proj.infernoRadius);
+                }
+                return; // Boulder doesn't collide with enemies directly
             }
             
             // Check collision with enemies using swept collision (line segment to circle)
@@ -6793,6 +6938,11 @@
             
             waveInProgress = true;
             waveBtn.disabled = true;
+            
+            // Cancel any tower move in progress
+            if (movingTower) {
+                cancelTowerAction();
+            }
             
             if (gameMode === 'campaign') {
                 waveBtn.textContent = `STAGE ${campaignStage}-${campaignStageWave}`;
@@ -8039,8 +8189,8 @@
                 drawPathArrows();
             }
             
-            drawTowers();
             drawInfernoZones();
+            drawTowers();
             drawEnemies();
             drawChampions();
             drawProjectiles();
@@ -8552,6 +8702,49 @@
                             const sy = tower.y + Math.sin(sAngle) * sparkleR;
                             ctx.beginPath();
                             ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        ctx.globalAlpha = 1;
+                        break;
+                        
+                    case 'inferno': // 🌋 Inferno - Volcano with billowing smoke
+                        // Volcano cone (mountain shape)
+                        ctx.fillStyle = '#4a2800';
+                        ctx.beginPath();
+                        ctx.moveTo(tower.x - 10 * pulseScale, tower.y + 8);
+                        ctx.lineTo(tower.x - 4 * pulseScale, tower.y - 6 * pulseScale);
+                        ctx.lineTo(tower.x + 4 * pulseScale, tower.y - 6 * pulseScale);
+                        ctx.lineTo(tower.x + 10 * pulseScale, tower.y + 8);
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        // Lava glow at crater
+                        ctx.fillStyle = '#ff4400';
+                        ctx.shadowColor = '#ff4400';
+                        ctx.shadowBlur = 12 * pulseScale;
+                        ctx.beginPath();
+                        ctx.ellipse(tower.x, tower.y - 5 * pulseScale, 4 * pulseScale, 2 * pulseScale, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Inner hot core
+                        ctx.fillStyle = '#ffaa00';
+                        ctx.beginPath();
+                        ctx.ellipse(tower.x, tower.y - 5 * pulseScale, 2 * pulseScale, 1 * pulseScale, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                        
+                        // Billowing smoke particles
+                        ctx.globalAlpha = 0.6;
+                        for (let s = 0; s < 4; s++) {
+                            const smokeTime = now / 400 + s * 1.5;
+                            const smokeY = tower.y - 8 - (smokeTime % 3) * 6;
+                            const smokeX = tower.x + Math.sin(smokeTime * 2 + s) * (3 + s);
+                            const smokeSize = 2 + (smokeTime % 3) * 1.5;
+                            const smokeAlpha = 0.5 - (smokeTime % 3) * 0.15;
+                            
+                            ctx.fillStyle = `rgba(80, 80, 80, ${Math.max(0, smokeAlpha)})`;
+                            ctx.beginPath();
+                            ctx.arc(smokeX, smokeY, smokeSize, 0, Math.PI * 2);
                             ctx.fill();
                         }
                         ctx.globalAlpha = 1;
@@ -9605,6 +9798,69 @@
         function drawProjectiles() {
             ctx.globalAlpha = 1; // Ensure visibility
             for (const proj of projectiles) {
+                // Special boulder projectile drawing
+                if (proj.isBoulder) {
+                    ctx.save();
+                    ctx.translate(proj.x, proj.y);
+                    ctx.rotate(proj.rotation || 0);
+                    
+                    // Smoke trail
+                    if (proj.trail && proj.trail.length > 1) {
+                        for (let i = 1; i < proj.trail.length; i++) {
+                            const alpha = (i / proj.trail.length) * 0.4;
+                            const size = 4 + (i / proj.trail.length) * 6;
+                            ctx.globalAlpha = alpha;
+                            ctx.fillStyle = '#555';
+                            ctx.beginPath();
+                            ctx.arc(proj.trail[i].x - proj.x, proj.trail[i].y - proj.y, size, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        ctx.globalAlpha = 1;
+                    }
+                    
+                    // Boulder body (rocky brown)
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 15;
+                    ctx.fillStyle = '#5a3d2b';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Rocky texture (darker patches)
+                    ctx.fillStyle = '#3d2817';
+                    ctx.shadowBlur = 0;
+                    ctx.beginPath();
+                    ctx.arc(-3, -2, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(4, 3, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Glowing lava cracks
+                    ctx.strokeStyle = '#ff6600';
+                    ctx.lineWidth = 2;
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(-6, -4);
+                    ctx.lineTo(0, 2);
+                    ctx.lineTo(5, -1);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(-2, 5);
+                    ctx.lineTo(3, 0);
+                    ctx.stroke();
+                    
+                    // Hot glowing core visible through cracks
+                    ctx.fillStyle = '#ffaa00';
+                    ctx.beginPath();
+                    ctx.arc(0, 1, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.restore();
+                    continue;
+                }
+                
                 // Draw trail
                 if (proj.trail && proj.trail.length > 1) {
                     ctx.lineCap = 'round';
@@ -9908,17 +10164,37 @@
                     ctx.fill();
                     break;
                 
-                case 'inferno': // Flame
-                    ctx.fillStyle = '#ff4400';
+                case 'inferno': // Volcano with smoke
+                    // Volcano cone
+                    ctx.fillStyle = '#4a2800';
                     ctx.beginPath();
-                    ctx.moveTo(previewX, previewY - 9);
-                    ctx.quadraticCurveTo(previewX + 6, previewY - 3, previewX + 4, previewY + 5);
-                    ctx.quadraticCurveTo(previewX, previewY + 2, previewX - 4, previewY + 5);
-                    ctx.quadraticCurveTo(previewX - 6, previewY - 3, previewX, previewY - 9);
+                    ctx.moveTo(previewX - 8, previewY + 6);
+                    ctx.lineTo(previewX - 3, previewY - 5);
+                    ctx.lineTo(previewX + 3, previewY - 5);
+                    ctx.lineTo(previewX + 8, previewY + 6);
+                    ctx.closePath();
                     ctx.fill();
+                    
+                    // Lava glow
+                    ctx.fillStyle = '#ff4400';
+                    ctx.shadowColor = '#ff4400';
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.ellipse(previewX, previewY - 4, 3, 1.5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Hot core
                     ctx.fillStyle = '#ffaa00';
                     ctx.beginPath();
-                    ctx.arc(previewX, previewY, 3, 0, Math.PI * 2);
+                    ctx.ellipse(previewX, previewY - 4, 1.5, 0.8, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                    
+                    // Smoke puffs
+                    ctx.fillStyle = 'rgba(80, 80, 80, 0.5)';
+                    ctx.beginPath();
+                    ctx.arc(previewX - 1, previewY - 9, 2, 0, Math.PI * 2);
+                    ctx.arc(previewX + 2, previewY - 12, 1.5, 0, Math.PI * 2);
                     ctx.fill();
                     break;
                     
@@ -10217,51 +10493,100 @@
                 const elapsed = now - zone.startTime;
                 const remaining = zone.duration - elapsed;
                 const fadeAlpha = Math.min(1, remaining / 500); // Fade out in last 500ms
-                const pulseAlpha = 0.3 + Math.sin(now / 100) * 0.1;
+                const pulseAlpha = 0.5 + Math.sin(now / 150) * 0.2;
+                const safeRadius = Math.max(1, zone.radius); // Ensure positive radius
                 
                 ctx.save();
                 
-                // Outer glow
+                // Outer lava glow ring
+                ctx.strokeStyle = `rgba(255, 60, 0, ${0.6 * fadeAlpha})`;
+                ctx.lineWidth = 1.5;
+                ctx.shadowColor = '#ff4400';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(zone.x, zone.y, safeRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                
+                // Base lava pool gradient
                 const gradient = ctx.createRadialGradient(
                     zone.x, zone.y, 0,
-                    zone.x, zone.y, zone.radius
+                    zone.x, zone.y, safeRadius
                 );
-                gradient.addColorStop(0, 'rgba(255, 100, 0, ' + (0.6 * fadeAlpha * pulseAlpha) + ')');
-                gradient.addColorStop(0.5, 'rgba(255, 50, 0, ' + (0.4 * fadeAlpha * pulseAlpha) + ')');
-                gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+                gradient.addColorStop(0, `rgba(255, 200, 50, ${0.7 * fadeAlpha * pulseAlpha})`);
+                gradient.addColorStop(0.3, `rgba(255, 100, 0, ${0.6 * fadeAlpha * pulseAlpha})`);
+                gradient.addColorStop(0.6, `rgba(200, 50, 0, ${0.5 * fadeAlpha * pulseAlpha})`);
+                gradient.addColorStop(0.85, `rgba(100, 20, 0, ${0.4 * fadeAlpha * pulseAlpha})`);
+                gradient.addColorStop(1, 'rgba(50, 10, 0, 0)');
                 
                 ctx.fillStyle = gradient;
                 ctx.beginPath();
-                ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+                ctx.arc(zone.x, zone.y, safeRadius, 0, Math.PI * 2);
                 ctx.fill();
                 
-                // Flame particles effect (animated)
+                // Bubbling lava blobs
                 ctx.globalAlpha = fadeAlpha;
-                for (let f = 0; f < 6; f++) {
-                    const angle = (now / 200 + f * Math.PI / 3) % (Math.PI * 2);
-                    const dist = zone.radius * 0.5 + Math.sin(now / 150 + f) * zone.radius * 0.3;
-                    const fx = zone.x + Math.cos(angle) * dist;
-                    const fy = zone.y + Math.sin(angle) * dist;
-                    const fsize = 4 + Math.sin(now / 100 + f * 2) * 2;
+                for (let b = 0; b < 8; b++) {
+                    const bubblePhase = (now / 300 + b * 0.8) % 3;
+                    const bubbleAngle = (b / 8) * Math.PI * 2 + Math.sin(now / 500 + b) * 0.3;
+                    const bubbleDist = safeRadius * (0.2 + bubblePhase * 0.2);
+                    const bx = zone.x + Math.cos(bubbleAngle) * bubbleDist;
+                    const by = zone.y + Math.sin(bubbleAngle) * bubbleDist;
+                    const bsize = Math.max(1, 3 + Math.sin(bubblePhase * Math.PI) * 4);
+                    const bAlpha = Math.max(0, Math.sin(bubblePhase * Math.PI) * 0.8);
                     
-                    ctx.fillStyle = f % 2 === 0 ? '#ffaa00' : '#ff4400';
+                    // Bubble glow
+                    const bubbleGrad = ctx.createRadialGradient(bx, by, 0, bx, by, bsize);
+                    bubbleGrad.addColorStop(0, `rgba(255, 220, 100, ${bAlpha})`);
+                    bubbleGrad.addColorStop(0.5, `rgba(255, 150, 50, ${bAlpha * 0.7})`);
+                    bubbleGrad.addColorStop(1, `rgba(255, 80, 0, 0)`);
+                    
+                    ctx.fillStyle = bubbleGrad;
                     ctx.beginPath();
-                    ctx.arc(fx, fy, fsize, 0, Math.PI * 2);
+                    ctx.arc(bx, by, bsize, 0, Math.PI * 2);
                     ctx.fill();
                 }
                 
-                // Center hotspot
-                ctx.fillStyle = 'rgba(255, 200, 50, ' + (0.5 * fadeAlpha) + ')';
-                ctx.beginPath();
-                ctx.arc(zone.x, zone.y, 8, 0, Math.PI * 2);
-                ctx.fill();
+                // Rising heat/ember particles
+                for (let e = 0; e < 5; e++) {
+                    const emberTime = (now / 600 + e * 1.2) % 2;
+                    const emberAngle = (e / 5) * Math.PI * 2 + now / 1000;
+                    const emberDist = safeRadius * 0.4 * (1 - emberTime * 0.3);
+                    const ex = zone.x + Math.cos(emberAngle) * emberDist;
+                    const ey = zone.y + Math.sin(emberAngle) * emberDist - emberTime * 15;
+                    const esize = 2 - emberTime * 0.8;
+                    const eAlpha = (1 - emberTime * 0.5) * 0.9;
+                    
+                    ctx.fillStyle = `rgba(255, ${180 + emberTime * 50}, 50, ${eAlpha})`;
+                    ctx.beginPath();
+                    ctx.arc(ex, ey, Math.max(0.5, esize), 0, Math.PI * 2);
+                    ctx.fill();
+                }
                 
-                // Fire icon in center
-                ctx.font = '14px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.globalAlpha = 0.8 * fadeAlpha;
-                ctx.fillText('🔥', zone.x, zone.y);
+                // Cracking dark lines (cooled lava crust)
+                ctx.strokeStyle = `rgba(40, 10, 0, ${0.4 * fadeAlpha})`;
+                ctx.lineWidth = 1;
+                for (let c = 0; c < 4; c++) {
+                    const crackAngle = (c / 4) * Math.PI * 2 + 0.3;
+                    const crackLen = safeRadius * (0.4 + Math.sin(now / 800 + c) * 0.15);
+                    ctx.beginPath();
+                    ctx.moveTo(zone.x, zone.y);
+                    ctx.lineTo(
+                        zone.x + Math.cos(crackAngle) * crackLen,
+                        zone.y + Math.sin(crackAngle) * crackLen
+                    );
+                    ctx.stroke();
+                }
+                
+                // Center hotspot (brightest)
+                const coreGrad = ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, 12);
+                coreGrad.addColorStop(0, `rgba(255, 255, 200, ${0.9 * fadeAlpha})`);
+                coreGrad.addColorStop(0.4, `rgba(255, 200, 50, ${0.6 * fadeAlpha})`);
+                coreGrad.addColorStop(1, 'rgba(255, 100, 0, 0)');
+                ctx.fillStyle = coreGrad;
+                ctx.beginPath();
+                ctx.arc(zone.x, zone.y, 12, 0, Math.PI * 2);
+                ctx.fill();
                 
                 ctx.restore();
             }
