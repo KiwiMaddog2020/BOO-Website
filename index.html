@@ -2307,6 +2307,7 @@
             
             .game-container {
                 /* Dimensions controlled by JS for smooth aspect-locked scaling */
+                position: relative !important;
                 min-height: unset !important;
                 padding: 0 !important;
                 border-radius: 5px !important;
@@ -2349,7 +2350,10 @@
                 overscroll-behavior: contain !important;
                 /* Lower z-index so button can be tapped */
                 z-index: 1 !important;
-                position: relative !important;
+                /* Absolute position to fill container */
+                position: absolute !important;
+                top: 0 !important;
+                left: 0 !important;
             }
             
             /* Mobile fullscreen button - larger tap target */
@@ -8851,29 +8855,32 @@
         
         // ========== ROBUST MOBILE + DESKTOP SCALING SYSTEM ==========
         (function() {
+            // DEBUG MODE - set to true to show debug overlay
+            const DEBUG_SCALING = true;
+            
             // Device detection
             const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
                          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             const isAndroid = /Android/.test(navigator.userAgent);
             const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isDuckDuckGo = /DuckDuckGo/.test(navigator.userAgent);
             
             // Visual Viewport API (more accurate on mobile)
             const vv = window.visualViewport;
             
             // Get accurate viewport dimensions
             function getViewportWidth() {
-                if (vv) return vv.width;
-                return window.innerWidth;
+                // DuckDuckGo and some browsers may not have visualViewport
+                if (vv && vv.width) return vv.width;
+                return Math.min(window.innerWidth, document.documentElement.clientWidth);
             }
             
             function getViewportHeight() {
-                if (vv) return vv.height;
-                // iOS Safari fallback - use documentElement for more accuracy
-                if (isIOS && isSafari) {
-                    return document.documentElement.clientHeight;
-                }
-                return window.innerHeight;
+                // DuckDuckGo and some browsers may not have visualViewport
+                if (vv && vv.height) return vv.height;
+                // Use the smaller of innerHeight and clientHeight for safety
+                return Math.min(window.innerHeight, document.documentElement.clientHeight);
             }
             
             // Detect if mobile based on width OR touch + reasonable size
@@ -8886,15 +8893,24 @@
             function getSafeAreaInsets() {
                 const style = getComputedStyle(document.documentElement);
                 return {
-                    top: parseInt(style.getPropertyValue('--sat') || 
-                         style.getPropertyValue('env(safe-area-inset-top)')) || 0,
-                    bottom: parseInt(style.getPropertyValue('--sab') || 
-                            style.getPropertyValue('env(safe-area-inset-bottom)')) || 0,
-                    left: parseInt(style.getPropertyValue('--sal') || 
-                          style.getPropertyValue('env(safe-area-inset-left)')) || 0,
-                    right: parseInt(style.getPropertyValue('--sar') || 
-                           style.getPropertyValue('env(safe-area-inset-right)')) || 0
+                    top: parseInt(style.getPropertyValue('--sat')) || 0,
+                    bottom: parseInt(style.getPropertyValue('--sab')) || 0,
+                    left: parseInt(style.getPropertyValue('--sal')) || 0,
+                    right: parseInt(style.getPropertyValue('--sar')) || 0
                 };
+            }
+            
+            // Debug overlay
+            function updateDebugOverlay(info) {
+                if (!DEBUG_SCALING) return;
+                let overlay = document.getElementById('scaling-debug');
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'scaling-debug';
+                    overlay.style.cssText = 'position:fixed;bottom:10px;left:10px;background:rgba(0,0,0,0.85);color:#0f0;padding:10px;font:11px monospace;z-index:999999;border-radius:5px;max-width:90vw;pointer-events:none;';
+                    document.body.appendChild(overlay);
+                }
+                overlay.innerHTML = info;
             }
             
             // Main scaling function
@@ -8922,13 +8938,9 @@
                     
                     // Dynamic overhead based on orientation and device
                     if (isLandscape) {
-                        // Landscape: minimal overhead, maximize game
                         overhead = 80 + safeArea.top + safeArea.bottom;
                     } else {
-                        // Portrait: account for nav, selector, safe areas
                         overhead = 130 + safeArea.top + safeArea.bottom;
-                        
-                        // iOS Safari has dynamic toolbar - add extra buffer
                         if (isIOS && isSafari) {
                             overhead += 20;
                         }
@@ -8938,7 +8950,7 @@
                     availableHeight = viewportHeight - overhead;
                     
                 } else {
-                    // Desktop calculations (unchanged)
+                    // Desktop calculations
                     const maxWidthCap = 660;
                     const widthMargin = 0.95;
                     overhead = 220;
@@ -8949,15 +8961,18 @@
                 
                 // Calculate size that fits both constraints while preserving ratio
                 let finalWidth, finalHeight;
+                let constraint = '';
                 
                 if (availableWidth / gameRatio <= availableHeight) {
-                    // Width-constrained: use full width, calculate height
+                    // Width-constrained
                     finalWidth = availableWidth;
                     finalHeight = availableWidth / gameRatio;
+                    constraint = 'WIDTH';
                 } else {
-                    // Height-constrained: use full height, calculate width
+                    // Height-constrained
                     finalHeight = availableHeight;
                     finalWidth = availableHeight * gameRatio;
+                    constraint = 'HEIGHT';
                 }
                 
                 // Ensure minimum size
@@ -8969,6 +8984,22 @@
                 container.style.height = Math.floor(finalHeight) + 'px';
                 container.style.maxWidth = Math.floor(finalWidth) + 'px';
                 container.style.maxHeight = Math.floor(finalHeight) + 'px';
+                
+                // Debug output
+                updateDebugOverlay(`
+                    <b>SCALING DEBUG</b><br>
+                    Browser: ${isDuckDuckGo ? 'DuckDuckGo' : isAndroid ? 'Android' : isIOS ? 'iOS' : 'Other'}<br>
+                    VV API: ${vv ? 'Yes' : 'No'}<br>
+                    Viewport: ${Math.round(viewportWidth)}×${Math.round(viewportHeight)}<br>
+                    innerW/H: ${window.innerWidth}×${window.innerHeight}<br>
+                    clientW/H: ${document.documentElement.clientWidth}×${document.documentElement.clientHeight}<br>
+                    Mobile: ${mobile} | Landscape: ${isLandscape}<br>
+                    Overhead: ${overhead}px<br>
+                    Available: ${Math.round(availableWidth)}×${Math.round(availableHeight)}<br>
+                    Final: ${Math.floor(finalWidth)}×${Math.floor(finalHeight)}<br>
+                    Constraint: ${constraint}<br>
+                    Ratio: ${gameRatio.toFixed(4)}
+                `);
             };
             
             // Debounced resize handler
