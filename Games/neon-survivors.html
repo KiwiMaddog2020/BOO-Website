@@ -5975,10 +5975,11 @@
                 name: 'Beam',
                 icon: '📡',
                 color: COLORS.pink,
-                desc: 'Continuous beam, damage ramps up',
+                desc: 'Continuous beams, damage ramps up. +1 beam / 4 lvls',
                 baseDamage: 8,
                 baseRange: 200,
                 acquireTime: 600,
+                baseBeams: 1,
                 type: 'beam'
             },
             starField: {
@@ -7051,72 +7052,89 @@
 
             updateBeam(id, def, state, level, now, dt) {
                 const range = def.baseRange + level * 15;
+                const beamCount = def.baseBeams + Math.floor(level / 4); // +1 beam every 4 levels
                 
-                // Find target within range (including leprechauns)
+                // Initialize beams array if needed
+                if (!state.beams) state.beams = [];
+                
+                // Find all targets within range (including leprechauns)
                 const aliveEnemies = enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < range);
                 const aliveBosses = bosses.filter(b => !b.dead && Math.hypot(b.x - this.x, b.y - this.y) < range);
                 const aliveLeprechauns = leprechauns.filter(l => !l.dead && Math.hypot(l.x - this.x, l.y - this.y) < range);
                 const allTargets = [...aliveEnemies, ...aliveBosses, ...aliveLeprechauns];
                 
-                // Find nearest target
-                let bestTarget = null;
-                let bestDist = Infinity;
-                for (const t of allTargets) {
-                    const dist = Math.hypot(t.x - this.x, t.y - this.y);
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestTarget = t;
-                    }
-                }
+                // Sort targets by distance
+                allTargets.sort((a, b) => {
+                    const distA = Math.hypot(a.x - this.x, a.y - this.y);
+                    const distB = Math.hypot(b.x - this.x, b.y - this.y);
+                    return distA - distB;
+                });
                 
-                // Track beam target
-                if (!bestTarget) {
-                    state.beamTarget = null;
-                    state.beamLockTime = null;
+                // No targets - clear all beams
+                if (allTargets.length === 0) {
+                    state.beams = [];
                     state.beamActive = false;
                     return;
                 }
                 
-                // Check if target changed
-                if (state.beamTarget !== bestTarget) {
-                    state.beamTarget = bestTarget;
-                    state.beamLockTime = now;
-                    state.beamRetargetTime = now;
+                state.beamActive = true;
+                
+                // Track which targets are already being beamed
+                const targetedSet = new Set();
+                
+                // Update existing beams - keep valid ones, remove invalid
+                state.beams = state.beams.filter(beam => {
+                    if (!beam.target || beam.target.dead) return false;
+                    const dist = Math.hypot(beam.target.x - this.x, beam.target.y - this.y);
+                    if (dist > range) return false;
+                    targetedSet.add(beam.target);
+                    return true;
+                });
+                
+                // Add new beams for untargeted enemies (up to beamCount)
+                for (const target of allTargets) {
+                    if (state.beams.length >= beamCount) break;
+                    if (targetedSet.has(target)) continue;
+                    
+                    state.beams.push({
+                        target: target,
+                        lockTime: now,
+                        retargetTime: now,
+                        ramp: 0.5
+                    });
+                    targetedSet.add(target);
                 }
                 
-                // Acquiring delay before damage starts
+                // Process each beam
                 const acquireTime = def.acquireTime * Math.pow(0.97, level - 1);
-                const isAcquiring = now - state.beamRetargetTime < acquireTime;
+                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
                 
-                // Store beam state for rendering
-                state.beamActive = true;
-                state.beamIsAcquiring = isAcquiring;
-                state.beamTargetX = bestTarget.x;
-                state.beamTargetY = bestTarget.y;
-                
-                if (isAcquiring) return;
-                
-                // Calculate ramp multiplier - starts at 0.5x, accelerates over time
-                const lockDuration = Math.max(0, (now - state.beamLockTime - acquireTime) / 1000);
-                const rampMultiplier = 0.5 + Math.pow(lockDuration * 0.8, 1.8);
-                
-                // Store ramp for visual thickness
-                state.beamRamp = Math.min(rampMultiplier, 8);
-                
-                // Deal damage (tick every 100ms)
-                if (!state.lastBeamTick || now - state.lastBeamTick >= 100) {
-                    state.lastBeamTick = now;
+                for (const beam of state.beams) {
+                    const isAcquiring = now - beam.retargetTime < acquireTime;
+                    beam.isAcquiring = isAcquiring;
+                    beam.targetX = beam.target.x;
+                    beam.targetY = beam.target.y;
                     
-                    const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
-                    const tickDamage = baseDamage * rampMultiplier * 0.1; // DPS / 10 ticks per second
+                    if (isAcquiring) continue;
                     
-                    const { damage, isCrit } = this.calcDamage(tickDamage);
-                    bestTarget.takeDamage(damage, isCrit);
-                    this.onDealDamage(damage);
+                    // Calculate ramp multiplier - starts at 0.5x, accelerates over time
+                    const lockDuration = Math.max(0, (now - beam.lockTime - acquireTime) / 1000);
+                    beam.ramp = Math.min(0.5 + Math.pow(lockDuration * 0.8, 1.8), 8);
                     
-                    // Occasional particles
-                    if (Math.random() < 0.3) {
-                        spawnParticles(bestTarget.x, bestTarget.y, def.color, 3);
+                    // Deal damage (tick every 100ms)
+                    if (!beam.lastTick || now - beam.lastTick >= 100) {
+                        beam.lastTick = now;
+                        
+                        const tickDamage = baseDamage * beam.ramp * 0.1; // DPS / 10 ticks per second
+                        
+                        const { damage, isCrit } = this.calcDamage(tickDamage);
+                        beam.target.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        
+                        // Occasional particles
+                        if (Math.random() < 0.3) {
+                            spawnParticles(beam.target.x, beam.target.y, def.color, 3);
+                        }
                     }
                 }
             }
@@ -9145,70 +9163,75 @@
                         ctx.shadowBlur = 0;
                     }
                     
-                    // Beam weapon rendering
-                    if (def.type === 'beam' && state.beamActive && state.beamTargetX !== undefined) {
+                    // Beam weapon rendering (multiple beams)
+                    if (def.type === 'beam' && state.beamActive && state.beams && state.beams.length > 0) {
                         const now = performance.now();
-                        const tx = camera.screenX(state.beamTargetX);
-                        const ty = camera.screenY(state.beamTargetY);
                         
-                        if (state.beamIsAcquiring) {
-                            // Thin flickering dotted "acquiring" beam
-                            const flicker = Math.random() > 0.3 ? 1 : 0.4;
-                            ctx.strokeStyle = def.color;
-                            ctx.globalAlpha = 0.5 * flicker;
-                            ctx.lineWidth = camera.scale(2);
-                            ctx.shadowBlur = camera.scale(6);
-                            ctx.shadowColor = def.color;
-                            ctx.setLineDash([camera.scale(6), camera.scale(6)]);
-                            ctx.beginPath();
-                            ctx.moveTo(sx, sy);
-                            ctx.lineTo(tx, ty);
-                            ctx.stroke();
-                            ctx.setLineDash([]);
-                        } else {
-                            // Full powered beam with thickness based on ramp
-                            const ramp = state.beamRamp || 1;
-                            const beamPulse = 0.8 + Math.sin(now / 40) * 0.2;
-                            const thickness = Math.min(ramp, 6);
+                        for (const beam of state.beams) {
+                            if (!beam.targetX) continue;
                             
-                            // Outer glow beam
-                            ctx.strokeStyle = def.color;
-                            ctx.globalAlpha = 0.3;
-                            ctx.lineWidth = camera.scale((4 + thickness * 1.5) * beamPulse);
-                            ctx.shadowBlur = camera.scale(15);
-                            ctx.shadowColor = def.color;
-                            ctx.beginPath();
-                            ctx.moveTo(sx, sy);
-                            ctx.lineTo(tx, ty);
-                            ctx.stroke();
+                            const tx = camera.screenX(beam.targetX);
+                            const ty = camera.screenY(beam.targetY);
                             
-                            // Middle beam
-                            ctx.globalAlpha = 0.6;
-                            ctx.lineWidth = camera.scale((2 + thickness * 0.8) * beamPulse);
-                            ctx.shadowBlur = camera.scale(10);
-                            ctx.beginPath();
-                            ctx.moveTo(sx, sy);
-                            ctx.lineTo(tx, ty);
-                            ctx.stroke();
-                            
-                            // Core beam (bright white)
-                            ctx.strokeStyle = '#fff';
-                            ctx.globalAlpha = 0.9;
-                            ctx.lineWidth = camera.scale(1.5 + thickness * 0.3);
-                            ctx.shadowBlur = camera.scale(4);
-                            ctx.beginPath();
-                            ctx.moveTo(sx, sy);
-                            ctx.lineTo(tx, ty);
-                            ctx.stroke();
-                            
-                            // Impact sparks at target
-                            if (Math.random() < 0.4) {
-                                ctx.fillStyle = '#fff';
-                                ctx.globalAlpha = 0.8;
-                                const sparkSize = camera.scale(2 + ramp * 0.5);
+                            if (beam.isAcquiring) {
+                                // Thin flickering dotted "acquiring" beam
+                                const flicker = Math.random() > 0.3 ? 1 : 0.4;
+                                ctx.strokeStyle = def.color;
+                                ctx.globalAlpha = 0.5 * flicker;
+                                ctx.lineWidth = camera.scale(2);
+                                ctx.shadowBlur = camera.scale(6);
+                                ctx.shadowColor = def.color;
+                                ctx.setLineDash([camera.scale(6), camera.scale(6)]);
                                 ctx.beginPath();
-                                ctx.arc(tx, ty, sparkSize, 0, Math.PI * 2);
-                                ctx.fill();
+                                ctx.moveTo(sx, sy);
+                                ctx.lineTo(tx, ty);
+                                ctx.stroke();
+                                ctx.setLineDash([]);
+                            } else {
+                                // Full powered beam with thickness based on ramp
+                                const ramp = beam.ramp || 1;
+                                const beamPulse = 0.8 + Math.sin(now / 40) * 0.2;
+                                const thickness = Math.min(ramp, 6);
+                                
+                                // Outer glow beam
+                                ctx.strokeStyle = def.color;
+                                ctx.globalAlpha = 0.3;
+                                ctx.lineWidth = camera.scale((4 + thickness * 1.5) * beamPulse);
+                                ctx.shadowBlur = camera.scale(15);
+                                ctx.shadowColor = def.color;
+                                ctx.beginPath();
+                                ctx.moveTo(sx, sy);
+                                ctx.lineTo(tx, ty);
+                                ctx.stroke();
+                                
+                                // Middle beam
+                                ctx.globalAlpha = 0.6;
+                                ctx.lineWidth = camera.scale((2 + thickness * 0.8) * beamPulse);
+                                ctx.shadowBlur = camera.scale(10);
+                                ctx.beginPath();
+                                ctx.moveTo(sx, sy);
+                                ctx.lineTo(tx, ty);
+                                ctx.stroke();
+                                
+                                // Core beam (bright white)
+                                ctx.strokeStyle = '#fff';
+                                ctx.globalAlpha = 0.9;
+                                ctx.lineWidth = camera.scale(1.5 + thickness * 0.3);
+                                ctx.shadowBlur = camera.scale(4);
+                                ctx.beginPath();
+                                ctx.moveTo(sx, sy);
+                                ctx.lineTo(tx, ty);
+                                ctx.stroke();
+                                
+                                // Impact sparks at target
+                                if (Math.random() < 0.4) {
+                                    ctx.fillStyle = '#fff';
+                                    ctx.globalAlpha = 0.8;
+                                    const sparkSize = camera.scale(2 + ramp * 0.5);
+                                    ctx.beginPath();
+                                    ctx.arc(tx, ty, sparkSize, 0, Math.PI * 2);
+                                    ctx.fill();
+                                }
                             }
                         }
                         
