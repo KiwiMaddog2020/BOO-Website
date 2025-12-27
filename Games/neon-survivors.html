@@ -421,12 +421,10 @@
             align-content: center;
             padding: calc(4px * var(--scale, 1));
             pointer-events: auto;
-            width: calc(70px * var(--scale, 1));
+            flex: 1;
             max-height: calc(170px * var(--scale, 1));
             align-self: flex-start;
             flex-shrink: 0;
-            /* Center horizontally between stat panel and minimap */
-            margin: 0 auto;
         }
         
         /* Tomes bar - between minimap and defense panel */
@@ -440,12 +438,10 @@
             align-content: center;
             padding: calc(4px * var(--scale, 1));
             pointer-events: auto;
-            width: calc(70px * var(--scale, 1));
+            flex: 1;
             max-height: calc(170px * var(--scale, 1));
             align-self: flex-start;
             flex-shrink: 0;
-            /* Center horizontally between minimap and stat panel */
-            margin: 0 auto;
         }
         
         /* Weapon/Tome Tooltips */
@@ -3827,9 +3823,6 @@
             /* Scale weapons and tomes for mobile */
             .weapons-bar, .tomes-bar {
                 max-height: 145px;
-                width: 40px;
-                min-width: 40px;
-                max-width: 40px;
                 padding: 2px;
                 gap: 2px;
             }
@@ -3973,9 +3966,6 @@
             /* Smaller weapons/tomes */
             .weapons-bar, .tomes-bar {
                 max-height: 110px;
-                width: 32px;
-                min-width: 32px;
-                max-width: 32px;
             }
             
             .weapon-icon, .tome-icon {
@@ -4796,18 +4786,12 @@
             /* Mobile: Weapons bar */
             .weapons-bar {
                 gap: 3px;
-                width: 50px;
-                min-width: 50px;
-                max-width: 50px;
                 max-height: 115px;
             }
             
             /* Mobile: Tomes bar */
             .tomes-bar {
                 gap: 3px;
-                width: 50px;
-                min-width: 50px;
-                max-width: 50px;
                 max-height: 115px;
             }
             .weapon-icon {
@@ -17777,22 +17761,22 @@
                 const isNew = u.currentLevel === 0;
                 
                 if (u.type === 'weapon') {
-                    // Weapons have fixed rarity
-                    u.rarity = isNew ? 'common' : getUpgradeRarity(u.type, u.id);
+                    // Weapons have fixed rarity, new weapons use 'common' for weighting
+                    u.rarity = isNew ? null : getUpgradeRarity(u.type, u.id);
                 } else if (u.type === 'tome') {
-                    // Tomes roll for rarity dynamically each time offered
                     // Existing tomes keep their acquired rarity
+                    // New tomes don't have rarity yet - it's rolled on selection
                     if (!isNew && player.tomes[u.id] && player.tomes[u.id].rarity) {
                         u.rarity = player.tomes[u.id].rarity;
+                        u.rarityMultiplier = TOME_RARITY_MULTIPLIERS[u.rarity] || 1;
                     } else {
-                        // New tomes or first offering - roll for rarity
-                        u.rarity = rollRarity();
+                        // New tome - no rarity yet
+                        u.rarity = null;
+                        u.rarityMultiplier = null;
                     }
-                    // Store multiplier for display
-                    u.rarityMultiplier = TOME_RARITY_MULTIPLIERS[u.rarity] || 1;
                 }
                 
-                // Apply rarity weighting
+                // Apply rarity weighting (only for items with rarity)
                 if (u.rarity) {
                     const uRarityIndex = rarityOrder.indexOf(u.rarity);
                     
@@ -17874,12 +17858,9 @@
                     }
                     
                     const newLabel = upgrade.type === 'tome' ? 'NEW TOME' : 'NEW WEAPON';
-                    // For tomes, always show rarity (even when new) since it affects stats
-                    const tomeRarityLabel = (upgrade.type === 'tome' && rarityInfo) 
-                        ? ` <span style="color:${rarityInfo.color};">(${rarityInfo.name})</span>` 
-                        : '';
+                    // Only show rarity for existing items being upgraded
                     const topLabel = isNew
-                        ? `<div class="slot-rarity" style="font-size:9px;text-transform:uppercase;color:#fff;">${newLabel}${tomeRarityLabel}</div>`
+                        ? `<div class="slot-rarity" style="font-size:9px;text-transform:uppercase;color:#fff;">${newLabel}</div>`
                         : (rarityInfo ? `<div class="slot-rarity" style="color:${rarityInfo.color};font-size:9px;text-transform:uppercase;">${rarityInfo.name}</div>` : '');
                     
                     const levelText = isNew ? '' : `Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}`;
@@ -17989,16 +17970,12 @@
                     : upgradeIcon;
                 
                 // Show NEW or rarity badge in same position (mutually exclusive)
-                // For tomes, always show rarity (even when new) since it affects stats
                 const newBadgeLabel = upgrade.type === 'tome' ? 'NEW TOME' : 'NEW WEAPON';
-                const tomeRarityBadge = (upgrade.type === 'tome' && rarityInfo) 
-                    ? ` <span style="color:${rarityInfo.color};">(${rarityInfo.name})</span>` 
-                    : '';
                 const rarityBadge = isNew
-                    ? `<div class="rarity-badge" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;color:#fff;">${newBadgeLabel}${tomeRarityBadge}</div>`
+                    ? `<div class="rarity-badge" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;color:#fff;">${newBadgeLabel}</div>`
                     : (rarityInfo ? `<div class="rarity-badge" style="color:${rarityInfo.color};font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${rarityInfo.name}</div>` : '');
                 
-                // For tomes, show boosted value in description
+                // For existing tomes with rarity, show boosted value in description
                 let descText = upgrade.desc;
                 if (upgrade.type === 'tome' && upgrade.rarityMultiplier && upgrade.rarityMultiplier !== 1) {
                     const def = TOMES[upgrade.id];
@@ -18160,7 +18137,9 @@
             if (upgrade.type === 'weapon') {
                 player.addWeapon(upgrade.id);
             } else if (upgrade.type === 'tome') {
-                player.addTome(upgrade.id, upgrade.rarity || 'common');
+                // For new tomes, roll rarity now; existing tomes already have rarity
+                const tomeRarity = upgrade.rarity || rollRarity();
+                player.addTome(upgrade.id, tomeRarity);
             } else {
                 player.addPassive(upgrade.id);
             }
@@ -19733,7 +19712,8 @@
         
         // Player color options (neon palette, cold to hot)
         const PLAYER_COLORS = [
-            '#9b30ff', // Purple (coldest)
+            '#0055ff', // Blue (coolest)
+            '#9b30ff', // Purple
             '#00ffff', // Cyan
             '#39ff14', // Neon Green
             '#ffff00', // Yellow
@@ -19741,7 +19721,7 @@
             '#ff0000', // Red
             '#ff00ff'  // Magenta (hottest)
         ];
-        let selectedPlayerColor = PLAYER_COLORS[1]; // Default to Cyan
+        let selectedPlayerColor = PLAYER_COLORS[2]; // Default to Cyan
         
         function showWeaponSelect() {
             DOM.menuOverlay.classList.add('hidden');
