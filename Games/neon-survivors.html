@@ -5735,6 +5735,52 @@
             height: 7776
         };
         
+        // Generate grass tufts for cartoon grass texture (Stardew Valley style)
+        const GRASS_CELL_SIZE = 60; // World units per grass cell
+        const GRASS_COLS = Math.ceil(WORLD.width / GRASS_CELL_SIZE);
+        const GRASS_ROWS = Math.ceil(WORLD.height / GRASS_CELL_SIZE);
+        const grassGrid = []; // 2D grid for spatial lookup
+        
+        function generateGrassTufts() {
+            // Seeded random for consistent grass placement
+            const seed = 12345;
+            let rng = seed;
+            const seededRandom = () => {
+                rng = (rng * 1103515245 + 12345) & 0x7fffffff;
+                return rng / 0x7fffffff;
+            };
+            
+            // Initialize grid
+            for (let r = 0; r < GRASS_ROWS; r++) {
+                grassGrid[r] = [];
+                for (let c = 0; c < GRASS_COLS; c++) {
+                    grassGrid[r][c] = [];
+                }
+            }
+            
+            // Generate grass tufts in each cell
+            for (let r = 0; r < GRASS_ROWS; r++) {
+                for (let c = 0; c < GRASS_COLS; c++) {
+                    const wx = c * GRASS_CELL_SIZE;
+                    const wy = r * GRASS_CELL_SIZE;
+                    
+                    // 1-3 tufts per cell (reduced from 2-4)
+                    const tuftCount = 1 + Math.floor(seededRandom() * 3);
+                    for (let t = 0; t < tuftCount; t++) {
+                        grassGrid[r][c].push({
+                            x: wx + seededRandom() * GRASS_CELL_SIZE,
+                            y: wy + seededRandom() * GRASS_CELL_SIZE,
+                            blades: 2 + Math.floor(seededRandom() * 3), // 2-4 blades
+                            height: 5 + seededRandom() * 7, // 5-12 pixels
+                            shade: seededRandom(), // For color variation
+                            lean: (seededRandom() - 0.5) * 0.25 // Slight lean
+                        });
+                    }
+                }
+            }
+        }
+        generateGrassTufts();
+        
         // Target visible world area - consistent across all devices
         // Desktop baseline: 800x600 canvas at 0.665 zoom shows ~1203x903 world units
         const TARGET_VISIBLE_WIDTH = 1144;  // 10% more zoomed out
@@ -5745,8 +5791,8 @@
         const SHARED_TARGETING_RANGE = Math.hypot(TARGET_VISIBLE_WIDTH, TARGET_VISIBLE_HEIGHT) / 2 * 0.60;
         
         const camera = {
-            x: 0,
-            y: 0,
+            x: WORLD.width / 2 - 600,
+            y: WORLD.height / 2 - 450,
             zoom: 0.665, // Will be recalculated based on canvas size
             
             // Recalculate zoom to show consistent world area
@@ -14666,21 +14712,25 @@
             }
             
             // ===== STEP 1: Spawn 8 Lakes (spread across larger map, ensuring accessibility) =====
-            // Lakes distributed across map quadrants
+            // Lakes distributed across map quadrants - further from edges
             const lakeZones = [
-                { minX: 0.10, maxX: 0.25, minY: 0.10, maxY: 0.25 },  // Top-left corner
-                { minX: 0.75, maxX: 0.90, minY: 0.75, maxY: 0.90 },  // Bottom-right corner
-                { minX: 0.75, maxX: 0.90, minY: 0.10, maxY: 0.25 },  // Top-right corner
-                { minX: 0.10, maxX: 0.25, minY: 0.75, maxY: 0.90 },  // Bottom-left corner
-                { minX: 0.35, maxX: 0.50, minY: 0.10, maxY: 0.25 },  // Top-center-left
-                { minX: 0.50, maxX: 0.65, minY: 0.75, maxY: 0.90 },  // Bottom-center-right
-                { minX: 0.10, maxX: 0.25, minY: 0.40, maxY: 0.55 },  // Left-center
-                { minX: 0.75, maxX: 0.90, minY: 0.45, maxY: 0.60 }   // Right-center
+                { minX: 0.12, maxX: 0.22, minY: 0.12, maxY: 0.22 },  // Top-left corner
+                { minX: 0.78, maxX: 0.88, minY: 0.78, maxY: 0.88 },  // Bottom-right corner
+                { minX: 0.78, maxX: 0.88, minY: 0.12, maxY: 0.22 },  // Top-right corner
+                { minX: 0.12, maxX: 0.22, minY: 0.78, maxY: 0.88 },  // Bottom-left corner
+                { minX: 0.38, maxX: 0.48, minY: 0.12, maxY: 0.22 },  // Top-center-left
+                { minX: 0.52, maxX: 0.62, minY: 0.78, maxY: 0.88 },  // Bottom-center-right
+                { minX: 0.12, maxX: 0.22, minY: 0.42, maxY: 0.52 },  // Left-center
+                { minX: 0.78, maxX: 0.88, minY: 0.48, maxY: 0.58 }   // Right-center
             ];
             
+            // Increased minimum spacing between lakes
+            const LAKE_MIN_SPACING = MIN_CORRIDOR + 400;
+            const LAKE_EDGE_BUFFER = 500; // Minimum distance from world boundaries
+            
             for (let i = 0; i < 8; i++) {
-                // Slightly smaller lakes to ensure corridors
-                const baseRadius = 700 + Math.random() * 200;
+                // Lake size
+                const baseRadius = 550 + Math.random() * 150;
                 const radiusX = baseRadius * (0.9 + Math.random() * 0.2);
                 const radiusY = baseRadius * (0.7 + Math.random() * 0.2);
                 
@@ -14696,22 +14746,28 @@
                     
                     attempts++;
                     
+                    // Check distance from world boundaries
+                    if (x - radiusX < LAKE_EDGE_BUFFER || 
+                        x + radiusX > WORLD.width - LAKE_EDGE_BUFFER ||
+                        y - radiusY < LAKE_EDGE_BUFFER || 
+                        y + radiusY > WORLD.height - LAKE_EDGE_BUFFER) continue;
+                    
                     // Check edge access is maintained
                     if (blocksEdge(x, y, radiusX, radiusY)) continue;
                     
                     // Keep away from center spawn area
                     const centerDist = Math.hypot(x - WORLD.width/2, y - WORLD.height/2);
-                    if (centerDist < 800 + Math.max(radiusX, radiusY)) continue;
+                    if (centerDist < 1000 + Math.max(radiusX, radiusY)) continue;
                     
-                    // Check no overlap with existing lakes (increased spacing)
-                    if (overlapsExisting(x, y, radiusX, radiusY, MIN_CORRIDOR + 200)) continue;
+                    // Check no overlap with existing lakes (much more spacing)
+                    if (overlapsExisting(x, y, radiusX, radiusY, LAKE_MIN_SPACING)) continue;
                     
                     // Check this doesn't create blocking corridors
                     if (createsBlockage(x, y, radiusX, radiusY)) continue;
                     
                     placed = true;
                     break;
-                } while (attempts < 40);
+                } while (attempts < 50);
                 
                 if (placed) {
                     terrainObstacles.push({
@@ -18962,11 +19018,64 @@
         }
 
         function render() {
-            ctx.fillStyle = '#0a0a0a';
+            // Dark grass base color
+            ctx.fillStyle = '#081208';
             ctx.fillRect(0, 0, gameWidth, gameHeight);
             
+            // Draw grass tufts using spatial grid for efficiency
+            const viewMargin = GRASS_CELL_SIZE;
+            const viewLeft = camera.x - viewMargin;
+            const viewRight = camera.x + gameWidth / camera.zoom + viewMargin;
+            const viewTop = camera.y - viewMargin;
+            const viewBottom = camera.y + gameHeight / camera.zoom + viewMargin;
+            
+            const startCol = Math.max(0, Math.floor(viewLeft / GRASS_CELL_SIZE));
+            const endCol = Math.min(GRASS_COLS, Math.ceil(viewRight / GRASS_CELL_SIZE));
+            const startRow = Math.max(0, Math.floor(viewTop / GRASS_CELL_SIZE));
+            const endRow = Math.min(GRASS_ROWS, Math.ceil(viewBottom / GRASS_CELL_SIZE));
+            
+            ctx.lineCap = 'round';
+            
+            for (let r = startRow; r < endRow; r++) {
+                for (let c = startCol; c < endCol; c++) {
+                    const tufts = grassGrid[r][c];
+                    for (let i = 0; i < tufts.length; i++) {
+                        const tuft = tufts[i];
+                        
+                        // Skip grass in terrain obstacles (use global isInTerrain with padding)
+                        if (isInTerrain(tuft.x, tuft.y, 15)) continue;
+                        
+                        const sx = camera.screenX(tuft.x);
+                        const sy = camera.screenY(tuft.y);
+                        const scale = camera.zoom;
+                        
+                        // Color varies from dark to medium green (Stardew style)
+                        const g = Math.floor(28 + tuft.shade * 45);
+                        ctx.strokeStyle = `rgb(${6 + tuft.shade * 15}, ${g}, ${10 + tuft.shade * 12})`;
+                        ctx.lineWidth = Math.max(1, 1.2 * scale);
+                        
+                        // Draw individual blades
+                        for (let b = 0; b < tuft.blades; b++) {
+                            const bladeOffset = (b - tuft.blades / 2) * 2.5 * scale;
+                            const bladeHeight = tuft.height * scale * (0.75 + tuft.shade * 0.25);
+                            const bladeLean = tuft.lean + (b - tuft.blades / 2) * 0.1;
+                            
+                            ctx.beginPath();
+                            ctx.moveTo(sx + bladeOffset, sy);
+                            ctx.quadraticCurveTo(
+                                sx + bladeOffset + bladeLean * bladeHeight * 0.8,
+                                sy - bladeHeight * 0.5,
+                                sx + bladeOffset + bladeLean * bladeHeight * 1.2,
+                                sy - bladeHeight
+                            );
+                            ctx.stroke();
+                        }
+                    }
+                }
+            }
+            
             // Grid background (scrolls with camera, scales with zoom)
-            ctx.strokeStyle = 'rgba(0, 255, 255, 0.05)';
+            ctx.strokeStyle = 'rgba(50, 255, 100, 0.04)';
             ctx.lineWidth = 1;
             const worldGridSize = 60; // World units per grid cell
             const screenGridSize = worldGridSize * camera.zoom;
@@ -19061,7 +19170,7 @@
                     ctx.strokeStyle = '#ff00ff';
                     ctx.lineWidth = 2;
                     ctx.setLineDash([8, 6]);
-                    ctx.globalAlpha = 0.5;
+                    ctx.globalAlpha = 0.3;
                     ctx.shadowBlur = 8;
                     ctx.shadowColor = '#ff00ff';
                     ctx.beginPath();
@@ -20235,6 +20344,7 @@
             killRewardBonus = 1;
             
             player = new Player();
+            camera.update(); // Center camera on player immediately
             initFogGrid();
             spawnTerrain();
             spawnShrines();
