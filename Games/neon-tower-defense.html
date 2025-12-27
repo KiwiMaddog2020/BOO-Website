@@ -374,8 +374,8 @@
         }
 
         .tower-btn {
-            width: calc(50px * var(--scale, 1));
-            height: calc(62px * var(--scale, 1));
+            width: calc(54px * var(--scale, 1));
+            height: calc(64px * var(--scale, 1));
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -410,12 +410,12 @@
         }
 
         .tower-cost {
-            font-size: calc(10px * var(--scale, 1));
+            font-size: calc(11px * var(--scale, 1));
             color: #ffd700;
         }
         
         .tower-count {
-            font-size: calc(8px * var(--scale, 1));
+            font-size: calc(9px * var(--scale, 1));
             color: rgba(255, 255, 255, 0.6);
             margin-top: calc(1px * var(--scale, 1));
         }
@@ -438,7 +438,7 @@
         
         .tower-btn.locked .tower-cost {
             color: #888;
-            font-size: calc(8px * var(--scale, 1));
+            font-size: calc(10px * var(--scale, 1));
         }
         
         .tower-btn.locked .tower-count {
@@ -2044,7 +2044,7 @@
                 font-size: calc(15px * var(--scale, 1));
             }
             .tower-cost {
-                font-size: calc(8px * var(--scale, 1));
+                font-size: calc(9px * var(--scale, 1));
             }
             
             /* Make all control buttons same size on mobile */
@@ -2100,7 +2100,7 @@
                 font-size: calc(13px * var(--scale, 1));
             }
             .tower-cost {
-                font-size: calc(7px * var(--scale, 1));
+                font-size: calc(8px * var(--scale, 1));
             }
             .tower-bar {
                 gap: calc(2px * var(--scale, 1));
@@ -4254,6 +4254,7 @@
         let inspectedTower = null; // Tower being inspected (clicked on map)
         let inspectedChampion = null; // Champion being inspected (clicked on map)
         let towers = [];
+        let towerIdCounter = 0; // Unique ID for each tower
         let towerCounts = {}; // Track number of each tower type placed
         let enemies = [];
         let projectiles = [];
@@ -5704,6 +5705,7 @@
                 towerCounts[selectedTower] = (towerCounts[selectedTower] || 0) + 1;
                 
                 towers.push({
+                    id: ++towerIdCounter,
                     x: x,
                     y: y,
                     type: selectedTower,
@@ -5960,10 +5962,12 @@
             let canFire = bestTarget;
             if (def.isInferno) {
                 const maxZones = def.infernoMaxZones || 3;
-                const inFlightBoulders = projectiles.filter(p => p.isBoulder && p.alive).length;
-                const totalActive = infernoZones.length + inFlightBoulders;
+                // Count zones and boulders owned by THIS tower only
+                const myZones = infernoZones.filter(z => z.towerId === tower.id).length;
+                const myBoulders = projectiles.filter(p => p.isBoulder && p.alive && p.towerId === tower.id).length;
+                const myTotalActive = myZones + myBoulders;
                 // Inferno can fire preemptively as soon as wave starts, doesn't need enemies in range
-                canFire = waveInProgress && totalActive < maxZones;
+                canFire = waveInProgress && myTotalActive < maxZones;
             }
             if (canFire && now - tower.lastFire >= fireInterval) {
                 tower.lastFire = now;
@@ -6143,6 +6147,7 @@
                                 type: 'inferno',
                                 alive: true,
                                 isBoulder: true,
+                                towerId: tower.id,
                                 infernoRadius: infernoRadius,
                                 infernoDamage: infernoDamage,
                                 infernoDuration: infernoDuration,
@@ -6706,7 +6711,8 @@
                         duration: proj.infernoDuration,
                         startTime: now,
                         color: proj.infernoColor,
-                        lastDamageTick: now
+                        lastDamageTick: now,
+                        towerId: proj.towerId
                     });
                     createParticles(proj.targetX, proj.targetY, '#ff4400', 20);
                     createParticles(proj.targetX, proj.targetY, '#ffaa00', 15);
@@ -6749,7 +6755,8 @@
                         duration: proj.infernoDuration,
                         startTime: now,
                         color: proj.infernoColor,
-                        lastDamageTick: now
+                        lastDamageTick: now,
+                        towerId: proj.towerId
                     });
                     
                     // Impact explosion particles
@@ -8184,10 +8191,13 @@
             
             drawPath();
             
-            // Draw path arrows during tutorial
+            // Draw path arrows during tutorial (below markers)
             if (showPathArrows) {
                 drawPathArrows();
             }
+            
+            // Draw markers on top of arrows
+            drawPathMarkers();
             
             drawInfernoZones();
             drawTowers();
@@ -8323,7 +8333,9 @@
                 ctx.lineTo(currentPath[i].x, currentPath[i].y);
             }
             ctx.stroke();
-            
+        }
+        
+        function drawPathMarkers() {
             // Entry marker - bigger with START text and outer ring
             // Offset toward canvas center (inward) based on X position only
             const startRawX = currentPath[0].x;
@@ -8360,15 +8372,15 @@
             const endX = endRawX + endOffsetX;
             const endY = endRawY; // Keep Y centered on track
             // Outer ring
-            ctx.strokeStyle = '#ff3366';
+            ctx.strokeStyle = '#ff6464';
             ctx.lineWidth = 2;
-            ctx.shadowColor = '#ff3366';
+            ctx.shadowColor = '#ff6464';
             ctx.shadowBlur = 12;
             ctx.beginPath();
             ctx.arc(endX, endY, 24, 0, Math.PI * 2);
             ctx.stroke();
             // Inner filled circle
-            ctx.fillStyle = '#ff3366';
+            ctx.fillStyle = '#ff6464';
             ctx.beginPath();
             ctx.arc(endX, endY, 16, 0, Math.PI * 2);
             ctx.fill();
@@ -8378,7 +8390,7 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.shadowBlur = 0;
-            ctx.fillText('END', endX, endY);
+            ctx.fillText('END', endX, endY + 1);
             
             ctx.shadowBlur = 0;
         }
@@ -8491,7 +8503,10 @@
                 ctx.beginPath();
                 ctx.arc(tower.x, tower.y, 14 * pulseScale, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.stroke();
+                // Skip stroke for sniper (bullseye draws its own rings)
+                if (tower.type !== 'sniper') {
+                    ctx.stroke();
+                }
                 
                 // Draw tower-specific design
                 ctx.fillStyle = def.color;
@@ -8515,15 +8530,23 @@
                         ctx.fill();
                         break;
                         
-                    case 'sniper': // 🎯 Sniper - Simple bullseye
-                        // Outer ring
-                        ctx.strokeStyle = '#ff4444';
-                        ctx.lineWidth = 2;
+                    case 'sniper': // 🎯 Sniper - Bullseye target (D3)
+                        // Disable glow for clean bullseye look
+                        ctx.shadowBlur = 0;
+                        // Outer ring (red) - radius 14
+                        ctx.strokeStyle = '#ff0000';
+                        ctx.lineWidth = 2.3;
                         ctx.beginPath();
-                        ctx.arc(tower.x, tower.y, 8 * pulseScale, 0, Math.PI * 2);
+                        ctx.arc(tower.x, tower.y, 14 * pulseScale, 0, Math.PI * 2);
                         ctx.stroke();
-                        // Center dot
-                        ctx.fillStyle = '#ff4444';
+                        // Inner ring (white) - radius 8.75
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 1.8;
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, 8.75 * pulseScale, 0, Math.PI * 2);
+                        ctx.stroke();
+                        // Center dot (red) - radius 3
+                        ctx.fillStyle = '#ff0000';
                         ctx.beginPath();
                         ctx.arc(tower.x, tower.y, 3 * pulseScale, 0, Math.PI * 2);
                         ctx.fill();
@@ -10036,13 +10059,21 @@
                     ctx.fill();
                     break;
                     
-                case 'sniper': // Simple bullseye
-                    ctx.strokeStyle = '#ff4444';
-                    ctx.lineWidth = 2;
+                case 'sniper': // Bullseye target (D3)
+                    // Outer ring (red) - radius 14
+                    ctx.strokeStyle = '#ff0000';
+                    ctx.lineWidth = 2.3;
                     ctx.beginPath();
-                    ctx.arc(previewX, previewY, 8, 0, Math.PI * 2);
+                    ctx.arc(previewX, previewY, 14, 0, Math.PI * 2);
                     ctx.stroke();
-                    ctx.fillStyle = '#ff4444';
+                    // Inner ring (white) - radius 8.75
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.8;
+                    ctx.beginPath();
+                    ctx.arc(previewX, previewY, 8.75, 0, Math.PI * 2);
+                    ctx.stroke();
+                    // Center dot (red) - radius 3
+                    ctx.fillStyle = '#ff0000';
                     ctx.beginPath();
                     ctx.arc(previewX, previewY, 3, 0, Math.PI * 2);
                     ctx.fill();
