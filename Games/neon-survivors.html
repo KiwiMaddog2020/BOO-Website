@@ -6175,7 +6175,7 @@
                 name: 'Beam',
                 icon: '📡',
                 color: COLORS.pink,
-                desc: 'Continuous beams, damage ramps up. +1 beam / 4 lvls',
+                desc: 'Continuous beams with AOE splash. Damage ramps up over time.',
                 baseDamage: 8,
                 baseRange: 220,
                 acquireTime: 600,
@@ -7375,6 +7375,8 @@
                 // Process each beam
                 const acquireTime = def.acquireTime * Math.pow(0.97, level - 1) / this.attackSpeedMultiplier;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
+                const splashRadius = 45 + level * 3; // AOE radius around target
+                const splashDamageMult = 0.35; // 35% damage to nearby enemies
                 
                 for (const beam of state.beams) {
                     const isAcquiring = now - beam.retargetTime < acquireTime;
@@ -7398,6 +7400,52 @@
                         const { damage, isCrit } = this.calcDamage(tickDamage);
                         beam.target.takeDamage(damage, isCrit);
                         this.onDealDamage(damage);
+                        
+                        // AOE splash damage to nearby enemies
+                        const splashDamage = tickDamage * splashDamageMult;
+                        if (!beam.splashHits) beam.splashHits = [];
+                        
+                        // Splash to nearby regular enemies
+                        for (const enemy of enemies) {
+                            if (enemy.dead || enemy === beam.target) continue;
+                            const dist = Math.hypot(enemy.x - beam.target.x, enemy.y - beam.target.y);
+                            if (dist < splashRadius + enemy.radius) {
+                                const { damage: sDmg, isCrit: sCrit } = this.calcDamage(splashDamage);
+                                enemy.takeDamage(sDmg, sCrit);
+                                this.onDealDamage(sDmg);
+                                beam.splashHits.push({ x: enemy.x, y: enemy.y, time: now });
+                            }
+                        }
+                        
+                        // Splash to nearby bosses
+                        for (const boss of bosses) {
+                            if (boss.dead || boss === beam.target) continue;
+                            const dist = Math.hypot(boss.x - beam.target.x, boss.y - beam.target.y);
+                            if (dist < splashRadius + boss.radius) {
+                                const { damage: sDmg, isCrit: sCrit } = this.calcDamage(splashDamage);
+                                boss.takeDamage(sDmg, sCrit);
+                                this.onDealDamage(sDmg);
+                                beam.splashHits.push({ x: boss.x, y: boss.y, time: now });
+                            }
+                        }
+                        
+                        // Splash to nearby leprechauns
+                        for (const lep of leprechauns) {
+                            if (lep.dead || lep === beam.target) continue;
+                            const dist = Math.hypot(lep.x - beam.target.x, lep.y - beam.target.y);
+                            if (dist < splashRadius + lep.radius) {
+                                const { damage: sDmg, isCrit: sCrit } = this.calcDamage(splashDamage);
+                                lep.takeDamage(sDmg, sCrit);
+                                this.onDealDamage(sDmg);
+                                beam.splashHits.push({ x: lep.x, y: lep.y, time: now });
+                            }
+                        }
+                        
+                        // Cleanup old splash hits
+                        beam.splashHits = beam.splashHits.filter(h => now - h.time < 200);
+                        
+                        // Store splash radius for rendering
+                        beam.splashRadius = splashRadius;
                         
                         // Occasional particles
                         if (Math.random() < 0.3) {
@@ -9551,6 +9599,52 @@
                                     ctx.beginPath();
                                     ctx.arc(tx, ty, sparkSize, 0, Math.PI * 2);
                                     ctx.fill();
+                                }
+                                
+                                // AOE splash radius indicator (subtle pulsing ring)
+                                if (beam.splashRadius) {
+                                    const splashPulse = 0.15 + Math.sin(now / 80) * 0.08;
+                                    ctx.strokeStyle = def.color;
+                                    ctx.globalAlpha = splashPulse;
+                                    ctx.lineWidth = camera.scale(1.5);
+                                    ctx.shadowBlur = camera.scale(8);
+                                    ctx.shadowColor = def.color;
+                                    ctx.beginPath();
+                                    ctx.arc(tx, ty, camera.scale(beam.splashRadius), 0, Math.PI * 2);
+                                    ctx.stroke();
+                                }
+                                
+                                // Draw splash hit arcs to nearby damaged enemies
+                                if (beam.splashHits && beam.splashHits.length > 0) {
+                                    for (const hit of beam.splashHits) {
+                                        const age = now - hit.time;
+                                        if (age > 200) continue;
+                                        
+                                        const hitX = camera.screenX(hit.x);
+                                        const hitY = camera.screenY(hit.y);
+                                        const alpha = 0.6 * (1 - age / 200);
+                                        
+                                        // Small arc from target to splash victim
+                                        ctx.strokeStyle = def.color;
+                                        ctx.globalAlpha = alpha;
+                                        ctx.lineWidth = camera.scale(1.5);
+                                        ctx.shadowBlur = camera.scale(6);
+                                        ctx.shadowColor = def.color;
+                                        ctx.beginPath();
+                                        ctx.moveTo(tx, ty);
+                                        // Curved arc via control point
+                                        const midX = (tx + hitX) / 2 + (Math.random() - 0.5) * 20;
+                                        const midY = (ty + hitY) / 2 + (Math.random() - 0.5) * 20;
+                                        ctx.quadraticCurveTo(midX, midY, hitX, hitY);
+                                        ctx.stroke();
+                                        
+                                        // Small impact flash at splash target
+                                        ctx.fillStyle = def.color;
+                                        ctx.globalAlpha = alpha * 0.8;
+                                        ctx.beginPath();
+                                        ctx.arc(hitX, hitY, camera.scale(4 * (1 - age / 200)), 0, Math.PI * 2);
+                                        ctx.fill();
+                                    }
                                 }
                             }
                         }
