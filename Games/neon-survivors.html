@@ -609,7 +609,7 @@
             border: calc(2px * var(--scale, 1)) solid rgba(0, 255, 255, 0.3);
             border-radius: calc(8px * var(--scale, 1));
             width: calc(170px * var(--scale, 1));
-            height: 100%;
+            height: calc(100% - 25px);
             pointer-events: none;
             flex-shrink: 0;
             justify-content: space-between;
@@ -3804,7 +3804,7 @@
                 width: 110px;
                 min-width: 110px;
                 max-width: 110px;
-                height: 100%;
+                height: calc(100% - 25px);
                 min-height: unset;
                 max-height: unset;
                 padding: 7px 6px 8px 6px;
@@ -3958,7 +3958,7 @@
                 width: 90px;
                 min-width: 90px;
                 max-width: 90px;
-                height: 100%;
+                height: calc(100% - 25px);
                 min-height: unset;
                 max-height: unset;
                 padding: 5px 4px 6px 4px;
@@ -9627,20 +9627,52 @@
                                     ctx.fill();
                                 }
                                 
-                                // AOE splash radius indicator (subtle pulsing ring)
+                                // AOE splash - magenta sparks flying in radius
                                 if (beam.splashRadius) {
-                                    const splashPulse = 0.15 + Math.sin(now / 80) * 0.08;
-                                    ctx.strokeStyle = def.color;
-                                    ctx.globalAlpha = splashPulse;
-                                    ctx.lineWidth = camera.scale(1.5);
-                                    ctx.shadowBlur = camera.scale(8);
-                                    ctx.shadowColor = def.color;
-                                    ctx.beginPath();
-                                    ctx.arc(tx, ty, camera.scale(beam.splashRadius), 0, Math.PI * 2);
-                                    ctx.stroke();
+                                    const numSparks = 8;
+                                    const splashR = camera.scale(beam.splashRadius);
+                                    ctx.fillStyle = '#ff00ff';
+                                    ctx.shadowBlur = camera.scale(6);
+                                    ctx.shadowColor = '#ff00ff';
+                                    
+                                    for (let i = 0; i < numSparks; i++) {
+                                        // Each spark has unique orbit based on index
+                                        const baseAngle = (i / numSparks) * Math.PI * 2;
+                                        const orbitSpeed = 0.002 + (i % 3) * 0.0008;
+                                        const radiusMult = 0.4 + ((i * 7) % 10) / 15; // 0.4 - 1.0
+                                        const sparkAngle = baseAngle + now * orbitSpeed;
+                                        const sparkDist = splashR * radiusMult;
+                                        
+                                        // Add some wobble
+                                        const wobbleX = Math.sin(now * 0.005 + i * 2) * splashR * 0.1;
+                                        const wobbleY = Math.cos(now * 0.004 + i * 3) * splashR * 0.1;
+                                        
+                                        const sparkX = tx + Math.cos(sparkAngle) * sparkDist + wobbleX;
+                                        const sparkY = ty + Math.sin(sparkAngle) * sparkDist + wobbleY;
+                                        
+                                        // Pulsing alpha per spark
+                                        const sparkAlpha = 0.4 + Math.sin(now * 0.008 + i) * 0.25;
+                                        ctx.globalAlpha = sparkAlpha;
+                                        
+                                        // Spark size varies
+                                        const sparkSize = camera.scale(2 + Math.sin(now * 0.01 + i * 1.5) * 1);
+                                        
+                                        ctx.beginPath();
+                                        ctx.arc(sparkX, sparkY, sparkSize, 0, Math.PI * 2);
+                                        ctx.fill();
+                                        
+                                        // Small trail behind spark
+                                        const trailAngle = sparkAngle - orbitSpeed * 80;
+                                        const trailX = tx + Math.cos(trailAngle) * sparkDist + wobbleX * 0.8;
+                                        const trailY = ty + Math.sin(trailAngle) * sparkDist + wobbleY * 0.8;
+                                        ctx.globalAlpha = sparkAlpha * 0.4;
+                                        ctx.beginPath();
+                                        ctx.arc(trailX, trailY, sparkSize * 0.6, 0, Math.PI * 2);
+                                        ctx.fill();
+                                    }
                                 }
                                 
-                                // Draw splash hit arcs to nearby damaged enemies
+                                // Draw spark bursts at splash hit locations
                                 if (beam.splashHits && beam.splashHits.length > 0) {
                                     for (const hit of beam.splashHits) {
                                         const age = now - hit.time;
@@ -9648,28 +9680,25 @@
                                         
                                         const hitX = camera.screenX(hit.x);
                                         const hitY = camera.screenY(hit.y);
-                                        const alpha = 0.6 * (1 - age / 200);
+                                        const progress = age / 200;
+                                        const alpha = 0.7 * (1 - progress);
                                         
-                                        // Small arc from target to splash victim
-                                        ctx.strokeStyle = def.color;
-                                        ctx.globalAlpha = alpha;
-                                        ctx.lineWidth = camera.scale(1.5);
-                                        ctx.shadowBlur = camera.scale(6);
-                                        ctx.shadowColor = def.color;
-                                        ctx.beginPath();
-                                        ctx.moveTo(tx, ty);
-                                        // Curved arc via control point
-                                        const midX = (tx + hitX) / 2 + (Math.random() - 0.5) * 20;
-                                        const midY = (ty + hitY) / 2 + (Math.random() - 0.5) * 20;
-                                        ctx.quadraticCurveTo(midX, midY, hitX, hitY);
-                                        ctx.stroke();
+                                        // Burst of small sparks expanding outward
+                                        ctx.fillStyle = '#ff00ff';
+                                        ctx.shadowBlur = camera.scale(4);
+                                        ctx.shadowColor = '#ff00ff';
                                         
-                                        // Small impact flash at splash target
-                                        ctx.fillStyle = def.color;
-                                        ctx.globalAlpha = alpha * 0.8;
-                                        ctx.beginPath();
-                                        ctx.arc(hitX, hitY, camera.scale(4 * (1 - age / 200)), 0, Math.PI * 2);
-                                        ctx.fill();
+                                        for (let s = 0; s < 5; s++) {
+                                            const burstAngle = (s / 5) * Math.PI * 2 + hit.time * 0.01;
+                                            const burstDist = camera.scale(8 + progress * 12);
+                                            const bx = hitX + Math.cos(burstAngle) * burstDist;
+                                            const by = hitY + Math.sin(burstAngle) * burstDist;
+                                            
+                                            ctx.globalAlpha = alpha * (0.6 + Math.sin(s * 2) * 0.3);
+                                            ctx.beginPath();
+                                            ctx.arc(bx, by, camera.scale(2 * (1 - progress * 0.5)), 0, Math.PI * 2);
+                                            ctx.fill();
+                                        }
                                     }
                                 }
                             }
@@ -15527,7 +15556,7 @@
                 this.type = type;
                 this.pierce = pierce;
                 this.sizeScale = sizeScale;
-                const baseRadius = type === 'laser' ? 6 : type === 'dagger' ? 7 : type === 'boomerang' ? 22 : 
+                const baseRadius = type === 'laser' ? 6 : type === 'dagger' ? 7 : type === 'boomerang' ? 17 : 
                               type === 'bolt' ? 5 : type === 'squirrel' ? 24 : type === 'ice' ? 6 : 
                               type === 'homing' ? 8 : 8;
                 this.radius = baseRadius * sizeScale;
@@ -16151,7 +16180,7 @@
                 
                 // Boomerang: outward then return to player
                 else if (this.type === 'boomerang') {
-                    this.spinAngle += 0.3 * dtScale;
+                    this.spinAngle += 0.15 * dtScale;
                     const distFromStart = Math.hypot(this.x - this.startX, this.y - this.startY);
                     
                     if (!this.returning && distFromStart >= this.maxDist) {
@@ -16527,31 +16556,21 @@
                     ctx.closePath();
                     ctx.fill();
                 } else if (this.type === 'boomerang') {
-                    // Classic curved boomerang shape
+                    // Banana curve boomerang shape
                     ctx.translate(sx, sy);
                     ctx.rotate(this.spinAngle);
                     ctx.beginPath();
-                    // Draw a curved V-shape boomerang
-                    const armLen = r * 1.6;
-                    const thickness = r * 0.4;
-                    // Left arm (curved)
+                    const armLen = r * 1.7;
+                    const wingWidth = r * 0.6;
                     ctx.moveTo(0, 0);
-                    ctx.quadraticCurveTo(-armLen * 0.3, -armLen * 0.5, -armLen * 0.7, -armLen * 0.85);
-                    ctx.lineTo(-armLen * 0.55, -armLen * 0.75);
-                    ctx.quadraticCurveTo(-armLen * 0.2, -armLen * 0.35, 0, -thickness);
-                    // Right arm (curved)
-                    ctx.quadraticCurveTo(armLen * 0.2, -armLen * 0.35, armLen * 0.55, -armLen * 0.75);
-                    ctx.lineTo(armLen * 0.7, -armLen * 0.85);
-                    ctx.quadraticCurveTo(armLen * 0.3, -armLen * 0.5, 0, 0);
+                    ctx.quadraticCurveTo(-armLen * 0.42, -armLen * 0.28, -armLen * 0.72, -armLen * 0.72);
+                    ctx.lineTo(-armLen * 0.58, -armLen * 0.85);
+                    ctx.quadraticCurveTo(-armLen * 0.22, -armLen * 0.22, 0, -wingWidth);
+                    ctx.quadraticCurveTo(armLen * 0.22, -armLen * 0.22, armLen * 0.58, -armLen * 0.85);
+                    ctx.lineTo(armLen * 0.72, -armLen * 0.72);
+                    ctx.quadraticCurveTo(armLen * 0.42, -armLen * 0.28, 0, 0);
                     ctx.closePath();
                     ctx.fill();
-                    // Add a center stripe for detail
-                    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(-armLen * 0.4, -armLen * 0.5);
-                    ctx.quadraticCurveTo(0, -thickness * 0.5, armLen * 0.4, -armLen * 0.5);
-                    ctx.stroke();
                 } else if (this.type === 'squirrel' || this.isSquirrel) {
                     // Animated pet squirrel sprite
                     ctx.translate(sx, sy);
@@ -19310,7 +19329,7 @@
             // Draw power drops (heart, shoe, hourglass) above XP gems
             drawPowerDrops();
             
-            // Draw beam range indicator (magenta dotted circle) when beam is active or recently was
+            // Draw beam range indicator (magenta dotted circle) around targeted enemy
             if (player && player.weapons.beam) {
                 const beamState = player.weapons.beam;
                 const beamDef = WEAPONS.beam;
@@ -19327,17 +19346,13 @@
                 const timeSinceActive = gameTime - beamLastActiveTime;
                 const showIndicator = isCurrentlyActive || (beamLastActiveTime > 0 && timeSinceActive < 5000);
                 
-                if (showIndicator) {
-                    const sx = camera.screenX(player.x);
-                    const sy = camera.screenY(player.y);
-                    const scaledRange = camera.scale(range);
-                    
+                if (showIndicator && beamState.beams && beamState.beams.length > 0) {
                     // Calculate alpha: full for first 3 seconds, fade over next 2 seconds
-                    let alpha = 0.3;
+                    let alpha = 0.15;
                     if (!isCurrentlyActive && timeSinceActive > 3000) {
-                        // Fade from 0.3 to 0 over 2 seconds (3000-5000ms)
+                        // Fade from 0.15 to 0 over 2 seconds (3000-5000ms)
                         const fadeProgress = (timeSinceActive - 3000) / 2000;
-                        alpha = 0.3 * (1 - fadeProgress);
+                        alpha = 0.15 * (1 - fadeProgress);
                     }
                     
                     ctx.save();
@@ -19345,11 +19360,20 @@
                     ctx.lineWidth = 2;
                     ctx.setLineDash([8, 6]);
                     ctx.globalAlpha = alpha;
-                    ctx.shadowBlur = 8;
+                    ctx.shadowBlur = 5;
                     ctx.shadowColor = '#ff00ff';
-                    ctx.beginPath();
-                    ctx.arc(sx, sy, scaledRange, 0, Math.PI * 2);
-                    ctx.stroke();
+                    
+                    // Draw range circle around each targeted enemy
+                    for (const beam of beamState.beams) {
+                        if (beam.target && !beam.target.dead) {
+                            const sx = camera.screenX(beam.target.x);
+                            const sy = camera.screenY(beam.target.y);
+                            const scaledRange = camera.scale(range * 0.98);
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, scaledRange, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
+                    }
                     ctx.restore();
                 }
             }
