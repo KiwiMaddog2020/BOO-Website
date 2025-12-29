@@ -8331,6 +8331,45 @@
             }, 200);
         });
         
+        // ========== ZOOM SCROLL LOCK (ResizeObserver) ==========
+        // Catches browser zoom which doesn't reliably fire resize events
+        if (typeof ResizeObserver !== 'undefined') {
+            let zoomScrollTimeout;
+            let sectionBeforeZoom = null;
+            
+            const zoomObserver = new ResizeObserver((entries) => {
+                // Skip if already handling a resize event
+                if (isResizing) return;
+                
+                // Capture current section at start of zoom
+                if (!sectionBeforeZoom) {
+                    sectionBeforeZoom = getCurrentSection();
+                }
+                
+                // Immediate correction during zoom
+                if (sectionBeforeZoom && scrollContainer) {
+                    const targetSection = document.getElementById(sectionBeforeZoom);
+                    if (targetSection) {
+                        scrollContainer.scrollTop = targetSection.offsetTop;
+                    }
+                }
+                
+                // Debounce - final cleanup after zoom settles
+                clearTimeout(zoomScrollTimeout);
+                zoomScrollTimeout = setTimeout(function() {
+                    if (sectionBeforeZoom && scrollContainer) {
+                        const targetSection = document.getElementById(sectionBeforeZoom);
+                        if (targetSection) {
+                            targetSection.scrollIntoView({ behavior: 'instant', block: 'start' });
+                        }
+                    }
+                    sectionBeforeZoom = null;
+                }, 100);
+            });
+            
+            zoomObserver.observe(document.documentElement);
+        }
+        
         // ========== SCROLL SNAP CORRECTION ==========
         // Periodically check and correct scroll position when sections aren't aligned
         // Helps recover from zoom-induced drift in Safari/Firefox
