@@ -224,6 +224,13 @@
                 transform-origin: center center;
             }
             
+            /* Isolate sections to prevent blend mode flickering */
+            section {
+                isolation: isolate;
+                contain: layout style paint;
+                transform: translateZ(0); /* Force GPU layer */
+            }
+            
             @-webkit-keyframes chromeBackgroundBreath {
                 0%, 100% { 
                     -webkit-transform: scale(1.0) rotate(0deg);
@@ -6246,6 +6253,7 @@
             border-radius: 50%;
             cursor: pointer;
             box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+            margin-top: -4px; /* Center on 4px track: (4-12)/2 = -4 */
         }
 
         .volume-slider::-webkit-slider-runnable-track {
@@ -8041,6 +8049,7 @@
                 });
                 
                 updateActiveDot(targetId);
+                knownCurrentSection = targetId; // Track for zoom lock
                 updateActiveMenuItem(targetId);
                 updateUrlHash(targetId);
                 
@@ -8126,6 +8135,10 @@
         // Track scroll position to update dots and trigger slide animations
         // Also pause animations on off-screen sections for performance
         const scrollContainer = document.getElementById('scroll-container');
+        
+        // Global section tracker - updated by IntersectionObserver and menu clicks
+        // Used by zoom lock to avoid recalculating during zoom (which is unreliable)
+        let knownCurrentSection = 'home';
         
         // Cache DOM queries for performance
         const cardDots = document.querySelectorAll('.card-dot');
@@ -8341,9 +8354,10 @@
                 // Skip if already handling a resize event
                 if (isResizing) return;
                 
-                // Capture current section at start of zoom
+                // Use cached knownCurrentSection instead of calculating during zoom
+                // (getCurrentSection is unreliable during zoom as browser shifts scroll first)
                 if (!sectionBeforeZoom) {
-                    sectionBeforeZoom = getCurrentSection();
+                    sectionBeforeZoom = knownCurrentSection;
                 }
                 
                 // Immediate correction during zoom
@@ -8462,6 +8476,7 @@
                         
                         if (entry.intersectionRatio > 0.3) {
                             updateActiveDot(entry.target.id);
+                            knownCurrentSection = entry.target.id; // Track for zoom lock
                             entry.target.classList.add('visible');
                             // Update active menu item (mobile only, excludes home)
                             updateActiveMenuItem(entry.target.id);
@@ -8542,6 +8557,7 @@
                         // Instant scroll to section (no animation during load)
                         targetSection.scrollIntoView({ behavior: 'instant', block: 'start' });
                         updateActiveDot(initialHash);
+                        knownCurrentSection = initialHash; // Track for zoom lock
                         updateActiveMenuItem(initialHash);
                         targetSection.classList.add('visible');
                         targetSection.classList.remove('offscreen'); // Resume animations
