@@ -7918,12 +7918,38 @@
             }
         }
         
-        // Get currently visible section
+        // Get currently visible section - uses actual section positions for zoom compatibility
         function getCurrentSection() {
             const scrollTop = scrollContainer.scrollTop;
-            const sectionHeight = window.innerHeight;
-            const currentIndex = Math.round(scrollTop / sectionHeight);
-            return sections[currentIndex] || sections[0];
+            const viewportHeight = window.innerHeight;
+            const scrollMidpoint = scrollTop + (viewportHeight / 2);
+            
+            // Find which section contains the viewport midpoint
+            let closestSection = sections[0];
+            let closestDistance = Infinity;
+            
+            for (let i = 0; i < sections.length; i++) {
+                const sectionEl = document.getElementById(sections[i]);
+                if (!sectionEl) continue;
+                
+                const sectionTop = sectionEl.offsetTop;
+                const sectionBottom = sectionTop + sectionEl.offsetHeight;
+                const sectionMidpoint = sectionTop + (sectionEl.offsetHeight / 2);
+                
+                // Check if viewport midpoint is within this section
+                if (scrollMidpoint >= sectionTop && scrollMidpoint < sectionBottom) {
+                    return sections[i];
+                }
+                
+                // Track closest section as fallback
+                const distance = Math.abs(sectionMidpoint - scrollMidpoint);
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestSection = sections[i];
+                }
+            }
+            
+            return closestSection;
         }
         
         // Black fade transition for MENU CLICKS only
@@ -8304,6 +8330,46 @@
                 isResizing = false;
             }, 200);
         });
+        
+        // ========== SCROLL SNAP CORRECTION ==========
+        // Periodically check and correct scroll position when sections aren't aligned
+        // Helps recover from zoom-induced drift in Safari/Firefox
+        (function() {
+            let correctionTimeout;
+            const SNAP_TOLERANCE = 5; // Pixels of tolerance before correcting
+            
+            function checkAndCorrectSnap() {
+                // Skip if transitioning, resizing, or game is active
+                if (isTransitioning || isResizing || document.body.classList.contains('arcade-game-hover')) {
+                    return;
+                }
+                
+                const currentSectionId = getCurrentSection();
+                const currentSectionEl = document.getElementById(currentSectionId);
+                if (!currentSectionEl) return;
+                
+                const expectedTop = currentSectionEl.offsetTop;
+                const actualTop = scrollContainer.scrollTop;
+                const drift = Math.abs(expectedTop - actualTop);
+                
+                // If drifted more than tolerance, snap back
+                if (drift > SNAP_TOLERANCE && drift < window.innerHeight * 0.4) {
+                    scrollContainer.scrollTop = expectedTop;
+                }
+            }
+            
+            // Check after scroll ends (debounced)
+            scrollContainer.addEventListener('scroll', function() {
+                clearTimeout(correctionTimeout);
+                correctionTimeout = setTimeout(checkAndCorrectSnap, 300);
+            }, { passive: true });
+            
+            // Also check after any resize settles
+            window.addEventListener('resize', function() {
+                clearTimeout(correctionTimeout);
+                correctionTimeout = setTimeout(checkAndCorrectSnap, 500);
+            });
+        })();
         
         // Update URL hash without adding to browser history (cleaner UX)
         var lastUrlSection = '';
