@@ -193,6 +193,13 @@
                 display: none !important;
             }
             
+            /* === DISABLE BLEND MODE ANIMATIONS (causes flickering) === */
+            .color-mist::before,
+            .color-mist::after {
+                animation: none !important;
+                -webkit-animation: none !important;
+            }
+            
             /* Reduce blur on remaining elements for better performance */
             .lava-blob {
                 filter: saturate(1.0) !important; /* Reduced saturation */
@@ -8202,6 +8209,7 @@
         // Intercept scroll/wheel/touch to trigger same fade transition as nav clicks
         let scrollTransitionCooldown = false;
         let isResizing = false; // Block transitions during window resize
+        let isZooming = false; // Block section tracking during browser zoom
         const scrollCooldownTime = 690; // Prevent rapid-fire transitions
         
         // Get ordered section list
@@ -8354,6 +8362,9 @@
                 // Skip if already handling a resize event
                 if (isResizing) return;
                 
+                // Block IntersectionObserver from updating knownCurrentSection during zoom
+                isZooming = true;
+                
                 // Use cached knownCurrentSection instead of calculating during zoom
                 // (getCurrentSection is unreliable during zoom as browser shifts scroll first)
                 if (!sectionBeforeZoom) {
@@ -8378,6 +8389,7 @@
                         }
                     }
                     sectionBeforeZoom = null;
+                    isZooming = false; // Re-enable section tracking
                 }, 800);
             });
             
@@ -8476,7 +8488,10 @@
                         
                         if (entry.intersectionRatio > 0.3) {
                             updateActiveDot(entry.target.id);
-                            knownCurrentSection = entry.target.id; // Track for zoom lock
+                            // Only update tracked section if not zooming (zoom lock uses cached value)
+                            if (!isZooming) {
+                                knownCurrentSection = entry.target.id;
+                            }
                             entry.target.classList.add('visible');
                             // Update active menu item (mobile only, excludes home)
                             updateActiveMenuItem(entry.target.id);
