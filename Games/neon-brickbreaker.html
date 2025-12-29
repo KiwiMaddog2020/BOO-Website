@@ -111,6 +111,7 @@
             margin: 0 !important;
             padding: 0 !important;
             overflow: hidden !important;
+            background: #000 !important;
         }
         
         html.in-iframe body {
@@ -120,30 +121,44 @@
         }
         
         html.in-iframe .game-container {
-            width: 100% !important;
-            height: 100% !important;
-            max-width: 100% !important;
-            max-height: 100% !important;
+            /* Render at natural size, CSS transform scales to fit */
+            width: fit-content !important;
+            height: fit-content !important;
+            max-width: none !important;
+            max-height: none !important;
             border: none !important;
             border-radius: 0 !important;
             box-shadow: none !important;
             padding: 4px !important;
             gap: 2px !important;
+            overflow: visible !important;
+            /* Transform origin for scaling */
+            transform-origin: center center;
+            /* Scale factor set by JS via CSS variable */
+            transform: scale(var(--iframe-scale, 1));
+        }
+        
+        /* In iframe: fixed canvas size */
+        html.in-iframe #gameCanvas {
+            width: 653px !important;
+            height: 515px !important;
         }
         
         /* In iframe: compact HUD */
         html.in-iframe .hud {
+            width: 653px !important;
             padding: 2px 0;
             flex-shrink: 0;
             font-size: 15px;
             gap: 22px;
         }
         
-        /* In iframe: compact trackpad zone to fit 640/690 aspect ratio */
+        /* In iframe: fixed trackpad zone */
         html.in-iframe .trackpad-zone {
-            flex: 1;
-            min-height: 100px;
-            max-height: none;
+            width: 653px !important;
+            height: 180px !important;
+            min-height: 180px !important;
+            max-height: 180px !important;
             padding: 6px 10px 7px;
         }
         
@@ -1816,8 +1831,56 @@
             const viewW = viewport.width;
             const viewH = viewport.height;
             
+            // IFRAME MODE: Scale entire game container to fit using CSS transform
+            if (isInIframe && !isNativeFullscreen) {
+                const gameContainer = document.querySelector('.game-container');
+                gameContainer.classList.add('fullscreen-mode');
+                document.body.classList.add('fullscreen-active');
+                
+                // Game's natural display dimensions (canvas + HUD + trackpad)
+                // Canvas: 653x515, HUD: ~25px, Trackpad: 180px, padding: ~12px
+                const gameNaturalWidth = 653 + 8;  // canvas + padding
+                const gameNaturalHeight = 515 + 25 + 180 + 12;  // canvas + HUD + trackpad + gaps
+                const gameAspect = gameNaturalWidth / gameNaturalHeight;
+                
+                // Calculate scale to fit iframe while maintaining aspect ratio
+                const iframeAspect = viewW / viewH;
+                let scale;
+                if (iframeAspect > gameAspect) {
+                    // Iframe wider than game - height constrained
+                    scale = viewH / gameNaturalHeight;
+                } else {
+                    // Iframe taller than game - width constrained
+                    scale = viewW / gameNaturalWidth;
+                }
+                
+                // Apply scale via CSS custom property
+                document.documentElement.style.setProperty('--iframe-scale', scale);
+                
+                // Canvas renders at base size
+                gameWidth = BASE_WIDTH;
+                gameHeight = BASE_HEIGHT;
+                cssWidth = BASE_WIDTH;
+                cssHeight = BASE_HEIGHT;
+                
+                // Set canvas buffer at appropriate resolution
+                const bufferScale = Math.min(window.devicePixelRatio || 1, 2);
+                canvas.width = Math.round(BASE_WIDTH * bufferScale);
+                canvas.height = Math.round(BASE_HEIGHT * bufferScale);
+                canvas.style.width = BASE_WIDTH + 'px';
+                canvas.style.height = BASE_HEIGHT + 'px';
+                
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(bufferScale, bufferScale);
+                dprScale = bufferScale;
+                
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                return;
+            }
+            
             const isPseudoFullscreen = !isNativeFullscreen && 
-                                       (isInIframe || viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
+                                       (viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
             
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const gameContainer = document.querySelector('.game-container');
