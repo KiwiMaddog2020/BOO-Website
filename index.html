@@ -2263,16 +2263,11 @@
             }
             
             .game-container {
-                /* Match desktop aspect ratio for consistency */
-                width: 95% !important;
-                max-width: 400px !important;
-                aspect-ratio: 640/718 !important;
-                height: auto !important;
-                max-height: 70vh !important; /* Prevent overflow beyond section */
-                min-height: unset !important;
+                /* DIMENSIONS CONTROLLED BY JS via enforceGameAspectRatio() */
+                /* width, height, max-width, max-height, aspect-ratio all set by JS */
                 padding: 0 !important;
                 border-radius: 5px !important;
-                overflow: hidden !important; /* Changed from visible to prevent content bleed */
+                overflow: hidden !important;
                 margin-top: 8px !important;
                 /* Prevent page scrolling when touching game */
                 touch-action: none !important;
@@ -2308,9 +2303,8 @@
             
             .game-container iframe {
                 width: 100% !important;
-                /* Fixed aspect ratio - ignore per-game data-aspect on mobile */
-                aspect-ratio: 640/718 !important;
-                height: auto !important;
+                height: 100% !important;
+                /* Let container control aspect ratio, iframe fills it */
                 min-height: unset !important;
                 border-radius: 5px !important;
                 touch-action: none !important;
@@ -5233,17 +5227,14 @@
         /* Desktop with zoom: ensure aspect-ratio is maintained even at narrow viewports */
         @media (pointer: fine) {
             .game-container {
-                aspect-ratio: 640/718 !important; /* JS will update per game */
+                /* aspect-ratio set by JS via enforceGameAspectRatio() */
             }
         }
         
         /* Tablet-specific game container - iPads and similar devices */
         @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) {
             .game-container {
-                width: 100% !important;
-                max-width: 100% !important;
-                max-height: 90vh !important;
-                aspect-ratio: 640/718 !important;
+                /* Dimensions controlled by JS via enforceGameAspectRatio() */
             }
             .game-container iframe {
                 width: 100% !important;
@@ -5633,8 +5624,7 @@
             }
             
             .game-container {
-                max-width: 100% !important;
-                max-height: 75vh !important;
+                /* Dimensions controlled by JS via enforceGameAspectRatio() */
             }
             
             /* Arcade selector - more compact */
@@ -5716,7 +5706,7 @@
             }
             
             .game-container {
-                max-height: 70vh !important;
+                /* Dimensions controlled by JS via enforceGameAspectRatio() */
             }
         }
         
@@ -6753,12 +6743,8 @@
 
         /* Larger phones like OnePlus 13R (400px+ width) - game container tweaks */
         @media (min-width: 400px) and (max-width: 768px) and (pointer: coarse) {
-            /* Tighter game container - maintain desktop aspect ratio */
+            /* Dimensions controlled by JS via enforceGameAspectRatio() */
             .game-container {
-                aspect-ratio: 640/718 !important;
-                height: auto !important;
-                max-height: 70vh !important;
-                min-height: unset !important;
                 overflow: hidden !important;
             }
             /* Nudge game section content up 10px on larger mobile devices */
@@ -6861,12 +6847,8 @@
             }
             .placeholder-icon { font-size: 0.9rem !important; }
             
-            /* Smaller game container - maintain desktop aspect ratio */
+            /* Smaller game container - dimensions controlled by JS via enforceGameAspectRatio() */
             .game-container {
-                aspect-ratio: 640/718 !important;
-                height: auto !important;
-                max-height: 65vh !important;
-                min-height: unset !important;
                 overflow: hidden !important;
             }
             
@@ -6951,8 +6933,7 @@
                 font-size: 0.95rem;
             }
             .game-container {
-                max-width: 520px;
-                max-height: 72vh;
+                /* Dimensions controlled by JS via enforceGameAspectRatio() */
             }
             
             /* Other sections */
@@ -6994,8 +6975,7 @@
                 font-size: 0.85rem;
             }
             .game-container {
-                max-width: 450px;
-                max-height: 68vh;
+                /* Dimensions controlled by JS via enforceGameAspectRatio() */
             }
             
             h2 { font-size: 1.8rem; }
@@ -9007,26 +8987,43 @@
             observer.observe(gameContainer);
         })();
         
-        // ========== DESKTOP-ONLY SMOOTH ASPECT-LOCKED SCALING ==========
-        // Calculates largest size that fits viewport while maintaining fixed 640/740 aspect ratio
-        // Only runs on desktop (>768px) - mobile uses pure CSS
+        // ========== ASPECT-LOCKED SCALING (ALL DEVICES) ==========
+        // Calculates largest size that fits viewport while maintaining per-game aspect ratio
+        // Uses data-aspect attribute from active arcade pill
         function enforceGameAspectRatio() {
-            // Skip on mobile - let CSS handle it
-            if (window.innerWidth <= 768) return;
-            
             const container = document.querySelector('#game .game-container');
             if (!container) return;
             
-            // Fixed aspect ratio for all games
-            const gameRatio = 640 / 740;
+            // Get aspect ratio from active pill's data-aspect attribute
+            const activePill = document.querySelector('.arcade-pill.active');
+            let aspectStr = '640/718'; // Default
+            let gameRatio = 640 / 718;
+            
+            if (activePill && activePill.dataset.aspect) {
+                aspectStr = activePill.dataset.aspect;
+                const parts = aspectStr.split('/');
+                gameRatio = parseFloat(parts[0]) / parseFloat(parts[1]);
+            }
+            
+            const isMobile = window.innerWidth <= 768;
             
             // Calculate available space
-            const maxWidthCap = 660;
-            const widthMargin = 0.95;
-            const overhead = 220;
+            let availableWidth, availableHeight;
             
-            const availableWidth = Math.min(maxWidthCap, window.innerWidth * widthMargin);
-            const availableHeight = window.innerHeight - overhead;
+            if (isMobile) {
+                // Mobile: fill width with small margin, respect viewport height
+                const widthMargin = 0.95;
+                const overhead = 180; // Space for nav, title, game selector
+                availableWidth = window.innerWidth * widthMargin;
+                availableHeight = window.innerHeight - overhead;
+            } else {
+                // Desktop: existing logic
+                const maxWidthCap = 660;
+                const widthMargin = 0.95;
+                const overhead = 220;
+                availableWidth = Math.min(maxWidthCap, window.innerWidth * widthMargin);
+                availableHeight = window.innerHeight - overhead;
+            }
             
             // Calculate size that fits both constraints while preserving ratio
             let finalWidth, finalHeight;
@@ -9041,20 +9038,19 @@
                 finalWidth = availableHeight * gameRatio;
             }
             
-            // Apply dimensions
-            container.style.width = finalWidth + 'px';
-            container.style.height = finalHeight + 'px';
-            container.style.maxWidth = finalWidth + 'px';
-            container.style.maxHeight = finalHeight + 'px';
+            // Apply dimensions with !important to override CSS
+            container.style.setProperty('width', finalWidth + 'px', 'important');
+            container.style.setProperty('height', finalHeight + 'px', 'important');
+            container.style.setProperty('max-width', finalWidth + 'px', 'important');
+            container.style.setProperty('max-height', finalHeight + 'px', 'important');
+            container.style.setProperty('aspect-ratio', aspectStr.replace('/', ' / '), 'important');
         }
         
-        // Run on resize (debounced for performance) - desktop only
+        // Run on resize (debounced for performance) - ALL devices now
         let resizeTimeout;
         window.addEventListener('resize', function() {
-            if (window.innerWidth > 768) {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(enforceGameAspectRatio, 50);
-            }
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(enforceGameAspectRatio, 50);
         });
         
         // ========== GAME CONTAINER ZOOM COMPENSATION ==========
@@ -9114,8 +9110,13 @@
         const arcadeGameContainer = document.querySelector('#game .game-container');
         
         if (arcadePills.length > 0 && arcadeFrame && arcadeGameContainer) {
-            // Set initial size (desktop only)
+            // Set initial size (all devices)
             enforceGameAspectRatio();
+            
+            // Also call on orientation change for mobile
+            window.addEventListener('orientationchange', function() {
+                setTimeout(enforceGameAspectRatio, 100);
+            });
             
             arcadePills.forEach(pill => {
                 // Click handler for desktop
