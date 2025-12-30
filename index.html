@@ -9053,53 +9053,130 @@
         
         // ========== GAME CONTAINER ZOOM COMPENSATION ==========
         // Prevents game iframe from scaling when user zooms the page
-        // Uses devicePixelRatio changes to detect zoom (most reliable method)
+        // Uses multiple detection methods for cross-browser compatibility
         (function() {
             const gameContainer = document.querySelector('#game .game-container');
+            const gameIframe = document.getElementById('arcadeFrame');
             if (!gameContainer) return;
             
-            // Store initial DPR as baseline
-            const initialDPR = window.devicePixelRatio || 1;
-            let currentScale = 1;
+            // Detect the baseline (unzoomed) DPR
+            // On high-DPI displays this is 2, on standard displays it's 1
+            // We use matchMedia to detect the true device scale
+            function getBaselineDPR() {
+                // Check if devicePixelRatio matches common device scales
+                const dpr = window.devicePixelRatio || 1;
+                // Round to nearest 0.5 to handle sub-pixel scaling
+                return Math.round(dpr * 2) / 2;
+            }
+            
+            // Get current zoom level using multiple methods
+            function getZoomLevel() {
+                // Method 1: visualViewport (most accurate on mobile and modern browsers)
+                if (window.visualViewport && window.visualViewport.scale !== 1) {
+                    return window.visualViewport.scale;
+                }
+                
+                // Method 2: Compare outerWidth to innerWidth (desktop browsers)
+                // This works when browser chrome is visible
+                if (window.outerWidth && window.innerWidth) {
+                    const ratio = window.outerWidth / window.innerWidth;
+                    // Only use this if it indicates zoom (not just window resizing)
+                    if (ratio > 1.1 || ratio < 0.9) {
+                        // This gives inverse zoom, so invert it
+                        return 1 / ratio;
+                    }
+                }
+                
+                // Method 3: devicePixelRatio changes from baseline
+                // This catches keyboard zoom (Cmd/Ctrl +/-)
+                const currentDPR = window.devicePixelRatio || 1;
+                const baselineDPR = getBaselineDPR();
+                
+                // If DPR changed significantly from expected baseline, user zoomed
+                // We need to account for the baseline being a retina display
+                const expectedDPR = baselineDPR;
+                if (Math.abs(currentDPR - expectedDPR) > 0.1) {
+                    return currentDPR / expectedDPR;
+                }
+                
+                return 1; // No zoom detected
+            }
+            
+            let lastAppliedScale = 1;
+            let baselineDPR = window.devicePixelRatio || 1;
             
             function compensateForZoom() {
                 const currentDPR = window.devicePixelRatio || 1;
                 
-                // Calculate zoom level from DPR change
-                // If DPR went from 1 to 2, user zoomed to 200%
-                const zoomLevel = currentDPR / initialDPR;
+                // Detect zoom by comparing current DPR to baseline
+                const zoomLevel = currentDPR / baselineDPR;
                 
-                // Only apply compensation if zoom is significantly different (>5% change)
-                // and within reasonable bounds (25% to 400%)
-                if (Math.abs(zoomLevel - 1) > 0.05 && zoomLevel >= 0.25 && zoomLevel <= 4) {
-                    const newScale = 1 / zoomLevel;
+                // Only compensate if zoom changed significantly (>5%)
+                // and is within reasonable bounds (25% to 500%)
+                if (Math.abs(zoomLevel - 1) > 0.05 && zoomLevel >= 0.2 && zoomLevel <= 5) {
+                    const counterScale = 1 / zoomLevel;
                     
-                    // Only update if scale changed meaningfully
-                    if (Math.abs(newScale - currentScale) > 0.02) {
-                        currentScale = newScale;
-                        gameContainer.style.transform = `scale(${newScale})`;
+                    // Only update if scale changed meaningfully (>2%)
+                    if (Math.abs(counterScale - lastAppliedScale) > 0.02) {
+                        lastAppliedScale = counterScale;
+                        
+                        // Apply counter-scale to game container
+                        gameContainer.style.transform = `scale(${counterScale})`;
                         gameContainer.style.transformOrigin = 'center center';
+                        
+                        // Adjust container size to compensate for scale
+                        // This prevents the scaled container from affecting layout
+                        const currentWidth = gameContainer.offsetWidth;
+                        const currentHeight = gameContainer.offsetHeight;
+                        gameContainer.style.marginLeft = `${(currentWidth * (1 - counterScale)) / 2}px`;
+                        gameContainer.style.marginRight = `${(currentWidth * (1 - counterScale)) / 2}px`;
+                        gameContainer.style.marginTop = `${(currentHeight * (1 - counterScale)) / 2}px`;
+                        gameContainer.style.marginBottom = `${(currentHeight * (1 - counterScale)) / 2}px`;
                     }
-                } else if (Math.abs(zoomLevel - 1) <= 0.05 && currentScale !== 1) {
-                    // Reset to normal if back to ~100% zoom
-                    currentScale = 1;
+                } else if (Math.abs(zoomLevel - 1) <= 0.05 && lastAppliedScale !== 1) {
+                    // Reset to normal when back to ~100% zoom
+                    lastAppliedScale = 1;
                     gameContainer.style.transform = '';
                     gameContainer.style.transformOrigin = '';
+                    gameContainer.style.marginLeft = '';
+                    gameContainer.style.marginRight = '';
+                    gameContainer.style.marginTop = '';
+                    gameContainer.style.marginBottom = '';
                 }
             }
             
-            // Check on resize (zoom triggers resize in most browsers)
+            // Listen for zoom changes via multiple events
+            
+            // 1. Resize event (zoom triggers this in most desktop browsers)
             window.addEventListener('resize', compensateForZoom);
             
-            // Also check periodically for browsers that don't fire resize on zoom
-            let lastCheckedDPR = initialDPR;
-            setInterval(() => {
+            // 2. visualViewport events (mobile and some desktop browsers)
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', compensateForZoom);
+                window.visualViewport.addEventListener('scroll', compensateForZoom);
+            }
+            
+            // 3. Poll for DPR changes (catches keyboard zoom in all browsers)
+            let lastDPR = window.devicePixelRatio || 1;
+            const pollInterval = setInterval(() => {
                 const currentDPR = window.devicePixelRatio || 1;
-                if (currentDPR !== lastCheckedDPR) {
-                    lastCheckedDPR = currentDPR;
+                if (Math.abs(currentDPR - lastDPR) > 0.01) {
+                    lastDPR = currentDPR;
                     compensateForZoom();
                 }
-            }, 500);
+            }, 250);
+            
+            // 4. Keyboard zoom shortcuts (Cmd/Ctrl + Plus/Minus/0)
+            document.addEventListener('keydown', (e) => {
+                if ((e.metaKey || e.ctrlKey) && (e.key === '+' || e.key === '-' || e.key === '=' || e.key === '0')) {
+                    // Delay check to let browser apply zoom first
+                    setTimeout(compensateForZoom, 100);
+                    setTimeout(compensateForZoom, 300);
+                }
+            });
+            
+            // Initial check (in case page was loaded while zoomed)
+            setTimeout(compensateForZoom, 100);
         })();
         
         // ========== ARCADE GAME SELECTOR ==========
