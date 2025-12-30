@@ -89,19 +89,15 @@
         .game-container.fullscreen-mode #gameCanvas {
             border: 2px solid rgba(0, 255, 255, 0.15);
             box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
-            border-radius: 0;
-            border-bottom: none;
+            border-radius: 5px;
             flex-shrink: 0;
         }
         
-        /* Subtle cyan border around trackpad in fullscreen */
+        /* Fullscreen trackpad - invisible touch overlay */
         .game-container.fullscreen-mode .trackpad-zone {
-            border: 2px solid rgba(0, 255, 255, 0.15);
-            border-top: none;
-            box-shadow: 0 0 10px rgba(0, 255, 255, 0.1);
-            overflow: visible;
-            flex-shrink: 0;
-            flex-grow: 0;
+            background: transparent;
+            border: none;
+            box-shadow: none;
         }
         
         /* Fullscreen body centering - JS adds this class */
@@ -3516,27 +3512,26 @@
 
         /* ========== UNIFIED TRACKPAD ZONE ========== */
         /* Contains: active buffs + spacer + instructions */
+        /* Trackpad zone - invisible overlay for touch events (canvas renders UI) */
         .trackpad-zone {
-            display: flex;
-            flex-direction: column;
-            justify-content: flex-start;
-            align-items: center;
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
             width: 100%;
-            /* Height set by JavaScript in fullscreen mode */
-            height: auto;
-            min-height: 80px;
-            flex: 0 0 auto;
-            padding: 2px calc(4px * var(--scale, 1)) calc(4px * var(--scale, 1)) calc(4px * var(--scale, 1));
-            box-sizing: border-box;
+            height: 240px;
+            /* Invisible but captures touch */
+            background: transparent;
+            border: none;
             /* Touch control */
             touch-action: none;
             pointer-events: auto;
-            /* Visual styling */
-            border-top: 1px solid rgba(0, 255, 255, 0.15);
-            background: linear-gradient(to bottom, rgba(0, 255, 255, 0.06), transparent);
-            border-radius: 0 0 5px 5px;
-            /* Needed for joystick positioning */
-            position: relative;
+            z-index: 10;
+        }
+        
+        /* Hide all visual children (canvas renders everything) */
+        .trackpad-zone > *:not(.joystick-overlay) {
+            display: none !important;
         }
         
         /* Active buffs display - removed, stats now in stat panels */
@@ -3873,15 +3868,16 @@
                 padding: 0 1px;
             }
             
-            /* Compact trackpad zone */
+            /* Compact trackpad zone - invisible (canvas renders) */
             .trackpad-zone {
-                min-height: 72px;
-                padding: 4px 4px 4px 4px;
+                min-height: 0;
+                padding: 0;
+                background: transparent !important;
+                border: none !important;
             }
             
             .trackpad-main-row {
-                gap: 0;
-                align-items: center;
+                display: none;
             }
             
             /* Mobile zone sizing - still fill width */
@@ -3944,7 +3940,9 @@
         /* Extra small screens */
         @media (max-width: 400px) {
             .trackpad-zone {
-                min-height: 36px;
+                min-height: 0;
+                background: transparent !important;
+                border: none !important;
             }
             
             .bottom-hp-bar {
@@ -5037,7 +5035,7 @@
 </head>
 <body>
     <div class="game-container">
-        <canvas id="gameCanvas" width="640" height="626"></canvas>
+        <canvas id="gameCanvas" width="800" height="820"></canvas>
         
         <!-- Pause button -->
         <div class="pause-btn" id="pauseBtn" title="Pause (P)">⏸</div>
@@ -5422,9 +5420,49 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         
-        // Base canvas dimensions
+        // ========== CANVAS-ONLY LAYOUT ==========
+        // All UI rendered on single canvas for zoom independence
         const BASE_WIDTH = 800;
-        const BASE_HEIGHT = 580;
+        const BASE_GAME_HEIGHT = 580;     // Game area only
+        const BASE_TRACKPAD_HEIGHT = 240; // Stats + minimap + controls (was 200, now matches ~29% ratio)
+        const BASE_HEIGHT = BASE_GAME_HEIGHT + BASE_TRACKPAD_HEIGHT; // 820 total
+        
+        const LAYOUT = {
+            gameTop: 0,
+            gameHeight: BASE_GAME_HEIGHT,
+            trackpadTop: BASE_GAME_HEIGHT,
+            trackpadHeight: BASE_TRACKPAD_HEIGHT
+        };
+        
+        // Canvas UI state (updated each frame)
+        const uiState = {
+            timer: '0:00',
+            kills: 0,
+            gold: 0,
+            level: 1,
+            hp: 120,
+            maxHp: 120,
+            shieldHp: 0,
+            maxShieldHp: 0,
+            xpPercent: 0,
+            // Offensive stats
+            damage: 100,
+            attackSpeed: 100,
+            critChance: 5,
+            critDamage: 2.0,
+            pickupRange: 100,
+            luck: 0,
+            // Defensive stats  
+            maxHpStat: 120,
+            hpRegen: 1.5,
+            lifesteal: 0,
+            armor: 0,
+            shield: 0,
+            moveSpeed: 100,
+            // Weapons and Tomes (arrays of {id, level, color, icon})
+            weapons: [],
+            tomes: []
+        };
         
         // ========== DEBUG UTILITY ==========
         const GameDebug = {
@@ -5524,8 +5562,10 @@
         
         // Scaling state
         let dprScale = 1;
-        let gameWidth = BASE_WIDTH;   // Game logic coordinates (always BASE)
-        let gameHeight = BASE_HEIGHT;
+        let fullscreenLogicalWidth = BASE_WIDTH;
+        let fullscreenLogicalHeight = BASE_HEIGHT;
+        let gameWidth = BASE_WIDTH;        // Game logic coordinates
+        let gameHeight = BASE_GAME_HEIGHT; // Game area only (not full canvas)
         let cssWidth = BASE_WIDTH;    // CSS display size
         let cssHeight = BASE_HEIGHT;
         
@@ -5559,82 +5599,78 @@
             const isTouchDeviceLocal = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
             const gameContainer = document.querySelector('.game-container');
             
-            // Game logic always uses base coordinates
+            // Game logic uses game area dimensions only
             gameWidth = BASE_WIDTH;
-            gameHeight = BASE_HEIGHT;
-            
-            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+            gameHeight = BASE_GAME_HEIGHT;
             
             if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
-                // Universal margin system: border + safety padding
-                // Iframes have no borders so no margin needed
+                // Universal margin system
                 const borderWidth = isInIframe ? 0 : 3;
                 const safetyPadding = (isTablet || isIPad) ? 20 : 0;
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Trackpad takes ~29% of total height (halfway between 1/4 and 1/3)
-                const TRACKPAD_MIN_HEIGHT = 80;
-                
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
                 
-                // Canvas aspect ratio (game logic coordinates)
-                const canvasAspect = BASE_WIDTH / BASE_HEIGHT; // 800/520 = 1.538
+                // Scale game to fill width, trackpad fills rest of height
+                // Game area maintains aspect ratio based on BASE dimensions
+                const gameAspect = BASE_WIDTH / BASE_GAME_HEIGHT; // 800/580 ≈ 1.38
                 
-                // Trackpad = ~29% of available height (halfway between 1/4 and 1/3)
-                const trackpadCalc = Math.max(TRACKPAD_MIN_HEIGHT, Math.floor(availHeight / 3.5));
-                const canvasAreaHeight = availHeight - trackpadCalc;
+                // Scale factor based on width
+                const scaleFromWidth = availWidth / BASE_WIDTH;
+                const scaledGameHeight = BASE_GAME_HEIGHT * scaleFromWidth;
                 
-                // Fit canvas to available width while maintaining aspect ratio
-                // If canvas would be taller than canvasAreaHeight, scale down width too
-                const canvasFromWidth = availWidth;
-                const canvasHeightFromWidth = canvasFromWidth / canvasAspect;
+                // Remaining height for trackpad
+                const remainingHeight = availHeight - scaledGameHeight;
+                const trackpadScaled = remainingHeight / scaleFromWidth; // Convert back to logical coords
+                const minTrackpad = 120;
+                const finalTrackpadLogical = Math.max(minTrackpad, trackpadScaled);
                 
-                if (canvasHeightFromWidth <= canvasAreaHeight) {
-                    // Width-limited: canvas fits in height
-                    cssWidth = Math.floor(canvasFromWidth);
-                    cssHeight = Math.floor(canvasHeightFromWidth);
-                } else {
-                    // Height-limited: scale canvas to fit height
-                    cssHeight = Math.floor(canvasAreaHeight);
-                    cssWidth = Math.floor(cssHeight * canvasAspect);
-                }
+                // Total logical height
+                const totalLogicalHeight = BASE_GAME_HEIGHT + finalTrackpadLogical;
                 
-                // Final trackpad height fills remaining space
-                const finalTrackpadHeight = availHeight - cssHeight;
+                // Update layout for dynamic trackpad
+                LAYOUT.gameHeight = BASE_GAME_HEIGHT;
+                LAYOUT.trackpadTop = BASE_GAME_HEIGHT;
+                LAYOUT.trackpadHeight = finalTrackpadLogical;
                 
-                // Determine optimal buffer scale based on device
+                // CSS dimensions fill viewport
+                cssWidth = Math.floor(availWidth);
+                cssHeight = Math.floor(BASE_GAME_HEIGHT * scaleFromWidth + finalTrackpadLogical * scaleFromWidth);
+                
+                // Set logical dimensions for rendering (in BASE_WIDTH coordinate space)
+                fullscreenLogicalWidth = BASE_WIDTH;
+                fullscreenLogicalHeight = totalLogicalHeight;
+                
+                // Determine buffer scale
                 let bufferScale;
                 const displayScale = cssWidth / BASE_WIDTH;
                 
                 if (isIPad) {
-                    bufferScale = Math.min(rawDPR * displayScale, 2.5);
+                    bufferScale = Math.min(displayScale * rawDPR, 2.5);
                 } else if (isTablet) {
-                    bufferScale = Math.min(rawDPR * displayScale * 0.85, 2.5);
+                    bufferScale = Math.min(displayScale * rawDPR * 0.85, 2.5);
                 } else if (is4K) {
                     bufferScale = Math.min(displayScale * rawDPR, 3);
-                } else if (isHighDPI) {
-                    bufferScale = Math.min(displayScale * rawDPR, maxFullscreenDPR);
                 } else {
                     bufferScale = Math.min(displayScale * rawDPR, maxFullscreenDPR);
                 }
                 
-                // Ensure minimum quality
                 bufferScale = Math.max(1, bufferScale);
                 
-                // iOS canvas memory safety check
+                // Memory safety check
                 let bufferWidth = Math.round(BASE_WIDTH * bufferScale);
-                let bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
+                let bufferHeight = Math.round(totalLogicalHeight * bufferScale);
                 const totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
                     const scaleFactorMem = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
                     bufferScale *= scaleFactorMem;
                     bufferWidth = Math.round(BASE_WIDTH * bufferScale);
-                    bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
+                    bufferHeight = Math.round(totalLogicalHeight * bufferScale);
                 }
                 
                 canvas.width = bufferWidth;
@@ -5642,19 +5678,22 @@
                 canvas.style.width = cssWidth + 'px';
                 canvas.style.height = cssHeight + 'px';
                 
-                // Set trackpad zone dimensions to match calculated layout
+                // Position invisible trackpad overlay for touch events
                 const trackpadEl = document.getElementById('trackpadZone');
                 if (trackpadEl) {
+                    const trackpadHeightPx = finalTrackpadLogical * scaleFromWidth;
+                    trackpadEl.style.position = 'absolute';
                     trackpadEl.style.width = cssWidth + 'px';
-                    trackpadEl.style.height = finalTrackpadHeight + 'px';
-                    trackpadEl.style.minHeight = finalTrackpadHeight + 'px';
+                    trackpadEl.style.height = trackpadHeightPx + 'px';
+                    trackpadEl.style.bottom = '0';
+                    trackpadEl.style.left = '50%';
+                    trackpadEl.style.transform = 'translateX(-50%)';
                 }
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(bufferScale, bufferScale);
                 dprScale = bufferScale;
                 
-                // Update CSS scale variable for UI elements
                 const uiScale = cssWidth / BASE_WIDTH;
                 document.documentElement.style.setProperty('--scale', uiScale);
             } else if (isMobileView) {
@@ -5663,28 +5702,51 @@
                 const containerPadding = 8;
                 const maxAvailWidth = viewW - containerPadding * 2 - 6;
                 cssWidth = Math.min(BASE_WIDTH, maxAvailWidth);
-                cssHeight = cssWidth / gameAspect;
                 
-                // Mobile DPR scaling - allow up to 2x for retina phones
-                // Most phones are 2x-3x DPR, cap to prevent memory issues
+                // Use base aspect ratio for windowed/mobile
+                const mobileAspect = BASE_WIDTH / BASE_HEIGHT;
+                cssHeight = cssWidth / mobileAspect;
+                
+                // Reset layout to base values for windowed mode
+                LAYOUT.gameHeight = BASE_GAME_HEIGHT;
+                LAYOUT.trackpadTop = BASE_GAME_HEIGHT;
+                LAYOUT.trackpadHeight = BASE_TRACKPAD_HEIGHT;
+                
+                // Set logical dimensions for rendering
+                fullscreenLogicalWidth = BASE_WIDTH;
+                fullscreenLogicalHeight = BASE_HEIGHT;
+                
                 const mobileDPRCap = isRetina3x ? 2 : Math.min(rawDPR, 2);
                 dprScale = mobileDPRCap * (cssWidth / BASE_WIDTH);
                 
-                let bufferWidth = Math.round(gameWidth * dprScale);
-                let bufferHeight = Math.round(gameHeight * dprScale);
+                let bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                let bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 const totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
                     const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
                     dprScale *= scaleFactor;
-                    bufferWidth = Math.round(gameWidth * dprScale);
-                    bufferHeight = Math.round(gameHeight * dprScale);
+                    bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                    bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
                 canvas.width = bufferWidth;
                 canvas.height = bufferHeight;
                 canvas.style.width = Math.round(cssWidth) + 'px';
                 canvas.style.height = Math.round(cssHeight) + 'px';
+                
+                // Position trackpad overlay
+                const trackpadEl = document.getElementById('trackpadZone');
+                if (trackpadEl) {
+                    const scale = cssHeight / BASE_HEIGHT;
+                    const trackpadHeightPx = LAYOUT.trackpadHeight * scale;
+                    trackpadEl.style.position = 'absolute';
+                    trackpadEl.style.width = Math.round(cssWidth) + 'px';
+                    trackpadEl.style.height = trackpadHeightPx + 'px';
+                    trackpadEl.style.bottom = '0';
+                    trackpadEl.style.left = '50%';
+                    trackpadEl.style.transform = 'translateX(-50%)';
+                }
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(dprScale, dprScale);
@@ -5694,31 +5756,50 @@
                 
                 GameDebug.hide();
             } else {
+                // Desktop windowed mode
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
                 cssWidth = BASE_WIDTH;
                 cssHeight = BASE_HEIGHT;
                 
-                // Desktop windowed mode - use device DPR up to limit
-                // 4K monitors benefit from higher scaling even in windowed mode
+                // Reset layout to base values for windowed mode
+                LAYOUT.gameHeight = BASE_GAME_HEIGHT;
+                LAYOUT.trackpadTop = BASE_GAME_HEIGHT;
+                LAYOUT.trackpadHeight = BASE_TRACKPAD_HEIGHT;
+                
+                // Set logical dimensions for rendering
+                fullscreenLogicalWidth = BASE_WIDTH;
+                fullscreenLogicalHeight = BASE_HEIGHT;
+                
                 const windowedDPRCap = is4K ? 2.5 : maxNormalDPR;
                 dprScale = Math.min(rawDPR, windowedDPRCap);
                 
-                let bufferWidth = Math.round(gameWidth * dprScale);
-                let bufferHeight = Math.round(gameHeight * dprScale);
+                let bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                let bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 const totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
                     const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
                     dprScale *= scaleFactor;
-                    bufferWidth = Math.round(gameWidth * dprScale);
-                    bufferHeight = Math.round(gameHeight * dprScale);
+                    bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                    bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
                 canvas.width = bufferWidth;
                 canvas.height = bufferHeight;
                 canvas.style.width = Math.round(cssWidth) + 'px';
                 canvas.style.height = Math.round(cssHeight) + 'px';
+                
+                // Position trackpad overlay
+                const trackpadEl = document.getElementById('trackpadZone');
+                if (trackpadEl) {
+                    trackpadEl.style.position = 'absolute';
+                    trackpadEl.style.width = cssWidth + 'px';
+                    trackpadEl.style.height = LAYOUT.trackpadHeight + 'px';
+                    trackpadEl.style.bottom = '0';
+                    trackpadEl.style.left = '50%';
+                    trackpadEl.style.transform = 'translateX(-50%)';
+                }
                 
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(dprScale, dprScale);
@@ -17698,9 +17779,20 @@
             const warning = document.createElement('div');
             warning.className = 'stacked-warning';
             warning.innerHTML = options.html;
+            
+            // Get game container for positioning
+            const gameContainer = document.querySelector('.game-container');
+            const containerRect = gameContainer ? gameContainer.getBoundingClientRect() : null;
+            
+            // Calculate position within game area (not trackpad)
+            // Game area is approximately top 70% of canvas (580/820 ≈ 70%)
+            const gameAreaRatio = 0.70;
+            const topPercent = containerRect ? 
+                (containerRect.top + containerRect.height * 0.08) : '8%';
+            
             warning.style.cssText = `
                 position: fixed;
-                top: 8%;
+                top: ${typeof topPercent === 'number' ? topPercent + 'px' : topPercent};
                 left: 50%;
                 transform: translateX(-50%);
                 color: ${options.color};
@@ -17709,6 +17801,7 @@
                 z-index: 9999;
                 pointer-events: none;
                 opacity: 0;
+                max-width: 90%;
             `;
             
             document.body.appendChild(warning);
@@ -18562,6 +18655,36 @@
             if (e.key === 'ArrowDown' || key === 's') input.down = false;
         });
 
+        // ===== BOO EASTER EGG - Invert colors when B+O+0 pressed =====
+        let booKeysPressed = { b: false, o: false, zero: false };
+        let colorsInverted = false;
+        
+        document.addEventListener('keydown', e => {
+            const key = e.key.toLowerCase();
+            if (key === 'b') booKeysPressed.b = true;
+            if (key === 'o') booKeysPressed.o = true;
+            if (key === '0') booKeysPressed.zero = true;
+            
+            // Check if all three are pressed
+            if (booKeysPressed.b && booKeysPressed.o && booKeysPressed.zero) {
+                colorsInverted = !colorsInverted;
+                const canvas = document.getElementById('gameCanvas');
+                if (canvas) {
+                    // Invert with reduced brightness to avoid harsh whites
+                    canvas.style.filter = colorsInverted ? 'invert(1) brightness(0.85)' : 'none';
+                }
+                // Reset to prevent rapid toggling
+                booKeysPressed = { b: false, o: false, zero: false };
+            }
+        });
+        
+        document.addEventListener('keyup', e => {
+            const key = e.key.toLowerCase();
+            if (key === 'b') booKeysPressed.b = false;
+            if (key === 'o') booKeysPressed.o = false;
+            if (key === '0') booKeysPressed.zero = false;
+        });
+
         // Mobile dynamic joystick controls
         const trackpadZone = document.getElementById('trackpadZone');
         const joystickOverlay = document.getElementById('joystickOverlay');
@@ -19253,7 +19376,64 @@
                 const seconds = Math.floor(gameTime % 60);
                 DOM.timer.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
                 
-                // Update mobile HUD
+                // ===== UPDATE CANVAS UI STATE =====
+                uiState.timer = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                uiState.kills = kills;
+                uiState.gold = playerGold;
+                uiState.level = player.level;
+                uiState.hp = player.hp;
+                uiState.maxHp = player.maxHp;
+                uiState.shieldHp = player.shieldHp || 0;
+                uiState.maxShieldHp = player.maxShieldHp || 0;
+                uiState.xpPercent = (player.xp / player.xpToNext) * 100;
+                // Offensive
+                uiState.damage = Math.round(player.damageMultiplier * 100);
+                uiState.attackSpeed = Math.round(player.attackSpeedMultiplier * 100);
+                uiState.critChance = Math.round(player.critChance * 100);
+                uiState.critDamage = player.critMultiplier;
+                uiState.pickupRange = Math.round((player.pickupRange / 50) * 100);
+                uiState.luck = Math.round(player.luck * 100);
+                // Defensive
+                uiState.maxHpStat = Math.round(player.maxHp);
+                uiState.hpRegen = player.regenRate;
+                uiState.lifesteal = Math.round(player.lifesteal * 100);
+                uiState.armor = Math.round(player.armor * 100);
+                uiState.shield = Math.round(player.maxShieldHp);
+                uiState.moveSpeed = Math.round((player.speed / player.baseSpeed) * 100);
+                
+                // Update weapons array for canvas rendering
+                uiState.weapons = [];
+                for (const [id, state] of Object.entries(player.weapons)) {
+                    const def = WEAPONS[id];
+                    if (def) {
+                        uiState.weapons.push({
+                            id: id,
+                            level: state.level,
+                            color: def.color,
+                            icon: def.icon,
+                            name: def.name
+                        });
+                    }
+                }
+                
+                // Update tomes array for canvas rendering
+                uiState.tomes = [];
+                for (const [id, tomeData] of Object.entries(player.tomes)) {
+                    const def = TOMES[id];
+                    if (def) {
+                        const rarity = tomeData.rarity || 'common';
+                        const rarityInfo = RARITIES[rarity];
+                        uiState.tomes.push({
+                            id: id,
+                            level: tomeData.level,
+                            color: rarityInfo ? rarityInfo.color : def.color,
+                            icon: def.icon,
+                            name: def.name
+                        });
+                    }
+                }
+                
+                // Update mobile HUD (legacy DOM)
                 updateTrackpadHUD();
             }
             
@@ -19266,10 +19446,443 @@
             requestAnimationFrame(gameLoop);
         }
 
+        // ========== CANVAS UI DRAWING ==========
+        
+        function drawTrackpad() {
+            ctx.save();
+            ctx.setTransform(dprScale, 0, 0, dprScale, 0, 0);
+            
+            // Get actual canvas dimensions (dynamic in fullscreen)
+            const canvasW = fullscreenLogicalWidth;
+            const canvasH = fullscreenLogicalHeight;
+            
+            const y = LAYOUT.trackpadTop;
+            const h = LAYOUT.trackpadHeight;
+            
+            // Background
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, y, canvasW, h);
+            
+            // Top border (matching original: border-top: 1px solid rgba(0, 255, 255, 0.15))
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.15)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvasW, y);
+            ctx.stroke();
+            
+            // Gradient glow at top (matching: linear-gradient(to bottom, rgba(0, 255, 255, 0.06), transparent))
+            const grad = ctx.createLinearGradient(0, y, 0, y + 30);
+            grad.addColorStop(0, 'rgba(0, 255, 255, 0.06)');
+            grad.addColorStop(1, 'transparent');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, y, canvasW, 30);
+            
+            // ===== XP BAR =====
+            const xpY = y + 8;
+            const xpH = 5;
+            const xpMargin = 5; // Reduced from 10px for wider bar
+            const xpW = canvasW - xpMargin * 2;
+            
+            ctx.strokeStyle = '#0ff';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(xpMargin, xpY, xpW, xpH, 3);
+            ctx.stroke();
+            
+            const xpFill = (xpW - 2) * (uiState.xpPercent / 100);
+            if (xpFill > 0) {
+                ctx.fillStyle = '#a8b8c8';
+                ctx.shadowColor = 'rgba(168, 184, 200, 0.5)';
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.roundRect(xpMargin + 1, xpY + 1, xpFill, xpH - 2, 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+            
+            // ===== MAIN LAYOUT: [OFFENSE][WEAPONS][MINIMAP][TOMES][DEFENSE] =====
+            // Matching original DOM layout exactly
+            const centerX = canvasW / 2;
+            const mainRowY = y + 50; // Base Y for minimap (2px below HP bar area)
+            const panelY = mainRowY + 15; // Stat panels 15px lower than minimap
+            const panelW = 175;
+            // Dynamic height - fill trackpad area minus stats row and instructions
+            const availableH = h - 68;
+            const panelH = Math.min(availableH - 15, 165); // 15px shorter (was 12px)
+            const mmSize = Math.min(availableH + 10, 195); // Minimap bigger (+10px)
+            const panelMargin = 5;
+            const iconSize = 28;
+            const iconGap = 8;
+            
+            // Stat panels at far left and right edges
+            const leftPanelX = panelMargin;
+            const rightPanelX = canvasW - panelMargin - panelW;
+            
+            // Minimap centered (at mainRowY, not panelY)
+            const mmX = centerX - mmSize / 2;
+            const mmY = mainRowY;
+            
+            // Weapons column: between offense panel and minimap
+            const weaponsColX = leftPanelX + panelW + 4;
+            const weaponsColW = mmX - weaponsColX - 8;
+            const weaponsCenterX = weaponsColX + weaponsColW / 2;
+            
+            // Tomes column: between minimap and defense panel
+            const tomesColX = mmX + mmSize + 8;
+            const tomesColW = rightPanelX - tomesColX - 4;
+            const tomesCenterX = tomesColX + tomesColW / 2;
+            
+            // ===== STATS ROW (repositioned based on new layout) =====
+            const statsY = y + 31;  // +3px spacing from XP bar
+            ctx.textBaseline = 'middle';
+            
+            // HP Bar width spans from weapons center to tomes center
+            const hpBarW = Math.max(100, tomesCenterX - weaponsCenterX);
+            const hpX = centerX - hpBarW / 2;
+            const hpH = 22;
+            const hpY = statsY - hpH / 2;
+            
+            // Left zone (timer, kills) - from left margin to HP bar with 5px extra spacing
+            const leftZoneStart = 10;
+            const leftZoneEnd = hpX - 15;  // 5px extra spacing from HP bar
+            const leftZoneW = leftZoneEnd - leftZoneStart;
+            
+            // Right zone (gold, level) - from HP bar to right margin with 5px extra spacing
+            const rightZoneStart = hpX + hpBarW + 15;  // 5px extra spacing from HP bar
+            const rightZoneEnd = canvasW - 10;
+            const rightZoneW = rightZoneEnd - rightZoneStart;
+            
+            // Timer (left) - original: color: #fff; text-shadow: 0 0 4px #0ff
+            ctx.font = '15px "Segoe UI", Tahoma, sans-serif';
+            ctx.fillStyle = '#fff';
+            ctx.shadowColor = '#0ff';
+            ctx.shadowBlur = 4;
+            ctx.textAlign = 'center';
+            ctx.fillText(uiState.timer, leftZoneStart + leftZoneW * 0.33, statsY);
+            
+            // Kills - original: color: #0ff; text-shadow: 0 0 4px #0ff
+            ctx.fillStyle = '#0ff';
+            ctx.shadowColor = '#0ff';
+            ctx.fillText(`${uiState.kills} Kills`, leftZoneStart + leftZoneW * 0.67, statsY);
+            ctx.shadowBlur = 0;
+            
+            // HP Bar - original: border: 1px solid #39ff9f; border-radius: 3px
+            const totalPool = uiState.maxHp + uiState.maxShieldHp;
+            const hpPortion = hpBarW * (uiState.maxHp / totalPool);
+            const shieldPortion = hpBarW * (uiState.maxShieldHp / totalPool);
+            const hpPct = Math.max(0, Math.min(100, (uiState.hp / uiState.maxHp) * 100));
+            const shieldPct = uiState.maxShieldHp > 0 ? Math.max(0, Math.min(100, (uiState.shieldHp / uiState.maxShieldHp) * 100)) : 0;
+            
+            const borderCol = uiState.maxShieldHp > 0 ? '#66aaff' : '#39ff9f';
+            ctx.strokeStyle = borderCol;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(hpX, hpY, hpBarW, hpH, 3);
+            ctx.stroke();
+            
+            // HP background
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillRect(hpX + 1, hpY + 1, hpPortion - 2, hpH - 2);
+            
+            // HP fill
+            if (hpPct > 0) {
+                const hpGrad = ctx.createLinearGradient(hpX, 0, hpX + hpPortion, 0);
+                hpGrad.addColorStop(0, '#39ff9f');
+                hpGrad.addColorStop(1, '#00ff66');
+                ctx.fillStyle = hpGrad;
+                ctx.shadowColor = '#39ff9f';
+                ctx.shadowBlur = 6;
+                ctx.fillRect(hpX + 1, hpY + 1, (hpPortion - 2) * (hpPct / 100), hpH - 2);
+                ctx.shadowBlur = 0;
+            }
+            
+            // Shield portion
+            if (uiState.maxShieldHp > 0) {
+                const shieldX = hpX + hpPortion;
+                ctx.fillStyle = 'rgba(68, 136, 255, 0.3)';
+                ctx.fillRect(shieldX, hpY + 1, shieldPortion - 1, hpH - 2);
+                if (shieldPct > 0) {
+                    const sGrad = ctx.createLinearGradient(shieldX, 0, shieldX + shieldPortion, 0);
+                    sGrad.addColorStop(0, '#4488ff');
+                    sGrad.addColorStop(1, '#66aaff');
+                    ctx.fillStyle = sGrad;
+                    ctx.shadowColor = '#4488ff';
+                    ctx.shadowBlur = 6;
+                    ctx.fillRect(shieldX, hpY + 1, (shieldPortion - 1) * (shieldPct / 100), hpH - 2);
+                    ctx.shadowBlur = 0;
+                }
+            }
+            
+            // HP text
+            const curHp = Math.max(0, Math.round(uiState.hp));
+            const maxHpVal = Math.round(uiState.maxHp);
+            const hpText = curHp <= 0 ? 'DEAD' : (curHp >= maxHpVal ? `${maxHpVal}` : `${curHp}/${maxHpVal}`);
+            ctx.font = 'bold 12px "Segoe UI", Tahoma, sans-serif';
+            ctx.fillStyle = '#fff';
+            ctx.shadowColor = '#000';
+            ctx.shadowBlur = 3;
+            ctx.textAlign = 'center';
+            ctx.fillText(hpText, centerX, statsY);
+            ctx.shadowBlur = 0;
+            
+            // Gold - original: color: #ffd700; text-shadow: 0 0 4px #ffd700
+            ctx.font = '15px "Segoe UI", Tahoma, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffd700';
+            ctx.shadowColor = '#ffd700';
+            ctx.shadowBlur = 4;
+            ctx.fillText(`🪙 ${uiState.gold}`, rightZoneStart + rightZoneW * 0.33, statsY);
+            
+            // Level - original: color: #0ff; text-shadow: 0 0 4px #0ff
+            ctx.fillStyle = '#0ff';
+            ctx.shadowColor = '#0ff';
+            ctx.fillText(`Level ${uiState.level}`, rightZoneStart + rightZoneW * 0.67, statsY);
+            ctx.shadowBlur = 0;
+            
+            // ===== OFFENSE PANEL (far left) =====
+            drawStatPanel(leftPanelX, panelY, panelW, panelH, '⚔️ OFFENSE', [
+                ['DAMAGE', `${uiState.damage}%`],
+                ['ATK SPEED', `${uiState.attackSpeed}%`],
+                ['CRIT %', `${uiState.critChance}%`],
+                ['CRIT DMG', `${uiState.critDamage.toFixed(1)}×`],
+                ['SPEED', `${uiState.moveSpeed}%`],
+                ['LUCK', `${uiState.luck}%`]
+            ], 'offense');
+            
+            // ===== DEFENSE PANEL (far right) =====
+            drawStatPanel(rightPanelX, panelY, panelW, panelH, '🛡️ DEFENSE', [
+                ['MAX HP', `${uiState.maxHpStat}`],
+                ['HP REGEN', `${uiState.hpRegen.toFixed(1)}/s`],
+                ['LIFESTEAL', `${uiState.lifesteal}%`],
+                ['ARMOR', `${uiState.armor}%`],
+                ['SHIELD', `${uiState.shield}`],
+                ['PICKUP', `${uiState.pickupRange}%`]
+            ], 'defense');
+            
+            // ===== WEAPONS COLUMN (vertical, between offense and minimap) =====
+            const maxWeapons = 6;
+            for (let i = 0; i < uiState.weapons.length && i < maxWeapons; i++) {
+                const weapon = uiState.weapons[i];
+                const iconX = weaponsCenterX - iconSize / 2;
+                const iconY = mainRowY + 5 + i * (iconSize + iconGap);
+                
+                // Draw weapon icon box
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.strokeStyle = weapon.color || '#0ff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(iconX, iconY, iconSize, iconSize, 4);
+                ctx.fill();
+                ctx.shadowColor = weapon.color || '#0ff';
+                ctx.shadowBlur = 6;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                
+                // Draw emoji icon
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(weapon.icon || '?', iconX + iconSize / 2, iconY + iconSize / 2 - 1);
+                
+                // Draw level badge - original: bottom-right, black bg, white text, 12px font
+                const lvlText = String(weapon.level);
+                ctx.font = '12px Arial';
+                const lvlMetrics = ctx.measureText(lvlText);
+                const lvlW = lvlMetrics.width + 6; // padding 3px each side
+                const lvlH = 14; // ~12px font + 2px padding
+                const lvlX = iconX + iconSize - lvlW + 2; // bottom-right, offset -2px
+                const lvlY = iconY + iconSize - lvlH + 2;
+                
+                // Black background with rounded corners
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.roundRect(lvlX, lvlY, lvlW, lvlH, 3);
+                ctx.fill();
+                
+                // White text
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(lvlText, lvlX + lvlW / 2, lvlY + lvlH / 2);
+            }
+            
+            // ===== TOMES COLUMN (vertical, between minimap and defense) =====
+            const maxTomes = 6;
+            for (let i = 0; i < uiState.tomes.length && i < maxTomes; i++) {
+                const tome = uiState.tomes[i];
+                const iconX = tomesCenterX - iconSize / 2;
+                const iconY = mainRowY + 5 + i * (iconSize + iconGap);
+                
+                // Draw tome icon box
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.strokeStyle = tome.color || '#a855f7';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(iconX, iconY, iconSize, iconSize, 4);
+                ctx.fill();
+                ctx.shadowColor = tome.color || '#a855f7';
+                ctx.shadowBlur = 6;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                
+                // Draw book emoji
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('📖', iconX + iconSize / 2, iconY + iconSize / 2 - 1);
+                
+                // Draw level badge - original: bottom-right, black bg, white text, 12px font
+                const tomeLvlText = String(tome.level);
+                ctx.font = '12px Arial';
+                const tomeLvlMetrics = ctx.measureText(tomeLvlText);
+                const tomeLvlW = tomeLvlMetrics.width + 6; // padding 3px each side
+                const tomeLvlH = 14; // ~12px font + 2px padding
+                const tomeLvlX = iconX + iconSize - tomeLvlW + 2; // bottom-right, offset -2px
+                const tomeLvlY = iconY + iconSize - tomeLvlH + 2;
+                
+                // Black background with rounded corners
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.roundRect(tomeLvlX, tomeLvlY, tomeLvlW, tomeLvlH, 3);
+                ctx.fill();
+                
+                // White text
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(tomeLvlText, tomeLvlX + tomeLvlW / 2, tomeLvlY + tomeLvlH / 2);
+            }
+            
+            // ===== MINIMAP (center) =====
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath();
+            ctx.roundRect(mmX - 2, mmY - 2, mmSize + 4, mmSize + 4, 5);
+            ctx.fill();
+            
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = 'rgba(0, 255, 255, 0.2)';
+            ctx.shadowBlur = 10;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            if (minimapCanvas) {
+                ctx.drawImage(minimapCanvas, mmX, mmY, mmSize, mmSize);
+            }
+            
+            // ===== INSTRUCTIONS =====
+            const instY = y + h - 14;
+            ctx.font = '11px Arial, sans-serif';
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.7)';
+            ctx.shadowColor = 'rgba(0, 255, 255, 0.3)';
+            ctx.shadowBlur = 5;
+            ctx.textAlign = 'center';
+            ctx.fillText('← TOUCH, MOUSE OR ARROW KEYS TO MOVE →', centerX, instY);
+            ctx.shadowBlur = 0;
+            
+            ctx.restore();
+        }
+        
+        function drawStatPanel(x, y, w, h, title, stats, type) {
+            // Background - original: background: rgba(0, 0, 0, 0.7)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 8);
+            ctx.fill();
+            
+            // Border and glow based on panel type
+            // OFFENSE: border-color: rgba(255, 100, 100, 0.5); box-shadow: 0 0 10px rgba(255, 100, 100, 0.15)
+            // DEFENSE: border-color: rgba(100, 200, 255, 0.5); box-shadow: 0 0 10px rgba(100, 200, 255, 0.15)
+            if (type === 'offense') {
+                ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
+                ctx.shadowColor = 'rgba(255, 100, 100, 0.15)';
+            } else {
+                ctx.strokeStyle = 'rgba(100, 200, 255, 0.5)';
+                ctx.shadowColor = 'rgba(100, 200, 255, 0.15)';
+            }
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 10;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            // Title - original: font-size: 12px; font-weight: bold; letter-spacing: 2px
+            // OFFENSE title: color: rgba(255, 150, 150, 1); text-shadow: 0 0 8px rgba(255, 100, 100, 0.5)
+            // DEFENSE title: color: rgba(150, 200, 255, 1); text-shadow: 0 0 8px rgba(100, 200, 255, 0.5)
+            ctx.font = 'bold 12px "Segoe UI", Tahoma, sans-serif';
+            ctx.textAlign = 'center';
+            if (type === 'offense') {
+                ctx.fillStyle = 'rgba(255, 150, 150, 1)';
+                ctx.shadowColor = 'rgba(255, 100, 100, 0.5)';
+            } else {
+                ctx.fillStyle = 'rgba(150, 200, 255, 1)';
+                ctx.shadowColor = 'rgba(100, 200, 255, 0.5)';
+            }
+            ctx.shadowBlur = 8;
+            ctx.fillText(title, x + w / 2, y + 18);
+            ctx.shadowBlur = 0;
+            
+            // Title underline - original: border-bottom: 1px solid rgba(255, 255, 255, 0.2)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + 10, y + 30);
+            ctx.lineTo(x + w - 10, y + 30);
+            ctx.stroke();
+            
+            // Stats rows - dynamic spacing based on panel height
+            const statsCount = stats.length;
+            const headerSpace = 46; // Space for title + underline (+1px)
+            const rowSpacing = 9; // 9px gap between rows
+            const availableForRows = h - headerSpace - 8; // Leave some padding at bottom
+            const rowH = Math.floor((availableForRows - (statsCount - 1) * rowSpacing) / statsCount);
+            const startY = y + headerSpace;
+            
+            for (let i = 0; i < stats.length; i++) {
+                const [label, value] = stats[i];
+                const rowY = startY + i * (rowH + rowSpacing);
+                
+                // Label - original: color: rgba(255, 255, 255, 0.6); font-size: 11px
+                ctx.font = '11px "Segoe UI", Tahoma, sans-serif';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.textAlign = 'left';
+                ctx.fillText(label, x + 10, rowY);
+                
+                // Value - original: font-size: 13px; font-weight: bold
+                // OFFENSE: color: #ff9977; text-shadow: 0 0 6px rgba(255, 136, 102, 0.5)
+                // DEFENSE: color: #77ccff; text-shadow: 0 0 6px rgba(102, 204, 255, 0.5)
+                ctx.font = 'bold 13px "Segoe UI", Tahoma, sans-serif';
+                ctx.textAlign = 'right';
+                if (type === 'offense') {
+                    ctx.fillStyle = '#ff9977';
+                    ctx.shadowColor = 'rgba(255, 136, 102, 0.5)';
+                } else {
+                    ctx.fillStyle = '#77ccff';
+                    ctx.shadowColor = 'rgba(102, 204, 255, 0.5)';
+                }
+                ctx.shadowBlur = 6;
+                ctx.fillText(value, x + w - 10, rowY);
+                ctx.shadowBlur = 0;
+            }
+        }
+
         function render() {
+            // Get actual canvas logical dimensions (dynamic in fullscreen)
+            const canvasLogicalWidth = fullscreenLogicalWidth;
+            const canvasLogicalHeight = fullscreenLogicalHeight;
+            const gameAreaHeight = LAYOUT.gameHeight;
+            
+            // Reset transform and clear full canvas
+            ctx.setTransform(dprScale, 0, 0, dprScale, 0, 0);
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvasLogicalWidth, canvasLogicalHeight);
+            
+            // ===== GAME AREA =====
             // Dark grass base color
             ctx.fillStyle = '#0a0c0a';
-            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            ctx.fillRect(0, 0, canvasLogicalWidth, gameAreaHeight);
             
             // Draw grass tufts using spatial grid for efficiency
             const viewMargin = GRASS_CELL_SIZE;
@@ -19358,7 +19971,9 @@
             );
             ctx.setLineDash([]);
             
-            if (!gameRunning) return;
+            if (!gameRunning) {
+                return;
+            }
             
             // Draw terrain obstacles (lakes/mountains - background)
             drawTerrain();
@@ -19861,7 +20476,10 @@
                 ctx.fillRect(0, 0, gameWidth, gameHeight);
             }
             
-            // Minimap
+            // ===== TRACKPAD AREA (bottom 200px) =====
+            drawTrackpad();
+            
+            // Minimap (draws to its own canvas, then gets composited in drawTrackpad)
             drawMinimap();
         }
 
