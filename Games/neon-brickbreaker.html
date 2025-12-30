@@ -464,7 +464,6 @@
         
         .hud {
             display: flex;
-            justify-content: center;
             gap: 25px;
             color: #fff;
             font-size: 16px;
@@ -1487,22 +1486,7 @@
     </div>
 
     <div class="game-container">
-        <div class="hud">
-            <div>Score: <span id="score">0</span></div>
-            <div>Lives: <span id="lives">3</span></div>
-            <div>Level: <span id="level">1</span></div>
-        </div>
-        <canvas id="gameCanvas" width="653" height="515"></canvas>
-        
-        <!-- Unified trackpad zone: power-up timers at top, instructions + permanent upgrades at bottom -->
-        <div class="trackpad-zone" id="trackpadZone">
-            <div class="power-up-timers" id="powerUpBar"></div>
-            <div class="trackpad-spacer"></div>
-            <div class="trackpad-instructions" id="trackpadInstructions">
-                ← ARROW KEYS, MOUSE OR TOUCH TO MOVE →
-            </div>
-            <div class="permanent-upgrades" id="permanentUpgradesBar"></div>
-        </div>
+        <canvas id="gameCanvas" width="653" height="700"></canvas>
         
         <!-- Upgrade Selector Overlay -->
         <div class="upgrade-overlay" id="upgradeOverlay">
@@ -1681,17 +1665,35 @@
         const leaderboardBtn = document.getElementById('menuLeaderboardBtn');
         const tutorialBtn = document.getElementById('menuTutorialBtn');
         const menuOverlay = document.getElementById('menuOverlay');
-        const trackpadZone = document.getElementById('trackpadZone');
-        const trackpadInstructionsEl = document.getElementById('trackpadInstructions');
-        const scoreEl = document.getElementById('score');
-        const livesEl = document.getElementById('lives');
-        const levelEl = document.getElementById('level');
-        const powerUpBarEl = document.getElementById('powerUpBar'); // Cached DOM reference
-        const permanentUpgradesBarEl = document.getElementById('permanentUpgradesBar'); // Cached DOM reference
+        
+        // DOM references removed - UI now rendered on canvas:
+        // trackpadZone, trackpadInstructionsEl, scoreEl, livesEl, levelEl, 
+        // powerUpBarEl, permanentUpgradesBarEl
 
         // Base canvas dimensions (game logic coordinates)
         const BASE_WIDTH = 653;
-        const BASE_HEIGHT = 515;
+        const BASE_GAME_HEIGHT = 515;  // Just the game play area
+        const BASE_HEIGHT = 700;       // Full canvas including HUD and trackpad
+        
+        // Canvas layout areas (all rendering is offset by these)
+        const LAYOUT = {
+            hudTop: 0,
+            hudHeight: 28,
+            gameTop: 28,              // Game area starts after HUD
+            gameHeight: 515,          // Original game height preserved
+            trackpadTop: 543,         // 28 + 515
+            trackpadHeight: 157       // Remaining space (700 - 543)
+        };
+        
+        // Canvas-rendered UI state (replaces DOM elements)
+        const uiState = {
+            score: 0,
+            lives: 3,
+            level: 1,
+            powerUpTimers: [],        // Array of {text, color, opacity}
+            permanentUpgrades: [],    // Array of {icon, color, level}
+            showInstructions: true
+        };
         
         // ========== DEBUG UTILITY ==========
         const GameDebug = {
@@ -1766,12 +1768,13 @@
         const maxNormalDPR = isLowPerfDevice ? 1.5 : 2;
         const maxFullscreenDPR = isLowPerfDevice ? 2 : 3;
         
-        // Scaling state - game logic ALWAYS uses gameWidth/gameHeight
+        // Scaling state - game logic ALWAYS uses gameWidth/gameHeight (game area only)
         let dprScale = 1;
-        let gameWidth = BASE_WIDTH;   // Logical game coordinates
-        let gameHeight = BASE_HEIGHT;
-        let cssWidth = BASE_WIDTH;    // CSS display size
-        let cssHeight = BASE_HEIGHT;
+        let gameWidth = BASE_WIDTH;        // Logical game coordinates (653)
+        let gameHeight = BASE_GAME_HEIGHT; // Game area only (515), NOT full canvas
+        let canvasHeight = BASE_HEIGHT;    // Full canvas height (700)
+        let cssWidth = BASE_WIDTH;         // CSS display size
+        let cssHeight = BASE_HEIGHT;       // Full canvas CSS height
         
         // Get accurate viewport size (works better in iframes)
         function getViewportSize() {
@@ -1801,11 +1804,11 @@
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const gameContainer = document.querySelector('.game-container');
             
-            // Game logic always uses base coordinates
+            // Game logic always uses base coordinates (game area only)
             gameWidth = BASE_WIDTH;
-            gameHeight = BASE_HEIGHT;
+            gameHeight = BASE_GAME_HEIGHT;
             
-            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+            const gameAspect = BASE_WIDTH / BASE_HEIGHT;  // Full canvas aspect ratio
             
             if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
@@ -1888,15 +1891,15 @@
                     dprScale = 1;
                 }
                 
-                let bufferWidth = Math.round(gameWidth * dprScale);
-                let bufferHeight = Math.round(gameHeight * dprScale);
+                let bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                let bufferHeight = Math.round(BASE_HEIGHT * dprScale);  // Full canvas height
                 const totalPixels = bufferWidth * bufferHeight;
                 
                 if (totalPixels > MAX_CANVAS_PIXELS) {
                     const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
                     dprScale *= scaleFactor;
-                    bufferWidth = Math.round(gameWidth * dprScale);
-                    bufferHeight = Math.round(gameHeight * dprScale);
+                    bufferWidth = Math.round(BASE_WIDTH * dprScale);
+                    bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
                 canvas.width = bufferWidth;
@@ -2095,7 +2098,7 @@
                 icon: '❤️',
                 apply: () => { 
                     lives += 2; 
-                    livesEl.textContent = lives;
+                    uiState.lives = lives;
                 }
             },
             {
@@ -2151,14 +2154,16 @@
             if (dualBallStacks > 0) upgrades.push({ id: 'dualball', stacks: dualBallStacks, legendary: true });
             if (hasMagnetPaddle) upgrades.push({ id: 'magnetpaddle', stacks: 1, legendary: true });
             
-            // Build HTML with squircle backgrounds
-            const html = upgrades.map(u => {
+            // Update uiState for canvas rendering
+            uiState.permanentUpgrades = upgrades.map(u => {
                 const info = upgradeIcons[u.id];
-                const stackText = u.stacks > 1 ? `<span class="perm-stack">x${u.stacks}</span>` : '';
-                return `<span class="perm-upgrade" style="color: ${info.color}"><span class="perm-icon">${info.icon}</span>${stackText}</span>`;
-            }).join('');
-            
-            permanentUpgradesBarEl.innerHTML = html;
+                return {
+                    icon: info.icon,
+                    color: info.color,
+                    level: u.stacks,
+                    legendary: u.legendary || false
+                };
+            });
         }
         
         // Boss state
@@ -2777,7 +2782,7 @@
             bosses.forEach(boss => {
                 if (boss.alive && boss.y + boss.height >= paddle.y - 20) {
                     lives--;
-                    livesEl.textContent = lives;
+                    uiState.lives = lives;
                     if (lives <= 0) {
                         gameOver();
                     } else {
@@ -2989,7 +2994,7 @@
                     
                     // Hit paddle - lose a life
                     lives--;
-                    livesEl.textContent = lives;
+                    uiState.lives = lives;
                     if (lives <= 0) {
                         gameOver();
                     } else {
@@ -3248,13 +3253,13 @@
                         boss.hits += damageDealt;
                         boss.flashUntil = now + 150; // Flash for 150ms
                         score += bossConfig.pointsPerHit * damageDealt;
-                        scoreEl.textContent = score;
+                        uiState.score = score;
                         
                         // Check if boss is destroyed
                         if (boss.hits >= bossConfig.hitsRequired) {
                             boss.alive = false;
                             score += bossConfig.pointsPerKill;
-                            scoreEl.textContent = score;
+                            uiState.score = score;
                             
                             // Check if this was the last boss - freeze ball IMMEDIATELY
                             if (bosses.every(b => !b.alive)) {
@@ -3738,7 +3743,7 @@
                                         
                                         brick.alive = false;
                                         score += 1;
-                                        scoreEl.textContent = score;
+                                        uiState.score = score;
                                     
                                     // Activate power-up if brick had one
                                     if (brick.powerUp) {
@@ -3799,7 +3804,7 @@
             // If no balls left, lose a life
             if (balls.length === 0) {
                 lives--;
-                livesEl.textContent = lives;
+                uiState.lives = lives;
                 if (lives <= 0) {
                     gameOver();
                 } else {
@@ -3853,7 +3858,7 @@
             activePowerUps.multiBall.bouncesLeft = 0;
             
             // Clear power-up bar display
-            powerUpBarEl.innerHTML = '';
+            uiState.powerUpTimers = [];
             lastPowerUpBarContent = '';
         }
         
@@ -3898,7 +3903,7 @@
             // Check if player earns an extra life AND legendary upgrade (every 5 levels)
             if (level % 5 === 0) {
                 lives++;
-                livesEl.textContent = lives;
+                uiState.lives = lives;
                 // Show extra life message first, then legendary upgrade selector
                 extraLifePause = true;
                 extraLifePauseEnd = performance.now() + 1200; // 1.2 second pause
@@ -4355,10 +4360,12 @@
             if (activePowerUps.bigPaddle.active) {
                 const timeLeft = activePowerUps.bigPaddle.timeLeft;
                 const isWarning = timeLeft <= 3;
-                const opacity = (isWarning && !flashOn) ? '0.5' : '1';
+                const opacity = (isWarning && !flashOn) ? 0.5 : 1;
                 activePowerups.push({
                     sortValue: timeLeft,
-                    html: `<span style="color: #00cc66; text-shadow: 0 0 8px #00cc66; opacity: ${opacity};">↔ Huge Paddle: ${Math.ceil(timeLeft)}s ↔</span>`
+                    text: `↔ Huge Paddle: ${Math.ceil(timeLeft)}s ↔`,
+                    color: '#00cc66',
+                    opacity: opacity
                 });
             }
             
@@ -4366,10 +4373,12 @@
             if (activePowerUps.crusher.active) {
                 const timeLeft = activePowerUps.crusher.timeLeft;
                 const isWarning = timeLeft <= 3;
-                const opacity = (isWarning && !flashOn) ? '0.5' : '1';
+                const opacity = (isWarning && !flashOn) ? 0.5 : 1;
                 activePowerups.push({
                     sortValue: timeLeft,
-                    html: `<span style="color: #ff0028; text-shadow: 0 0 8px #ff0028; opacity: ${opacity};">⚡ Crusher: ${Math.ceil(timeLeft)}s ⚡</span>`
+                    text: `⚡ Crusher: ${Math.ceil(timeLeft)}s ⚡`,
+                    color: '#ff0028',
+                    opacity: opacity
                 });
             }
             
@@ -4377,21 +4386,25 @@
             if (activePowerUps.multiBall.active) {
                 const bouncesLeft = activePowerUps.multiBall.bouncesLeft;
                 const isWarning = bouncesLeft === 1;
-                const opacity = (isWarning && !flashOn) ? '0.5' : '1';
+                const opacity = (isWarning && !flashOn) ? 0.5 : 1;
                 activePowerups.push({
                     sortValue: bouncesLeft * 2,
-                    html: `<span style="color: #ff6a00; text-shadow: 0 0 8px #ff6a00; opacity: ${opacity};">✦ Multi Ball: ${bouncesLeft} Bounce${bouncesLeft !== 1 ? 's' : ''} ✦</span>`
+                    text: `✦ Multi Ball: ${bouncesLeft} Bounce${bouncesLeft !== 1 ? 's' : ''} ✦`,
+                    color: '#ff6a00',
+                    opacity: opacity
                 });
             }
             
-            // Small paddle timer - grey like brick #888888 with red border
+            // Small paddle timer - grey like brick #888888
             if (activePowerUps.smallPaddle.active) {
                 const timeLeft = activePowerUps.smallPaddle.timeLeft;
                 const isWarning = timeLeft <= 3;
-                const opacity = (isWarning && !flashOn) ? '0.5' : '1';
+                const opacity = (isWarning && !flashOn) ? 0.5 : 1;
                 activePowerups.push({
                     sortValue: timeLeft,
-                    html: `<span style="color: #888888; text-shadow: 0 0 6px #888888; border: 1px solid #ff0028; border-radius: 3px; padding: 1px 6px; box-shadow: 0 0 8px rgba(255, 0, 40, 0.6); opacity: ${opacity};">☠ Small Paddle: ${Math.ceil(timeLeft)}s ☠</span>`
+                    text: `☠ Small Paddle: ${Math.ceil(timeLeft)}s ☠`,
+                    color: '#888888',
+                    opacity: opacity
                 });
             }
             
@@ -4399,30 +4412,28 @@
             if (paddleImmunity.active) {
                 const timeLeft = paddleImmunity.timeLeft;
                 const isWarning = timeLeft <= 3;
-                const opacity = (isWarning && !flashOn) ? '0.5' : '1';
+                const opacity = (isWarning && !flashOn) ? 0.5 : 1;
                 activePowerups.push({
                     sortValue: timeLeft,
-                    html: `<span style="color: #ffff00; text-shadow: 0 0 8px #ffff00; opacity: ${opacity};">★ Immunity: ${Math.ceil(timeLeft)}s ★</span>`
+                    text: `★ Immunity: ${Math.ceil(timeLeft)}s ★`,
+                    color: '#ffff00',
+                    opacity: opacity
                 });
             }
             
             // Sort by time remaining (lowest first = closest to expiring on top)
             activePowerups.sort((a, b) => a.sortValue - b.sortValue);
             
-            // Limit to 3 on mobile, 4 on desktop (hide extras via overflow:hidden in CSS)
+            // Limit to 3 on mobile, 4 on desktop
             const maxTimers = isTrueMobile ? 3 : 4;
-            const html = activePowerups.slice(0, maxTimers).map(p => p.html).join('');
             
-            // Only update DOM if content changed (major optimization)
-            if (html !== lastPowerUpBarContent) {
-                powerUpBarEl.innerHTML = html;
-                lastPowerUpBarContent = html;
-            }
+            // Update uiState for canvas rendering
+            uiState.powerUpTimers = activePowerups.slice(0, maxTimers);
         }
 
         function nextLevel() {
             level++;
-            levelEl.textContent = level;
+            uiState.level = level;
             
             // Clear boss state for new level
             bossPhase = false;
@@ -4519,7 +4530,7 @@
         function gameOver() {
             gameRunning = false;
             
-            powerUpBarEl.innerHTML = '';
+            uiState.powerUpTimers = [];
             lastPowerUpBarContent = '';
             
             // Draw game over screen (will be visible after modal closes)
@@ -4532,6 +4543,9 @@
         }
         
         function drawGameOverScreen() {
+            ctx.save();
+            ctx.translate(0, LAYOUT.gameTop);  // Offset to game area
+            
             ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
             ctx.fillRect(0, 0, gameWidth, gameHeight);
             
@@ -4546,17 +4560,199 @@
             ctx.font = '24px Arial';
             ctx.fillStyle = '#0ff';
             ctx.fillText(`Final Score: ${score}`, gameWidth / 2, gameHeight / 2 - 15);
+            
+            ctx.restore();
         }
         
         function showGameOverButtons() {
             startBtn.textContent = 'PLAY AGAIN';
             menuOverlay.classList.remove('hidden');
         }
+        
+        // ========== CANVAS UI DRAWING FUNCTIONS ==========
+        
+        function drawHUD() {
+            ctx.save();
+            
+            // HUD background
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, gameWidth, LAYOUT.hudHeight);
+            
+            // HUD text styling - matches original: 16px, text-shadow 10px blur
+            ctx.font = '16px "Segoe UI", Tahoma, Geneva, Verdana, sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = '#0ff';
+            ctx.shadowBlur = 10;
+            
+            const hudY = LAYOUT.hudHeight / 2;
+            const centerX = gameWidth / 2;
+            
+            // Build the three HUD items
+            const items = [
+                { label: 'Score: ', value: String(uiState.score) },
+                { label: 'Lives: ', value: String(uiState.lives) },
+                { label: 'Level: ', value: String(uiState.level) }
+            ];
+            
+            // Measure each item's total width
+            const itemWidths = items.map(item => {
+                return ctx.measureText(item.label).width + ctx.measureText(item.value).width;
+            });
+            
+            // Gap between items (matches original gap: 25px)
+            const gap = 25;
+            const totalWidth = itemWidths.reduce((a, b) => a + b, 0) + gap * 2;
+            
+            // Starting X position to center everything
+            let x = centerX - totalWidth / 2;
+            
+            // Draw each item
+            items.forEach((item, i) => {
+                // Label in white
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'left';
+                ctx.fillText(item.label, x, hudY);
+                x += ctx.measureText(item.label).width;
+                
+                // Value in cyan
+                ctx.fillStyle = '#0ff';
+                ctx.fillText(item.value, x, hudY);
+                x += ctx.measureText(item.value).width;
+                
+                // Add gap after (except last item)
+                if (i < items.length - 1) {
+                    x += gap;
+                }
+            });
+            
+            // HUD bottom border
+            ctx.shadowBlur = 4;
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, LAYOUT.hudHeight - 1);
+            ctx.lineTo(gameWidth, LAYOUT.hudHeight - 1);
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+        
+        function drawTrackpad() {
+            ctx.save();
+            
+            const trackpadY = LAYOUT.trackpadTop;
+            
+            // Trackpad background with gradient like original
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, trackpadY, gameWidth, LAYOUT.trackpadHeight);
+            
+            // Top border of trackpad (cyan line)
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.15)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, trackpadY + 1);
+            ctx.lineTo(gameWidth, trackpadY + 1);
+            ctx.stroke();
+            
+            // Power-up timers area (top of trackpad) - 13px font, 17px row height
+            const timerStartY = trackpadY + 15;
+            ctx.font = '13px "Segoe UI", Tahoma, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Draw active power-up timers from uiState
+            if (uiState.powerUpTimers.length > 0) {
+                const timerSpacing = 17;  // Match original row height
+                uiState.powerUpTimers.forEach((timer, i) => {
+                    const y = timerStartY + i * timerSpacing;
+                    
+                    // Timer background pill
+                    const textWidth = ctx.measureText(timer.text).width;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                    ctx.beginPath();
+                    ctx.roundRect(gameWidth / 2 - textWidth / 2 - 8, y - 8, textWidth + 16, 16, 3);
+                    ctx.fill();
+                    
+                    // Timer text
+                    ctx.fillStyle = timer.color;
+                    ctx.shadowColor = timer.color;
+                    ctx.shadowBlur = 8;
+                    ctx.globalAlpha = timer.opacity;
+                    ctx.fillText(timer.text, gameWidth / 2, y);
+                });
+                ctx.globalAlpha = 1;
+                ctx.shadowBlur = 0;
+            }
+            
+            // Permanent upgrades (middle of trackpad) - 32px icons with 10px gap
+            if (uiState.permanentUpgrades.length > 0) {
+                const upgradeY = trackpadY + 95;
+                const upgradeSize = 32;
+                const upgradeSpacing = 42;  // 32px + 10px gap
+                const totalWidth = (uiState.permanentUpgrades.length - 1) * upgradeSpacing;
+                const startX = (gameWidth - totalWidth) / 2;
+                
+                // Divider line above upgrades
+                ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(gameWidth / 4, upgradeY - 20);
+                ctx.lineTo(gameWidth * 3 / 4, upgradeY - 20);
+                ctx.stroke();
+                
+                uiState.permanentUpgrades.forEach((upgrade, i) => {
+                    const x = startX + i * upgradeSpacing;
+                    
+                    // Upgrade icon with glow
+                    ctx.font = '20px sans-serif';
+                    ctx.fillStyle = upgrade.color;
+                    ctx.shadowColor = upgrade.color;
+                    ctx.shadowBlur = 3;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(upgrade.icon, x, upgradeY);
+                    
+                    // Level indicator (stack count)
+                    if (upgrade.level > 1) {
+                        ctx.shadowBlur = 0;
+                        ctx.font = 'bold 9px sans-serif';
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText('x' + upgrade.level, x + 10, upgradeY + 10);
+                    }
+                });
+                ctx.shadowBlur = 0;
+            }
+            
+            // Instructions (BOTTOM of trackpad) - 10px Arial, cyan 50% opacity
+            if (uiState.showInstructions) {
+                const instructY = trackpadY + LAYOUT.trackpadHeight - 12;
+                ctx.font = '10px Arial, sans-serif';
+                ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+                ctx.shadowColor = 'rgba(0, 255, 255, 0.3)';
+                ctx.shadowBlur = 6;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.letterSpacing = '1.5px';  // Note: may not work in all browsers
+                ctx.fillText('← ARROW KEYS, MOUSE OR TOUCH TO MOVE →', gameWidth / 2, instructY);
+            }
+            
+            ctx.restore();
+        }
 
         function draw() {
-            // Background fill (no need for clearRect since we fill the whole canvas)
+            // Clear entire canvas
             ctx.fillStyle = '#0a0a0a';
-            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            ctx.fillRect(0, 0, gameWidth, BASE_HEIGHT);
+            
+            // Draw HUD at top
+            drawHUD();
+            
+            // Draw trackpad at bottom
+            drawTrackpad();
+            
+            // Offset context for game area rendering
+            ctx.save();
+            ctx.translate(0, LAYOUT.gameTop);
             
             // Draw play area boundary lines - shows where ball bounces/falls
             ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
@@ -4610,6 +4806,8 @@
             
             // Draw life lost message overlay (on top of everything)
             drawLifeLostMessage();
+            
+            ctx.restore(); // Restore from game area translation
         }
 
         // Delta time for consistent game speed across all frame rates
@@ -4735,7 +4933,7 @@
 
         function startGame() {
             // Show instructions with fade-in
-            trackpadInstructionsEl.classList.add('visible');
+            uiState.showInstructions = true;
             
             score = 0;
             lives = 3;
@@ -4800,9 +4998,9 @@
             activePowerUps.multiBall = { active: false, bouncesLeft: 0 };
             activePowerUps.crusher = { active: false, timeLeft: 0 };
             activePowerUps.smallPaddle = { active: false, timeLeft: 0, originalWidth: 107 };
-            powerUpBarEl.innerHTML = '';
+            uiState.powerUpTimers = [];
             lastPowerUpBarContent = '';
-            permanentUpgradesBarEl.innerHTML = '';
+            uiState.permanentUpgrades = [];
             
             // Reset ball color to white
             ballColorTransition.currentR = 255;
@@ -4827,9 +5025,9 @@
             levelsSinceSkull = 0;
             lastLevelHadSkull = false;
             
-            scoreEl.textContent = score;
-            livesEl.textContent = lives;
-            levelEl.textContent = level;
+            uiState.score = score;
+            uiState.lives = lives;
+            uiState.level = level;
             
             paddle.x = gameWidth / 2 - paddle.width / 2;
             paddle.targetX = paddle.x;
@@ -4940,9 +5138,9 @@
             if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
         }
         
-        // Trackpad zone handles touch events for paddle control
-        trackpadZone.addEventListener('touchstart', handleTrackpad, { passive: false });
-        trackpadZone.addEventListener('touchmove', handleTrackpad, { passive: false });
+        // Canvas handles touch events for paddle control (replaces trackpadZone)
+        canvas.addEventListener('touchstart', handleTrackpad, { passive: false });
+        canvas.addEventListener('touchmove', handleTrackpad, { passive: false });
         
         // Magnet paddle release function
         function releaseMagnetBall() {
@@ -4969,17 +5167,16 @@
         
         // Desktop: Click to release magnet ball
         canvas.addEventListener('click', releaseMagnetBall);
-        trackpadZone.addEventListener('click', releaseMagnetBall);
         
         // Mobile: Tap to release magnet ball (use touchend for tap detection)
         let magnetTapStart = null;
-        trackpadZone.addEventListener('touchstart', (e) => {
+        canvas.addEventListener('touchstart', (e) => {
             if (magnetCaughtBall && gameRunning) {
                 magnetTapStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, time: Date.now() };
             }
         }, { passive: true });
         
-        trackpadZone.addEventListener('touchend', (e) => {
+        canvas.addEventListener('touchend', (e) => {
             if (magnetCaughtBall && gameRunning && magnetTapStart) {
                 const elapsed = Date.now() - magnetTapStart.time;
                 // Quick tap (under 300ms) releases the ball
