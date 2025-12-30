@@ -1691,8 +1691,7 @@
             lives: 3,
             level: 1,
             powerUpTimers: [],        // Array of {text, color, opacity}
-            permanentUpgrades: [],    // Array of {icon, color, level}
-            showInstructions: true
+            permanentUpgrades: []     // Array of {icon, color, level}
         };
         
         // ========== DEBUG UTILITY ==========
@@ -1999,6 +1998,10 @@
         let levelTransitionPauseEnd = 0;
         let extraLifePause = false;
         let extraLifePauseEnd = 0;
+        
+        // Instruction overlay states
+        let instructionPause = false;
+        let showFirstBossInstructions = false;  // Track if first boss instructions shown
         
         // Stage clear pending - freezes ball immediately when bricks/bosses cleared
         let stageClearPending = false;
@@ -3894,7 +3897,15 @@
             stageClearPending = false;
             // Pause before bosses appear
             bossSpawnPause = true;
-            bossSpawnPauseEnd = performance.now() + 1200; // 1.2 second pause
+            
+            // First boss: tap to continue (pauseEnd = 0 signals waiting for tap)
+            // Subsequent bosses: timed pause
+            if (level === 1 && !showFirstBossInstructions) {
+                showFirstBossInstructions = true;
+                bossSpawnPauseEnd = 0; // Wait for tap
+            } else {
+                bossSpawnPauseEnd = performance.now() + 1200; // Normal 1.2s pause
+            }
         }
         
         function startLevelTransition() {
@@ -4186,6 +4197,9 @@
         function drawExtraLifeMessage() {
             if (!extraLifePause) return;
             
+            ctx.save();
+            ctx.translate(0, LAYOUT.gameTop);
+            
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
             ctx.fillRect(0, 0, gameWidth, gameHeight);
@@ -4198,10 +4212,15 @@
             ctx.shadowBlur = 25;
             ctx.fillText('+1 LIFE', gameWidth / 2, gameHeight / 2);
             ctx.shadowBlur = 0;
+            
+            ctx.restore();
         }
         
         function drawBossSpawnMessage() {
             if (!bossSpawnPause) return;
+            
+            ctx.save();
+            ctx.translate(0, LAYOUT.gameTop);
             
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
@@ -4213,12 +4232,73 @@
             ctx.textAlign = 'center';
             ctx.shadowColor = '#f0f';
             ctx.shadowBlur = 20;
-            ctx.fillText('BOSS INCOMING!', gameWidth / 2, gameHeight / 2);
+            ctx.fillText('BOSS INCOMING!', gameWidth / 2, gameHeight / 2 - 30);
             ctx.shadowBlur = 0;
+            
+            // Show instructions for first boss only
+            if (showFirstBossInstructions && level === 1) {
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 0;
+                ctx.fillText('Hit to damage • Dodge lasers • Catch ★ for immunity', gameWidth / 2, gameHeight / 2 + 20);
+                
+                // Tap to begin prompt
+                ctx.font = 'bold 16px Arial';
+                ctx.fillStyle = '#0ff';
+                ctx.shadowColor = '#0ff';
+                ctx.shadowBlur = 10;
+                ctx.fillText('TAP, CLICK OR PRESS TO BEGIN', gameWidth / 2, gameHeight / 2 + 60);
+                ctx.shadowBlur = 0;
+            }
+            
+            ctx.restore();
+        }
+        
+        function drawInstructionOverlay() {
+            if (!instructionPause) return;
+            
+            ctx.save();
+            ctx.translate(0, LAYOUT.gameTop);
+            
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(0, 0, gameWidth, gameHeight);
+            
+            // Title
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#0ff';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#0ff';
+            ctx.shadowBlur = 15;
+            ctx.fillText('DESTROY ALL BRICKS!', gameWidth / 2, gameHeight / 2 - 50);
+            ctx.shadowBlur = 0;
+            
+            // Controls instruction
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#fff';
+            ctx.fillText('Move paddle to bounce the ball', gameWidth / 2, gameHeight / 2);
+            
+            // Control hint
+            ctx.font = '14px Arial';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.fillText('Touch • Mouse • Arrow keys', gameWidth / 2, gameHeight / 2 + 30);
+            
+            // Tap to begin prompt
+            ctx.font = 'bold 16px Arial';
+            ctx.fillStyle = '#f0f';
+            ctx.shadowColor = '#f0f';
+            ctx.shadowBlur = 10;
+            ctx.fillText('TAP, CLICK OR PRESS TO BEGIN', gameWidth / 2, gameHeight / 2 + 80);
+            ctx.shadowBlur = 0;
+            
+            ctx.restore();
         }
         
         function drawLevelTransitionMessage() {
             if (!levelTransitionPause) return;
+            
+            ctx.save();
+            ctx.translate(0, LAYOUT.gameTop);
             
             // Semi-transparent overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
@@ -4232,6 +4312,8 @@
             ctx.shadowBlur = 20;
             ctx.fillText(`LEVEL ${level} CLEAR!`, gameWidth / 2, gameHeight / 2);
             ctx.shadowBlur = 0;
+            
+            ctx.restore();
         }
 
         function activatePowerUp(type) {
@@ -4657,17 +4739,15 @@
             ctx.stroke();
             
             // 1. Instructions (TOP of trackpad) - 10px Arial, cyan 50% opacity
-            if (uiState.showInstructions) {
-                const instructY = trackpadY + 14;
-                ctx.font = '10px Arial, sans-serif';
-                ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
-                ctx.shadowColor = 'rgba(0, 255, 255, 0.3)';
-                ctx.shadowBlur = 6;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('← ARROW KEYS, MOUSE OR TOUCH TO MOVE →', gameWidth / 2, instructY);
-                ctx.shadowBlur = 0;
-            }
+            const instructY = trackpadY + 14;
+            ctx.font = '10px Arial, sans-serif';
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.shadowColor = 'rgba(0, 255, 255, 0.3)';
+            ctx.shadowBlur = 6;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('← TOUCH, MOUSE OR ARROW KEYS TO MOVE →', gameWidth / 2, instructY);
+            ctx.shadowBlur = 0;
             
             // 2. Permanent upgrades (below instructions) - 20px icons with 10px gap
             if (uiState.permanentUpgrades.length > 0) {
@@ -4835,10 +4915,23 @@
                 return;
             }
             
+            // Check if instruction pause is active (wait for tap/click)
+            if (instructionPause) {
+                // During pause, still draw but don't update game logic
+                draw();
+                drawInstructionOverlay();
+                requestAnimationFrame(update);
+                return;
+            }
+            
             // Check if boss spawn pause is over
             if (bossSpawnPause) {
-                if (currentTime >= bossSpawnPauseEnd) {
+                // First boss waits for tap, others use timer
+                const waitingForTap = showFirstBossInstructions && level === 1 && bossSpawnPauseEnd === 0;
+                
+                if (!waitingForTap && currentTime >= bossSpawnPauseEnd) {
                     bossSpawnPause = false;
+                    showFirstBossInstructions = false; // Clear after first boss starts
                     createBosses();
                     resetBall();
                 }
@@ -4925,9 +5018,6 @@
         }
 
         function startGame() {
-            // Show instructions with fade-in
-            uiState.showInstructions = true;
-            
             score = 0;
             lives = 3;
             level = 1;
@@ -4955,6 +5045,7 @@
             bossSpawnPause = false;
             levelTransitionPause = false;
             extraLifePause = false;
+            instructionPause = false;
             upgradeSelectionActive = false;
             preBossUpgrade = false;
             pendingLegendaryUpgrade = false;
@@ -5033,6 +5124,13 @@
             deltaMultiplier = 1; // Start with normal speed
             gameRunning = true;
             gameHasStarted = true;
+            
+            // Reset first boss instructions flag for new game
+            showFirstBossInstructions = false;
+            
+            // Show instruction overlay at game start (tap to dismiss)
+            instructionPause = true;
+            
             // Hide menu overlay during gameplay
             menuOverlay.classList.add('hidden');
             requestAnimationFrame(update);
@@ -5040,6 +5138,21 @@
 
         // Controls (combined keyboard handler)
         document.addEventListener('keydown', (e) => {
+            // Dismiss instruction or boss overlay on any key
+            if (instructionPause || (bossSpawnPause && showFirstBossInstructions && level === 1 && bossSpawnPauseEnd === 0)) {
+                if (instructionPause) {
+                    instructionPause = false;
+                }
+                if (bossSpawnPause && showFirstBossInstructions && level === 1 && bossSpawnPauseEnd === 0) {
+                    bossSpawnPause = false;
+                    showFirstBossInstructions = false;
+                    createBosses();
+                    resetBall();
+                }
+                e.preventDefault();
+                return;
+            }
+            
             // Left movement: Arrow Left or A
             if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
                 e.preventDefault();
@@ -5184,6 +5297,22 @@
             }
             magnetTapStart = null;
         }, { passive: true });
+        
+        // Tap/click to dismiss instruction overlay or first boss overlay
+        function dismissOverlay() {
+            if (instructionPause) {
+                instructionPause = false;
+            }
+            // Dismiss first boss instructions (when pauseEnd is 0, waiting for tap)
+            if (bossSpawnPause && showFirstBossInstructions && level === 1 && bossSpawnPauseEnd === 0) {
+                bossSpawnPause = false;
+                showFirstBossInstructions = false;
+                createBosses();
+                resetBall();
+            }
+        }
+        canvas.addEventListener('click', dismissOverlay);
+        canvas.addEventListener('touchend', dismissOverlay, { passive: true });
         
         // AGGRESSIVE scroll prevention - use capture phase on document
         // This fires BEFORE any element handlers and prevents scroll at the root
