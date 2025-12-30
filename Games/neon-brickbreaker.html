@@ -4275,11 +4275,13 @@
             duration: 300
         };
 
-        function animatePaddleSize(targetWidth) {
+        function animatePaddleSize(targetWidth, customDuration) {
             paddleAnimation.active = true;
             paddleAnimation.startWidth = paddle.width;
             paddleAnimation.targetWidth = targetWidth;
             paddleAnimation.startTime = frameTime; // Use frameTime
+            // Use custom duration if provided, otherwise default 300ms
+            paddleAnimation.duration = customDuration || 300;
         }
         
         function updatePaddleAnimation() {
@@ -4323,8 +4325,8 @@
                 activePowerUps.bigPaddle.timeLeft -= delta;
                 if (activePowerUps.bigPaddle.timeLeft <= 0) {
                     activePowerUps.bigPaddle.active = false;
-                    // Animate paddle shrinking back
-                    animatePaddleSize(activePowerUps.bigPaddle.originalWidth);
+                    // Animate paddle shrinking back (3x slower = 900ms for gradual shrink)
+                    animatePaddleSize(activePowerUps.bigPaddle.originalWidth, 900);
                 }
             }
             
@@ -4654,8 +4656,51 @@
             ctx.lineTo(gameWidth, trackpadY + 1);
             ctx.stroke();
             
-            // Power-up timers area (top of trackpad) - 13px font, 17px row height
-            const timerStartY = trackpadY + 15;
+            // 1. Instructions (TOP of trackpad) - 10px Arial, cyan 50% opacity
+            if (uiState.showInstructions) {
+                const instructY = trackpadY + 14;
+                ctx.font = '10px Arial, sans-serif';
+                ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
+                ctx.shadowColor = 'rgba(0, 255, 255, 0.3)';
+                ctx.shadowBlur = 6;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('← ARROW KEYS, MOUSE OR TOUCH TO MOVE →', gameWidth / 2, instructY);
+                ctx.shadowBlur = 0;
+            }
+            
+            // 2. Permanent upgrades (below instructions) - 20px icons with 10px gap
+            if (uiState.permanentUpgrades.length > 0) {
+                const upgradeY = trackpadY + 45;
+                const upgradeSpacing = 42;  // 32px + 10px gap
+                const totalWidth = (uiState.permanentUpgrades.length - 1) * upgradeSpacing;
+                const startX = (gameWidth - totalWidth) / 2;
+                
+                uiState.permanentUpgrades.forEach((upgrade, i) => {
+                    const x = startX + i * upgradeSpacing;
+                    
+                    // Upgrade icon with glow
+                    ctx.font = '20px sans-serif';
+                    ctx.fillStyle = upgrade.color;
+                    ctx.shadowColor = upgrade.color;
+                    ctx.shadowBlur = 3;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(upgrade.icon, x, upgradeY);
+                    
+                    // Level indicator (stack count)
+                    if (upgrade.level > 1) {
+                        ctx.shadowBlur = 0;
+                        ctx.font = 'bold 9px sans-serif';
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText('x' + upgrade.level, x + 10, upgradeY + 10);
+                    }
+                });
+                ctx.shadowBlur = 0;
+            }
+            
+            // 3. Power-up timers (below permanent upgrades) - 13px font, 17px row height
+            const timerStartY = trackpadY + 75;
             ctx.font = '13px "Segoe UI", Tahoma, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -4682,58 +4727,6 @@
                 });
                 ctx.globalAlpha = 1;
                 ctx.shadowBlur = 0;
-            }
-            
-            // Permanent upgrades (middle of trackpad) - 32px icons with 10px gap
-            if (uiState.permanentUpgrades.length > 0) {
-                const upgradeY = trackpadY + 95;
-                const upgradeSize = 32;
-                const upgradeSpacing = 42;  // 32px + 10px gap
-                const totalWidth = (uiState.permanentUpgrades.length - 1) * upgradeSpacing;
-                const startX = (gameWidth - totalWidth) / 2;
-                
-                // Divider line above upgrades
-                ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(gameWidth / 4, upgradeY - 20);
-                ctx.lineTo(gameWidth * 3 / 4, upgradeY - 20);
-                ctx.stroke();
-                
-                uiState.permanentUpgrades.forEach((upgrade, i) => {
-                    const x = startX + i * upgradeSpacing;
-                    
-                    // Upgrade icon with glow
-                    ctx.font = '20px sans-serif';
-                    ctx.fillStyle = upgrade.color;
-                    ctx.shadowColor = upgrade.color;
-                    ctx.shadowBlur = 3;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(upgrade.icon, x, upgradeY);
-                    
-                    // Level indicator (stack count)
-                    if (upgrade.level > 1) {
-                        ctx.shadowBlur = 0;
-                        ctx.font = 'bold 9px sans-serif';
-                        ctx.fillStyle = '#fff';
-                        ctx.fillText('x' + upgrade.level, x + 10, upgradeY + 10);
-                    }
-                });
-                ctx.shadowBlur = 0;
-            }
-            
-            // Instructions (BOTTOM of trackpad) - 10px Arial, cyan 50% opacity
-            if (uiState.showInstructions) {
-                const instructY = trackpadY + LAYOUT.trackpadHeight - 12;
-                ctx.font = '10px Arial, sans-serif';
-                ctx.fillStyle = 'rgba(0, 255, 255, 0.5)';
-                ctx.shadowColor = 'rgba(0, 255, 255, 0.3)';
-                ctx.shadowBlur = 6;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.letterSpacing = '1.5px';  // Note: may not work in all browsers
-                ctx.fillText('← ARROW KEYS, MOUSE OR TOUCH TO MOVE →', gameWidth / 2, instructY);
             }
             
             ctx.restore();
@@ -5047,11 +5040,13 @@
 
         // Controls (combined keyboard handler)
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowLeft') {
+            // Left movement: Arrow Left or A
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
                 e.preventDefault();
                 paddle.dx = -paddle.speed;
             }
-            if (e.key === 'ArrowRight') {
+            // Right movement: Arrow Right or D
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
                 e.preventDefault();
                 paddle.dx = paddle.speed;
             }
@@ -5066,7 +5061,10 @@
         });
 
         document.addEventListener('keyup', (e) => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') paddle.dx = 0;
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || 
+                e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') {
+                paddle.dx = 0;
+            }
         });
 
         // Track if mouse is controlling paddle (only when inside game area)
