@@ -5445,6 +5445,7 @@
             shieldHp: 0,
             maxShieldHp: 0,
             xpPercent: 0,
+            xpPercentDisplay: 0, // Smoothly lerps toward xpPercent
             // Offensive stats
             damage: 100,
             attackSpeed: 100,
@@ -13225,9 +13226,15 @@
             const gameCanvas = document.getElementById('gameCanvas');
             const canvasRect = gameCanvas.getBoundingClientRect();
             
+            // Position 10px above the XP bar (XP bar is at trackpadTop + 8)
+            // Notification bottom should be at trackpadTop - 2 (10px above XP bar top)
+            const logicalHeight = LAYOUT.gameHeight + LAYOUT.trackpadHeight;
+            const scale = canvasRect.height / logicalHeight;
+            const distanceFromCanvasBottom = (LAYOUT.trackpadHeight + 10) * scale;
+            
             notification.style.cssText = `
                 position: fixed;
-                bottom: ${window.innerHeight - canvasRect.bottom + 15}px;
+                bottom: ${window.innerHeight - canvasRect.bottom + distanceFromCanvasBottom}px;
                 left: 50%;
                 transform: translateX(-50%);
                 background: rgba(139, 69, 19, 0.9);
@@ -13241,7 +13248,7 @@
                 text-align: center;
                 pointer-events: none;
             `;
-            notification.innerHTML = '🤠 COWBOY HAT FOUND!<br><span style="font-size: 13px; color: #ffd700;">+20% Movement Speed</span>';
+            notification.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; gap: 6px;"><span style="line-height: 1;">🤠</span><span>COWBOY HAT FOUND!</span></div><div style="font-size: 13px; color: #ffd700;">+20% Movement Speed</div>';
             document.body.appendChild(notification);
             
             setTimeout(() => {
@@ -13386,9 +13393,15 @@
             const gameCanvas = document.getElementById('gameCanvas');
             const canvasRect = gameCanvas.getBoundingClientRect();
             
+            // Position 10px above the XP bar (XP bar is at trackpadTop + 8)
+            // Notification bottom should be at trackpadTop - 2 (10px above XP bar top)
+            const logicalHeight = LAYOUT.gameHeight + LAYOUT.trackpadHeight;
+            const scale = canvasRect.height / logicalHeight;
+            const distanceFromCanvasBottom = (LAYOUT.trackpadHeight + 10) * scale;
+            
             notification.style.cssText = `
                 position: fixed;
-                bottom: ${window.innerHeight - canvasRect.bottom + 15}px;
+                bottom: ${window.innerHeight - canvasRect.bottom + distanceFromCanvasBottom}px;
                 left: 50%;
                 transform: translateX(-50%);
                 background: rgba(40, 80, 160, 0.9);
@@ -13402,7 +13415,7 @@
                 text-align: center;
                 pointer-events: none;
             `;
-            notification.innerHTML = '🛡️ SHIELD FOUND!<br><span style="font-size: 13px; color: #4488ff;">+25 Shield HP</span>';
+            notification.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; gap: 6px;"><span style="line-height: 1;">🛡️</span><span>SHIELD FOUND!</span></div><div style="font-size: 13px; color: #4488ff;">+25 Shield HP</div>';
             document.body.appendChild(notification);
             
             setTimeout(() => {
@@ -13627,9 +13640,15 @@
             const gameCanvas = document.getElementById('gameCanvas');
             const canvasRect = gameCanvas.getBoundingClientRect();
             
+            // Position 10px above the XP bar (XP bar is at trackpadTop + 8)
+            // Notification bottom should be at trackpadTop - 2 (10px above XP bar top)
+            const logicalHeight = LAYOUT.gameHeight + LAYOUT.trackpadHeight;
+            const scale = canvasRect.height / logicalHeight;
+            const distanceFromCanvasBottom = (LAYOUT.trackpadHeight + 10) * scale;
+            
             notification.style.cssText = `
                 position: fixed;
-                bottom: ${window.innerHeight - canvasRect.bottom + 15}px;
+                bottom: ${window.innerHeight - canvasRect.bottom + distanceFromCanvasBottom}px;
                 left: 50%;
                 transform: translateX(-50%);
                 background: rgba(0, 0, 0, 0.85);
@@ -13644,7 +13663,7 @@
                 pointer-events: none;
                 box-shadow: 0 0 20px ${color}80;
             `;
-            notification.innerHTML = `${icon} ${name}<br><span style="font-size: 13px; color: ${color};">${desc}</span>`;
+            notification.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; gap: 6px;"><span style="line-height: 1;">${icon}</span><span>${name}</span></div><div style="font-size: 13px; color: ${color};">${desc}</div>`;
             document.body.appendChild(notification);
             
             setTimeout(() => {
@@ -19386,6 +19405,17 @@
                 uiState.shieldHp = player.shieldHp || 0;
                 uiState.maxShieldHp = player.maxShieldHp || 0;
                 uiState.xpPercent = (player.xp / player.xpToNext) * 100;
+                
+                // Smooth XP bar animation - lerp display toward actual
+                // If xpPercent dropped (level up), snap to it then lerp up
+                if (uiState.xpPercent < uiState.xpPercentDisplay - 50) {
+                    // Level up detected - snap to new value
+                    uiState.xpPercentDisplay = uiState.xpPercent;
+                } else {
+                    // Smoothly lerp toward target (slower = smoother)
+                    const lerpSpeed = 0.08;
+                    uiState.xpPercentDisplay += (uiState.xpPercent - uiState.xpPercentDisplay) * lerpSpeed;
+                }
                 // Offensive
                 uiState.damage = Math.round(player.damageMultiplier * 100);
                 uiState.attackSpeed = Math.round(player.attackSpeedMultiplier * 100);
@@ -19490,7 +19520,7 @@
             ctx.roundRect(xpMargin, xpY, xpW, xpH, 3);
             ctx.stroke();
             
-            const xpFill = (xpW - 2) * (uiState.xpPercent / 100);
+            const xpFill = (xpW - 2) * (uiState.xpPercentDisplay / 100);
             if (xpFill > 0) {
                 ctx.fillStyle = '#ff00ff';
                 ctx.shadowColor = 'rgba(255, 0, 255, 0.5)';
@@ -19511,7 +19541,7 @@
             const availableH = h - 68;
             const panelH = Math.min(availableH - 15, 165); // 15px shorter (was 12px)
             const mmSize = Math.min(availableH + 15, 200); // Minimap bigger (+5px)
-            const panelMargin = 5;
+            const panelMargin = 20;
             const iconSize = 28;
             const iconGap = 8;
             
@@ -19543,13 +19573,13 @@
             const hpH = 22;
             const hpY = statsY - hpH / 2;
             
-            // Left zone (timer, kills) - from left margin to HP bar with 5px extra spacing
+            // Left zone (timer, kills) - from left margin to HP bar
             const leftZoneStart = 10;
-            const leftZoneEnd = hpX - 15;  // 5px extra spacing from HP bar
+            const leftZoneEnd = hpX;
             const leftZoneW = leftZoneEnd - leftZoneStart;
             
-            // Right zone (gold, level) - from HP bar to right margin with 5px extra spacing
-            const rightZoneStart = hpX + hpBarW + 15;  // 5px extra spacing from HP bar
+            // Right zone (gold, level) - from HP bar to right margin
+            const rightZoneStart = hpX + hpBarW;
             const rightZoneEnd = canvasW - 10;
             const rightZoneW = rightZoneEnd - rightZoneStart;
             
@@ -19680,7 +19710,7 @@
             for (let i = 0; i < uiState.weapons.length && i < maxWeapons; i++) {
                 const weapon = uiState.weapons[i];
                 const iconX = weaponsCenterX - iconSize / 2;
-                const iconY = mainRowY + 5 + i * (iconSize + iconGap);
+                const iconY = panelY + i * (iconSize + iconGap);
                 
                 // Draw weapon icon box
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -19728,7 +19758,7 @@
             for (let i = 0; i < uiState.tomes.length && i < maxTomes; i++) {
                 const tome = uiState.tomes[i];
                 const iconX = tomesCenterX - iconSize / 2;
-                const iconY = mainRowY + 5 + i * (iconSize + iconGap);
+                const iconY = panelY + i * (iconSize + iconGap);
                 
                 // Draw tome icon box
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
@@ -19742,12 +19772,21 @@
                 ctx.stroke();
                 ctx.shadowBlur = 0;
                 
-                // Draw tome icon (use actual tome icon, not generic book)
-                ctx.font = '16px Arial';
-                ctx.fillStyle = '#fff';
+                // Draw tome icon (book base + effect icon overlay, matching edit menu)
+                // Base: faded book emoji
+                ctx.font = '20px Arial';
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(tome.icon || '📖', iconX + iconSize / 2, iconY + iconSize / 2 - 1);
+                ctx.fillText('📖', iconX + iconSize / 2, iconY + iconSize / 2);
+                
+                // Effect: actual tome icon overlaid
+                ctx.font = '12px Arial';
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = '#000';
+                ctx.shadowBlur = 2;
+                ctx.fillText(tome.icon || '?', iconX + iconSize / 2, iconY + iconSize / 2);
+                ctx.shadowBlur = 0;
                 
                 // Draw level badge - original: bottom-right, black bg, white text, 12px font
                 const tomeLvlText = String(tome.level);
@@ -19836,7 +19875,7 @@
                 ctx.shadowColor = 'rgba(100, 200, 255, 0.5)';
             }
             ctx.shadowBlur = 8;
-            ctx.fillText(title, x + w / 2, y + 18);
+            ctx.fillText(title, x + w / 2, y + 16);
             ctx.shadowBlur = 0;
             
             // Title underline - original: border-bottom: 1px solid rgba(255, 255, 255, 0.2)
@@ -19850,7 +19889,7 @@
             // Stats rows - dynamic spacing based on panel height
             const statsCount = stats.length;
             const headerSpace = 46; // Space for title + underline (+1px)
-            const rowSpacing = 9; // 9px gap between rows
+            const rowSpacing = 10; // 10px gap between rows (+1px for extra spacing)
             const availableForRows = h - headerSpace - 8; // Leave some padding at bottom
             const rowH = Math.floor((availableForRows - (statsCount - 1) * rowSpacing) / statsCount);
             const startY = y + headerSpace;
