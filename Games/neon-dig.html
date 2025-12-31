@@ -2455,6 +2455,28 @@
         const BASE_HEIGHT = 500;
         let renderScale = 1;
         
+        // ========== ALL-CANVAS UI LAYOUT ==========
+        const BASE_HUD_HEIGHT = 50;       // Height for top HUD bar (logical units)
+        const BASE_TRACKPAD_HEIGHT = 140; // Height for bottom control/trackpad area (logical units)
+        
+        // Layout state (updated during resize) - all values in logical coordinates
+        const LAYOUT = {
+            isFullscreen: false,
+            gameWidth: BASE_WIDTH,
+            gameHeight: BASE_HEIGHT,
+            hudHeight: 0,           // 0 in windowed mode, calculated in fullscreen
+            trackpadHeight: 0,      // 0 in windowed mode, calculated in fullscreen
+            totalHeight: BASE_HEIGHT,
+            hudTop: BASE_HEIGHT,    // HUD below game
+            trackpadTop: BASE_HEIGHT
+        };
+        
+        // Canvas UI button hit areas (in logical coordinates)
+        const canvasButtons = {
+            pause: { x: 0, y: 0, w: 0, h: 0, visible: false },
+            upgrades: { x: 0, y: 0, w: 0, h: 0, visible: false }
+        };
+        
         // iOS canvas memory limit: 16,777,216 pixels max (approx 4096x4096)
         const MAX_CANVAS_PIXELS = 16777216;
         
@@ -10380,7 +10402,7 @@
                 ctx.textAlign = 'center';
                 ctx.shadowColor = '#00ff88';
                 ctx.shadowBlur = 10;
-                ctx.fillText('⛽ FUEL & REPAIR HERE 🔧', BASE_WIDTH / 2, surfaceScreenY + 30);
+                ctx.fillText('⛽ FUEL & REPAIR HERE 🔧', BASE_WIDTH / 2, surfaceScreenY + 20);
                 ctx.restore();
                 
                 // Refuel zone indicator line (dashed) at bottom of refuel zone
@@ -10481,7 +10503,7 @@
                 ctx.fillRect(stationCenterX + 41, groundY - 22, 6, 3);
                 ctx.fillRect(stationCenterX + 45, groundY - 24, 3, 10);
                 
-                // "GAS" neon sign on building
+                // "GAS" neon sign on building (green matching fuel & repair here)
                 ctx.save();
                 ctx.shadowColor = '#00ff88';
                 ctx.shadowBlur = 10 * pumpGlow;
@@ -10494,7 +10516,7 @@
                 // Price sign on pole
                 ctx.fillStyle = '#111111';
                 ctx.fillRect(stationCenterX + 50, groundY - 32, 18, 22);
-                ctx.fillStyle = '#00ff00';
+                ctx.fillStyle = '#ff9500';
                 ctx.font = 'bold 7px Arial';
                 ctx.textAlign = 'center';
                 ctx.fillText('$1.99', stationCenterX + 59, groundY - 20);
@@ -10588,11 +10610,11 @@
                 ctx.fillStyle = '#666666';
                 ctx.fillRect(shopCenterX - 62, groundY - 26, 4, 12);
                 
-                // "REPAIR" neon sign on building
+                // "REPAIR" neon sign on building (green matching fuel & repair here)
                 ctx.save();
-                ctx.shadowColor = '#00ffff';
+                ctx.shadowColor = '#00ff88';
                 ctx.shadowBlur = 10 * shopGlow;
-                ctx.fillStyle = `rgba(0, 255, 255, ${0.6 + shopGlow * 0.3})`;
+                ctx.fillStyle = `rgba(0, 255, 136, ${0.6 + shopGlow * 0.3})`;
                 ctx.font = 'bold 9px Oxanium, monospace';
                 ctx.textAlign = 'center';
                 ctx.fillText('REPAIR', shopCenterX, groundY - 46);
@@ -10783,6 +10805,507 @@
             drawAlien();
             
             ctx.restore();
+            
+            // Draw canvas-based UI (only in fullscreen/iframe mode)
+            if (LAYOUT.isFullscreen) {
+                // Pause button over game area (like original DOM overlay)
+                drawPauseButton();
+                
+                // Upgrades button with arrow in game area
+                drawUpgradesButton();
+                
+                if (LAYOUT.hudHeight > 0 || LAYOUT.trackpadHeight > 0) {
+                    drawCanvasHUD();
+                    if (LAYOUT.trackpadHeight > 0) {
+                        drawCanvasTrackpad();
+                    }
+                }
+            }
+        }
+        
+        // ========== CANVAS UI DRAWING ==========
+        // Exact styling from DOM CSS
+        const UI_COLORS = {
+            cyan: '#00f0ff',
+            magenta: '#ff00ff',
+            orange: '#ff9500',
+            labelColor: 'rgba(255, 255, 255, 0.5)',
+            valueWhite: '#ffffff',
+            valueWhiteGlow: 'rgba(255, 255, 255, 0.7)',
+            hudBg1: 'rgba(0, 15, 25, 0.9)',
+            hudBg2: 'rgba(0, 10, 18, 0.95)',
+            hudBorder: 'rgba(0, 240, 255, 0.1)',
+            controlBg1: 'rgba(5, 12, 20, 0.9)',
+            controlBg2: 'rgba(2, 8, 15, 0.95)',
+            controlBorder: 'rgba(0, 240, 255, 0.08)',
+            fuelBg: 'rgba(255, 150, 0, 0.1)',
+            fuelBorder: 'rgba(255, 150, 0, 0.3)',
+            fuelFill1: '#ff4400',
+            fuelFill2: '#ff9500',
+            fuelFill3: '#ffcc00',
+            fuelGlow: 'rgba(255, 150, 0, 0.5)',
+            hullBg: 'rgba(0, 240, 255, 0.1)',
+            hullBorder: 'rgba(0, 240, 255, 0.3)',
+            hullFill1: '#00aacc',
+            hullFill2: '#00f0ff',
+            hullFill3: '#66ffff',
+            hullGlow: 'rgba(0, 240, 255, 0.5)'
+        };
+        
+        function drawCanvasHUD() {
+            const y = LAYOUT.hudTop;
+            const h = LAYOUT.hudHeight;
+            const w = BASE_WIDTH;
+            
+            if (h <= 0) return;
+            
+            // Background gradient (matches .hud: linear-gradient 0deg)
+            const bgGrad = ctx.createLinearGradient(0, y + h, 0, y);
+            bgGrad.addColorStop(0, UI_COLORS.hudBg1);
+            bgGrad.addColorStop(1, UI_COLORS.hudBg2);
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, y, w, h);
+            
+            // Top border (matches border-top: 1px solid rgba(0, 240, 255, 0.1))
+            ctx.strokeStyle = UI_COLORS.hudBorder;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+            
+            // Fixed font sizes
+            const labelSize = 10;
+            const valueSize = 18;
+            const labelValueGap = 2;
+            
+            // Calculate total height of label+value unit for centering
+            const labelValueHeight = labelSize + labelValueGap + valueSize;
+            const unitTop = y + (h - labelValueHeight) / 2;
+            
+            // Bars: SLIMMER (shorter height) and WIDER
+            const barHeight = 18;
+            const barWidth = 143;  // 10% wider than 130
+            
+            const centerY = y + h / 2;
+            const currentDepth = Math.max(0, Math.floor((player.y - 60) / TILE_SIZE));
+            
+            // === LEFT SIDE: Depth - vertically centered as unit ===
+            const leftX = 12;
+            
+            // Label "Depth"
+            ctx.font = `600 ${labelSize}px "Exo 2", sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.labelColor;
+            ctx.fillText('DEPTH', leftX, unitTop);
+            
+            // Value (white with white glow)
+            ctx.font = `400 ${valueSize}px "Oxanium", monospace`;
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.valueWhite;
+            ctx.shadowColor = UI_COLORS.valueWhiteGlow;
+            ctx.shadowBlur = 20;
+            ctx.fillText(`${currentDepth}m`, leftX, unitTop + labelSize + labelValueGap);
+            ctx.shadowBlur = 0;
+            
+            // === RIGHT SIDE: Points - vertically centered as unit ===
+            const rightX = w - 12;
+            const availablePoints = getAvailablePoints();
+            
+            // Label "Points"
+            ctx.font = `600 ${labelSize}px "Exo 2", sans-serif`;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.labelColor;
+            ctx.fillText('POINTS', rightX, unitTop);
+            
+            // Value (white with white glow)
+            ctx.font = `400 ${valueSize}px "Oxanium", monospace`;
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.valueWhite;
+            ctx.shadowColor = UI_COLORS.valueWhiteGlow;
+            ctx.shadowBlur = 20;
+            ctx.fillText(`${availablePoints}`, rightX, unitTop + labelSize + labelValueGap);
+            ctx.shadowBlur = 0;
+            
+            // === CENTER: Fuel and Hull bars ===
+            const barGap = 18;
+            const centerX = w / 2;
+            
+            // Center the bar+label unit vertically (4px gap between label and bar, was 2px)
+            const barLabelGap = 4;
+            const barLabelHeight = labelSize + barLabelGap + barHeight;
+            const barUnitTop = y + (h - barLabelHeight) / 2;
+            const labelY = barUnitTop;
+            const barY = barUnitTop + labelSize + barLabelGap;
+            
+            // Fuel bar (left of center)
+            const fuelX = centerX - barWidth - barGap / 2;
+            drawFuelBar(fuelX, barY, barWidth, barHeight, fuel / maxFuel, labelSize, labelY);
+            
+            // Hull bar (right of center)
+            const hullX = centerX + barGap / 2;
+            drawHullBar(hullX, barY, barWidth, barHeight, hull / maxHull, labelSize, labelY);
+        }
+        
+        // Pause button drawn OVER the game area (matches original .pause-btn position)
+        function drawPauseButton() {
+            if (!LAYOUT.isFullscreen) return;
+            if (!gameRunning || gamePaused) {
+                canvasButtons.pause.visible = false;
+                return;
+            }
+            
+            // Position: top: 6px, left: 6px from game area
+            // Size: smaller than original 36px to account for canvas scaling
+            const btnSize = 28;
+            const btnX = 6;
+            const btnY = 6;
+            
+            // Background: rgba(0, 0, 0, 0.7)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath();
+            ctx.roundRect(btnX, btnY, btnSize, btnSize, 5);
+            ctx.fill();
+            
+            // Border: 2px solid rgba(0, 255, 255, 0.5)
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            
+            // Icon: font-size 14px (scaled down), color rgba(0, 255, 255, 0.9)
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.9)';
+            ctx.fillText('⏸', btnX + btnSize / 2, btnY + btnSize / 2 + 1);
+            
+            canvasButtons.pause = { x: btnX, y: btnY, w: btnSize, h: btnSize, visible: true };
+        }
+        
+        function drawFuelBar(x, y, w, h, percent, labelSize, labelY) {
+            // Label above bar - moved up 10px
+            ctx.font = `600 ${labelSize}px "Exo 2", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.labelColor;
+            ctx.fillText('FUEL', x + w / 2, labelY);
+            
+            // Bar background (slimmer bar = smaller radius)
+            ctx.fillStyle = UI_COLORS.fuelBg;
+            ctx.strokeStyle = UI_COLORS.fuelBorder;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 8);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Bar fill
+            const fillW = (w - 4) * Math.max(0, Math.min(1, percent));
+            if (fillW > 0) {
+                const fillGrad = ctx.createLinearGradient(x, 0, x + w, 0);
+                fillGrad.addColorStop(0, UI_COLORS.fuelFill1);
+                fillGrad.addColorStop(0.5, UI_COLORS.fuelFill2);
+                fillGrad.addColorStop(1, UI_COLORS.fuelFill3);
+                ctx.fillStyle = fillGrad;
+                ctx.shadowColor = UI_COLORS.fuelGlow;
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.roundRect(x + 2, y + 2, fillW, h - 4, 6);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+            
+            // Percent text (centered)
+            ctx.font = `700 11px "Oxanium", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+            ctx.shadowBlur = 2;
+            ctx.shadowOffsetY = 1;
+            ctx.fillText(`${Math.round(percent * 100)}`, x + w / 2, y + h / 2);
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        function drawHullBar(x, y, w, h, percent, labelSize, labelY) {
+            // Label above bar - moved up 10px
+            ctx.font = `600 ${labelSize}px "Exo 2", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.labelColor;
+            ctx.fillText('HULL', x + w / 2, labelY);
+            
+            // Bar background (slimmer bar = smaller radius)
+            ctx.fillStyle = UI_COLORS.hullBg;
+            ctx.strokeStyle = UI_COLORS.hullBorder;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 8);
+            ctx.fill();
+            ctx.stroke();
+            
+            // Bar fill
+            const fillW = (w - 4) * Math.max(0, Math.min(1, percent));
+            if (fillW > 0) {
+                const fillGrad = ctx.createLinearGradient(x, 0, x + w, 0);
+                fillGrad.addColorStop(0, UI_COLORS.hullFill1);
+                fillGrad.addColorStop(0.5, UI_COLORS.hullFill2);
+                fillGrad.addColorStop(1, UI_COLORS.hullFill3);
+                ctx.fillStyle = fillGrad;
+                ctx.shadowColor = UI_COLORS.hullGlow;
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.roundRect(x + 2, y + 2, fillW, h - 4, 6);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+            
+            // Percent text (centered)
+            ctx.font = `700 11px "Oxanium", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+            ctx.shadowBlur = 2;
+            ctx.shadowOffsetY = 1;
+            ctx.fillText(`${Math.round(percent * 100)}`, x + w / 2, y + h / 2);
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
+        function drawCanvasTrackpad() {
+            const y = LAYOUT.trackpadTop;
+            const h = LAYOUT.trackpadHeight;
+            const w = BASE_WIDTH;
+            
+            if (h <= 0) return;
+            
+            // Background gradient (matches .control-zone: linear-gradient 180deg)
+            const bgGrad = ctx.createLinearGradient(0, y, 0, y + h);
+            bgGrad.addColorStop(0, UI_COLORS.controlBg1);
+            bgGrad.addColorStop(1, UI_COLORS.controlBg2);
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, y, w, h);
+            
+            // Top border (matches border-top: 1px solid rgba(0, 240, 255, 0.08))
+            ctx.strokeStyle = UI_COLORS.controlBorder;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+            
+            // Fixed font sizes matching HUD
+            const labelSize = 10;
+            const valueSize = 18;
+            const labelValueGap = 2;
+            
+            // Calculate total height of label+value unit for centering
+            const labelValueHeight = labelSize + labelValueGap + valueSize;
+            const unitTop = y + (h - labelValueHeight) / 2;
+            
+            const centerY = y + h / 2;
+            
+            // === LEFT SIDE: Max depth - vertically centered as unit ===
+            const leftX = 12;
+            
+            ctx.font = `600 ${labelSize}px "Exo 2", sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.labelColor;
+            ctx.fillText('MAX', leftX, unitTop);
+            
+            ctx.font = `400 ${valueSize}px "Oxanium", monospace`;
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.magenta;
+            ctx.shadowColor = UI_COLORS.magenta;
+            ctx.shadowBlur = 20;
+            ctx.fillText(`${maxDepthThisRun}m`, leftX, unitTop + labelSize + labelValueGap);
+            ctx.shadowBlur = 0;
+            
+            // === RIGHT SIDE: Score - vertically centered as unit ===
+            const rightX = w - 12;
+            
+            ctx.font = `600 ${labelSize}px "Exo 2", sans-serif`;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.labelColor;
+            ctx.fillText('SCORE', rightX, unitTop);
+            
+            ctx.font = `400 ${valueSize}px "Oxanium", monospace`;
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = UI_COLORS.magenta;
+            ctx.shadowColor = UI_COLORS.magenta;
+            ctx.shadowBlur = 20;
+            ctx.fillText(`${score}`, rightX, unitTop + labelSize + labelValueGap);
+            ctx.shadowBlur = 0;
+            
+            // === CENTER: Touch instructions - vertically centered ===
+            const centerX = w / 2;
+            
+            ctx.font = `500 10px "Exo 2", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = 'rgba(0, 240, 255, 0.4)';
+            ctx.fillText('TOUCH AND DRAG OR ARROW KEYS/WASD TO MOVE', centerX, centerY);
+        }
+        
+        // Animation timer for arrow bounce
+        let arrowBounceTime = 0;
+        
+        // Draw upgrades button in GAME AREA with bouncing arrow
+        function drawUpgradesButton() {
+            if (!LAYOUT.isFullscreen) return;
+            
+            const refuelThresholdY = player.y + player.height * 0.1;
+            const isAboveRefuelLine = refuelThresholdY <= REFUEL_LINE_Y;
+            
+            if (!gameRunning || !isAboveRefuelLine || upgradeSelectionActive || score <= 0) {
+                canvasButtons.upgrades.visible = false;
+                return;
+            }
+            
+            // Update bounce animation
+            arrowBounceTime += 0.05;
+            const bounceOffset = Math.sin(arrowBounceTime * 2) * 6;
+            
+            const w = BASE_WIDTH;
+            const btnW = 100;
+            const btnH = 30;
+            const btnX = w / 2 - btnW / 2;
+            // Position button just above the HUD/UI area
+            const btnY = BASE_HEIGHT - btnH - 8;
+            
+            // === ARROW pointing down to button (30% smaller) ===
+            const arrowX = w / 2;
+            const arrowTailHeight = 25;
+            const arrowHeadHeight = 17;
+            const arrowTailWidth = 6;
+            const arrowHeadWidth = 13;
+            const arrowY = btnY - arrowTailHeight - arrowHeadHeight - 15 + bounceOffset;
+            
+            // Arrow glow
+            ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+            ctx.shadowBlur = 12;
+            
+            // Arrow tail (rectangle)
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.roundRect(arrowX - arrowTailWidth / 2, arrowY, arrowTailWidth, arrowTailHeight, [3, 3, 0, 0]);
+            ctx.fill();
+            
+            // Arrow head (triangle pointing down)
+            ctx.beginPath();
+            ctx.moveTo(arrowX - arrowHeadWidth, arrowY + arrowTailHeight);
+            ctx.lineTo(arrowX + arrowHeadWidth, arrowY + arrowTailHeight);
+            ctx.lineTo(arrowX, arrowY + arrowTailHeight + arrowHeadHeight);
+            ctx.closePath();
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            // === BUTTON ===
+            // Background: linear-gradient(180deg, #cc00ff, #9900cc)
+            const btnGrad = ctx.createLinearGradient(0, btnY, 0, btnY + btnH);
+            btnGrad.addColorStop(0, '#cc00ff');
+            btnGrad.addColorStop(1, '#9900cc');
+            ctx.fillStyle = btnGrad;
+            
+            // Box shadow: 0 0 15px rgba(200, 0, 255, 0.5)
+            ctx.shadowColor = 'rgba(200, 0, 255, 0.5)';
+            ctx.shadowBlur = 15;
+            ctx.beginPath();
+            ctx.roundRect(btnX, btnY, btnW, btnH, 22); // Pill shape
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            // Text: white with magenta text-shadow
+            ctx.font = `700 14px "Oxanium", monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(255, 100, 255, 0.8)';
+            ctx.shadowBlur = 8;
+            ctx.fillText('UPGRADES', btnX + btnW / 2, btnY + btnH / 2);
+            ctx.shadowBlur = 0;
+            
+            canvasButtons.upgrades = { x: btnX, y: btnY, w: btnW, h: btnH, visible: true };
+        }
+        
+        function drawPermanentUpgrades(startY, availHeight) {
+            // Get current permanent upgrades
+            const activeUpgrades = [];
+            for (const [key, level] of Object.entries(permanentUpgrades)) {
+                if (level > 0) {
+                    const def = upgradeDefinitions.find(u => u.id === key) || 
+                               legendaryUpgradeDefinitions.find(u => u.id === key);
+                    if (def) {
+                        activeUpgrades.push({ icon: def.icon, level, color: def.color || UI_COLORS.cyan });
+                    }
+                }
+            }
+            
+            if (activeUpgrades.length === 0) return;
+            
+            // Matches .perm-upgrade: width: 32px; height: 32px
+            const iconSize = 32;
+            const gap = 5;
+            const totalWidth = activeUpgrades.length * iconSize + (activeUpgrades.length - 1) * gap;
+            let x = (BASE_WIDTH - totalWidth) / 2;
+            
+            for (const upgrade of activeUpgrades) {
+                // Background: linear-gradient(135deg, rgba(0, 240, 255, 0.08) 0%, rgba(0, 240, 255, 0.02) 100%)
+                const iconGrad = ctx.createLinearGradient(x, startY, x + iconSize, startY + iconSize);
+                iconGrad.addColorStop(0, 'rgba(0, 240, 255, 0.08)');
+                iconGrad.addColorStop(1, 'rgba(0, 240, 255, 0.02)');
+                ctx.fillStyle = iconGrad;
+                
+                // Border: 1px solid rgba(0, 240, 255, 0.2), border-radius: 8px
+                ctx.strokeStyle = 'rgba(0, 240, 255, 0.2)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(x, startY, iconSize, iconSize, 8);
+                ctx.fill();
+                ctx.stroke();
+                
+                // Icon: font-size 15px with drop-shadow
+                ctx.font = '15px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = upgrade.color;
+                ctx.shadowBlur = 6;
+                ctx.fillText(upgrade.icon, x + iconSize / 2, startY + iconSize / 2);
+                ctx.shadowBlur = 0;
+                
+                // Level badge (if > 1) - matches .perm-stack
+                if (upgrade.level > 1) {
+                    // Position: bottom: -3px; right: -3px
+                    const badgeX = x + iconSize + 3;
+                    const badgeY = startY + iconSize + 3;
+                    
+                    // Background: rgba(0, 0, 0, 0.85), padding: 2px 5px, border-radius: 6px
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+                    ctx.beginPath();
+                    ctx.roundRect(badgeX - 14, badgeY - 12, 14, 12, 6);
+                    ctx.fill();
+                    
+                    // Border: 1px solid currentColor
+                    ctx.strokeStyle = upgrade.color;
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    
+                    // Text: font-size 9px, font-weight 800
+                    ctx.font = '800 9px "Oxanium", monospace';
+                    ctx.fillStyle = '#fff';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(`${upgrade.level}`, badgeX - 7, badgeY - 6);
+                }
+                
+                x += iconSize + gap;
+            }
         }
         
         // OPTIMIZATION: Pre-defined gem colors lookup (avoids object creation in hot loop)
@@ -11343,23 +11866,23 @@
                     break;
                 
                 case TILE.BOUNCE_PAD:
-                    // Red block with upward arrows (mirror of depth charge)
+                    // Yellow block with upward arrows (mirror of depth charge)
                     const upPulse = 0.6 + Math.sin(time * 3 + tx + ty) * 0.4;
                     const upArrowBob = Math.sin(time * 4) * 2;
                     
-                    // Dark red base
-                    ctx.fillStyle = '#2a0a0a';
+                    // Dark yellow base
+                    ctx.fillStyle = '#2a2a0a';
                     ctx.fillRect(x, y, s, s);
                     
-                    // Red gradient fill (reversed direction from depth charge)
+                    // Yellow gradient fill (reversed direction from depth charge)
                     const upGrad = ctx.createLinearGradient(x, y + s, x, y);
-                    upGrad.addColorStop(0, `rgba(255, 50, 50, ${upPulse * 0.7})`);
-                    upGrad.addColorStop(1, `rgba(200, 0, 0, ${upPulse})`);
+                    upGrad.addColorStop(0, `rgba(255, 255, 50, ${upPulse * 0.7})`);
+                    upGrad.addColorStop(1, `rgba(200, 200, 0, ${upPulse})`);
                     ctx.fillStyle = upGrad;
                     ctx.fillRect(x + 2, y + 2, s - 4, s - 4);
                     
                     // Upward arrows
-                    ctx.fillStyle = `rgba(255, 200, 100, ${upPulse})`;
+                    ctx.fillStyle = `rgba(255, 255, 200, ${upPulse})`;
                     ctx.font = 'bold 10px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
@@ -11368,7 +11891,7 @@
                     ctx.textBaseline = 'alphabetic';
                     
                     // Warning stripes (at top, mirrored)
-                    ctx.strokeStyle = `rgba(255, 200, 0, ${upPulse * 0.5})`;
+                    ctx.strokeStyle = `rgba(255, 255, 100, ${upPulse * 0.5})`;
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
@@ -11378,7 +11901,7 @@
                     }
                     
                     // Glow
-                    ctx.fillStyle = `rgba(255, 100, 50, ${upPulse * 0.2})`;
+                    ctx.fillStyle = `rgba(255, 255, 100, ${upPulse * 0.2})`;
                     ctx.beginPath();
                     ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
                     ctx.fill();
@@ -11416,23 +11939,23 @@
                     break;
                 
                 case TILE.DEPTH_CHARGE:
-                    // Red block with downward arrows
+                    // Yellow block with downward arrows
                     const depthPulse = 0.6 + Math.sin(time * 3 + tx + ty) * 0.4;
                     const arrowBob = Math.sin(time * 4) * 2;
                     
-                    // Dark red base
-                    ctx.fillStyle = '#2a0a0a';
+                    // Dark yellow base
+                    ctx.fillStyle = '#2a2a0a';
                     ctx.fillRect(x, y, s, s);
                     
-                    // Red gradient fill
+                    // Yellow gradient fill
                     const depthGrad = ctx.createLinearGradient(x, y, x, y + s);
-                    depthGrad.addColorStop(0, `rgba(255, 50, 50, ${depthPulse * 0.7})`);
-                    depthGrad.addColorStop(1, `rgba(200, 0, 0, ${depthPulse})`);
+                    depthGrad.addColorStop(0, `rgba(255, 255, 50, ${depthPulse * 0.7})`);
+                    depthGrad.addColorStop(1, `rgba(200, 200, 0, ${depthPulse})`);
                     ctx.fillStyle = depthGrad;
                     ctx.fillRect(x + 2, y + 2, s - 4, s - 4);
                     
                     // Downward arrows
-                    ctx.fillStyle = `rgba(255, 200, 100, ${depthPulse})`;
+                    ctx.fillStyle = `rgba(255, 255, 200, ${depthPulse})`;
                     ctx.font = 'bold 10px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
@@ -11441,7 +11964,7 @@
                     ctx.textBaseline = 'alphabetic';
                     
                     // Warning stripes
-                    ctx.strokeStyle = `rgba(255, 200, 0, ${depthPulse * 0.5})`;
+                    ctx.strokeStyle = `rgba(255, 255, 100, ${depthPulse * 0.5})`;
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
@@ -11451,7 +11974,7 @@
                     }
                     
                     // Glow
-                    ctx.fillStyle = `rgba(255, 100, 50, ${depthPulse * 0.2})`;
+                    ctx.fillStyle = `rgba(255, 255, 100, ${depthPulse * 0.2})`;
                     ctx.beginPath();
                     ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
                     ctx.fill();
@@ -13681,6 +14204,87 @@
             togglePause();
         });
         
+        // ===== CANVAS UI CLICK HANDLING =====
+        function getCanvasCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            // Scale from display to logical coordinates
+            const scaleX = BASE_WIDTH / rect.width;
+            const scaleY = LAYOUT.totalHeight / rect.height;
+            
+            let clientX, clientY;
+            if (e.touches) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else if (e.changedTouches) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+        
+        function isInButton(x, y, btn) {
+            return btn && btn.visible && 
+                   x >= btn.x && x <= btn.x + btn.w &&
+                   y >= btn.y && y <= btn.y + btn.h;
+        }
+        
+        function handleCanvasUIClick(e) {
+            if (!LAYOUT.isFullscreen) return false;
+            
+            const coords = getCanvasCoords(e);
+            
+            // Check pause button
+            if (isInButton(coords.x, coords.y, canvasButtons.pause)) {
+                e.preventDefault();
+                togglePause();
+                return true;
+            }
+            
+            // Check upgrades button
+            if (isInButton(coords.x, coords.y, canvasButtons.upgrades)) {
+                e.preventDefault();
+                openShop();
+                return true;
+            }
+            
+            return false;
+        }
+        
+        // Add canvas UI click listeners
+        canvas.addEventListener('click', (e) => {
+            if (LAYOUT.isFullscreen) {
+                handleCanvasUIClick(e);
+            }
+        });
+        
+        // Override touch handlers for canvas UI in fullscreen
+        const originalTouchStart = canvas.ontouchstart;
+        canvas.addEventListener('touchstart', (e) => {
+            if (LAYOUT.isFullscreen && LAYOUT.hudHeight > 0) {
+                const coords = getCanvasCoords(e);
+                // Check if touch is in HUD or trackpad area for button clicks
+                if (coords.y >= LAYOUT.hudTop) {
+                    // Will be handled by touchend
+                    return;
+                }
+            }
+        }, { passive: true });
+        
+        canvas.addEventListener('touchend', (e) => {
+            if (LAYOUT.isFullscreen) {
+                if (handleCanvasUIClick(e)) {
+                    return;
+                }
+            }
+        }, { passive: false });
+        
         // Resume button
         resumeBtn.addEventListener('click', resumeGame);
         resumeBtn.addEventListener('touchend', (e) => {
@@ -13765,29 +14369,71 @@
             
             const isInIframe = window.self !== window.top;
             
-            const hud = document.querySelector('.hud');
-            const hudHeight = hud ? hud.offsetHeight : 50;
+            const hudEl = document.querySelector('.hud');
+            const controlZoneEl = document.querySelector('.control-zone');
+            const pauseBtnEl = document.getElementById('pauseBtn');
+            const upgradeBtnEl = document.getElementById('surfaceUpgradeBtn');
+            const upgradeArrowEl = document.getElementById('upgradeArrow');
             
             const gameContainer = document.querySelector('.game-container');
             const isFullscreen = isInIframe || viewportWidth > BASE_WIDTH * 1.05 || viewportHeight > BASE_HEIGHT * 1.05;
             
-            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
-            
             if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
+                LAYOUT.isFullscreen = true;
                 
-                // No letterboxing - use full available space
-                const borderWidth = 0;
-                const safetyPadding = 0;
-                const totalMargin = 0;
+                // Hide DOM UI elements - we draw them on canvas
+                if (hudEl) hudEl.style.display = 'none';
+                if (controlZoneEl) controlZoneEl.style.display = 'none';
+                if (pauseBtnEl) pauseBtnEl.style.display = 'none';
+                if (upgradeBtnEl) upgradeBtnEl.style.display = 'none';
+                if (upgradeArrowEl) upgradeArrowEl.style.display = 'none';
                 
+                // Calculate display dimensions
                 const availWidth = viewportWidth;
-                const availHeight = viewportHeight - hudHeight;
+                const availHeight = viewportHeight;
                 
-                // Use full available dimensions - no aspect ratio constraint
-                let cssWidth = Math.floor(availWidth);
-                let cssHeight = Math.floor(availHeight);
+                // Game area fills width, find height maintaining aspect
+                const gameAspect = BASE_WIDTH / BASE_HEIGHT;
+                let displayGameWidth = availWidth;
+                let displayGameHeight = Math.floor(displayGameWidth / gameAspect);
+                
+                // Check if we have extra height for UI
+                const extraDisplayHeight = availHeight - displayGameHeight;
+                
+                let displayHudHeight = 0;
+                let displayTrackpadHeight = 0;
+                
+                if (extraDisplayHeight > 80) {
+                    // Split extra space 50/50 between HUD and trackpad for equal section heights
+                    // Make sections a touch larger - use more of the extra space
+                    const sectionHeight = Math.max(55, Math.min(75, extraDisplayHeight * 0.50));
+                    displayHudHeight = sectionHeight;
+                    displayTrackpadHeight = sectionHeight;
+                } else if (extraDisplayHeight > 45) {
+                    // Just HUD, no trackpad
+                    displayHudHeight = extraDisplayHeight;
+                    displayTrackpadHeight = 0;
+                } else {
+                    // No extra UI - game fills screen
+                    displayGameHeight = availHeight;
+                    displayHudHeight = 0;
+                    displayTrackpadHeight = 0;
+                }
+                
+                const displayTotalHeight = displayGameHeight + displayHudHeight + displayTrackpadHeight;
+                
+                // Convert display heights to logical coordinates (matching BASE_WIDTH/BASE_HEIGHT scale)
+                const displayToLogical = BASE_HEIGHT / displayGameHeight;
+                
+                LAYOUT.gameWidth = BASE_WIDTH;
+                LAYOUT.gameHeight = BASE_HEIGHT;
+                LAYOUT.hudHeight = Math.round(displayHudHeight * displayToLogical);
+                LAYOUT.trackpadHeight = Math.round(displayTrackpadHeight * displayToLogical);
+                LAYOUT.totalHeight = BASE_HEIGHT + LAYOUT.hudHeight + LAYOUT.trackpadHeight;
+                LAYOUT.hudTop = BASE_HEIGHT;
+                LAYOUT.trackpadTop = BASE_HEIGHT + LAYOUT.hudHeight;
                 
                 // Determine buffer scale
                 let bufferScale;
@@ -13799,22 +14445,23 @@
                     bufferScale = 2;
                 }
                 
-                // iOS canvas memory safety check
+                // Buffer uses logical dimensions
                 let bufferWidth = Math.round(BASE_WIDTH * bufferScale);
-                let bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
+                let bufferHeight = Math.round(LAYOUT.totalHeight * bufferScale);
                 const totalPixels = bufferWidth * bufferHeight;
                 
+                // iOS canvas memory safety check
                 if (totalPixels > MAX_CANVAS_PIXELS) {
                     const scaleFactor = Math.sqrt(MAX_CANVAS_PIXELS / totalPixels);
                     bufferScale *= scaleFactor;
                     bufferWidth = Math.round(BASE_WIDTH * bufferScale);
-                    bufferHeight = Math.round(BASE_HEIGHT * bufferScale);
+                    bufferHeight = Math.round(LAYOUT.totalHeight * bufferScale);
                 }
                 
                 canvas.width = bufferWidth;
                 canvas.height = bufferHeight;
-                canvas.style.width = cssWidth + 'px';
-                canvas.style.height = cssHeight + 'px';
+                canvas.style.width = displayGameWidth + 'px';
+                canvas.style.height = displayTotalHeight + 'px';
                 
                 renderScale = bufferScale;
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -13825,15 +14472,30 @@
                 // Debug overlay
                 GameDebug.show({
                     viewport: `${viewportWidth}×${viewportHeight}`,
-                    avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
-                    css: `${cssWidth}×${cssHeight}`,
-                    buffer: `${bufferWidth}×${bufferHeight}`,
-                    iframe: isInIframe ? 'YES' : 'NO',
-                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
+                    display: `${displayGameWidth}×${displayTotalHeight}`,
+                    logical: `${BASE_WIDTH}×${LAYOUT.totalHeight}`,
+                    hud: LAYOUT.hudHeight,
+                    trackpad: LAYOUT.trackpadHeight,
+                    iframe: isInIframe ? 'YES' : 'NO'
                 });
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
                 document.body.classList.remove('fullscreen-active');
+                LAYOUT.isFullscreen = false;
+                
+                // Reset LAYOUT for windowed mode
+                LAYOUT.hudHeight = 0;
+                LAYOUT.trackpadHeight = 0;
+                LAYOUT.totalHeight = BASE_HEIGHT;
+                
+                // Show DOM UI elements in windowed mode
+                if (hudEl) hudEl.style.display = '';
+                if (controlZoneEl) controlZoneEl.style.display = '';
+                if (pauseBtnEl) pauseBtnEl.style.display = '';
+                if (upgradeBtnEl) upgradeBtnEl.style.display = '';
+                if (upgradeArrowEl) upgradeArrowEl.style.display = '';
+                
+                const hudHeight = hudEl ? hudEl.offsetHeight : 50;
                 
                 // Scale internal resolution based on display size
                 if (viewportWidth >= 2560 || viewportHeight >= 1440) {
