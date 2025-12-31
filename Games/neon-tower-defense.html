@@ -97,6 +97,13 @@
             align-items: center;
         }
         
+        /* Hide DOM HUD in fullscreen - canvas draws it instead */
+        .game-container.fullscreen-mode .hud,
+        .game-container.fullscreen-mode .speed-btn,
+        .game-container.fullscreen-mode .exit-btn {
+            display: none !important;
+        }
+        
         /* Fullscreen body centering - JS adds this class */
         body.fullscreen-active {
             position: fixed !important;
@@ -3384,6 +3391,33 @@
         let CANVAS_WIDTH = BASE_WIDTH;
         let CANVAS_HEIGHT = BASE_HEIGHT;
         
+        // ========== CANVAS UI LAYOUT ==========
+        // Tracks fullscreen state for canvas-based HUD
+        const LAYOUT = {
+            isFullscreen: false,
+            gameWidth: BASE_WIDTH,
+            gameHeight: BASE_HEIGHT
+        };
+        
+        // Canvas HUD colors (matching DOM CSS exactly)
+        const UI_COLORS = {
+            cyan: '#00f0ff',
+            cyanGlow: 'rgba(0, 255, 255, 0.8)',
+            gold: '#ffd700',
+            red: '#ff4444',
+            white: '#ffffff',
+            labelColor: 'rgba(255, 255, 255, 0.7)',
+            hudBg: 'rgba(0, 0, 0, 0.5)',
+            buttonBg: 'rgba(0, 50, 60, 0.8)',
+            buttonBorder: 'rgba(0, 255, 255, 0.5)'
+        };
+        
+        // Canvas button hit areas for click detection
+        const canvasButtons = {
+            speed: { x: 0, y: 0, w: 0, h: 0, visible: false },
+            exit: { x: 0, y: 0, w: 0, h: 0, visible: false }
+        };
+        
         // ========== DEBUG UTILITY ==========
         const GameDebug = {
             enabled: false, // Toggle for debugging
@@ -3516,6 +3550,9 @@
             const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             const isMobile = viewW <= 768;
             const gameContainer = document.querySelector('.game-container');
+            
+            // Update LAYOUT for canvas UI
+            LAYOUT.isFullscreen = isFullscreen;
             
             // Control bar takes about 155px (two rows of towers + buttons + padding)
             const CONTROL_BAR_HEIGHT = 155;
@@ -5888,6 +5925,11 @@
         function handleCanvasClick(e) {
             const pos = getCanvasCoords(e.clientX, e.clientY);
             
+            // Check canvas UI buttons first (in fullscreen mode)
+            if (LAYOUT.isFullscreen && checkCanvasButtonClick(pos.x, pos.y)) {
+                return;
+            }
+            
             // If we're moving a tower, handle the move
             if (movingTower) {
                 completeTowerMove(pos.x, pos.y);
@@ -5947,6 +5989,11 @@
             
             const touch = e.changedTouches[0];
             const pos = getCanvasCoords(touch.clientX, touch.clientY);
+            
+            // Check canvas UI buttons first (in fullscreen mode)
+            if (LAYOUT.isFullscreen && checkCanvasButtonClick(pos.x, pos.y)) {
+                return;
+            }
             
             // If we're moving a tower, handle the move
             if (movingTower) {
@@ -9151,6 +9198,147 @@
             if (tutorialActive && tutorialAlpha > 0) {
                 drawTutorialText();
             }
+            
+            // Draw canvas-based HUD in fullscreen/iframe mode
+            if (LAYOUT.isFullscreen) {
+                drawCanvasHUD();
+            }
+        }
+        
+        // ========== CANVAS HUD DRAWING ==========
+        function drawCanvasHUD() {
+            const w = BASE_WIDTH;
+            const centerX = w / 2;
+            const hudY = 10; // top: 10px from CSS
+            
+            // === HUD ITEMS (centered) ===
+            // Matches: .hud { gap: 20px, font-size: 18px, color: #fff, text-shadow: 0 0 10px #0ff, font-weight: bold }
+            // Matches: .hud-item span { color: #0ff }
+            const items = [
+                { icon: '❤️', value: lives },
+                { icon: '💰', value: gold },
+                { icon: '🌊', value: wave },
+                { icon: '💀', value: kills }
+            ];
+            
+            const itemGap = 20; // gap: 20px
+            ctx.font = 'bold 18px Arial, sans-serif';
+            ctx.textBaseline = 'middle';
+            
+            // Measure total width for centering
+            let totalWidth = 0;
+            const itemWidths = [];
+            for (const item of items) {
+                const iconWidth = 20; // emoji width approx
+                const valueWidth = ctx.measureText(item.value.toString()).width;
+                const itemW = iconWidth + 5 + valueWidth; // 5px gap inside item
+                itemWidths.push(itemW);
+                totalWidth += itemW;
+            }
+            totalWidth += itemGap * (items.length - 1);
+            
+            let x = centerX - totalWidth / 2;
+            const textY = hudY + 11;
+            
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                
+                // Icon (white with cyan glow)
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = '#0ff';
+                ctx.shadowBlur = 10;
+                ctx.textAlign = 'left';
+                ctx.fillText(item.icon, x, textY);
+                
+                // Value (cyan with cyan glow)
+                ctx.fillStyle = '#0ff';
+                ctx.fillText(item.value.toString(), x + 25, textY);
+                ctx.shadowBlur = 0;
+                
+                x += itemWidths[i] + itemGap;
+            }
+            
+            // === SPEED BUTTON (left of HUD) ===
+            // Matches: .speed-btn { left: calc(50% - 175px), transform: translateX(-100%) }
+            // Button right edge is at centerX - 175
+            const speedBtnW = 52;
+            const speedBtnH = 22;
+            const speedBtnX = centerX - 175 - speedBtnW; // right edge at centerX-175, so left edge is that minus width
+            const speedBtnY = hudY;
+            
+            // Background: rgba(0, 0, 0, 0.7)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath();
+            ctx.roundRect(speedBtnX, speedBtnY, speedBtnW, speedBtnH, 4);
+            ctx.fill();
+            
+            // Border: 2px solid rgba(0, 255, 255, 0.5)
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Text: color #0ff, font-size 11px bold
+            const speedText = '▶▶ ' + gameSpeed + 'x';
+            ctx.font = 'bold 11px Arial';
+            ctx.fillStyle = '#0ff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(speedText, speedBtnX + speedBtnW / 2, speedBtnY + speedBtnH / 2);
+            
+            canvasButtons.speed = { x: speedBtnX, y: speedBtnY, w: speedBtnW, h: speedBtnH, visible: true };
+            
+            // === EXIT BUTTON (right of HUD) ===
+            // Matches: .exit-btn { left: calc(50% + 175px) }
+            const exitBtnW = 52;
+            const exitBtnH = 22;
+            const exitBtnX = centerX + 175;
+            const exitBtnY = hudY;
+            
+            // Background: rgba(0, 0, 0, 0.7)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath();
+            ctx.roundRect(exitBtnX, exitBtnY, exitBtnW, exitBtnH, 4);
+            ctx.fill();
+            
+            // Border: 2px solid rgba(255, 100, 100, 0.5)
+            ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Text: color rgba(255, 100, 100, 0.8), font-size 11px bold
+            ctx.font = 'bold 11px Arial';
+            ctx.fillStyle = 'rgba(255, 100, 100, 0.8)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('✕ EXIT', exitBtnX + exitBtnW / 2, exitBtnY + exitBtnH / 2);
+            
+            canvasButtons.exit = { x: exitBtnX, y: exitBtnY, w: exitBtnW, h: exitBtnH, visible: true };
+        }
+        
+        // Check if a canvas UI button was clicked
+        function checkCanvasButtonClick(x, y) {
+            // Speed button
+            const speedBtn = canvasButtons.speed;
+            if (speedBtn.visible && x >= speedBtn.x && x <= speedBtn.x + speedBtn.w && y >= speedBtn.y && y <= speedBtn.y + speedBtn.h) {
+                // Cycle game speed: 1x -> 2x -> 3x -> 1x
+                gameSpeed = gameSpeed === 1 ? 2 : gameSpeed === 2 ? 3 : 1;
+                // Update DOM button text (for consistency if it becomes visible)
+                const domSpeedBtn = document.getElementById('speedBtn');
+                if (domSpeedBtn) {
+                    domSpeedBtn.textContent = '▶▶ ' + gameSpeed + 'x';
+                }
+                return true;
+            }
+            
+            // Exit button
+            const exitBtn = canvasButtons.exit;
+            if (exitBtn.visible && x >= exitBtn.x && x <= exitBtn.x + exitBtn.w && y >= exitBtn.y && y <= exitBtn.y + exitBtn.h) {
+                // Show exit confirmation overlay (same as DOM button)
+                document.getElementById('exitConfirmOverlay').classList.add('active');
+                return true;
+            }
+            
+            return false;
         }
         
         function drawPathArrows() {
