@@ -2795,48 +2795,30 @@
             margin: 0;
         }
 
-        /* ========== SCROLL CONTAINER STRATEGY ==========
-           Research: Dedicated container works consistently across all browsers
-           - Chrome/Firefox work on html, Safari needs body
-           - Dedicated container avoids these inconsistencies
-           - overscroll-behavior-y: contain prevents Chrome edge bugs
+        /* ========== FIXED SECTIONS ARCHITECTURE ==========
+           All sections are position:fixed, stacked on top of each other.
+           Only the active section is visible. No scroll = no zoom issues.
+           Navigation fades between sections via CSS transitions.
         */
         .scroll-container {
+            /* Container is just a wrapper now - no scrolling */
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
             height: 100vh;
-            height: 100dvh; /* Dynamic viewport for mobile */
-            overflow-y: scroll;
-            overflow-x: hidden;
-            /* Scroll-snap disabled - manual fade transitions handle all section changes */
-            scroll-snap-type: none;
-            -webkit-scroll-snap-type: none;
-            scroll-behavior: auto;
-            overscroll-behavior-y: contain;
-            -webkit-overscroll-behavior-y: contain;
-            -webkit-overflow-scrolling: touch; /* iOS momentum */
-            /* GPU acceleration - avoid will-change: scroll-position (invalid) */
+            height: 100dvh;
+            overflow: hidden;
+            /* GPU acceleration */
             -webkit-transform: translateZ(0);
             transform: translateZ(0);
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
-            /* Hide scrollbar globally while maintaining scroll functionality */
-            scrollbar-width: none; /* Firefox */
-            -ms-overflow-style: none; /* IE/Edge */
-        }
-        
-        /* Hide scrollbar - WebKit/Blink browsers (Chrome, Safari, Edge, Opera) */
-        .scroll-container::-webkit-scrollbar {
-            display: none;
-            width: 0;
-            height: 0;
         }
 
         @supports not (height: 100dvh) {
             .scroll-container {
                 height: 100vh;
-            }
-            section {
-                height: 100vh;
-                min-height: 100vh;
             }
         }
 
@@ -3015,14 +2997,15 @@
 
         /* ========== VERTICAL CARD SECTIONS ========== */
         section {
-            position: relative;
-            min-height: 100vh;
-            min-height: 100dvh; /* Dynamic viewport height for mobile */
+            /* FIXED POSITION - All sections stacked, only active one visible */
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
             height: 100vh;
             height: 100dvh; /* Dynamic viewport height for mobile */
-            box-sizing: border-box; /* Include border in height for proper scroll-snap */
+            box-sizing: border-box;
             /* Center content between nav bar (top) and music player (bottom) */
-            /* Nav: ~55px, Music player: ~75px from bottom edge */
             padding: 70px 3rem 100px;
             display: flex;
             flex-direction: column;
@@ -3030,17 +3013,45 @@
             align-items: center;
             text-align: center;
             overflow: hidden;
-            scroll-snap-align: start;
-            -webkit-scroll-snap-align: start;
-            scroll-snap-stop: always;
-            -webkit-scroll-snap-stop: always;
-            border-bottom: 8px solid #000000;
-            box-shadow: 0 8px 0 #000000;
+            /* Hidden by default - active class makes visible */
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            /* Smooth transitions between sections */
+            transition: opacity 0.4s ease-out, visibility 0.4s ease-out;
             /* GPU acceleration to prevent tearing */
             -webkit-transform: translate3d(0, 0, 0);
             transform: translate3d(0, 0, 0);
             -webkit-backface-visibility: hidden;
             backface-visibility: hidden;
+            /* Stack order - will be overridden by z-index for active */
+            z-index: 1;
+        }
+        
+        /* ACTIVE SECTION - Visible and interactive */
+        section.section-active {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            z-index: 10;
+        }
+        
+        /* TRANSITIONING OUT - Fading away */
+        section.section-transitioning-out {
+            opacity: 0;
+            visibility: visible;
+            pointer-events: none;
+            z-index: 5;
+            transition: opacity 0.35s ease-in, visibility 0.35s ease-in;
+        }
+        
+        /* TRANSITIONING IN - Fading in */
+        section.section-transitioning-in {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: none;
+            z-index: 10;
+            transition: opacity 0.35s ease-out 0.1s, visibility 0s;
         }
         
         /* Consistent padding on all sections */
@@ -3049,7 +3060,7 @@
             padding-bottom: 100px;
         }
         
-        /* Section transition states for nav clicks */
+        /* Section transition states for nav clicks - LEGACY, keeping for compatibility */
         section.transitioning-out {
             animation: sectionFadeOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
             pointer-events: none;
@@ -7071,7 +7082,7 @@
     <div class="scroll-container" id="scroll-container">
 
     <!-- Home Section -->
-    <section id="home" class="home-section">
+    <section id="home" class="home-section section-active">
         <div class="fade-overlay"></div>
         <div class="darken-overlay"></div>
         <div class="chrome-color-sweep"></div>
@@ -7798,10 +7809,12 @@
         
         // Get currently visible section
         function getCurrentSection() {
-            const scrollTop = scrollContainer.scrollTop;
-            const sectionHeight = window.innerHeight;
-            const currentIndex = Math.round(scrollTop / sectionHeight);
-            return sections[currentIndex] || sections[0];
+            // Fixed sections architecture: find section with active class
+            const activeSection = document.querySelector('section.section-active');
+            if (activeSection) {
+                return activeSection.id;
+            }
+            return 'home'; // Default fallback
         }
         
         // Black fade transition for MENU CLICKS only
@@ -7818,6 +7831,7 @@
             }
             
             const currentSectionId = getCurrentSection();
+            const currentSection = document.querySelector('section.section-active');
             const targetSection = document.getElementById(targetId);
             
             if (!targetSection) return;
@@ -7840,7 +7854,7 @@
             // Detect Safari for faster timing
             const isSafariBrowser = document.body.classList.contains('is-safari') || document.body.classList.contains('is-mac-safari');
             const fadeInTime = isSafariBrowser ? 230 : 345;
-            const pauseTime = isSafariBrowser ? 35 : 58;
+            const pauseTime = isSafariBrowser ? 200 : 200; // +300ms black hold time
             const snapReenableTime = isSafariBrowser ? 58 : 115;
             
             // Mobile: Add tap highlight class (skip logo)
@@ -7873,30 +7887,31 @@
             // Fade in the black overlay
             transitionOverlay.classList.add('active');
             
-            // After fade in complete, do the scroll
+            // After fade in complete, switch sections
             setTimeout(() => {
-                // Use multiple scroll methods for maximum compatibility
-                // Safari sometimes ignores scrollIntoView, so we use scrollTop as fallback
-                try {
-                    // Primary: scrollIntoView (works in most browsers)
-                    targetSection.scrollIntoView({ behavior: 'instant', block: 'start' });
-                } catch (e) {
-                    // Fallback: direct scrollTop manipulation
-                    scrollContainer.scrollTop = targetSection.offsetTop;
+                // ========== FIXED SECTIONS: Toggle visibility classes ==========
+                // Remove active from current section
+                if (currentSection) {
+                    currentSection.classList.remove('section-active');
+                    currentSection.classList.add('section-transitioning-out');
                 }
                 
-                // Double-check position after a frame (Safari fix)
-                requestAnimationFrame(() => {
-                    if (Math.abs(scrollContainer.scrollTop - targetSection.offsetTop) > 10) {
-                        scrollContainer.scrollTop = targetSection.offsetTop;
+                // Add active to target section
+                targetSection.classList.remove('section-transitioning-out');
+                targetSection.classList.add('section-active');
+                
+                // Clean up transition class after animation
+                setTimeout(() => {
+                    if (currentSection) {
+                        currentSection.classList.remove('section-transitioning-out');
                     }
-                });
+                }, 400);
                 
                 updateActiveDot(targetId);
                 updateActiveMenuItem(targetId);
                 updateUrlHash(targetId);
                 
-                // Brief pause then fade out
+                // Brief pause then fade out overlay
                 setTimeout(() => {
                     transitionOverlay.classList.remove('active');
                     document.body.classList.remove('page-transitioning');
@@ -7999,28 +8014,11 @@
         }
         
         function handleScroll() {
-            // Pause animations during scroll
-            pauseAnimations();
-            resumeAnimations();
-            
-            // Show card indicators (reuse shared function)
-            showCardIndicators();
-            
+            // FIXED SECTIONS: No scroll to handle - animations managed by section transitions
             scrollTicking = false;
         }
         
-        // Single optimized scroll listener with throttling
-        if (scrollContainer) {
-            scrollContainer.addEventListener('scroll', function() {
-                // Skip if scroll is locked (game interaction) or in cooldown period
-                if (isScrollLocked || unlockCooldown) return;
-                
-                if (!scrollTicking) {
-                    requestAnimationFrame(handleScroll);
-                    scrollTicking = true;
-                }
-            }, { passive: true });
-        }
+        // No scroll listener needed - fixed sections don't scroll
         
         // Block keyboard scroll keys only when hovering over game container
         document.addEventListener('keydown', function(e) {
@@ -8059,7 +8057,8 @@
         }
         
         function triggerScrollTransition(direction) {
-            if (scrollTransitionCooldown || isTransitioning || isResizing) return;
+            // FIXED SECTIONS: Block during game interaction or other locks
+            if (scrollTransitionCooldown || isTransitioning || isResizing || isScrollLocked || unlockCooldown) return;
             
             const nextSectionId = getNextSection(direction);
             if (!nextSectionId) return;
@@ -8072,12 +8071,12 @@
             }, scrollCooldownTime);
         }
         
-        // WHEEL EVENT - Desktop scroll (replaces arcade frame lock handler)
+        // WHEEL EVENT - Desktop section navigation (fixed sections architecture)
         let wheelAccumulator = 0;
         const wheelThreshold = 50; // Pixels of wheel delta before triggering
         let wheelResetTimeout;
         
-        scrollContainer.addEventListener('wheel', function(e) {
+        document.addEventListener('wheel', function(e) {
             // Don't intercept if game is active (arcade hover)
             if (document.body.classList.contains('arcade-game-hover')) {
                 e.preventDefault();
@@ -8101,33 +8100,37 @@
             }
         }, { passive: false });
         
-        // TOUCH EVENTS - Mobile swipe
+        // TOUCH EVENTS - Mobile swipe (fixed sections architecture)
         let swipeTouchStartY = 0;
         let swipeTouchStartTime = 0;
         const swipeThreshold = 50; // Minimum swipe distance
         const swipeTimeLimit = 300; // Max time for swipe gesture
         
-        scrollContainer.addEventListener('touchstart', function(e) {
+        document.addEventListener('touchstart', function(e) {
             // Don't intercept if game is active
-            if (isInteractingWithGame || isGameVisible || isScrollLocked) return;
+            if (isInteractingWithGame || isGameVisible) return;
             
             swipeTouchStartY = e.touches[0].clientY;
             swipeTouchStartTime = Date.now();
         }, { passive: true });
         
-        scrollContainer.addEventListener('touchmove', function(e) {
+        document.addEventListener('touchmove', function(e) {
             // Don't intercept if game is active
-            if (isInteractingWithGame || isGameVisible || isScrollLocked) return;
+            if (isInteractingWithGame || isGameVisible) return;
             
-            // Prevent native scroll when not in cooldown
+            // Prevent native scroll since we're using fixed sections
             if (!scrollTransitionCooldown && !isTransitioning) {
-                e.preventDefault();
+                // Only prevent if it's a vertical swipe
+                const deltaY = Math.abs(swipeTouchStartY - e.touches[0].clientY);
+                if (deltaY > 10) {
+                    e.preventDefault();
+                }
             }
         }, { passive: false });
         
-        scrollContainer.addEventListener('touchend', function(e) {
+        document.addEventListener('touchend', function(e) {
             // Don't intercept if game is active
-            if (isInteractingWithGame || isGameVisible || isScrollLocked) return;
+            if (isInteractingWithGame || isGameVisible) return;
             
             const touchEndY = e.changedTouches[0].clientY;
             const touchEndTime = Date.now();
@@ -8141,236 +8144,18 @@
             }
         }, { passive: true });
         
-        // ========== RESIZE SCROLL LOCK ==========
-        // Maintain current section position when window is resized
-        let resizeScrollTimeout;
-        let currentSectionBeforeResize = null;
-        
+        // ========== RESIZE HANDLING (FIXED SECTIONS) ==========
+        // No scroll position to maintain - just update vh if needed
         window.addEventListener('resize', function() {
-            // Capture current section at start of resize
-            if (!currentSectionBeforeResize) {
-                currentSectionBeforeResize = getCurrentSection();
-            }
+            // Block transitions during resize
             isResizing = true;
-            
-            // Debounce - wait for resize to settle
             clearTimeout(resizeScrollTimeout);
             resizeScrollTimeout = setTimeout(function() {
-                if (currentSectionBeforeResize && scrollContainer) {
-                    const targetSection = document.getElementById(currentSectionBeforeResize);
-                    if (targetSection) {
-                        // Instantly scroll to maintain section position
-                        scrollContainer.scrollTop = targetSection.offsetTop;
-                    }
-                }
-                currentSectionBeforeResize = null;
                 isResizing = false;
             }, 150);
         });
         
-        // ========== AGGRESSIVE ZOOM/SCALE SCROLL LOCK ==========
-        // Detect zoom changes (pinch or accessibility zoom) and force section position
-        // Uses visualViewport API + gesture handlers + periodic position enforcement
-        let lastScale = 1;
-        let scaleChangeSection = null;
-        let scaleChangeTimeout;
-        let isZooming = false;
-        let zoomEnforcementInterval = null;
-        
-        // Force scroll to current section - used by multiple handlers
-        function forceScrollToSection(sectionId) {
-            if (!sectionId || !scrollContainer) return;
-            const targetSection = document.getElementById(sectionId);
-            if (targetSection) {
-                scrollContainer.scrollTop = targetSection.offsetTop;
-            }
-        }
-        
-        // Aggressive position enforcement during zoom
-        function startZoomEnforcement(sectionId) {
-            stopZoomEnforcement();
-            isZooming = true;
-            
-            // Continuously force position during zoom (every 50ms)
-            zoomEnforcementInterval = setInterval(function() {
-                forceScrollToSection(sectionId);
-            }, 50);
-            
-            // Safety: stop enforcement after 2 seconds max
-            setTimeout(stopZoomEnforcement, 2000);
-        }
-        
-        function stopZoomEnforcement() {
-            isZooming = false;
-            if (zoomEnforcementInterval) {
-                clearInterval(zoomEnforcementInterval);
-                zoomEnforcementInterval = null;
-            }
-        }
-        
-        // visualViewport API - catches all zoom/scale changes
-        if (window.visualViewport) {
-            // Track scale changes
-            window.visualViewport.addEventListener('resize', function() {
-                const currentScale = window.visualViewport.scale;
-                
-                // Detect scale change (zoom in or out)
-                if (Math.abs(currentScale - lastScale) > 0.005) {
-                    // Capture current section at start of zoom
-                    if (!scaleChangeSection) {
-                        scaleChangeSection = getCurrentSection();
-                        startZoomEnforcement(scaleChangeSection);
-                    }
-                    
-                    // Force position immediately on each scale change
-                    forceScrollToSection(scaleChangeSection);
-                    
-                    // Debounce - wait for zoom to fully settle
-                    clearTimeout(scaleChangeTimeout);
-                    scaleChangeTimeout = setTimeout(function() {
-                        // Final position enforcement
-                        forceScrollToSection(scaleChangeSection);
-                        
-                        // Double-check after a frame
-                        requestAnimationFrame(function() {
-                            forceScrollToSection(scaleChangeSection);
-                            
-                            // Triple-check after another short delay
-                            setTimeout(function() {
-                                forceScrollToSection(scaleChangeSection);
-                                scaleChangeSection = null;
-                                stopZoomEnforcement();
-                            }, 100);
-                        });
-                        
-                        lastScale = currentScale;
-                    }, 250);
-                }
-                
-                lastScale = currentScale;
-            });
-            
-            // Also catch scroll events on visualViewport during zoom
-            window.visualViewport.addEventListener('scroll', function() {
-                if (isZooming && scaleChangeSection) {
-                    forceScrollToSection(scaleChangeSection);
-                }
-            });
-        }
-        
-        // GESTURE HANDLERS - iOS Safari pinch-zoom prevention
-        // These fire before touch events and can block zoom gestures
-        let gestureSection = null;
-        
-        document.addEventListener('gesturestart', function(e) {
-            // Always capture section at gesture start
-            gestureSection = getCurrentSection();
-            
-            // Block gesture during transitions
-            if (isTransitioning || scrollTransitionCooldown) {
-                e.preventDefault();
-                return false;
-            }
-            
-            // Start enforcement for non-home sections
-            if (gestureSection !== 'home') {
-                startZoomEnforcement(gestureSection);
-            }
-        }, { passive: false, capture: true });
-        
-        document.addEventListener('gesturechange', function(e) {
-            // Continuously enforce position during pinch gesture
-            if (gestureSection && gestureSection !== 'home') {
-                forceScrollToSection(gestureSection);
-            }
-        }, { passive: true, capture: true });
-        
-        document.addEventListener('gestureend', function(e) {
-            if (gestureSection) {
-                // Final enforcement burst
-                forceScrollToSection(gestureSection);
-                
-                // Multiple delayed checks to catch any drift
-                setTimeout(function() { forceScrollToSection(gestureSection); }, 50);
-                setTimeout(function() { forceScrollToSection(gestureSection); }, 150);
-                setTimeout(function() { 
-                    forceScrollToSection(gestureSection);
-                    gestureSection = null;
-                    stopZoomEnforcement();
-                }, 300);
-            }
-        }, { passive: true, capture: true });
-        
-        // MULTI-TOUCH DETECTION - Catch 2+ finger touches (pinch zoom)
-        let multiTouchSection = null;
-        let isMultiTouch = false;
-        
-        document.addEventListener('touchstart', function(e) {
-            if (e.touches.length >= 2) {
-                // Multi-touch detected (likely pinch zoom)
-                isMultiTouch = true;
-                multiTouchSection = getCurrentSection();
-                
-                if (multiTouchSection !== 'home') {
-                    startZoomEnforcement(multiTouchSection);
-                }
-            }
-        }, { passive: true, capture: true });
-        
-        document.addEventListener('touchmove', function(e) {
-            if (isMultiTouch && multiTouchSection && multiTouchSection !== 'home') {
-                // Enforce position during multi-touch move
-                forceScrollToSection(multiTouchSection);
-            }
-        }, { passive: true, capture: true });
-        
-        document.addEventListener('touchend', function(e) {
-            if (isMultiTouch && e.touches.length === 0) {
-                // All fingers lifted after multi-touch
-                if (multiTouchSection) {
-                    // Aggressive enforcement burst
-                    forceScrollToSection(multiTouchSection);
-                    
-                    var section = multiTouchSection;
-                    setTimeout(function() { forceScrollToSection(section); }, 50);
-                    setTimeout(function() { forceScrollToSection(section); }, 100);
-                    setTimeout(function() { forceScrollToSection(section); }, 200);
-                    setTimeout(function() { 
-                        forceScrollToSection(section);
-                        stopZoomEnforcement();
-                    }, 350);
-                }
-                
-                isMultiTouch = false;
-                multiTouchSection = null;
-            }
-        }, { passive: true, capture: true });
-        
-        // SCROLL POSITION VERIFICATION - Catch any drift after touch interactions
-        // Runs on every touchend to verify we're still at a valid section boundary
-        document.addEventListener('touchend', function(e) {
-            // Skip if game interaction or already handling zoom
-            if (isInteractingWithGame || isZooming || isMultiTouch) return;
-            
-            // Skip if transitioning
-            if (isTransitioning || scrollTransitionCooldown) return;
-            
-            // Delayed verification - let any scroll momentum settle
-            setTimeout(function() {
-                if (!scrollContainer || isZooming || isTransitioning) return;
-                
-                var currentPos = scrollContainer.scrollTop;
-                var sectionHeight = window.innerHeight;
-                var nearestSection = Math.round(currentPos / sectionHeight);
-                var expectedPos = nearestSection * sectionHeight;
-                
-                // If we've drifted more than 50px from section boundary, snap back
-                if (Math.abs(currentPos - expectedPos) > 50) {
-                    var sectionId = orderedSections[nearestSection] || getCurrentSection();
-                    forceScrollToSection(sectionId);
-                }
-            }, 400);
-        }, { passive: true });
+        var resizeScrollTimeout;
         
         // Update URL hash without adding to browser history (cleaner UX)
         var lastUrlSection = '';
@@ -8500,16 +8285,19 @@
             const validSections = ['home', 'about', 'videos', 'photos', 'game', 'merch', 'events'];
             
             if (initialHash && validSections.includes(initialHash)) {
-                // Delay navigation until after loader completes
+                // FIXED SECTIONS: Switch active section instead of scrolling
                 setTimeout(() => {
                     const targetSection = document.getElementById(initialHash);
-                    if (targetSection) {
-                        // Instant scroll to section (no animation during load)
-                        targetSection.scrollIntoView({ behavior: 'instant', block: 'start' });
+                    const homeSection = document.getElementById('home');
+                    if (targetSection && targetSection !== homeSection) {
+                        // Remove active from home, add to target
+                        if (homeSection) {
+                            homeSection.classList.remove('section-active');
+                        }
+                        targetSection.classList.add('section-active');
                         updateActiveDot(initialHash);
                         updateActiveMenuItem(initialHash);
                         targetSection.classList.add('visible');
-                        targetSection.classList.remove('offscreen'); // Resume animations
                         lastUrlSection = initialHash;
                     }
                 }, 1250); // After loader fades
@@ -9401,36 +9189,14 @@
             }
         });
         
-        // Lock scrolling completely - simpler approach without position:fixed to prevent flicker
+        // Lock game interaction - prevent section changes during gameplay
+        // FIXED SECTIONS: Much simpler - just set flags, no scroll position to track
         function lockScroll() {
-            // Don't lock if already locked
             if (isScrollLocked) return;
             isScrollLocked = true;
-            
-            if (scrollContainer) {
-                // Simply save current position - no snapping (prevents page shift on hover)
-                savedScrollY = scrollContainer.scrollTop;
-                
-                scrollContainer.style.overflow = 'hidden';
-                scrollContainer.style.touchAction = 'none';
-                scrollContainer.style.overscrollBehavior = 'none';
-                
-                // Add scroll event listener to immediately reset any scroll attempts
-                scrollContainer.addEventListener('scroll', blockScroll, { passive: false, capture: true });
-                scrollContainer.addEventListener('wheel', blockWheel, { passive: false, capture: true });
-            }
         }
         
-        // Block scroll by resetting position immediately
-        function blockScroll(e) {
-            if (isScrollLocked && scrollContainer) {
-                e.preventDefault();
-                e.stopPropagation();
-                scrollContainer.scrollTop = savedScrollY;
-            }
-        }
-        
-        // Block wheel events on scroll container
+        // Block wheel events during game interaction
         function blockWheel(e) {
             if (isScrollLocked) {
                 e.preventDefault();
@@ -9439,73 +9205,17 @@
             }
         }
         
-        // Unlock scrolling - restore normal scroll behavior
-        // iOS Safari specific: Use cooldown to prevent momentum-triggered jumps
+        // Unlock game interaction - allow section changes again
         function unlockScroll() {
-            // Don't unlock if still interacting with game or not locked
             if (isInteractingWithGame || !isScrollLocked) return;
             
-            var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-            
-            // Start cooldown period - reject snaps during this time
+            // Brief cooldown to prevent accidental navigation
             unlockCooldown = true;
-            
-            // Get the game section position for forced snap
-            var gameSection = document.getElementById('game');
-            var gameSectionTop = gameSection ? gameSection.offsetTop : savedScrollY;
-            
-            // Force scroll to game section BEFORE clearing overflow
-            if (scrollContainer) {
-                scrollContainer.scrollTop = gameSectionTop;
-                savedScrollY = gameSectionTop;
-            }
-            
             isScrollLocked = false;
             
-            // Remove scroll blocker
-            if (scrollContainer) {
-                scrollContainer.removeEventListener('scroll', blockScroll, { capture: true });
-                scrollContainer.removeEventListener('wheel', blockWheel, { capture: true });
-                
-                // iOS Safari fix: Keep touch-action blocked briefly to absorb momentum
-                if (isIOS) {
-                    // Keep overflow hidden and force position for a moment
-                    scrollContainer.scrollTop = gameSectionTop;
-                    
-                    setTimeout(function() {
-                        if (scrollContainer && !isScrollLocked) {
-                            // Force position again before releasing
-                            scrollContainer.scrollTop = gameSectionTop;
-                            scrollContainer.style.overflow = '';
-                            scrollContainer.style.touchAction = '';
-                            scrollContainer.style.overscrollBehavior = '';
-                            
-                            // One more force after styles clear
-                            requestAnimationFrame(function() {
-                                if (scrollContainer && !isScrollLocked) {
-                                    scrollContainer.scrollTop = gameSectionTop;
-                                }
-                            });
-                        }
-                    }, 50);
-                    
-                    // End cooldown after momentum would have settled
-                    setTimeout(function() {
-                        unlockCooldown = false;
-                    }, 400);
-                } else {
-                    // Non-iOS: immediate release
-                    scrollContainer.style.overflow = '';
-                    scrollContainer.style.touchAction = '';
-                    scrollContainer.style.overscrollBehavior = '';
-                    scrollContainer.scrollTop = gameSectionTop;
-                    
-                    setTimeout(function() {
-                        unlockCooldown = false;
-                    }, 150);
-                }
-            }
+            setTimeout(function() {
+                unlockCooldown = false;
+            }, 150);
         }
         
         // TOUCH EVENTS - Capture phase for maximum control
@@ -9577,16 +9287,6 @@
                 return false;
             }
         }, { passive: false, capture: true });
-        
-        // iOS SAFARI FIX: Catch any scroll events during cooldown and force back to game section
-        window.addEventListener('scroll', function(e) {
-            if (unlockCooldown && scrollContainer) {
-                var gameSection = document.getElementById('game');
-                if (gameSection) {
-                    scrollContainer.scrollTop = gameSection.offsetTop;
-                }
-            }
-        }, { passive: true, capture: true });
         
         // KEYBOARD - Prevent arrow keys from scrolling when game is focused or hovered
         document.addEventListener('keydown', function(e) {
