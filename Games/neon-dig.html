@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>Goldmine</title>
@@ -11,6 +11,7 @@
         if (window.self !== window.top) {
             document.documentElement.classList.add('in-iframe');
         }
+        window.onerror=function(){return true};window.onunhandledrejection=function(e){if(e&&e.preventDefault)e.preventDefault();return true};
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,6 +39,7 @@
             touch-action: none;
             width: 100%;
             height: 100%;
+            height: 100dvh; /* Dynamic viewport height for mobile */
             margin: 0;
             padding: 0;
             overscroll-behavior: none;
@@ -47,14 +49,16 @@
         body {
             display: flex;
             justify-content: center;
-            align-items: center;
-            height: 100%;
-            height: 100dvh;
+            align-items: center; /* Center vertically for better iframe fit */
+            min-height: 100%;
+            min-height: 100dvh;
             background: linear-gradient(160deg, rgba(10, 15, 25, 1) 0%, rgba(5, 8, 15, 1) 100%);
             font-family: 'Exo 2', sans-serif;
             -webkit-user-select: none;
             user-select: none;
             -webkit-tap-highlight-color: transparent;
+            overscroll-behavior: none;
+            padding: 0;
         }
 
         .game-wrapper {
@@ -96,14 +100,17 @@
             box-sizing: border-box;
         }
 
-        /* Fullscreen/iframe mode: center content */
+        /* Fullscreen/iframe mode: fill entire viewport */
         .game-container.fullscreen-mode {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            padding: 0;
+            gap: 0;
+            border: none;
             border-radius: 0;
+            box-shadow: none;
         }
         
         /* Fullscreen body centering - JS adds this class */
@@ -125,23 +132,31 @@
         }
         
         /* Force fullscreen layout when in iframe (CSS kicks in immediately) */
+        html.in-iframe,
         html.in-iframe body {
-            align-items: flex-start;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
         }
         
-        /* Tablet in iframe - center vertically */
-        @media (min-width: 769px) and (pointer: coarse) {
-            html.in-iframe body {
-                align-items: center;
-            }
+        html.in-iframe body {
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
         }
         
         html.in-iframe .game-container {
-            width: 100%;
-            height: 100%;
-            max-width: 100%;
-            max-height: 100%;
-            border-radius: 0;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            gap: 0 !important;
         }
 
         #gameCanvas {
@@ -2545,9 +2560,9 @@
             GATE: 17,        // Locked gate requiring boss key
             ALIEN_NODE: 18,  // Alien gem node - drops multiple gems
             CHAIN_CRYSTAL: 19, // Breaks adjacent chain crystals in chain reaction
-            BOUNCE_PAD: 20,    // Up Charge - clears blocks above
+            BOUNCE_PAD: 20,    // Legacy - now triggers Depth Charge
             MYSTERY_BLOCK: 21, // Random reward when broken
-            DEPTH_CHARGE: 22,  // Clears 5 blocks below when broken
+            DEPTH_CHARGE: 22,  // Pink charge - clears 7 blocks below when broken
             MAGNET_ORE: 23,    // Pulls nearby gems toward player
             CHERRY_BOMB: 24    // Smaller bomb, 3x3 explosion (red)
         });
@@ -3756,13 +3771,8 @@
                 return TILE.CHAIN_CRYSTAL;
             }
             
-            // Up Charge - rare (clears blocks above)
-            if (depth >= 30 && antiClusterRandom(0.0012 + depthFactor * 0.0006, 'bouncePad')) {
-                return TILE.BOUNCE_PAD;
-            }
-            
-            // Depth Charge - rare (clears blocks below)
-            if (depth >= 30 && antiClusterRandom(0.0012 + depthFactor * 0.0006, 'depthCharge')) {
+            // Depth Charge - rare (clears blocks below) - pink themed
+            if (depth >= 30 && antiClusterRandom(0.0018 + depthFactor * 0.0009, 'depthCharge')) {
                 return TILE.DEPTH_CHARGE;
             }
             
@@ -4590,8 +4600,8 @@
                     // Trigger depth charge
                     triggerDepthCharge(item.tx, item.absoluteTy);
                 } else if (item.tile === TILE.BOUNCE_PAD) {
-                    // Trigger up charge
-                    triggerUpCharge(item.tx, item.absoluteTy);
+                    // Legacy: also triggers depth charge
+                    triggerDepthCharge(item.tx, item.absoluteTy);
                 } else if (item.tile === TILE.MAGNET_ORE) {
                     // Trigger magnet pull
                     triggerMagnetPull(item.tx, item.absoluteTy);
@@ -4644,11 +4654,8 @@
                     } else if (roll < 0.60) {
                         // Magnet
                         triggerMagnetPull(item.tx, item.absoluteTy);
-                    } else if (roll < 0.70) {
-                        // Up Charge
-                        triggerUpCharge(item.tx, item.absoluteTy);
                     } else if (roll < 0.80) {
-                        // Depth Charge
+                        // Depth Charge (replaces separate up/down)
                         triggerDepthCharge(item.tx, item.absoluteTy);
                     } else if (roll < 0.92) {
                         // Bomb (50/50 big or cherry)
@@ -4797,7 +4804,7 @@
                 } else if (item.tile === TILE.DEPTH_CHARGE) {
                     triggerDepthCharge(item.tx, item.absoluteTy);
                 } else if (item.tile === TILE.BOUNCE_PAD) {
-                    triggerUpCharge(item.tx, item.absoluteTy);
+                    triggerDepthCharge(item.tx, item.absoluteTy);
                 } else if (item.tile === TILE.MAGNET_ORE) {
                     triggerMagnetPull(item.tx, item.absoluteTy);
                 }
@@ -4894,129 +4901,13 @@
             }
         }
         
-        // Depth Charge - clears 5 blocks directly below
-        // Up Charge - clears 7 blocks directly above
-        function triggerUpCharge(tx, startAbsTY) {
-            const centerX = tx * TILE_SIZE + TILE_SIZE/2;
-            let blocksCleared = 0;
-            let totalValue = 0;
-            
-            createFloatingText('▲▲▲ UP CHARGE ▲▲▲', centerX, startAbsTY * TILE_SIZE - 10, '#ff6644');
-            
-            // Clear 7 blocks above
-            for (let i = 1; i <= 7; i++) {
-                const targetAbsTY = startAbsTY - i;
-                const targetTY = getWorldRow(targetAbsTY);
-                
-                // Don't clear sky rows
-                if (targetAbsTY < FIRST_DIGGABLE_ROW) break;
-                if (targetTY < 0 || targetTY >= world.length) continue;
-                
-                const tile = world[targetTY][tx];
-                const tileCenterX = tx * TILE_SIZE + TILE_SIZE/2;
-                const tileCenterY = targetAbsTY * TILE_SIZE + TILE_SIZE/2;
-                
-                // Truly unbreakable - always stop
-                if (tile === TILE.BEDROCK || tile === TILE.PORTAL || 
-                    tile === TILE.PORTAL_PART || tile === TILE.GATE) {
-                    break;
-                }
-                
-                // Skip air
-                if (tile === TILE.AIR) continue;
-                
-                // Hard rock: break on first block, stop on subsequent
-                if (tile === TILE.HARD_ROCK) {
-                    if (blocksCleared === 0) {
-                        // First block - break through hard rock
-                        world[targetTY][tx] = TILE.AIR;
-                        blocksCleared++;
-                        for (let j = 0; j < 4; j++) {
-                            particles.push({
-                                x: tileCenterX + (Math.random() - 0.5) * 10,
-                                y: tileCenterY,
-                                vx: (Math.random() - 0.5) * 3,
-                                vy: -2 - Math.random() * 3,
-                                size: 3 + Math.random() * 3,
-                                color: Math.random() < 0.5 ? '#ff4444' : '#ffaaaa',
-                                life: 0.5,
-                                type: 'explosion'
-                            });
-                        }
-                        continue;
-                    } else {
-                        // Subsequent blocks - stop at hard rock
-                        break;
-                    }
-                }
-                
-                // Collect gems
-                if (tile >= TILE.GEM_COMMON && tile <= TILE.GEM_EPIC) {
-                    let baseValue = tile === TILE.GEM_EPIC ? 50 : tile === TILE.GEM_RARE ? 25 : 10;
-                    const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
-                    const value = Math.floor(baseValue * (1 + totalGemBonus / 100) * getComboMultiplier());
-                    totalValue += value;
-                    addCombo();
-                    const color = tile === TILE.GEM_EPIC ? '#ff9500' : tile === TILE.GEM_RARE ? '#ff00ff' : '#00f0ff';
-                    createGemParticles(tileCenterX, tileCenterY, color);
-                }
-                
-                // Collect fuel
-                if (tile === TILE.FUEL) {
-                    const fuelGain = 10;
-                    fuel = Math.min(fuel + fuelGain, maxFuel);
-                    createParticles(tileCenterX, tileCenterY, '#ff9500', 6);
-                }
-                
-                // Trigger chain crystals
-                if (tile === TILE.CHAIN_CRYSTAL) {
-                    triggerChainCrystalExplosion(tx, targetAbsTY);
-                }
-                
-                // Trigger bombs
-                if (tile === TILE.BOMB) {
-                    explodeBomb(tx, targetAbsTY);
-                }
-                if (tile === TILE.CHERRY_BOMB) {
-                    explodeCherryBomb(tx, targetAbsTY);
-                }
-                
-                world[targetTY][tx] = TILE.AIR;
-                blocksCleared++;
-                
-                // Upward explosion particles
-                for (let j = 0; j < 4; j++) {
-                    particles.push({
-                        x: tileCenterX + (Math.random() - 0.5) * 10,
-                        y: tileCenterY,
-                        vx: (Math.random() - 0.5) * 3,
-                        vy: -2 - Math.random() * 3,
-                        size: 3 + Math.random() * 3,
-                        color: Math.random() < 0.5 ? '#ff4444' : '#ffaaaa',
-                        life: 0.5,
-                        type: 'explosion'
-                    });
-                }
-            }
-            
-            if (totalValue > 0) {
-                score += totalValue;
-                updateScoreDisplay();
-                createFloatingText(`+${totalValue}`, centerX, (startAbsTY - 3) * TILE_SIZE, '#ffff00');
-            }
-            
-            triggerScreenFlash('#ff6644', 0.3, 12);
-            screenShake = 8;
-            updateFuelBar();
-        }
-        
-        // Depth Charge - clears 5 blocks directly below
+        // Depth Charge - clears 7 blocks directly below (pink themed)
         function triggerDepthCharge(tx, startAbsTY) {
             const centerX = tx * TILE_SIZE + TILE_SIZE/2;
             let blocksCleared = 0;
             let totalValue = 0;
             
-            createFloatingText('▼▼▼ DEPTH CHARGE ▼▼▼', centerX, startAbsTY * TILE_SIZE - 10, '#ff6644');
+            createFloatingText('▼▼▼ DEPTH CHARGE ▼▼▼', centerX, startAbsTY * TILE_SIZE - 10, '#ff66aa');
             
             // Clear 7 blocks below
             for (let i = 1; i <= 7; i++) {
@@ -5051,7 +4942,7 @@
                                 vx: (Math.random() - 0.5) * 3,
                                 vy: 2 + Math.random() * 3,
                                 size: 3 + Math.random() * 3,
-                                color: Math.random() < 0.5 ? '#ff4400' : '#ffaa00',
+                                color: Math.random() < 0.5 ? '#ff44aa' : '#ff88cc',
                                 life: 0.5,
                                 type: 'explosion'
                             });
@@ -5105,7 +4996,7 @@
                         vx: (Math.random() - 0.5) * 3,
                         vy: 2 + Math.random() * 3,
                         size: 3 + Math.random() * 3,
-                        color: Math.random() < 0.5 ? '#ff4400' : '#ffaa00',
+                        color: Math.random() < 0.5 ? '#ff44aa' : '#ff88cc',
                         life: 0.5,
                         type: 'explosion'
                     });
@@ -5115,10 +5006,10 @@
             if (totalValue > 0) {
                 score += totalValue;
                 updateScoreDisplay();
-                createFloatingText(`+${totalValue}`, centerX, (startAbsTY + 3) * TILE_SIZE, '#ffff00');
+                createFloatingText(`+${totalValue}`, centerX, (startAbsTY + 3) * TILE_SIZE, '#ff66aa');
             }
             
-            triggerScreenFlash('#ff4400', 0.3, 12);
+            triggerScreenFlash('#ff44aa', 0.3, 12);
             screenShake = 8;
             updateFuelBar();
         }
@@ -5631,10 +5522,10 @@
                 return;
             }
             
-            // ===== UP CHARGE =====
+            // ===== DEPTH CHARGE (also handles legacy BOUNCE_PAD) =====
             if (tile === TILE.BOUNCE_PAD) {
                 world[ty][tx] = TILE.AIR;
-                triggerUpCharge(tx, absoluteTy);
+                triggerDepthCharge(tx, absoluteTy);
                 player.digging = false;
                 player.digTarget = null;
                 if (!fromMagnet && lastDigDirection) {
@@ -5677,11 +5568,8 @@
                 } else if (roll < 0.60) {
                     // 10% - Magnet effect!
                     triggerMagnetPull(tx, absoluteTy);
-                } else if (roll < 0.70) {
-                    // 10% - Up Charge effect (clears up)
-                    triggerUpCharge(tx, absoluteTy);
                 } else if (roll < 0.80) {
-                    // 10% - Depth Charge effect (clears down)
+                    // 20% - Depth Charge effect (clears down)
                     triggerDepthCharge(tx, absoluteTy);
                 } else if (roll < 0.85) {
                     // 5% - Nothing (dud)
@@ -10101,6 +9989,17 @@
                 }
                 drawBossArena();
                 ctx.restore();
+                
+                // Still draw HUD/trackpad in fullscreen mode during boss fights
+                if (LAYOUT.isFullscreen) {
+                    drawPauseButton();
+                    if (LAYOUT.hudHeight > 0 || LAYOUT.trackpadHeight > 0) {
+                        drawCanvasHUD();
+                        if (LAYOUT.trackpadHeight > 0) {
+                            drawCanvasTrackpad();
+                        }
+                    }
+                }
                 return;
             }
             
@@ -10185,6 +10084,17 @@
                 }
                 
                 ctx.restore();
+                
+                // Still draw HUD/trackpad in fullscreen mode during teleporting
+                if (LAYOUT.isFullscreen) {
+                    drawPauseButton();
+                    if (LAYOUT.hudHeight > 0 || LAYOUT.trackpadHeight > 0) {
+                        drawCanvasHUD();
+                        if (LAYOUT.trackpadHeight > 0) {
+                            drawCanvasTrackpad();
+                        }
+                    }
+                }
                 return;
             }
             
@@ -11866,42 +11776,42 @@
                     break;
                 
                 case TILE.BOUNCE_PAD:
-                    // Yellow block with upward arrows (mirror of depth charge)
+                    // Legacy: now renders as pink depth charge with down arrows
                     const upPulse = 0.6 + Math.sin(time * 3 + tx + ty) * 0.4;
                     const upArrowBob = Math.sin(time * 4) * 2;
                     
-                    // Dark yellow base
-                    ctx.fillStyle = '#2a2a0a';
+                    // Dark pink base
+                    ctx.fillStyle = '#2a0a1a';
                     ctx.fillRect(x, y, s, s);
                     
-                    // Yellow gradient fill (reversed direction from depth charge)
-                    const upGrad = ctx.createLinearGradient(x, y + s, x, y);
-                    upGrad.addColorStop(0, `rgba(255, 255, 50, ${upPulse * 0.7})`);
-                    upGrad.addColorStop(1, `rgba(200, 200, 0, ${upPulse})`);
+                    // Pink gradient fill
+                    const upGrad = ctx.createLinearGradient(x, y, x, y + s);
+                    upGrad.addColorStop(0, `rgba(255, 100, 200, ${upPulse * 0.7})`);
+                    upGrad.addColorStop(1, `rgba(200, 50, 150, ${upPulse})`);
                     ctx.fillStyle = upGrad;
                     ctx.fillRect(x + 2, y + 2, s - 4, s - 4);
                     
-                    // Upward arrows
-                    ctx.fillStyle = `rgba(255, 255, 200, ${upPulse})`;
+                    // Downward arrows
+                    ctx.fillStyle = `rgba(255, 180, 220, ${upPulse})`;
                     ctx.font = 'bold 10px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
-                    ctx.fillText('▲', x + s/2, y + s * 2/3 - upArrowBob);
-                    ctx.fillText('▲', x + s/2, y + s/3 - upArrowBob * 0.5);
+                    ctx.fillText('▼', x + s/2, y + s/3 + upArrowBob);
+                    ctx.fillText('▼', x + s/2, y + s * 2/3 + upArrowBob * 0.5);
                     ctx.textBaseline = 'alphabetic';
                     
-                    // Warning stripes (at top, mirrored)
-                    ctx.strokeStyle = `rgba(255, 255, 100, ${upPulse * 0.5})`;
+                    // Warning stripes (at bottom)
+                    ctx.strokeStyle = `rgba(255, 150, 200, ${upPulse * 0.5})`;
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
-                        ctx.moveTo(x + 3 + i * 8, y + 2);
-                        ctx.lineTo(x + 7 + i * 8, y + 6);
+                        ctx.moveTo(x + 3 + i * 8, y + s - 2);
+                        ctx.lineTo(x + 7 + i * 8, y + s - 6);
                         ctx.stroke();
                     }
                     
                     // Glow
-                    ctx.fillStyle = `rgba(255, 255, 100, ${upPulse * 0.2})`;
+                    ctx.fillStyle = `rgba(255, 100, 180, ${upPulse * 0.2})`;
                     ctx.beginPath();
                     ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
                     ctx.fill();
@@ -11939,23 +11849,23 @@
                     break;
                 
                 case TILE.DEPTH_CHARGE:
-                    // Yellow block with downward arrows
+                    // Pink block with downward arrows
                     const depthPulse = 0.6 + Math.sin(time * 3 + tx + ty) * 0.4;
                     const arrowBob = Math.sin(time * 4) * 2;
                     
-                    // Dark yellow base
-                    ctx.fillStyle = '#2a2a0a';
+                    // Dark pink base
+                    ctx.fillStyle = '#2a0a1a';
                     ctx.fillRect(x, y, s, s);
                     
-                    // Yellow gradient fill
+                    // Pink gradient fill
                     const depthGrad = ctx.createLinearGradient(x, y, x, y + s);
-                    depthGrad.addColorStop(0, `rgba(255, 255, 50, ${depthPulse * 0.7})`);
-                    depthGrad.addColorStop(1, `rgba(200, 200, 0, ${depthPulse})`);
+                    depthGrad.addColorStop(0, `rgba(255, 100, 200, ${depthPulse * 0.7})`);
+                    depthGrad.addColorStop(1, `rgba(200, 50, 150, ${depthPulse})`);
                     ctx.fillStyle = depthGrad;
                     ctx.fillRect(x + 2, y + 2, s - 4, s - 4);
                     
                     // Downward arrows
-                    ctx.fillStyle = `rgba(255, 255, 200, ${depthPulse})`;
+                    ctx.fillStyle = `rgba(255, 180, 220, ${depthPulse})`;
                     ctx.font = 'bold 10px sans-serif';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
@@ -11964,7 +11874,7 @@
                     ctx.textBaseline = 'alphabetic';
                     
                     // Warning stripes
-                    ctx.strokeStyle = `rgba(255, 255, 100, ${depthPulse * 0.5})`;
+                    ctx.strokeStyle = `rgba(255, 150, 200, ${depthPulse * 0.5})`;
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 3; i++) {
                         ctx.beginPath();
@@ -11974,7 +11884,7 @@
                     }
                     
                     // Glow
-                    ctx.fillStyle = `rgba(255, 255, 100, ${depthPulse * 0.2})`;
+                    ctx.fillStyle = `rgba(255, 100, 180, ${depthPulse * 0.2})`;
                     ctx.beginPath();
                     ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2);
                     ctx.fill();
@@ -14363,11 +14273,17 @@
         }
         
         function handleResize() {
-            const viewport = getViewportSize();
-            const viewportWidth = viewport.width;
-            const viewportHeight = viewport.height;
-            
+            const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             const isInIframe = window.self !== window.top;
+            
+            const viewport = getViewportSize();
+            const viewW = viewport.width;
+            const viewH = viewport.height;
+            
+            const isPseudoFullscreen = !isNativeFullscreen && 
+                                       (isInIframe || viewW > BASE_WIDTH * 1.15 || viewH > BASE_HEIGHT * 1.15);
+            
+            const isFullscreen = isNativeFullscreen || isPseudoFullscreen;
             
             const hudEl = document.querySelector('.hud');
             const controlZoneEl = document.querySelector('.control-zone');
@@ -14376,7 +14292,9 @@
             const upgradeArrowEl = document.getElementById('upgradeArrow');
             
             const gameContainer = document.querySelector('.game-container');
-            const isFullscreen = isInIframe || viewportWidth > BASE_WIDTH * 1.05 || viewportHeight > BASE_HEIGHT * 1.05;
+            
+            // Game aspect ratio (game area only, not including canvas UI)
+            const gameAspect = BASE_WIDTH / BASE_HEIGHT;
             
             if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
@@ -14390,16 +14308,30 @@
                 if (upgradeBtnEl) upgradeBtnEl.style.display = 'none';
                 if (upgradeArrowEl) upgradeArrowEl.style.display = 'none';
                 
-                // Calculate display dimensions
-                const availWidth = viewportWidth;
-                const availHeight = viewportHeight;
+                // Universal margin system: border + safety padding (matches Brickbreaker)
+                const borderWidth = isInIframe ? 0 : 3;
+                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 5 : 0);
+                const totalMargin = (borderWidth + safetyPadding) * 2;
                 
-                // Game area fills width, find height maintaining aspect
-                const gameAspect = BASE_WIDTH / BASE_HEIGHT;
-                let displayGameWidth = availWidth;
-                let displayGameHeight = Math.floor(displayGameWidth / gameAspect);
+                const availWidth = viewW - totalMargin;
+                const availHeight = viewH - totalMargin;
+                const screenAspect = availWidth / availHeight;
                 
-                // Check if we have extra height for UI
+                // First, calculate game display dimensions preserving aspect ratio
+                let displayGameWidth, displayGameHeight;
+                
+                if (screenAspect > gameAspect) {
+                    // Screen wider than game: height-constrained
+                    displayGameHeight = Math.floor(availHeight);
+                    displayGameWidth = Math.floor(displayGameHeight * gameAspect);
+                } else {
+                    // Screen taller than game: width-constrained  
+                    displayGameWidth = Math.floor(availWidth);
+                    displayGameHeight = Math.floor(displayGameWidth / gameAspect);
+                }
+                
+                // Now calculate how much extra height we have for HUD/trackpad
+                // This is the difference between available height and game height
                 const extraDisplayHeight = availHeight - displayGameHeight;
                 
                 let displayHudHeight = 0;
@@ -14407,7 +14339,6 @@
                 
                 if (extraDisplayHeight > 80) {
                     // Split extra space 50/50 between HUD and trackpad for equal section heights
-                    // Make sections a touch larger - use more of the extra space
                     const sectionHeight = Math.max(55, Math.min(75, extraDisplayHeight * 0.50));
                     displayHudHeight = sectionHeight;
                     displayTrackpadHeight = sectionHeight;
@@ -14416,8 +14347,7 @@
                     displayHudHeight = extraDisplayHeight;
                     displayTrackpadHeight = 0;
                 } else {
-                    // No extra UI - game fills screen
-                    displayGameHeight = availHeight;
+                    // No extra UI - game fills available space
                     displayHudHeight = 0;
                     displayTrackpadHeight = 0;
                 }
@@ -14435,14 +14365,15 @@
                 LAYOUT.hudTop = BASE_HEIGHT;
                 LAYOUT.trackpadTop = BASE_HEIGHT + LAYOUT.hudHeight;
                 
-                // Determine buffer scale
+                // Determine optimal buffer scale based on device (matches Brickbreaker)
                 let bufferScale;
                 if (isTablet || isIPad) {
-                    bufferScale = 2;
-                } else if (viewportWidth >= 2560 || viewportHeight >= 1440) {
-                    bufferScale = 2.5;
+                    bufferScale = 2; // Fixed 2x for tablets
                 } else {
-                    bufferScale = 2;
+                    // Desktop: scale based on CSS size vs base size, capped by DPR
+                    const displayScale = displayGameWidth / BASE_WIDTH;
+                    const maxFullscreenDPR = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ? 2 : 3;
+                    bufferScale = Math.min(displayScale * rawDPR, maxFullscreenDPR);
                 }
                 
                 // Buffer uses logical dimensions
@@ -14467,16 +14398,22 @@
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(bufferScale, bufferScale);
                 
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                
                 WORLD_WIDTH = Math.floor(BASE_WIDTH / TILE_SIZE);
                 
                 // Debug overlay
                 GameDebug.show({
-                    viewport: `${viewportWidth}×${viewportHeight}`,
+                    viewport: `${viewW}×${viewH}`,
+                    avail: `${Math.round(availWidth)}×${Math.round(availHeight)}`,
                     display: `${displayGameWidth}×${displayTotalHeight}`,
                     logical: `${BASE_WIDTH}×${LAYOUT.totalHeight}`,
+                    buffer: `${bufferWidth}×${bufferHeight}`,
                     hud: LAYOUT.hudHeight,
                     trackpad: LAYOUT.trackpadHeight,
-                    iframe: isInIframe ? 'YES' : 'NO'
+                    iframe: isInIframe ? 'YES' : 'NO',
+                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
                 });
             } else {
                 gameContainer.classList.remove('fullscreen-mode');
@@ -14498,10 +14435,15 @@
                 const hudHeight = hudEl ? hudEl.offsetHeight : 50;
                 
                 // Scale internal resolution based on display size
-                if (viewportWidth >= 2560 || viewportHeight >= 1440) {
-                    renderScale = 2.5;
-                } else if (viewportWidth >= 800) {
-                    renderScale = 2;
+                const isMobile = viewW <= 768;
+                const maxNormalDPR = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ? 1.5 : 2;
+                
+                if (isMobile) {
+                    renderScale = Math.min(rawDPR, 1.5);
+                } else if (viewW >= 2560 || viewH >= 1440) {
+                    renderScale = Math.min(rawDPR, 2.5);
+                } else if (viewW >= 800) {
+                    renderScale = Math.min(rawDPR, maxNormalDPR);
                 } else {
                     renderScale = 1;
                 }
@@ -14523,23 +14465,24 @@
                 
                 ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
                 
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                
                 // Use full viewport - no letterboxing
-                const availableWidth = viewportWidth;
-                const availableHeight = viewportHeight - hudHeight;
+                const availableWidth = viewW;
+                const availableHeight = viewH - hudHeight;
                 
                 canvas.style.width = availableWidth + 'px';
                 canvas.style.height = availableHeight + 'px';
                 
                 WORLD_WIDTH = Math.floor(BASE_WIDTH / TILE_SIZE);
                 
+                // Hide debug in non-fullscreen
                 GameDebug.hide();
             }
         }
         
         function handleFullscreenChange() {
-            const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-            
-            // Just call resize - it handles both fullscreen and normal
             handleResize();
             
             if (!gameRunning) {
@@ -14547,9 +14490,15 @@
             }
         }
         
-        // Initialize scaling
-        handleResize();
+        // Listen for fullscreen changes (all browser variants - matches Brickbreaker)
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+        
+        // Listen for resize/orientation changes
         window.addEventListener('resize', handleResize);
+        window.addEventListener('orientationchange', () => setTimeout(handleResize, 100));
         
         // Use visualViewport resize event if available (better for iframes)
         if (window.visualViewport) {
@@ -14557,23 +14506,12 @@
             window.visualViewport.addEventListener('scroll', handleResize);
         }
         
-        // Handle fullscreen changes
-        document.addEventListener('fullscreenchange', () => {
-            setTimeout(handleFullscreenChange, 50);
-            setTimeout(handleResize, 150);
-            setTimeout(handleResize, 500);
-        });
-        document.addEventListener('webkitfullscreenchange', () => {
-            setTimeout(handleFullscreenChange, 50);
-            setTimeout(handleResize, 150);
-            setTimeout(handleResize, 500);
-        });
+        // Re-check size after delays for iframe loading (matches Brickbreaker)
+        setTimeout(handleResize, 100);
+        setTimeout(handleResize, 300);
         
-        // Handle orientation changes on mobile
-        window.addEventListener('orientationchange', () => {
-            setTimeout(handleResize, 100);
-            setTimeout(handleResize, 300);
-        });
+        // Initial scale calculation
+        handleResize();
         
         // Clear stuck keys when page loses focus or visibility changes
         // This prevents keys from staying stuck if user switches apps or tabs
@@ -14589,11 +14527,6 @@
                 clearAllKeys();
             }
         });
-        
-        // Re-check size after delays for iframe loading
-        setTimeout(handleResize, 100);
-        setTimeout(handleResize, 300);
-        setTimeout(handleResize, 500);
         
         // ==================== INITIALIZATION ====================
         createScanlinePattern();
