@@ -5202,6 +5202,14 @@
             border-radius: 24px; /* Match about-content */
             overscroll-behavior: contain;
             -webkit-overflow-scrolling: touch;
+            touch-action: pan-y; /* Allow vertical scrolling on touch */
+        }
+        
+        /* Events container - same scrolling behavior */
+        .events-container {
+            touch-action: pan-y;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
         }
         
         /* About section - scrollable content */
@@ -6722,6 +6730,24 @@
                 margin: 0 !important;
             }
             .subtitle { font-size: clamp(0.85rem, 3vw, 1rem); padding: 0 0.5rem; margin-bottom: 0.25rem; }
+            /* About section - allow internal scrolling */
+            #about {
+                padding-top: 65px !important;
+                padding-bottom: 85px !important;
+                justify-content: flex-start !important;
+                overflow: visible !important; /* Override base overflow:hidden to allow child scrolling */
+            }
+            /* About section scrollable container */
+            .about-container {
+                max-height: 58vh !important;
+                overflow-y: auto !important;
+                overflow-x: hidden !important;
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                overscroll-behavior: contain !important;
+                position: relative !important;
+                z-index: 20 !important; /* Above overlays */
+            }
             .about-content { padding: 1.4rem 1.25rem; }
             .about-content p { font-size: 0.9rem; margin-bottom: 1rem; }
             .videos-grid { grid-template-columns: 1fr; gap: 1.5rem; }
@@ -6774,7 +6800,22 @@
             .home-social-links { gap: 1.8rem 1.6rem !important; margin-top: 1.2rem !important; padding: 1rem 2rem !important; } /* Much more spacing on mobile */
             .home-social-btn { padding: 0.5rem 0.9rem; font-size: 0.72rem; }
             .social-btn { padding: 0.75rem 1.25rem; font-size: 0.9rem; }
-            .events-container { gap: 0.5rem; width: 90%; }
+            /* Events section - allow internal scrolling */
+            #events {
+                overflow: visible !important;
+                justify-content: flex-start !important;
+                padding-top: 65px !important;
+            }
+            .events-container { 
+                gap: 0.5rem; 
+                width: 90%;
+                max-height: 55vh !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                overscroll-behavior: contain !important;
+                z-index: 20 !important;
+            }
             .event-item { padding: 0.5rem 0.7rem; }
             
             /* Scale down overlay elements for mobile performance */
@@ -6865,8 +6906,34 @@
                 max-width: 300px !important;
                 padding: 0.8rem 1.5rem !important;
             }
+            /* About section - allow internal scrolling */
+            #about {
+                overflow: visible !important;
+                justify-content: flex-start !important;
+                padding-top: 60px !important;
+            }
+            .about-container {
+                max-height: 55vh !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                z-index: 20 !important;
+            }
             .about-content { padding: 1.3rem 1rem; }
             .about-content p { font-size: 0.85rem; margin-bottom: 0.9rem; }
+            /* Events section - allow internal scrolling */
+            #events {
+                overflow: visible !important;
+                justify-content: flex-start !important;
+                padding-top: 60px !important;
+            }
+            .events-container {
+                max-height: 52vh !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                z-index: 20 !important;
+            }
             /* 3-column photo grid for 12 photos - fill screen width */
             .photos-grid { 
                 grid-template-columns: repeat(3, 1fr) !important; 
@@ -6974,6 +7041,33 @@
             }
             .home-section h1 {
                 margin: 0 !important;
+            }
+            
+            /* About section - allow internal scrolling */
+            #about {
+                overflow: visible !important;
+                justify-content: flex-start !important;
+                padding-top: 55px !important;
+            }
+            .about-container {
+                max-height: 52vh !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                z-index: 20 !important;
+            }
+            /* Events section - allow internal scrolling */
+            #events {
+                overflow: visible !important;
+                justify-content: flex-start !important;
+                padding-top: 55px !important;
+            }
+            .events-container {
+                max-height: 50vh !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                z-index: 20 !important;
             }
             
             /* Hero image container constraint */
@@ -8357,7 +8451,7 @@
                 return section;
             }
             // Check common scrollable containers
-            const scrollable = section.querySelector('.about-container, .scrollable-content');
+            const scrollable = section.querySelector('.about-container, .events-container, .scrollable-content');
             if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 5) {
                 return scrollable;
             }
@@ -8410,8 +8504,36 @@
         // TOUCH EVENTS - Mobile swipe (fixed sections architecture)
         let swipeTouchStartY = 0;
         let swipeTouchStartTime = 0;
+        let swipeTouchStartElement = null;
         const swipeThreshold = 50; // Minimum swipe distance
         const swipeTimeLimit = 300; // Max time for swipe gesture
+        
+        // Check if element or its parents are scrollable
+        function isWithinScrollable(element) {
+            if (!element) return null;
+            let current = element;
+            while (current && current !== document.body && current !== document) {
+                // Check if this element or a close parent is a scrollable container
+                if (current.classList && (
+                    current.classList.contains('about-container') ||
+                    current.classList.contains('about-content') ||
+                    current.classList.contains('events-container') ||
+                    current.classList.contains('scrollable-content')
+                )) {
+                    // Find the actual scrollable container (might be this or parent)
+                    let scrollable = current;
+                    if (current.classList.contains('about-content')) {
+                        scrollable = current.closest('.about-container') || current;
+                    }
+                    // Check if it actually has scrollable content
+                    if (scrollable.scrollHeight > scrollable.clientHeight + 5) {
+                        return scrollable;
+                    }
+                }
+                current = current.parentElement;
+            }
+            return null;
+        }
         
         document.addEventListener('touchstart', function(e) {
             // Don't intercept if game is active
@@ -8419,18 +8541,18 @@
             
             swipeTouchStartY = e.touches[0].clientY;
             swipeTouchStartTime = Date.now();
+            swipeTouchStartElement = e.target;
         }, { passive: true });
         
         document.addEventListener('touchmove', function(e) {
             // Don't intercept if game is active
             if (isInteractingWithGame || isGameVisible) return;
             
-            // Check if active section has scrollable content
-            const activeSection = document.querySelector('section.section-active');
-            const scrollable = activeSection ? getScrollableElement(activeSection) : null;
+            // Check if touch started within a scrollable container
+            const scrollableContainer = isWithinScrollable(swipeTouchStartElement);
             
-            if (scrollable) {
-                // Allow native scroll within scrollable element
+            if (scrollableContainer) {
+                // Allow native scroll within scrollable element - don't prevent default
                 return;
             }
             
@@ -8454,13 +8576,12 @@
             const deltaY = swipeTouchStartY - touchEndY;
             const deltaTime = touchEndTime - swipeTouchStartTime;
             
-            // Check if active section has scrollable content
-            const activeSection = document.querySelector('section.section-active');
-            const scrollable = activeSection ? getScrollableElement(activeSection) : null;
+            // Check if touch started within a scrollable container
+            const scrollableContainer = isWithinScrollable(swipeTouchStartElement);
             
-            if (scrollable) {
-                const scrollTop = scrollable.scrollTop;
-                const scrollBottom = scrollable.scrollHeight - scrollable.clientHeight - scrollTop;
+            if (scrollableContainer) {
+                const scrollTop = scrollableContainer.scrollTop;
+                const scrollBottom = scrollableContainer.scrollHeight - scrollableContainer.clientHeight - scrollTop;
                 const swipingDown = deltaY > 0;
                 const swipingUp = deltaY < 0;
                 
