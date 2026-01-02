@@ -2207,7 +2207,7 @@
         
         <div class="boss-victory-overlay" id="bossVictoryOverlay">
             <div class="boss-victory-container">
-                <div class="boss-victory-title">🏆 VICTORY!</div>
+                <div class="boss-victory-title">VICTORY!</div>
                 <div class="boss-victory-subtitle" id="bossVictorySubtitle">You defeated THE BURROWER</div>
                 <div class="boss-victory-key-box">
                     <div class="boss-victory-key-label">🔑 Key Obtained!</div>
@@ -2215,7 +2215,7 @@
                     <div class="boss-victory-key-depth" id="bossVictoryKeyDepth">100m Boss Key</div>
                 </div>
                 <div class="boss-victory-refuel">⛽ Hull & Fuel Fully Restored!</div>
-                <button class="boss-victory-btn" id="bossVictoryTeleport">⬆️ TELEPORT BACK</button>
+                <button class="boss-victory-btn" id="bossVictoryTeleport">TELEPORT BACK</button>
             </div>
         </div>
 
@@ -7646,7 +7646,7 @@
         }
         
         function updateCrystalGolemAI(playerX, playerY) {
-            // Crystal Golem: Walks side to side, slams ground for shockwaves, shoots crystals
+            // Crystal Golem: Wanders the arena, slams ground for shockwaves, shoots crystals
             // Hit it during recovery to stun, then drill the core
             
             // Initialize golem-specific properties if needed
@@ -7654,29 +7654,48 @@
                 boss.walkDirection = 1;
                 boss.slamCount = 0;
                 boss.shotsFired = 0;
+                boss.wanderTarget = null;
+                boss.wanderTimer = 0;
+                boss.returnToCenterTimer = 0;
+                // Set initial Y position to center of arena (no gravity, floats freely)
+                boss.y = bossArena.offsetY + (bossArena.height / 2) * TILE_SIZE;
             }
             
+            // Calculate arena bounds using tile-based system
             const arenaLeft = bossArena.offsetX + TILE_SIZE * 2;
             const arenaRight = bossArena.offsetX + (bossArena.width - 2) * TILE_SIZE;
-            const groundY = bossArena.offsetY + (bossArena.height - 3) * TILE_SIZE;
+            const arenaTop = bossArena.offsetY + TILE_SIZE * 3;
+            const arenaBottom = bossArena.offsetY + (bossArena.height - 3) * TILE_SIZE;
+            const centerX = bossArena.offsetX + (bossArena.width / 2) * TILE_SIZE;
+            const centerY = bossArena.offsetY + (bossArena.height / 2) * TILE_SIZE;
             
-            // Keep golem on ground for most states (no gravity - fixed position)
-            if (boss.state !== 'windup') {
-                boss.y = groundY;
-            }
+            // NO GRAVITY - golem floats freely in arena
+            // Only clamp to arena bounds
             
             // Clamp X position and correct walkDirection at arena bounds
             if (boss.x <= arenaLeft) {
                 boss.x = arenaLeft;
-                if (boss.walkDirection !== undefined) boss.walkDirection = 1;
+                boss.walkDirection = 1;
             } else if (boss.x >= arenaRight) {
                 boss.x = arenaRight;
-                if (boss.walkDirection !== undefined) boss.walkDirection = -1;
+                boss.walkDirection = -1;
+            }
+            
+            // Clamp Y position to arena bounds
+            if (boss.y <= arenaTop) {
+                boss.y = arenaTop;
+            } else if (boss.y >= arenaBottom) {
+                boss.y = arenaBottom;
+            }
+            
+            // Increment return to center timer during idle/wandering
+            if (boss.state === 'idle' || boss.state === 'wandering') {
+                boss.returnToCenterTimer += deltaMultiplier;
             }
             
             switch(boss.state) {
                 case 'idle':
-                    // Walk side to side
+                    // Float side to side (horizontal only - no diagonals)
                     boss.x += boss.walkDirection * 1.5 * deltaMultiplier;
                     
                     // Bounce off walls
@@ -7688,30 +7707,112 @@
                         boss.walkDirection = -1;
                     }
                     
+                    // Periodically return to center (every ~8 seconds)
+                    if (boss.returnToCenterTimer >= 480) {
+                        boss.state = 'returning';
+                        boss.stateTimer = 0;
+                        boss.returnToCenterTimer = 0;
+                        break;
+                    }
+                    
                     // Attack pattern
                     if (boss.attackTimer >= boss.attackCooldown) {
                         boss.attackTimer = 0;
                         boss.slamCount++;
                         
-                        // Alternate between slam and shoot
-                        if (boss.slamCount % 3 === 0) {
+                        // Cycle through: slam, wander, shoot, wander
+                        const pattern = boss.slamCount % 4;
+                        if (pattern === 0) {
                             boss.state = 'shooting';
                             boss.stateTimer = 0;
                             boss.shotsFired = 0;
+                        } else if (pattern === 2) {
+                            boss.state = 'wandering';
+                            boss.stateTimer = 0;
+                            boss.wanderTimer = 0;
+                            // Pick random target position within bounds (including Y)
+                            boss.wanderTarget = {
+                                x: arenaLeft + 20 + Math.random() * (arenaRight - arenaLeft - 40),
+                                y: arenaTop + 20 + Math.random() * (arenaBottom - arenaTop - 40)
+                            };
                         } else {
                             boss.state = 'windup';
                             boss.stateTimer = 0;
                         }
                     }
                     break;
+                
+                case 'wandering':
+                    // Move toward wander target (one axis at a time - no diagonals)
+                    if (boss.wanderTarget) {
+                        const dx = boss.wanderTarget.x - boss.x;
+                        const dy = boss.wanderTarget.y - boss.y;
+                        const wanderSpeed = 2.5 * deltaMultiplier;
+                        
+                        // Move on whichever axis has greater distance (no diagonals)
+                        if (Math.abs(dx) > 5 && Math.abs(dx) >= Math.abs(dy)) {
+                            // Move horizontally
+                            boss.x += Math.sign(dx) * wanderSpeed;
+                            boss.walkDirection = Math.sign(dx) || 1;
+                        } else if (Math.abs(dy) > 5) {
+                            // Move vertically
+                            boss.y += Math.sign(dy) * wanderSpeed;
+                        }
+                        
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        
+                        // Reached target or timeout
+                        boss.wanderTimer += deltaMultiplier;
+                        if (dist <= 5 || boss.wanderTimer >= 180) {
+                            boss.state = 'idle';
+                            boss.stateTimer = 0;
+                            boss.wanderTarget = null;
+                        }
+                    } else {
+                        boss.state = 'idle';
+                        boss.stateTimer = 0;
+                    }
+                    break;
+                
+                case 'returning':
+                    // Move back to center of arena (one axis at a time - no diagonals)
+                    const dxCenter = centerX - boss.x;
+                    const dyCenter = centerY - boss.y;
+                    const distCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter);
+                    const returnSpeed = 2.0 * deltaMultiplier;
+                    
+                    // Move on whichever axis has greater distance (no diagonals)
+                    if (Math.abs(dxCenter) > 5 && Math.abs(dxCenter) >= Math.abs(dyCenter)) {
+                        // Move horizontally
+                        boss.x += Math.sign(dxCenter) * returnSpeed;
+                        boss.walkDirection = Math.sign(dxCenter) || 1;
+                    } else if (Math.abs(dyCenter) > 5) {
+                        // Move vertically
+                        boss.y += Math.sign(dyCenter) * returnSpeed;
+                    }
+                    
+                    // Reached center or timeout
+                    if (distCenter <= 5 || boss.stateTimer >= 180) {
+                        boss.state = 'idle';
+                        boss.stateTimer = 0;
+                        // Reset walk direction randomly
+                        boss.walkDirection = Math.random() < 0.5 ? -1 : 1;
+                    }
+                    break;
                     
                 case 'windup':
-                    // Pause before slam - small hop
-                    boss.y = groundY - Math.sin(boss.stateTimer * 0.1) * 8;
+                    // Pause before slam - bob up and down only (no horizontal movement)
+                    // Store original Y on first frame
+                    if (boss.stateTimer < 1 && !boss.windupBaseY) {
+                        boss.windupBaseY = boss.y;
+                    }
+                    boss.y = boss.windupBaseY + Math.sin(boss.stateTimer * 0.15) * 8;
                     
                     if (boss.stateTimer >= 25) {
                         boss.state = 'slam';
                         boss.stateTimer = 0;
+                        boss.y = boss.windupBaseY; // Reset to base position
+                        boss.windupBaseY = null;
                     }
                     break;
                     
@@ -7721,11 +7822,10 @@
                         screenShake = 15;
                         triggerScreenFlash('#8844ff', 0.4, 12);
                         
-                        // Create shockwave projectiles that travel along ground
-                        const shockwaveY = groundY + 15;
+                        // Create shockwave projectiles that travel outward from boss
                         bossArena.projectiles.push({
                             x: boss.x - 25,
-                            y: shockwaveY,
+                            y: boss.y,
                             vx: -3.5,
                             vy: 0,
                             radius: 14,
@@ -7736,7 +7836,7 @@
                         });
                         bossArena.projectiles.push({
                             x: boss.x + 25,
-                            y: shockwaveY,
+                            y: boss.y,
                             vx: 3.5,
                             vy: 0,
                             radius: 14,
@@ -7746,13 +7846,13 @@
                             type: 'shockwave'
                         });
                         
-                        // Ground particles
+                        // Particles around boss
                         for (let i = 0; i < 10; i++) {
                             bossArena.particles.push({
                                 x: boss.x + (Math.random() - 0.5) * 50,
-                                y: groundY,
+                                y: boss.y + (Math.random() - 0.5) * 50,
                                 vx: (Math.random() - 0.5) * 5,
-                                vy: -2 - Math.random() * 3,
+                                vy: (Math.random() - 0.5) * 5,
                                 size: 3 + Math.random() * 4,
                                 color: Math.random() < 0.5 ? '#7744cc' : '#553388',
                                 life: 0.7
@@ -7764,7 +7864,7 @@
                     if (boss.stateTimer >= 35) {
                         boss.state = 'recovery';
                         boss.stateTimer = 0;
-                        createFloatingText('💫 EXPOSED!', boss.x, boss.y - 50, '#ffff00');
+                        createFloatingText('EXPOSED!', boss.x, boss.y - 50, '#ffff00');
                     }
                     break;
                     
@@ -7804,7 +7904,7 @@
                     if (boss.stateTimer >= 55) {
                         boss.state = 'recovery';
                         boss.stateTimer = 0;
-                        createFloatingText('💫 EXPOSED!', boss.x, boss.y - 50, '#ffff00');
+                        createFloatingText('EXPOSED!', boss.x, boss.y - 50, '#ffff00');
                     }
                     break;
                 
@@ -7816,6 +7916,7 @@
                     if (boss.stateTimer >= 60) {
                         boss.state = 'idle';
                         boss.stateTimer = 0;
+                        boss.returnToCenterTimer = 0; // Reset so it doesn't immediately return
                     }
                     break;
                     
@@ -7836,7 +7937,7 @@
                             radius: 30,
                             active: true
                         }];
-                        createFloatingText('⚠️ DRILL THE CORE!', boss.x, boss.y - 50, '#00ff88');
+                        createFloatingText('DRILL THE CORE!', boss.x, boss.y - 50, '#00ff88');
                     } else {
                         // Update weak point position
                         bossArena.weakPoints[0].x = boss.x;
@@ -7851,6 +7952,7 @@
                         boss.width = 56;
                         boss.height = 56;
                         bossArena.weakPoints = [];
+                        boss.returnToCenterTimer = 0; // Reset so it doesn't immediately return
                     }
                     break;
                     
@@ -7865,16 +7967,18 @@
                     break;
             }
             
-            // Final position clamp - ensure boss stays in bounds after all state updates
+            // Final position clamp - ensure boss stays in arena bounds
             if (boss.x <= arenaLeft) {
                 boss.x = arenaLeft;
-                boss.walkDirection = 1; // Force direction away from wall
+                boss.walkDirection = 1;
             } else if (boss.x >= arenaRight) {
                 boss.x = arenaRight;
-                boss.walkDirection = -1; // Force direction away from wall
+                boss.walkDirection = -1;
             }
-            if (boss.state !== 'windup') {
-                boss.y = groundY; // Enforce ground position (except during windup jump)
+            if (boss.y <= arenaTop) {
+                boss.y = arenaTop;
+            } else if (boss.y >= arenaBottom) {
+                boss.y = arenaBottom;
             }
         }
         
@@ -8628,7 +8732,7 @@
                     ctx.font = 'bold 14px Oxanium, monospace';
                     ctx.fillStyle = '#ff4400';
                     ctx.textAlign = 'center';
-                    ctx.fillText('🔥 LAVA WURMS 🔥', BASE_WIDTH / 2, hpBarY + hpBarHeight + 18);
+                    ctx.fillText('LAVA WURMS', BASE_WIDTH / 2, hpBarY + hpBarHeight + 18);
                 } else {
                     // Single boss HP bar
                     const hpBarX = (BASE_WIDTH - hpBarWidth) / 2;
