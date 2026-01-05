@@ -5034,6 +5034,20 @@
     </style>
 </head>
 <body>
+    <!-- Music Audio Elements -->
+    <audio id="musicTitle" preload="auto" loop>
+        <source src="Game Music/xDeviruchi - 16 bit Fantasy & Adventure (2025)/04_-_Silent_Forest.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="musicBattle1" preload="auto" loop>
+        <source src="Game Music/xDeviruchi - 16 bit Fantasy & Adventure (2025)/05_-_Battle_1.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="musicBattle2" preload="auto">
+        <source src="Game Music/xDeviruchi - 16 bit Fantasy & Adventure (2025)/09_-_Battle_2.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="musicGameOver" preload="auto" loop>
+        <source src="Game Music/xDeviruchi - 16 bit Fantasy & Adventure (2025)/22_-_The_Final_of_The_Fantasy.mp3" type="audio/mpeg">
+    </audio>
+    
     <div class="game-container">
         <canvas id="gameCanvas" width="800" height="820"></canvas>
         
@@ -6038,6 +6052,113 @@
             
             return x > viewLeft && x < viewRight && y > viewTop && y < viewBottom;
         }
+
+        // ===== MUSIC CONTROLLER =====
+        const MusicController = {
+            title: document.getElementById('musicTitle'),
+            battle1: document.getElementById('musicBattle1'),
+            battle2: document.getElementById('musicBattle2'),
+            gameOver: document.getElementById('musicGameOver'),
+            current: null,
+            volume: 0.5,
+            fadeTime: 2000, // 2 second crossfade
+            fadeInterval: null,
+            initialized: false,
+            
+            init() {
+                if (this.initialized) return;
+                this.title.volume = 0;
+                this.battle1.volume = 0;
+                this.battle2.volume = 0;
+                this.gameOver.volume = 0;
+                
+                // When Battle 2 ends, start Battle 1 loop
+                this.battle2.addEventListener('ended', () => {
+                    if (this.current === this.battle2) {
+                        this.crossfade(this.battle1);
+                    }
+                });
+                
+                this.initialized = true;
+            },
+            
+            crossfade(toTrack) {
+                if (this.fadeInterval) clearInterval(this.fadeInterval);
+                
+                const fromTrack = this.current;
+                const steps = 40; // 40 steps over 2 seconds = 50ms per step
+                const stepTime = this.fadeTime / steps;
+                const volumeStep = this.volume / steps;
+                let step = 0;
+                
+                // Start new track at 0 volume
+                toTrack.volume = 0;
+                toTrack.currentTime = 0;
+                toTrack.play().catch(() => {});
+                
+                this.fadeInterval = setInterval(() => {
+                    step++;
+                    
+                    // Fade out old track
+                    if (fromTrack) {
+                        fromTrack.volume = Math.max(0, this.volume - (volumeStep * step));
+                    }
+                    
+                    // Fade in new track
+                    toTrack.volume = Math.min(this.volume, volumeStep * step);
+                    
+                    if (step >= steps) {
+                        clearInterval(this.fadeInterval);
+                        this.fadeInterval = null;
+                        if (fromTrack) {
+                            fromTrack.pause();
+                            fromTrack.currentTime = 0;
+                        }
+                        toTrack.volume = this.volume;
+                        this.current = toTrack;
+                    }
+                }, stepTime);
+                
+                this.current = toTrack;
+            },
+            
+            playTitle() {
+                this.init();
+                if (this.current === this.title) return;
+                this.crossfade(this.title);
+            },
+            
+            playBattle() {
+                this.init();
+                // Start with Battle 2, it will auto-transition to Battle 1 when done
+                this.crossfade(this.battle2);
+            },
+            
+            playGameOver() {
+                this.init();
+                this.crossfade(this.gameOver);
+            },
+            
+            pause() {
+                if (this.current && !this.current.paused) {
+                    this.current.pause();
+                }
+            },
+            
+            resume() {
+                if (this.current && this.current.paused) {
+                    this.current.play().catch(() => {});
+                }
+            },
+            
+            // Called on first user interaction to enable audio
+            unlock() {
+                if (!this.initialized) {
+                    this.init();
+                    this.playTitle();
+                }
+            }
+        };
 
         // ===== GAME STATE =====
         let gameRunning = false;
@@ -20777,6 +20898,13 @@
         let selectedPlayerColor = PLAYER_COLORS[2]; // Default to Cyan
         
         function showWeaponSelect() {
+            // Handle music: unlock on first interaction, or switch to title from game over
+            if (!MusicController.initialized) {
+                MusicController.unlock();
+            } else if (!gameRunning) {
+                // Coming from game over screen - switch to title music
+                MusicController.playTitle();
+            }
             DOM.menuOverlay.classList.add('hidden');
             DOM.weaponSelectOverlay.classList.add('active');
             
@@ -21184,6 +21312,7 @@
         function startGame() {
             gameRunning = true;
             gamePaused = false;
+            MusicController.playBattle();
             gameTime = 0;
             kills = 0;
             beamLastActiveTime = 0;
@@ -21528,6 +21657,7 @@
 
         function gameOver() {
             gameRunning = false;
+            MusicController.playGameOver();
             
             // Store stats for later display
             const minutes = Math.floor(gameTime / 60);
@@ -21605,9 +21735,11 @@
             // Show/hide pause overlay
             if (gamePaused) {
                 DOM.pauseOverlay.classList.add('active');
+                MusicController.pause();
             } else {
                 DOM.pauseOverlay.classList.remove('active');
                 DOM.confirmOverlay.classList.remove('active');
+                MusicController.resume();
             }
         }
         
@@ -21618,6 +21750,7 @@
             DOM.pauseBtn.classList.remove('paused');
             DOM.pauseOverlay.classList.remove('active');
             DOM.confirmOverlay.classList.remove('active');
+            MusicController.resume();
         }
         
         function showExitConfirm() {
@@ -21637,6 +21770,7 @@
             DOM.pauseBtn.classList.remove('paused');
             DOM.menuOverlay.classList.remove('hidden');
             if (DOM.finalStats) DOM.finalStats.style.display = 'none';
+            MusicController.playTitle();
         }
         
         // Pause button click
