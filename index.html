@@ -1076,13 +1076,19 @@
             overscroll-behavior: contain !important;
             pointer-events: auto !important;
             position: relative !important;
-            z-index: 20 !important;
+            z-index: 100 !important; /* Above scroll-container::before (50) */
         }
         
         /* Safari #about section - allow internal scrolling */
         body.is-safari #about,
         body.is-mac-safari #about {
             overflow: visible !important;
+        }
+        
+        /* Safari about-content - ensure it doesn't block scrolling */
+        body.is-safari .about-content,
+        body.is-mac-safari .about-content {
+            pointer-events: auto !important;
         }
         
         /* Safari title glow keyframes */
@@ -10587,7 +10593,31 @@
                     isHovering = false;
                 });
                 
-                // Wheel event - contain scroll within container
+                // CAPTURE PHASE wheel handler - intercept before document handlers
+                container.addEventListener('wheel', function(e) {
+                    const scrollTop = container.scrollTop;
+                    const scrollHeight = container.scrollHeight;
+                    const clientHeight = container.clientHeight;
+                    const maxScroll = scrollHeight - clientHeight;
+                    
+                    // If there's nothing to scroll, let it bubble
+                    if (maxScroll <= 0) return;
+                    
+                    const delta = e.deltaY;
+                    
+                    // At boundary - let it propagate for section navigation
+                    if ((scrollTop <= 1 && delta < 0) || (scrollTop >= maxScroll - 1 && delta > 0)) {
+                        return; // Let it bubble to trigger section change
+                    }
+                    
+                    // Within scroll bounds - scroll the container and block everything else
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    container.scrollTop += delta;
+                }, { passive: false, capture: true });
+                
+                // Wheel event - contain scroll within container (bubble phase backup)
                 container.addEventListener('wheel', function(e) {
                     const scrollTop = container.scrollTop;
                     const scrollHeight = container.scrollHeight;
