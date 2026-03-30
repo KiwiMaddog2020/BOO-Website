@@ -16,15 +16,16 @@ Single-page psychedelic experience with layered visual effects, smooth transitio
 
 ### Core Features
 
-- **Scroll-snap navigation** with smooth section transitions and card indicators
+- **Fixed-section navigation** with black overlay fade transitions and card indicators
 - **Floating pill music player** with track controls, progress bar, and volume slider
 - **Animated loading screen** with color-sweep logo effect (hot orange → cool cyan)
 - **Lightbox gallery** with keyboard navigation and download support
 - **Lazy loading** with 300px preload margin for instant image reveals
+- **Wheel, touch, and keyboard** section navigation with direction detection
 
 ### Visual Effects
 
-Each section features multiple animated overlay layers:
+Each section features multiple animated overlay layers (desktop):
 
 - Color mist gradients with breathing animations
 - Liquid morphing overlay with screen blend
@@ -33,16 +34,18 @@ Each section features multiple animated overlay layers:
 - Color splotches with soft glow
 - Lava blobs with organic movement
 - Chrome color sweep and shimmer
-- Per-section psychedelic backgrounds
+- Per-section psychedelic backgrounds with breathing warp
+- Ambient color wash (section::after)
 
 ### Browser Optimizations
 
 - **Safari** (iOS/macOS): Static title styling, boosted overlay opacity, direct style injection
-- **Chrome/Chromium**: Reduced overlay complexity on desktop, mobile GPU stability fixes
-- **Firefox/LibreWolf**: Dedicated detection and class targeting
-- **Mobile**: Lightweight builds strip problematic animations while preserving core aesthetic
+- **Chrome/Chromium**: All overlay animations disabled on desktop to prevent flickering, mobile GPU stability fixes
+- **Firefox/LibreWolf**: Dedicated detection, desaturated overlays to match cross-browser consistency
+- **Android**: Direct gradient fade-overlays, GPU acceleration on animated elements
+- **Mobile (all)**: Lightweight builds strip all overlay effects while preserving background breathing animation
 
-## 🕹️ The Arcade
+## The Arcade
 
 Six custom HTML5 games with global Firebase leaderboards:
 
@@ -62,17 +65,18 @@ Six custom HTML5 games with global Firebase leaderboards:
 - Fullscreen button with hybrid scaling (transform for desktop, pseudo-fullscreen for iOS)
 - Touch scroll prevention — game interactions don't trigger page scrolling
 - Keyboard input capture when game is focused
+- Performance mode — disables overlay animations when arcade section is active
 
 ## Tech Stack
 
 - **Frontend:** Vanilla HTML, CSS, JavaScript
 - **Games:** HTML5 Canvas with custom physics
 - **Leaderboards:** Firebase Firestore
-- **Analytics:** Google Analytics
-- **Palette:** Neon cyan (#0ff), magenta (#f0f), purple, orange on dark backgrounds
-- **Fonts:** Bebas Neue, Rumble Brave, Tilt Neon, Poppins, Oxanium, Exo 2
+- **Analytics:** Google Analytics GA4
+- **Fonts:** Bebas Neue, Rumble Brave, Poppins, Oxanium, Exo 2, Tilt Neon
 
 ## Files
+
 ```
 index.html               # Main website
 neon-brickbreaker.html   # Brick breaker game
@@ -87,6 +91,7 @@ neon-space-shooter.html  # Space shooter (hidden)
 ## Running Locally
 
 Just open `index.html` in a browser. For iframe/CORS issues:
+
 ```bash
 python -m http.server 8000
 # http://localhost:8000
@@ -98,9 +103,3 @@ python -m http.server 8000
 - [YouTube](https://www.youtube.com/@BunchOfOthersMusic)
 - [Spotify](https://open.spotify.com/artist/1n8AIkpbrWiXAS8pewVjnP)
 - [Apple Music](https://music.apple.com/us/artist/bunch-of-others/1754588177)
-
----
-
-© Bunch of Others. All rights reserved.
-
-*Last updated: December 24, 2025*
