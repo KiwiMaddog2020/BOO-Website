@@ -78,14 +78,21 @@ Six custom HTML5 games with global Firebase leaderboards:
 ## Files
 
 ```
-index.html               # Main website
-neon-brickbreaker.html   # Brick breaker game
-neon-survivors.html      # Survivors game
-clydes-big-jump.html     # Endless jumper
-neon-tower-defense.html  # Tower defense
-neon-dig.html            # Digging game
-neon-snake.html          # Snake game
-neon-space-shooter.html  # Space shooter (hidden)
+index.html               # Main site — GitHub Pages entry
+CLAUDE.md                # Dev context + Dev Protocol
+README.md                # This file
+SECURITY.md              # Security policy
+Images/                  # Site images and favicons
+Music/                   # Band audio tracks
+Games/                   # Arcade HTML5 games (iframe-embedded)
+  clydes-big-jump.html
+  neon-brickbreaker.html
+  neon-dig.html
+  neon-snake.html
+  neon-space-shooter.html
+  neon-survivors.html
+  neon-tower-defense.html
+_unused/                 # Orphan assets preserved for future use
 ```
 
 ## Running Locally
