@@ -9780,6 +9780,13 @@
             // Skip while in pseudo-fullscreen — the .pseudo-fullscreen CSS (100vw x 100vh)
             // handles sizing, and enforceGameAspectRatio's inline !important would undo it.
             if (container.classList.contains('pseudo-fullscreen')) return;
+            // Skip while in native fullscreen (Android / tablet / desktop path) — the browser
+            // makes the container fullscreen-sized; our inline sizing would fight that.
+            const inNativeFullscreen = document.fullscreenElement === container ||
+                                        document.webkitFullscreenElement === container ||
+                                        document.mozFullScreenElement === container ||
+                                        document.msFullscreenElement === container;
+            if (inNativeFullscreen) return;
 
             const isMobile = window.innerWidth <= 768;
             // Detect tablet: touch device with width between 769-1400px
@@ -10086,17 +10093,28 @@
                         
                         if (isMobile || isTabletFS) {
                             // MOBILE/TABLET: Fill entire viewport. Game preserves its own
-                            // canvas aspect ratio inside the iframe. Previously this branch
-                            // used a hardcoded 640/740 aspect which left dead-black bars
-                            // above and below the iframe on portrait phones (~48% of the
-                            // screen was blank). Filling 100vw x 100vh removes those.
-                            arcadeFrameFS.style.position = 'absolute';
-                            arcadeFrameFS.style.width = '100%';
-                            arcadeFrameFS.style.height = '100%';
-                            arcadeFrameFS.style.top = '0';
-                            arcadeFrameFS.style.left = '0';
-                            arcadeFrameFS.style.transform = 'none';
-                            arcadeFrameFS.style.border = 'none';
+                            // canvas aspect ratio inside the iframe.
+                            //
+                            // V1_71: Use setProperty with 'important' to beat #game iframe
+                            // max-width/max-height CSS, and clear enforceGameAspectRatio's
+                            // inline !important sizing on .game-container so the fullscreen
+                            // element can actually fill the screen (same root cause as V1_70
+                            // found on iPhone pseudo-fullscreen).
+                            arcadeGameContainerFS.style.removeProperty('width');
+                            arcadeGameContainerFS.style.removeProperty('height');
+                            arcadeGameContainerFS.style.removeProperty('max-width');
+                            arcadeGameContainerFS.style.removeProperty('max-height');
+                            arcadeGameContainerFS.style.removeProperty('aspect-ratio');
+
+                            arcadeFrameFS.style.setProperty('position', 'absolute', 'important');
+                            arcadeFrameFS.style.setProperty('top', '0', 'important');
+                            arcadeFrameFS.style.setProperty('left', '0', 'important');
+                            arcadeFrameFS.style.setProperty('width', '100%', 'important');
+                            arcadeFrameFS.style.setProperty('height', '100%', 'important');
+                            arcadeFrameFS.style.setProperty('max-width', 'none', 'important');
+                            arcadeFrameFS.style.setProperty('max-height', 'none', 'important');
+                            arcadeFrameFS.style.setProperty('transform', 'none', 'important');
+                            arcadeFrameFS.style.setProperty('border', 'none', 'important');
                         } else {
                             // DESKTOP: Use transform scaling
                             requestAnimationFrame(() => {
