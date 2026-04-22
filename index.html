@@ -8985,6 +8985,16 @@
         const wheelThreshold = 50; // Pixels of wheel delta before triggering
         let wheelResetTimeout;
         
+        // Normalize wheel delta to pixels regardless of browser deltaMode.
+        // Chrome/Safari default to DOM_DELTA_PIXEL (0) with deltaY ~100 per wheel click.
+        // Firefox/LibreWolf default to DOM_DELTA_LINE (1) with deltaY ~3 per click.
+        // Without this, `container.scrollTop += e.deltaY` scrolls 3px on Firefox — feels broken.
+        function normalizeWheelDelta(e, fallbackPageHeight) {
+            if (e.deltaMode === 1) return e.deltaY * 40;  // LINE  -> ~40px per line
+            if (e.deltaMode === 2) return e.deltaY * (fallbackPageHeight || 800);  // PAGE
+            return e.deltaY;  // PIXEL (default Chrome/Safari)
+        }
+
         // Helper to check if element or children are scrollable
         function getScrollableElement(section) {
             // Check section itself
@@ -9046,7 +9056,7 @@
                 if (!(atTop && scrollingUp) && !(atBottom && scrollingDown)) {
                     // Manual scroll and block all other handlers
                     e.preventDefault();
-                    hoveredScrollable.scrollTop += delta;
+                    hoveredScrollable.scrollTop += normalizeWheelDelta(e, clientHeight);
                     return;
                 }
                 // At boundary - fall through to section navigation
@@ -10686,7 +10696,7 @@
                     e.preventDefault();
                     e.stopPropagation();
                     e.stopImmediatePropagation();
-                    container.scrollTop += delta;
+                    container.scrollTop += normalizeWheelDelta(e, clientHeight);
                 }, { passive: false, capture: true });
                 
                 // Wheel event - contain scroll within container (bubble phase backup)
