@@ -2787,8 +2787,11 @@
             }
             
             /* ========== MERCH GRID - SMALLER ITEMS WITH SMALLER ICONS ========== */
-            /* Only apply grid styles if not hidden via inline style */
-            .merch-grid:not([style*="display: none"]) {
+            /* V1_79: Gated by html.beta-pay — default merch hide must win on mobile.
+               The `:not([style*=...])` filter only catches inline styles; without the
+               beta-pay prefix this rule's `display: grid !important` would override
+               the default `#merch .merch-grid { display: none }` gate. */
+            html.beta-pay .merch-grid:not([style*="display: none"]) {
                 display: grid !important;
                 grid-template-columns: repeat(2, 1fr) !important;
                 gap: 0.4rem !important;
@@ -7064,7 +7067,48 @@
                 -webkit-animation: navTapGlow 3s ease-in-out forwards !important;
                 animation: navTapGlow 3s ease-in-out forwards !important;
             }
-            
+
+            /* V1_79: Radial neon ripple on mobile nav tap (cyan → magenta burst).
+               .nav-ripple is a <span> inserted via JS at the tap coordinates in
+               spawnNavRipple(). Sits on top of the pill; mix-blend-mode: screen
+               keeps text readable while the ripple paints color onto the nav bg. */
+            nav a:not(.nav-animated-logo-container) {
+                position: relative;
+            }
+            .nav-ripple {
+                position: absolute;
+                pointer-events: none;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                -webkit-transform: translate(-50%, -50%) scale(0);
+                transform: translate(-50%, -50%) scale(0);
+                background: radial-gradient(circle,
+                    rgba(0, 255, 255, 0.9) 0%,
+                    rgba(0, 255, 255, 0.55) 30%,
+                    rgba(255, 0, 255, 0.4) 65%,
+                    transparent 100%);
+                -webkit-animation: navRipple 400ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+                animation: navRipple 400ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+                z-index: 3;
+                mix-blend-mode: screen;
+                will-change: transform, opacity;
+            }
+            @-webkit-keyframes navRipple {
+                0%   { -webkit-transform: translate(-50%, -50%) scale(0); opacity: 1; }
+                100% { -webkit-transform: translate(-50%, -50%) scale(8); opacity: 0; }
+            }
+            @keyframes navRipple {
+                0%   { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+                100% { transform: translate(-50%, -50%) scale(8); opacity: 0; }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                .nav-ripple {
+                    -webkit-animation-duration: 120ms !important;
+                    animation-duration: 120ms !important;
+                }
+            }
+
             /* No glow on hover/active - only on explicit tap */
             nav a:not(.nav-animated-logo-container):hover,
             nav a:not(.nav-animated-logo-container):active {
@@ -7235,12 +7279,14 @@
                 padding: 0.5rem !important;
             }
             .photo-item { width: 100% !important; max-width: none !important; max-height: none !important; aspect-ratio: 1 !important; }
-            /* 2-column merch grid with invisible container - respect hidden state */
-            .merch-grid:not([style*="display: none"]) { 
+            /* 2-column merch grid with invisible container - only when beta-pay flag active.
+               V1_79: gated by html.beta-pay so default-hidden merch stays hidden on mobile
+               (the `:not([style*=...])` filter only matches inline styles, not the CSS gate). */
+            html.beta-pay .merch-grid:not([style*="display: none"]) {
                 display: grid !important;
                 grid-template-columns: repeat(2, 1fr) !important;
                 justify-items: center !important;
-                gap: 0.6rem !important; 
+                gap: 0.6rem !important;
                 max-width: 290px !important;
                 max-height: none !important;
                 padding: 0.8rem !important;
@@ -7270,6 +7316,9 @@
                 gap: 0.5rem;
             }
             .card-dot { width: 10px; height: 10px; }
+            /* V1_79: lock section nav on mobile — nav menu at top is the only navigator.
+               Card dots hidden entirely so they can't compete for taps. */
+            .card-indicators { display: none !important; }
             .social-links { gap: 0.75rem; flex-wrap: wrap; padding: 0 1rem; }
             .home-social-links { gap: 1.8rem 1.6rem !important; margin-top: 1.2rem !important; padding: 1rem 2rem !important; } /* Much more spacing on mobile */
             .home-social-btn { padding: 0.5rem 0.9rem; font-size: 0.72rem; }
@@ -7433,10 +7482,10 @@
                 padding: 0.4rem !important;
             }
             .photo-item { width: 100% !important; max-width: none !important; max-height: none !important; aspect-ratio: 1 !important; }
-            /* Smaller merch with smaller icons - respect hidden state */
-            .merch-grid:not([style*="display: none"]) { 
-                grid-template-columns: repeat(2, 1fr) !important; 
-                gap: 0.35rem !important; 
+            /* Smaller merch with smaller icons — gated by html.beta-pay (V1_79) for consistency */
+            html.beta-pay .merch-grid:not([style*="display: none"]) {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 0.35rem !important;
                 max-width: 250px !important;
                 width: 250px !important;
                 max-height: none !important;
@@ -7585,8 +7634,8 @@
             }
             .photo-item { max-width: none !important; max-height: none !important; aspect-ratio: 1 !important; }
             
-            /* Smaller merch - respect hidden state */
-            .merch-grid:not([style*="display: none"]) { 
+            /* Smaller merch — gated by html.beta-pay (V1_79) for consistency */
+            html.beta-pay .merch-grid:not([style*="display: none"]) {
                 max-width: 220px !important;
                 gap: 0.25rem !important;
             }
@@ -8876,6 +8925,24 @@
             menuTransitionToSection(targetId);
         }
 
+        // V1_79: Spawn a radial neon ripple at the tap point on mobile nav anchors.
+        // Ripple is a short-lived <span.nav-ripple> positioned at the tap coords
+        // relative to the anchor. CSS animation handles the burst; JS cleans up.
+        // No-op for logo (skip) and desktop (skip).
+        function spawnNavRipple(anchor, clientX, clientY) {
+            if (window.innerWidth > 768) return;
+            if (!anchor || anchor.classList.contains('nav-animated-logo-container')) return;
+            var rect = anchor.getBoundingClientRect();
+            var ripple = document.createElement('span');
+            ripple.className = 'nav-ripple';
+            ripple.style.left = (clientX - rect.left) + 'px';
+            ripple.style.top  = (clientY - rect.top)  + 'px';
+            anchor.appendChild(ripple);
+            setTimeout(function() {
+                if (ripple.parentNode) ripple.parentNode.removeChild(ripple);
+            }, 500);
+        }
+
         // Smooth scrolling for nav links - uses fade transition
         // Safari iOS fix: Use touchend for better touch response
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
@@ -8883,28 +8950,35 @@
             anchor.addEventListener('click', function (e) {
                 e.preventDefault();
                 e.stopPropagation();
+                // V1_79: Ripple on mobile click path (covers mouse-tap in narrow viewports).
+                spawnNavRipple(this, e.clientX, e.clientY);
                 const targetId = this.getAttribute('href').substring(1);
                 const target = document.getElementById(targetId);
                 if (target) {
                     menuTransitionToSection(targetId, this);
                 }
             });
-            
+
             // Safari iOS fix: touchend fires more reliably than click
             // Track touch start position to detect taps vs scrolls
             let touchStartY = 0;
+            let touchStartX = 0;
             anchor.addEventListener('touchstart', function(e) {
                 touchStartY = e.touches[0].clientY;
+                touchStartX = e.touches[0].clientX;
             }, { passive: true });
-            
+
             anchor.addEventListener('touchend', function (e) {
                 // Only handle if it was a tap (not a scroll - less than 10px movement)
                 const touchEndY = e.changedTouches[0].clientY;
+                const touchEndX = e.changedTouches[0].clientX;
                 const isScrollGesture = Math.abs(touchEndY - touchStartY) > 10;
-                
+
                 if (!isScrollGesture) {
                     e.preventDefault();
                     e.stopPropagation();
+                    // V1_79: Ripple at the release point (primary mobile path).
+                    spawnNavRipple(this, touchEndX, touchEndY);
                     const targetId = this.getAttribute('href').substring(1);
                     const target = document.getElementById(targetId);
                     if (target) {
@@ -9039,6 +9113,36 @@
             }, scrollCooldownTime);
         }
         
+        // ========== BIO/EVENTS WHEEL PRIORITY (V1_79) ==========
+        // Window-level capture handler using GEOMETRIC BOUNDS (getBoundingClientRect)
+        // rather than e.target DOM ancestry. Guarantees the mouse-over-text-body case
+        // scrolls the .about-container / .events-container, even when ambient overlays
+        // or compositing layers confuse e.target. Runs BEFORE any other wheel listener.
+        // Falls through (returns without preventDefault) when at a scroll boundary so
+        // the existing section-nav wheel logic can still fire at edges.
+        window.addEventListener('wheel', function(e) {
+            if (isInteractingWithGame || isScrollLocked || unlockCooldown) return;
+            var activeSection = document.querySelector('section.section-active');
+            if (!activeSection) return;
+            var container = activeSection.querySelector('.about-container, .events-container');
+            if (!container) return;
+            var rect = container.getBoundingClientRect();
+            var inside = e.clientX >= rect.left && e.clientX <= rect.right &&
+                         e.clientY >= rect.top  && e.clientY <= rect.bottom;
+            if (!inside) return;
+            var maxScroll = container.scrollHeight - container.clientHeight;
+            if (maxScroll <= 0) return;
+            var delta = e.deltaY;
+            var atTop = container.scrollTop <= 1;
+            var atBottom = container.scrollTop >= maxScroll - 1;
+            // Boundary in scroll direction → let section-nav handler take over.
+            if ((atTop && delta < 0) || (atBottom && delta > 0)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            container.scrollTop += normalizeWheelDelta(e, container.clientHeight);
+        }, { passive: false, capture: true });
+
         // WHEEL EVENT - Desktop section navigation (fixed sections architecture)
         let wheelAccumulator = 0;
         const wheelThreshold = 50; // Pixels of wheel delta before triggering
@@ -9229,6 +9333,10 @@
             }
             
             if (Math.abs(deltaY) >= swipeThreshold && deltaTime <= swipeTimeLimit) {
+                // V1_79: Mobile section lock — swipe cannot navigate sections.
+                // Nav menu at the top is the sole section navigator on mobile.
+                // Internal bio/events container scroll still works (handled above).
+                if (window.innerWidth <= 768) return;
                 const direction = deltaY > 0 ? 'down' : 'up';
                 triggerScrollTransition(direction);
             }
