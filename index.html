@@ -1822,11 +1822,14 @@
                 opacity: 1 !important;
             }
             
-            /* Safari nav tap animation - use the same keyframes defined in mobile query */
-            /* NOTE: iOS/iPad uses simplified mobile nav styles */
+            /* V1_83: Was navTapGlow 3s; updated to navChromaticSplit 600ms to
+               match the V1_82 mobile animation. This rule has higher specificity
+               than the mobile-media-query rule (body:not(.is-ios) adds a class),
+               so without this update, Android kept seeing the old pulse. */
+            /* NOTE: iOS/iPad uses simplified mobile nav styles (is-ios override below) */
             body:not(.is-ios) nav a:not(.nav-animated-logo-container).nav-tap-active {
-                -webkit-animation: navTapGlow 3s ease-in-out forwards !important;
-                animation: navTapGlow 3s ease-in-out forwards !important;
+                -webkit-animation: navChromaticSplit 600ms cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+                animation: navChromaticSplit 600ms cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
             }
             
             /* Safari nav hover - Firefox glow with outline on top */
@@ -9278,13 +9281,19 @@
                 return;
             }
 
-            // V1_80: Mobile — always block native scroll for page-level touchmove.
-            // Sections are fixed + nav-only navigation (V1_79), so any page-level
-            // swipe is nothing but Android overscroll / URL-bar-hiding noise. The
-            // old `!scrollTransitionCooldown && deltaY>10` gate let the first
-            // ~10px bleed through, which is exactly the gray-bar flash Kevin saw.
+            // V1_83: Mobile — threshold-based preventDefault. V1_80 was
+            // unconditional, which cancelled the synthesized click event that
+            // onclick-based elements (e.g. photo-gallery items → openLightbox)
+            // rely on. The overscroll-behavior:none on html/body (V1_80 CSS)
+            // already prevents the gray-bar flash without needing per-touchmove
+            // intervention; this threshold of 6px catches actual swipes while
+            // letting the sub-6px finger wobble on a tap pass through so Android
+            // Chrome / iOS Safari still synthesize the click.
             if (window.innerWidth <= 768) {
-                e.preventDefault();
+                const deltaY = Math.abs(swipeTouchStartY - e.touches[0].clientY);
+                if (deltaY > 6) {
+                    e.preventDefault();
+                }
                 return;
             }
 
