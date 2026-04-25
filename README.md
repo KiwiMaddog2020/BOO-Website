@@ -47,7 +47,7 @@ Each section features multiple animated overlay layers (desktop):
 
 ## The Arcade
 
-Six custom HTML5 games with global Firebase leaderboards:
+Seven custom HTML5 games with global Firebase leaderboards:
 
 | Game | Description |
 |------|-------------|
@@ -57,6 +57,7 @@ Six custom HTML5 games with global Firebase leaderboards:
 | **Neon Tower Defense** | Strategic tower placement against neon waves |
 | **Neon Dig** | Dig deep, collect gems, avoid hazards |
 | **Neon Snake** | Classic snake with psychedelic visuals |
+| **Neon Space Shooter** | Legacy Neon Pong / space-shooter arcade entry |
 
 ### Arcade Features
 
@@ -79,7 +80,10 @@ Six custom HTML5 games with global Firebase leaderboards:
 
 ```
 index.html               # Main site — GitHub Pages entry
+cancel.html              # Stripe Checkout cancel-redirect page
+success.html             # Stripe Checkout success-redirect page
 CLAUDE.md                # Dev context + Dev Protocol
+PAYMENT_PLAN.md          # Canadian payment infrastructure plan
 README.md                # This file
 SECURITY.md              # Security policy
 Images/                  # Site images and favicons
