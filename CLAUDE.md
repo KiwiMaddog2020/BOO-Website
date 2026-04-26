@@ -222,7 +222,7 @@ git push --tags
 
 ```bash
 # Serve locally
-python -m http.server 8000
+python3 -m http.server 8000
 # Then open http://localhost:8000
 
 # Firebase deploy (if CLI installed)

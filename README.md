@@ -104,7 +104,7 @@ _unused/                 # Orphan assets preserved for future use
 Just open `index.html` in a browser. For iframe/CORS issues:
 
 ```bash
-python -m http.server 8000
+python3 -m http.server 8000
 # http://localhost:8000
 ```
 
