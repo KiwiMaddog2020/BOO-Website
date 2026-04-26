@@ -74,7 +74,7 @@ Seven custom HTML5 games with global Firebase leaderboards:
 - **Games:** HTML5 Canvas with custom physics
 - **Leaderboards:** Firebase Firestore
 - **Analytics:** Google Analytics GA4
-- **Fonts:** Bebas Neue, Rumble Brave, Poppins, Oxanium, Exo 2, Tilt Neon
+- **Fonts:** Tilt Neon (titles), Oxanium (body), Exo 2 (UI), Orbitron (games), Poppins (nav). Bebas Neue and Rumble Brave appear in the historical record only — not used in new work.
 
 ## Files
 
