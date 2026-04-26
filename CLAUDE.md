@@ -31,7 +31,7 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 
 **Game audio:** xDeviruchi 16-bit Fantasy & Adventure collection (used in BOO Survivors).
 
-**iOS dev (in progress):** Xcode (beta, iOS 26.2 runtime); SpriteKit port of Neon Brickbreaker.
+**iOS dev (in progress):** Xcode (beta, iOS 26.2 runtime); Capacitor 6 wrapper at `mobile/` bundling the existing HTML5 games as a native iOS app. `Games/`, `Images/`, `Music/` at the repo root remain canonical — `mobile/build-www.sh` syncs them into `mobile/www/` before each build. Phase 1 ships Brickbreaker active + the other 6 games as "Coming soon" placeholders.
 
 ---
 
@@ -235,7 +235,7 @@ firebase deploy
 
 - Complete Claude Code authentication + workflow integration (Windows)
 - Continued mobile polish and cross-browser testing
-- iOS App Store release of Neon Brickbreaker (Swift/SpriteKit port) — Xcode beta runtime compatibility issues currently
+- iOS App Store release of the BOO Arcade (Capacitor 6 wrapper at `mobile/`) — Phase 1 active in V1_89/V1_90 with Brickbreaker playable + 6 placeholders; remaining phases unlock the other games for App Review
 - Ongoing game balance and feature refinement across the arcade suite
 
 ---
