@@ -2,7 +2,7 @@
 
 **Status:** Planning only. Hidden scaffold build begins at V1_77.
 **Owner:** Kevin
-**Last updated:** 2026-04-22 (V1_76 revision — expanded research)
+**Last updated:** 2026-04-25 (V1_85 — Apple Pay + Google Pay activation appendix)
 
 ## Goal
 
@@ -192,6 +192,41 @@ The lightest possible first step. V1_75's Phase 1 used Stripe Checkout SDK; Paym
 - No per-variant inventory (Payment Links support global quantity limits only)
 - No digital delivery (use Bandcamp for music)
 - No tickets (defer to Phase 4)
+
+### Apple Pay + Google Pay activation (free, automatic — added V1_85)
+
+Stripe Payment Links automatically display Apple Pay and Google Pay buttons to eligible customers when those wallets are enabled on the Stripe account. Zero code changes on bunchofothers.com — buyers see "Apple Pay" alongside "Card" on the Stripe-hosted checkout, confirm with Face ID / Touch ID, done.
+
+#### Why it's free for static sites
+Apple Pay on the web normally requires the merchant to verify their domain with Apple (a `.well-known/apple-developer-merchantid-domain-association` file served from the site root). Stripe Payment Links sidesteps this entirely: checkout happens at `buy.stripe.com` (Stripe's domain), which Stripe has pre-verified with Apple. Same with Google Pay's domain checks. We inherit Stripe's verification — no domain config on our side, no `.well-known/` file on GitHub Pages.
+
+#### Kevin's activation steps (after Stripe account KYC clears)
+1. Stripe Dashboard → **Settings** → **Payment methods**.
+2. In the "Wallets" section, confirm **Apple Pay** and **Google Pay** are toggled ON. (For new accounts these are usually default-enabled — just verify they didn't get unchecked during KYC.)
+3. Done. Existing Payment Links automatically expose the new methods on the next page load — no link regeneration needed.
+
+#### What customers see
+- **iPhone Safari / Mac Safari** — Apple Pay button at top of Stripe checkout. Tap → Face ID / Touch ID → confirmed in ~3 seconds.
+- **Android Chrome / desktop Chrome with a saved Google Pay card** — Google Pay button. Same one-tap flow.
+- **All other browsers** — standard card form (unchanged from current).
+
+#### Why this is a real upgrade
+- Musician-and-fan demographics skew iPhone-heavy → high Apple Pay activation rate.
+- Checkout time drops from ~20s (typing card + billing address) to ~3s (biometric confirm).
+- Stripe's published data shows Apple Pay buyers convert 2–3× more often than card-only buyers on mobile.
+- No additional fees beyond Stripe's standard processing rates.
+
+#### Caveats and limits
+- Both wallets require HTTPS. bunchofothers.com is HTTPS via GitHub Pages ✓
+- Apple Pay on web is **not available** in private / incognito Safari.
+- Google Pay button only renders for users with at least one card saved in their Google account.
+- Both wallets only show when Stripe verifies the customer is eligible — that happens server-side on Stripe's checkout page, invisible to us.
+- For a customer to see Apple Pay, the iPhone needs to be signed into iCloud and have a card in Apple Wallet. ~80%+ of recent iPhone users meet this.
+
+#### What we deliberately did NOT do
+- **No "Apple Pay accepted" badges on the merch grid.** Stripe already shows the wallet buttons natively on its checkout page; adding badges to our merch tiles would be redundant and would clutter the design.
+- **No domain registration with Apple Pay / Google Pay.** Not needed since checkout lives at `buy.stripe.com`. If we ever migrate from Payment Links to embedded Stripe Elements (Phase 5+), we'd need to register `bunchofothers.com` then. Not before.
+- **No backend wallet token handling.** Stripe handles all token exchange server-side on their checkout page.
 
 ---
 
