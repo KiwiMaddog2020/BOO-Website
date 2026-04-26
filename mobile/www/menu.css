@@ -35,18 +35,118 @@ body {
     min-height: 100dvh;
 }
 
-/* Splash veil — opaque black on first paint, fades via JS once page is ready */
+/* V1_91: Splash veil with animated psychedelic bg + ghost scale-in.
+   The static Capacitor splash image (matching radial-halo design) shows during
+   the brief WKWebView load; this veil takes over once HTML has parsed, runs a
+   ~1.3s reveal animation (ghost bounce + glow pulse, bg conic-rotate + halo
+   pulse), then dissolves to reveal the menu underneath. */
 .splash-veil {
     position: fixed;
     inset: 0;
-    background: #0a0a0a;
     z-index: 9999;
-    opacity: 1;
     pointer-events: none;
-    transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(ellipse 65% 60% at 18% 18%, rgba(0, 255, 255, 0.45), transparent 65%),
+        radial-gradient(ellipse 65% 60% at 82% 18%, rgba(255, 0, 255, 0.45), transparent 65%),
+        radial-gradient(ellipse 65% 60% at 82% 82%, rgba(255, 102, 0, 0.40), transparent 65%),
+        radial-gradient(ellipse 65% 60% at 18% 82%, rgba(139, 0, 255, 0.45), transparent 65%),
+        radial-gradient(ellipse 70% 70% at center, rgba(0,0,0,0.55), transparent 70%),
+        #08050f;
+    opacity: 1;
+    transition: opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Trippy rotating conic overlay — sized via vmax so the rotating square is
+   always larger than the viewport's diagonal, no edges revealed at any angle.
+   Centered on the viewport, then keyframes translate(-50%,-50%) + rotate so
+   the rotation pivots in place. */
+.splash-veil::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 250vmax;
+    height: 250vmax;
+    background: conic-gradient(
+        from 0deg,
+        rgba(0, 255, 255, 0.22),
+        rgba(255, 0, 255, 0.22),
+        rgba(255, 102, 0, 0.16),
+        rgba(139, 0, 255, 0.22),
+        rgba(0, 255, 255, 0.22)
+    );
+    mix-blend-mode: screen;
+    animation: splashTrippySpin 14s linear infinite;
+    will-change: transform;
+    transform-origin: center;
+}
+/* Subtle inner pulse — radial brightening under the ghost on a slower cycle */
+.splash-veil::after {
+    content: '';
+    position: absolute;
+    inset: 25% 25%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.10), transparent 70%);
+    animation: splashHaloPulse 4s ease-in-out infinite;
+    will-change: opacity, transform;
+}
+@keyframes splashTrippySpin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+@keyframes splashHaloPulse {
+    0%, 100% { transform: scale(0.95); opacity: 0.65; }
+    50%      { transform: scale(1.08); opacity: 1; }
+}
+/* Ghost mascot — V1_91: starts at full size to match Capacitor static splash
+   for a seamless static→animated handoff (no rewind/double-loading feel).
+   Just a subtle glow pulse over ~1.2s while the trippy bg spins. */
+.splash-ghost {
+    position: relative;
+    z-index: 2;
+    width: 38vmin;
+    height: 38vmin;
+    object-fit: contain;
+    animation: splashGhostPulse 1.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    will-change: transform, filter;
+}
+@keyframes splashGhostPulse {
+    0% {
+        transform: scale(1.0);
+        opacity: 1;
+        filter:
+            drop-shadow(0 0 22px rgba(255, 0, 200, 0.6))
+            drop-shadow(0 0 48px rgba(0, 255, 255, 0.3));
+    }
+    50% {
+        transform: scale(1.04);
+        filter:
+            drop-shadow(0 0 36px rgba(255, 0, 200, 0.85))
+            drop-shadow(0 0 70px rgba(0, 255, 255, 0.5));
+    }
+    100% {
+        transform: scale(1.0);
+        opacity: 1;
+        filter:
+            drop-shadow(0 0 22px rgba(255, 0, 200, 0.6))
+            drop-shadow(0 0 48px rgba(0, 255, 255, 0.3));
+    }
 }
 body.menu-ready .splash-veil {
     opacity: 0;
+}
+/* Reduced-motion: skip the trippy bg + ghost bounce, just fade in/out */
+@media (prefers-reduced-motion: reduce) {
+    .splash-veil::before,
+    .splash-veil::after { animation: none !important; }
+    .splash-ghost {
+        animation: none !important;
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
 /* Ambient psychedelic halos */

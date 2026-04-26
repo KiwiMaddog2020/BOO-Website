@@ -35,13 +35,15 @@ function tapHaptic(style) {
 }
 
 // --- Splash fade -----------------------------------------------------------
+// V1_91: hold the splash for ~1500ms so the ghost-scale-in animation (1.3s)
+// completes + brief settle pause, THEN start the veil-fade-out (700ms).
 window.addEventListener('load', () => {
-    requestAnimationFrame(() => {
+    setTimeout(() => {
         document.body.classList.add('menu-ready');
         // Remove the veil from the DOM after the fade completes so it can't
         // intercept anything later.
-        setTimeout(() => splashVeil.remove(), 700);
-    });
+        setTimeout(() => { if (splashVeil && splashVeil.parentNode) splashVeil.remove(); }, 800);
+    }, 1500);
 });
 
 // --- Game shell open/close --------------------------------------------------
