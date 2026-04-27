@@ -31,7 +31,7 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 
 **Game audio:** xDeviruchi 16-bit Fantasy & Adventure collection (used in BOO Survivors).
 
-**iOS dev (in progress):** Xcode (beta, iOS 26.2 runtime); Capacitor 6 wrapper at `mobile/` bundling the existing HTML5 games as a native iOS app. `Games/`, `Images/`, `Music/` at the repo root remain canonical — `mobile/build-www.sh` syncs them into `mobile/www/` before each build. Phase 1 ships Brickbreaker active + the other 6 games as "Coming soon" placeholders.
+**iOS dev (in progress):** Xcode (beta, iOS 26.2 runtime); Capacitor 6 wrapper at `mobile/` bundling the existing HTML5 games as a native iOS app. `Games/`, `Images/`, `Music/` at the repo root remain canonical — `mobile/build-www.sh` syncs them into `mobile/www/` before each build. Phase 2 (V1_96+) activates all 7 games in the arcade menu; V1_92 added custom radial-halo icon + animated splash; V1_97/V1_98 unified game sizing with an 8%-per-side letterbox cap for fullscreen.
 
 ---
 
@@ -235,7 +235,7 @@ firebase deploy
 
 - Complete Claude Code authentication + workflow integration (Windows)
 - Continued mobile polish and cross-browser testing
-- iOS App Store release of the BOO Arcade (Capacitor 6 wrapper at `mobile/`) — Phase 1 active in V1_89/V1_90 with Brickbreaker playable + 6 placeholders; remaining phases unlock the other games for App Review
+- iOS App Store release of the BOO Arcade (Capacitor 6 wrapper at `mobile/`) — Phase 2 active as of V1_96 with all 7 games playable; V1_97–V1_102 polished sizing, fullscreen letterbox, and section wallpapers ahead of App Review
 - Ongoing game balance and feature refinement across the arcade suite
 
 ---
