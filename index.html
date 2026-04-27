@@ -10652,7 +10652,22 @@
             const rect = gameContainer.getBoundingClientRect();
             return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
         }
-        
+
+        // Geometric checks should only fire when game is the active section.
+        // Sections stack at viewport size with visibility:hidden when inactive —
+        // getBoundingClientRect() still returns center-of-viewport, so without
+        // this gate we'd preventDefault touches on overlay content (.about-content,
+        // .photo-grid) that geometrically overlap the inactive game container.
+        // V1_99: try/catch fail-safe so a misbehaving helper degrades to the old
+        // pre-V1_94 behavior (assume active) instead of breaking the page.
+        function isGameSectionActive() {
+            try {
+                return !!gameSection && gameSection.classList && gameSection.classList.contains('section-active');
+            } catch (e) {
+                return true;
+            }
+        }
+
         // Intersection Observer to detect when game is visible
         // Used to track visibility state, but don't preemptively lock scroll
         // Scroll lock only happens on actual interaction with game container
@@ -10728,7 +10743,7 @@
         // TOUCH EVENTS - Capture phase for maximum control
         document.addEventListener('touchstart', function(e) {
             const touch = e.touches[0];
-            if (isGameElement(e.target) || isPointInGame(touch.clientX, touch.clientY)) {
+            if (isGameElement(e.target) || (isGameSectionActive() && isPointInGame(touch.clientX, touch.clientY))) {
                 isInteractingWithGame = true;
                 lockScroll();
                 e.preventDefault();
@@ -10745,7 +10760,7 @@
                 return false;
             }
             const touch = e.touches[0];
-            if (isGameElement(e.target) || isPointInGame(touch.clientX, touch.clientY)) {
+            if (isGameElement(e.target) || (isGameSectionActive() && isPointInGame(touch.clientX, touch.clientY))) {
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
@@ -10787,7 +10802,7 @@
         
         // MOUSE WHEEL - Prevent scroll when over game - document level backup
         document.addEventListener('wheel', function(e) {
-            if (isInteractingWithGame || unlockCooldown || isGameElement(e.target) || isPointInGame(e.clientX, e.clientY)) {
+            if (isInteractingWithGame || unlockCooldown || isGameElement(e.target) || (isGameSectionActive() && isPointInGame(e.clientX, e.clientY))) {
                 e.preventDefault();
                 e.stopPropagation();
                 e.stopImmediatePropagation();
