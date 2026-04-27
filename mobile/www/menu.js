@@ -47,14 +47,59 @@ window.addEventListener('load', () => {
 });
 
 // --- Game shell open/close --------------------------------------------------
+// V1_98: Mirror main-site V1_97 fullscreen letterbox-cap so games stretch
+// to fit the device with thin black bars top + bottom. Aspect lookup matches
+// the main-site arcade pills: all games use 640/718 (Brickbreaker shape) by
+// default; Survivors gets 800/820 override per V1_81.
+const MAX_LETTERBOX_RATIO = 0.08;
+const GAME_FULLSCREEN_ASPECT = {
+    'Games/neon-survivors.html': '800/820'
+};
+const DEFAULT_FULLSCREEN_ASPECT = '640/718';
+let currentGameSrc = null;
+
+function sizeGameFrame() {
+    if (!currentGameSrc || !gameFrame || !gameShell) return;
+    const aspectStr = GAME_FULLSCREEN_ASPECT[currentGameSrc] || DEFAULT_FULLSCREEN_ASPECT;
+    const parts = aspectStr.split('/');
+    const aw = parseFloat(parts[0]) || 640;
+    const ah = parseFloat(parts[1]) || 718;
+    const gameRatio = aw / ah;
+    const shellRect = gameShell.getBoundingClientRect();
+    const vw = shellRect.width;
+    const vh = shellRect.height;
+    if (vw <= 0 || vh <= 0) return;
+    let gameW, gameH;
+    if (vw / vh > gameRatio) {
+        gameW = vh * gameRatio;
+        const pillarRatio = (vw - gameW) / 2 / vw;
+        if (pillarRatio > MAX_LETTERBOX_RATIO) {
+            gameW = vw * (1 - 2 * MAX_LETTERBOX_RATIO);
+        }
+        gameH = vh;
+    } else {
+        gameH = vw / gameRatio;
+        const letterRatio = (vh - gameH) / 2 / vh;
+        if (letterRatio > MAX_LETTERBOX_RATIO) {
+            gameH = vh * (1 - 2 * MAX_LETTERBOX_RATIO);
+        }
+        gameW = vw;
+    }
+    gameFrame.style.width = gameW + 'px';
+    gameFrame.style.height = gameH + 'px';
+}
+
 function openGame(src) {
+    currentGameSrc = src;
     gameFrame.src = src;
     gameShell.classList.add('is-open');
     gameShell.setAttribute('aria-hidden', 'false');
+    sizeGameFrame();
     tapHaptic('Medium');
 }
 
 function closeGame() {
+    currentGameSrc = null;
     gameShell.classList.remove('is-open');
     gameShell.setAttribute('aria-hidden', 'true');
     // Stop game audio / loops by clearing the iframe src.
@@ -66,6 +111,10 @@ gameBack.addEventListener('click', (e) => {
     e.preventDefault();
     closeGame();
 });
+
+// V1_98: re-fit iframe on rotate / viewport change while a game is open
+window.addEventListener('resize', sizeGameFrame);
+window.addEventListener('orientationchange', () => setTimeout(sizeGameFrame, 100));
 
 // --- Tile taps --------------------------------------------------------------
 document.querySelectorAll('.game-tile').forEach((tile) => {
