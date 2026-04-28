@@ -73,14 +73,31 @@
     <!-- V1_116: Web App Manifest — installable PWA on Android + iOS Add-to-Home-Screen -->
     <link rel="manifest" href="manifest.webmanifest">
     
-    <!-- Early error handler to catch CORS/external resource errors -->
+    <!-- V1_117: Suppress only CORS-redacted "Script error." messages from cross-origin
+         scripts (gtag, gstatic Firebase, youtube-nocookie). Local errors propagate so
+         real bugs (like the V1_94 outage) are visible in console + DevTools. -->
     <script>
     (function() {
-        // Suppress all script errors (CORS, external resources, etc.)
-        window.onerror = function() { return true; };
+        function isCorsScriptError(message, source) {
+            // Browsers redact cross-origin script errors to "Script error." for security.
+            if (typeof message === 'string' && message.indexOf('Script error') === 0) return true;
+            // Empty source + opaque message is the other CORS-redaction signature.
+            if (!source && (!message || message === '')) return true;
+            return false;
+        }
+        window.onerror = function(message, source, lineno, colno, error) {
+            return isCorsScriptError(message, source);
+        };
+        window.addEventListener('error', function(e) {
+            if (isCorsScriptError(e.message, e.filename)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return true;
+            }
+        }, true);
+        // Unhandled promise rejections from external SDKs (Firebase auth race, etc.)
+        // are still suppressed — those don't have a clean "is this CORS?" signal.
         window.onunhandledrejection = function(e) { try { e.preventDefault(); } catch(x) {} return true; };
-        // Also use addEventListener for maximum compatibility
-        window.addEventListener('error', function(e) { e.preventDefault(); e.stopPropagation(); return true; }, true);
         window.addEventListener('unhandledrejection', function(e) { e.preventDefault(); return true; }, true);
     })();
     </script>
