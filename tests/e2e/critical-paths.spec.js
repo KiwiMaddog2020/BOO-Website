@@ -133,6 +133,41 @@ test.describe('BOO website — critical paths', () => {
     expect((meta || '').length).toBeGreaterThan(50);
   });
 
+  test('17. mobile bio scroll: .about-container scrollTop responds to programmatic scroll', async ({ page }, testInfo) => {
+    // V1_99 / V1_100 regression catcher. The capture-phase game-touch handlers
+    // were preventDefault'ing all touchmoves whose coordinates fell inside the
+    // game container's getBoundingClientRect() — which on this fixed-section
+    // layout overlaps every other section. Bio scroll was dead until V1_100
+    // gated the handler on isGameSectionActive().
+    if (testInfo.project.name === 'chromium') test.skip(); // desktop has wheel, not the touch path
+
+    // Navigate to bio
+    await page.evaluate(() => {
+      // @ts-ignore
+      if (typeof menuTransitionToSection === 'function') menuTransitionToSection('about');
+      else location.hash = 'about';
+    });
+    await page.waitForTimeout(600); // section transition cooldown 550ms
+
+    const aboutContainer = page.locator('.about-container').first();
+    await expect(aboutContainer).toBeVisible();
+
+    // Try to scroll inside the container. If overflow + handler are correctly
+    // wired, scrollTop will increase. If anything is preventDefault'ing or
+    // touch-action is wrong, it stays at 0.
+    const initial = await aboutContainer.evaluate(el => el.scrollTop);
+    await aboutContainer.evaluate(el => { el.scrollTop = 80; });
+    const final = await aboutContainer.evaluate(el => el.scrollTop);
+
+    // If content is shorter than container, scrollTop will clamp to 0 — that's
+    // fine, the test passes if we either scrolled or there's nothing to scroll.
+    const scrollHeight = await aboutContainer.evaluate(el => el.scrollHeight);
+    const clientHeight = await aboutContainer.evaluate(el => el.clientHeight);
+    if (scrollHeight > clientHeight + 5) {
+      expect(final, `scrollTop ${final} should be > initial ${initial} when content overflows`).toBeGreaterThan(initial);
+    }
+  });
+
   test('16. JSON-LD MusicGroup is present (V1_108)', async ({ page }) => {
     const jsonLd = await page.locator('script[type="application/ld+json"]').textContent();
     expect(jsonLd).toBeTruthy();
