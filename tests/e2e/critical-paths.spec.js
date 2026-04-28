@@ -100,6 +100,47 @@ test.describe('BOO website — critical paths', () => {
     expect(src || '').toMatch(/neon-brickbreaker\.html/);
   });
 
+  test('11. card-indicators has 8 dots (1 per section)', async ({ page }) => {
+    const dots = page.locator('.card-indicators .card-dot');
+    await expect(dots).toHaveCount(8);
+  });
+
+  test('12. every card-dot has an aria-label', async ({ page }) => {
+    const dots = page.locator('.card-indicators .card-dot');
+    const count = await dots.count();
+    for (let i = 0; i < count; i++) {
+      const label = await dots.nth(i).getAttribute('aria-label');
+      expect(label, `dot ${i} missing aria-label`).toBeTruthy();
+    }
+  });
+
+  test('13. music player toggle has aria-label', async ({ page }) => {
+    const toggle = page.locator('#music-toggle');
+    await expect(toggle).toHaveAttribute('aria-label', /music/i);
+  });
+
+  test('14. brickbreaker iframe responds 200', async ({ page, request }) => {
+    const response = await request.get('/Games/neon-brickbreaker.html');
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    // V1_105 regression catcher: Firebase URL is the bumped version
+    expect(body).toContain('firebasejs/10.14.1');
+  });
+
+  test('15. meta description is present + non-empty', async ({ page }) => {
+    const meta = await page.locator('meta[name="description"]').getAttribute('content');
+    expect(meta).toBeTruthy();
+    expect((meta || '').length).toBeGreaterThan(50);
+  });
+
+  test('16. JSON-LD MusicGroup is present (V1_108)', async ({ page }) => {
+    const jsonLd = await page.locator('script[type="application/ld+json"]').textContent();
+    expect(jsonLd).toBeTruthy();
+    const parsed = JSON.parse(jsonLd || '{}');
+    expect(parsed['@type']).toBe('MusicGroup');
+    expect(parsed['name']).toBe('Bunch of Others');
+  });
+
   test('10. computeFullscreenIframeSize caps letterbox at ~8% per side (V1_97)', async ({ page }) => {
     // Verify the V1_97 letterbox-cap math reaches the iframe at fullscreen.
     // We can't trigger native fullscreen in headless tests, so we exercise
