@@ -15,19 +15,23 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 ## Tech Stack
 - **Frontend:** Vanilla HTML / CSS / JavaScript — no frameworks
 - **Graphics:** HTML5 Canvas (games)
-- **Backend:** Firebase Firestore (leaderboards)
+- **Backend:** Firebase Firestore (leaderboards) — SDK 10.14.1 (V1_105)
 - **Analytics:** Google Analytics — ID `G-ELVHNXC9MJ`
 - **Hosting:** GitHub Pages
 - **Version control:** Git + GitHub Desktop (Windows)
+- **Tests (V1_104+):** Playwright E2E (`tests/e2e/critical-paths.spec.js`); 17 tests across 3 viewports (chromium / mobile-android / mobile-ios) = 50 runs total
+- **CI:** GitHub Actions — `.github/workflows/test.yml` runs Playwright on push/PR to `main`
+- **PWA (V1_116+):** `manifest.webmanifest` makes the site installable on Android + iOS Add-to-Home-Screen
+- **SEO/discovery (V1_108):** `sitemap.xml`, `robots.txt`, JSON-LD `MusicGroup` schema; `humans.txt` credits (V1_121)
 
 **Fonts (current):**
-- Tilt Neon — display / psychedelic titles
+- Tilt Neon — display / psychedelic titles (declared)
 - Oxanium — body / UI
 - Exo 2 — secondary UI
 - Orbitron — games (arcade HTML files)
-- Poppins — navigation
+- Poppins — navigation (loaded via Google Fonts)
+- Rumble Brave — home h1 + section h2 headers (V1_110 promoted this from historical; declared with cursive fallback per V1_123 — Kevin prefers the system-cursive look it falls back to)
 - Bebas Neue — *historical, avoid in new work*
-- Rumble Brave — historical (V1_19 title)
 
 **Game audio:** xDeviruchi 16-bit Fantasy & Adventure collection (used in BOO Survivors).
 
@@ -221,9 +225,14 @@ git push --tags
 ## Local Development
 
 ```bash
-# Serve locally
-python3 -m http.server 8000
-# Then open http://localhost:8000
+# Serve locally (pick one)
+python3 -m http.server 8000        # then open http://localhost:8000
+npm run serve                       # serve on :4747 (no clipboard) via package.json
+
+# Run Playwright E2E tests (V1_104+)
+npm run test:e2e                    # headless across all 3 projects
+npm run test:e2e:ui                 # interactive UI mode
+npm run test:e2e:headed             # headed mode (watch the browser run)
 
 # Firebase deploy (if CLI installed)
 firebase deploy
@@ -237,6 +246,14 @@ firebase deploy
 - Continued mobile polish and cross-browser testing
 - iOS App Store release of the BOO Arcade (Capacitor 6 wrapper at `mobile/`) — Phase 2 active as of V1_96 with all 7 games playable; V1_97–V1_102 polished sizing, fullscreen letterbox, and section wallpapers ahead of App Review
 - Ongoing game balance and feature refinement across the arcade suite
+
+**Recently shipped (V1_104 → V1_127):**
+
+- **Testing/CI:** Playwright E2E suite (17 tests / 50 runs across chromium + mobile-android + mobile-ios) wired to GitHub Actions on every push/PR to `main`
+- **Performance:** Firebase 9.22.0 → 10.14.1 (V1_105); preconnect/dns-prefetch (V1_106); deferred Firebase via `requestIdleCallback` (V1_109); `loading="lazy"` on iframes (V1_112); `width`/`height`/`decoding=async` on photos (V1_113)
+- **A11y:** `aria-label` on arcade pills + lightbox (V1_107); skip-to-content + `<main id="main-content">` (V1_114/V1_115); PWA manifest (V1_116); error suppressor scoped to CORS (V1_117); `aria-current="page"` on nav (V1_118); `<header role="banner">` landmark (V1_119); `lang="en-CA"` (V1_121)
+- **SEO:** JSON-LD `MusicGroup` + `sitemap.xml` + `robots.txt` (V1_108); `humans.txt` credits (V1_121)
+- **Visual polish:** Rumble Brave promoted to active header font (V1_110, V1_122/V1_123 settled font story); section h2 + home h1 margin nudges (V1_124–V1_127)
 
 ---
 
