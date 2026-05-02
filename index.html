@@ -8079,7 +8079,7 @@
     </div>
 
     <!-- Music Player -->
-    <button class="music-toggle" id="music-toggle" onclick="toggleMusicPlayer()" title="Toggle Music Player" aria-label="Toggle Music Player">🎵</button>
+    <button class="music-toggle" id="music-toggle" title="Toggle Music Player" aria-label="Toggle Music Player">🎵</button>
     <div class="music-player" id="music-player">
         <div class="player-controls">
             <button class="player-btn prev-btn" onclick="prevTrack()" title="Previous" aria-label="Previous track">⏮</button>
@@ -9804,12 +9804,14 @@
             initMusicPlayerVisibility();
         }
 
-        // V1_143: belt-and-suspenders touch handler for music toggle. Inline onclick
-        // doesn't synthesize a click on every Android browser (DuckDuckGo Privacy
-        // Browser is one — touchstart/end fire but click never does). Adding
-        // explicit pointerup + touchend fallbacks ensures the toggle responds.
+        // V1_143 / V1_145: single debounced binding for music-toggle covering
+        // click + touchend + pointerup. V1_143 inadvertently caused a DOUBLE-TOGGLE
+        // on browsers that fire BOTH touchend AND a synthesized click — fallback
+        // toggled to shown, click toggled back to hidden, net no change. Inline
+        // onclick was removed; this is now the only handler, sharing the `fired`
+        // debounce across all event types so exactly one toggle fires per tap.
         (function() {
-            function bindToggleFallback() {
+            function bindToggle() {
                 var t = document.getElementById('music-toggle');
                 if (!t) return;
                 var fired = false;
@@ -9820,13 +9822,14 @@
                     if (e && e.preventDefault) e.preventDefault();
                     if (typeof toggleMusicPlayer === 'function') toggleMusicPlayer();
                 }
+                t.addEventListener('click', safeToggle);
                 t.addEventListener('touchend', safeToggle, { passive: false });
                 t.addEventListener('pointerup', safeToggle);
             }
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', bindToggleFallback);
+                document.addEventListener('DOMContentLoaded', bindToggle);
             } else {
-                bindToggleFallback();
+                bindToggle();
             }
         })();
 
