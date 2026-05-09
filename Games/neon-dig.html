@@ -11,7 +11,31 @@
         if (window.self !== window.top) {
             document.documentElement.classList.add('in-iframe');
         }
-        window.onerror=function(){return true};window.onunhandledrejection=function(e){if(e&&e.preventDefault)e.preventDefault();return true};
+        (function() {
+            function isCorsScriptError(message, source) {
+                if (typeof message === 'string' && message.indexOf('Script error') === 0) return true;
+                if (!source && (!message || message === '')) return true;
+                return false;
+            }
+            function isCorsPromiseRejection(e) {
+                var reason = e && e.reason;
+                var message = '';
+                if (typeof reason === 'string') message = reason;
+                else if (reason && reason.message) message = reason.message;
+                return isCorsScriptError(message, '');
+            }
+            window.onerror = function(message, source) { return isCorsScriptError(message, source); };
+            window.addEventListener('error', function(e) {
+                if (isCorsScriptError(e.message, e.filename)) { e.preventDefault(); e.stopPropagation(); return true; }
+            }, true);
+            window.onunhandledrejection = function(e) {
+                if (isCorsPromiseRejection(e)) { try { e.preventDefault(); } catch(x) {} return true; }
+                return false;
+            };
+            window.addEventListener('unhandledrejection', function(e) {
+                if (isCorsPromiseRejection(e)) { e.preventDefault(); e.stopPropagation(); return true; }
+            }, true);
+        })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13565,11 +13589,27 @@
         }
         
         // ==================== SCORE SYSTEM (Firebase + localStorage fallback) ====================
+        function sanitizeUsername(name) {
+            return name.trim().substring(0, 12).toUpperCase().replace(/[^A-Z0-9_\-]/g, '');
+        }
+
+        const escapeDiv = document.createElement('div');
+        function escapeHtml(text) {
+            escapeDiv.textContent = text == null ? '' : String(text);
+            return escapeDiv.innerHTML;
+        }
+
+        function safeInteger(value) {
+            const number = Number(value);
+            return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
+        }
+
         function saveLocalScore(name, scoreVal, depthVal) {
             try {
-                const scores = JSON.parse(localStorage.getItem('neon_dig_scores') || '[]');
+                const parsedScores = JSON.parse(localStorage.getItem('neon_dig_scores') || '[]');
+                const scores = Array.isArray(parsedScores) ? parsedScores : [];
                 scores.push({ name: name, score: scoreVal, depth: depthVal, timestamp: Date.now() });
-                scores.sort((a, b) => b.score - a.score);
+                scores.sort((a, b) => safeInteger(b.score) - safeInteger(a.score));
                 localStorage.setItem('neon_dig_scores', JSON.stringify(scores.slice(0, 100)));
                 return true;
             } catch (e) {
@@ -13580,7 +13620,8 @@
         
         function getLocalScores() {
             try {
-                return JSON.parse(localStorage.getItem('neon_dig_scores') || '[]');
+                const scores = JSON.parse(localStorage.getItem('neon_dig_scores') || '[]');
+                return Array.isArray(scores) ? scores : [];
             } catch (e) {
                 return [];
             }
@@ -13642,11 +13683,13 @@
             leaderboardList.innerHTML = scores.slice(0, 20).map((e, i) => {
                 const rankClass = i < 3 ? `top-3` : '';
                 const rankColorClass = i < 3 ? `leaderboard-rank-${i + 1}` : '';
+                const scoreValue = safeInteger(e.score);
+                const depthValue = safeInteger(e.depth);
                 return `<div class="leaderboard-row ${rankClass}">
                     <span class="leaderboard-rank ${rankColorClass}">#${i + 1}</span>
-                    <span class="leaderboard-name">${e.name}</span>
-                    <span class="leaderboard-score">${e.score}</span>
-                    <span class="leaderboard-depth">${e.depth}m</span>
+                    <span class="leaderboard-name">${escapeHtml(e.name)}</span>
+                    <span class="leaderboard-score">${scoreValue}</span>
+                    <span class="leaderboard-depth">${depthValue}m</span>
                 </div>`;
             }).join('');
         }
@@ -13984,7 +14027,7 @@
         
         // ==================== EVENT LISTENERS ====================
         submitScoreBtn.addEventListener('click', async () => {
-            const name = usernameInput.value.trim();
+            const name = sanitizeUsername(usernameInput.value);
             if (name.length < 2) {
                 scoreError.textContent = 'Name must be at least 2 characters';
                 return;

@@ -12,7 +12,31 @@
         if (window.self !== window.top) {
             document.documentElement.classList.add('in-iframe');
         }
-        window.onerror=function(){return true};window.onunhandledrejection=function(e){if(e&&e.preventDefault)e.preventDefault();return true};
+        (function() {
+            function isCorsScriptError(message, source) {
+                if (typeof message === 'string' && message.indexOf('Script error') === 0) return true;
+                if (!source && (!message || message === '')) return true;
+                return false;
+            }
+            function isCorsPromiseRejection(e) {
+                var reason = e && e.reason;
+                var message = '';
+                if (typeof reason === 'string') message = reason;
+                else if (reason && reason.message) message = reason.message;
+                return isCorsScriptError(message, '');
+            }
+            window.onerror = function(message, source) { return isCorsScriptError(message, source); };
+            window.addEventListener('error', function(e) {
+                if (isCorsScriptError(e.message, e.filename)) { e.preventDefault(); e.stopPropagation(); return true; }
+            }, true);
+            window.onunhandledrejection = function(e) {
+                if (isCorsPromiseRejection(e)) { try { e.preventDefault(); } catch(x) {} return true; }
+                return false;
+            };
+            window.addEventListener('unhandledrejection', function(e) {
+                if (isCorsPromiseRejection(e)) { e.preventDefault(); e.stopPropagation(); return true; }
+            }, true);
+        })();
     </script>
     <style>
         * {
@@ -12307,4 +12331,3 @@
     <div class="first-placement-arrow" id="firstPlacementArrow" style="display:none;">▼</div>
 </body>
 </html>
-
