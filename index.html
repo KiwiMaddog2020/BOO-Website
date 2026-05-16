@@ -6823,6 +6823,15 @@
             transform: scale(1.4);
         }
 
+        /* V1_159: nav-only section changes. The side dot rail is no longer an
+           alternate page-to-page control. */
+        .card-indicators {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
         /* ========== MUSIC PLAYER - Minimal Pill Style ========== */
         .music-player {
             position: fixed;
@@ -8180,6 +8189,67 @@
                 font-size: clamp(0.715rem, 1.32vw, 1.045rem) !important;
             }
         }
+
+        /* V1_159: iPad arcade fit. Keep selector controls clear and let JS
+           size the iframe against the remaining visible viewport. */
+        @media (min-width: 700px) and (max-width: 1400px) {
+            body.is-ipad #game {
+                justify-content: flex-start !important;
+                align-items: center !important;
+                overflow: hidden !important;
+                padding-left: clamp(10px, 2vw, 28px) !important;
+                padding-right: clamp(10px, 2vw, 28px) !important;
+            }
+
+            body.is-ipad #game .arcade-selector {
+                display: flex !important;
+                flex-wrap: nowrap !important;
+                justify-content: center !important;
+                align-items: center !important;
+                padding-top: 6px !important;
+                margin-top: 0 !important;
+                z-index: 100 !important;
+                overflow: visible !important;
+            }
+
+            body.is-ipad #game .game-container {
+                margin-top: 0 !important;
+                flex: 0 0 auto !important;
+            }
+
+            body.is-ipad.game-section-active .music-player,
+            body.is-ipad.game-section-active .music-toggle {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+                transform: translateY(100px) !important;
+            }
+        }
+
+        @media (min-width: 700px) and (max-width: 1400px) and (orientation: landscape) {
+            body.is-ipad #game {
+                padding-top: clamp(82px, 11dvh, 112px) !important;
+                padding-bottom: clamp(14px, 2.8dvh, 30px) !important;
+            }
+
+            body.is-ipad #game .arcade-selector {
+                gap: clamp(7px, 1.1vw, 12px) !important;
+                margin-bottom: clamp(8px, 1.8dvh, 16px) !important;
+            }
+        }
+
+        @media (min-width: 700px) and (max-width: 1400px) and (orientation: portrait) {
+            body.is-ipad #game {
+                padding-top: clamp(92px, 9dvh, 124px) !important;
+                padding-bottom: clamp(28px, 3.5dvh, 48px) !important;
+            }
+
+            body.is-ipad #game .arcade-selector {
+                gap: clamp(8px, 1.4vw, 14px) !important;
+                margin-bottom: clamp(10px, 1.7dvh, 18px) !important;
+            }
+        }
         
         /* iOS nav - NO hover/active animations */
         body.is-ios nav a:not(.nav-animated-logo-container),
@@ -8315,6 +8385,7 @@
             line-height: 1;
             text-align: center;
             cursor: pointer;
+            touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
             text-shadow: -1px 0 0 rgba(255, 0, 100, 0.55),
                          1px 0 0 rgba(0, 255, 255, 0.55);
@@ -8337,6 +8408,23 @@
         body.nav-overlay-open .nav-tile:nth-child(4) { transition-delay: 0.20s; }
         body.nav-overlay-open .nav-tile:nth-child(5) { transition-delay: 0.25s; }
         body.nav-overlay-open .nav-tile:nth-child(6) { transition-delay: 0.30s; }
+
+        @media (max-height: 620px) and (orientation: landscape) {
+            .nav-overlay {
+                padding: clamp(54px, 10dvh, 72px) 1rem clamp(12px, 3dvh, 20px);
+            }
+
+            .nav-overlay-grid {
+                gap: clamp(0.08rem, 0.8dvh, 0.25rem);
+                max-height: calc(100dvh - 84px);
+                justify-content: center;
+            }
+
+            .nav-tile {
+                font-size: clamp(1.65rem, 6.2dvh, 2.4rem);
+                padding: clamp(0.22rem, 0.9dvh, 0.42rem) 0.35rem;
+            }
+        }
 
         .nav-tile:active {
             -webkit-transform: scale(0.97);
@@ -9381,6 +9469,15 @@
             return 'home'; // Default fallback
         }
 
+        function closestMatch(target, selector) {
+            if (!target) return null;
+            if (target.closest) return target.closest(selector);
+            if (target.parentElement && target.parentElement.closest) {
+                return target.parentElement.closest(selector);
+            }
+            return null;
+        }
+
         function syncGameSectionActiveClass() {
             const gameSection = document.getElementById('game');
             const isGameActive = !!gameSection && gameSection.classList.contains('section-active');
@@ -9552,6 +9649,7 @@
             var navToggle = document.getElementById('nav-mobile-toggle');
             var navOverlayEl = document.getElementById('nav-overlay');
             if (!navToggle || !navOverlayEl) return;
+            var tileActivationLocked = false;
 
             function openNavOverlay() {
                 document.body.classList.add('nav-overlay-open');
@@ -9586,6 +9684,9 @@
             });
 
             function handleTileActivate(tile) {
+                if (tileActivationLocked) return;
+                tileActivationLocked = true;
+                setTimeout(function() { tileActivationLocked = false; }, 650);
                 tile.classList.add('tile-tap-active');
                 setTimeout(function() { tile.classList.remove('tile-tap-active'); }, 700);
                 var section = tile.getAttribute('data-section');
@@ -9600,6 +9701,19 @@
             }
             navOverlayEl.querySelectorAll('.nav-tile').forEach(function(tile) {
                 var tileTouchStartY = 0;
+                var tilePointerStartY = 0;
+                tile.addEventListener('pointerdown', function(e) {
+                    if (e.pointerType === 'mouse') return;
+                    tilePointerStartY = e.clientY;
+                }, { passive: true });
+                tile.addEventListener('pointerup', function(e) {
+                    if (e.pointerType === 'mouse') return;
+                    var dy = Math.abs(e.clientY - tilePointerStartY);
+                    if (dy > 42) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleTileActivate(tile);
+                }, { passive: false });
                 tile.addEventListener('touchstart', function(e) {
                     tileTouchStartY = e.touches[0].clientY;
                 }, { passive: true });
@@ -9630,9 +9744,14 @@
 
         // Card dot navigation - uses fade transition
         const sections = ['home', 'about', 'videos', 'photos', 'game', 'merch', 'events', 'logo-outro'];
+        const NAVMENU_ONLY_NAVIGATION = true;
         
         document.querySelectorAll('.card-dot').forEach(dot => {
-            dot.addEventListener('click', function() {
+            dot.addEventListener('click', function(e) {
+                if (NAVMENU_ONLY_NAVIGATION) {
+                    e.preventDefault();
+                    return;
+                }
                 const targetId = this.dataset.section;
                 const target = document.getElementById(targetId);
                 if (target) {
@@ -9668,6 +9787,7 @@
         
         // Shared function to show card indicators (defined early for reuse)
         function showCardIndicators() {
+            if (NAVMENU_ONLY_NAVIGATION) return;
             if (cardIndicators) {
                 cardIndicators.classList.add('visible');
                 clearTimeout(cardIndicatorTimeout);
@@ -9713,11 +9833,8 @@
             }
         }, { passive: false });
         
-        // Scroll/wheel uses native scroll-snap behavior
-        // No interception needed - CSS scroll-snap-type: y mandatory handles it
-        
         // ========== SCROLL TRANSITION SYSTEM ==========
-        // Intercept scroll/wheel/touch to trigger same fade transition as nav clicks
+        // Intercept wheel/touch so page-to-page navigation stays nav-menu-only.
         let scrollTransitionCooldown = false;
         let isResizing = false; // Block transitions during window resize
         let isZooming = false; // Block section tracking during browser zoom
@@ -9739,6 +9856,7 @@
         }
         
         function triggerScrollTransition(direction) {
+            if (NAVMENU_ONLY_NAVIGATION) return;
             // FIXED SECTIONS: Block during game interaction or other locks
             if (scrollTransitionCooldown || isTransitioning || isResizing || isScrollLocked || unlockCooldown) return;
             
@@ -9757,9 +9875,9 @@
         // Window-level capture handler using GEOMETRIC BOUNDS (getBoundingClientRect)
         // rather than e.target DOM ancestry. Guarantees the mouse-over-text-body case
         // scrolls the .about-container / .events-container, even when ambient overlays
-        // or compositing layers confuse e.target. Runs BEFORE any other wheel listener.
-        // Falls through (returns without preventDefault) when at a scroll boundary so
-        // the existing section-nav wheel logic can still fire at edges.
+        // or compositing layers confuse e.target. Runs BEFORE any other wheel listener;
+        // at boundaries, document-level wheel handling absorbs the gesture without
+        // changing sections.
         window.addEventListener('wheel', function(e) {
             if (isInteractingWithGame || isScrollLocked || unlockCooldown) return;
             var activeSection = document.querySelector('section.section-active');
@@ -9816,11 +9934,11 @@
         function getHoveredScrollable(e) {
             const target = e.target;
             // Primary: walk up from target to find a scrollable container.
-            let scrollable = target.closest('.about-container, .events-container');
+            let scrollable = closestMatch(target, '.about-container, .events-container');
             // Fallback: target may be a decorative overlay sibling (splotch, flutter, etc.)
             // rather than inside the content box. If so, look inside the enclosing section.
             if (!scrollable) {
-                const section = target.closest('section');
+                const section = closestMatch(target, 'section');
                 if (section) {
                     scrollable = section.querySelector('.about-container, .events-container');
                 }
@@ -9916,6 +10034,7 @@
         }
         
         document.addEventListener('touchstart', function(e) {
+            if (document.body.classList.contains('nav-overlay-open')) return;
             // Don't intercept if game is active
             if (isInteractingWithGame || (isGameVisible && isGameSectionActive())) return;
             
@@ -9925,13 +10044,14 @@
         }, { passive: true });
         
         document.addEventListener('touchmove', function(e) {
+            if (document.body.classList.contains('nav-overlay-open')) return;
             // Don't intercept if game is active
             if (isInteractingWithGame || (isGameVisible && isGameSectionActive())) return;
             
             // Check if touch started OR is currently within a scrollable container
             // Use both stored start element and current target for maximum reliability
             const scrollableFromStart = isWithinScrollable(swipeTouchStartElement);
-            const scrollableFromTarget = e.target.closest('.about-container, .about-content, .events-container');
+            const scrollableFromTarget = closestMatch(e.target, '.about-container, .about-content, .events-container');
             
             if (scrollableFromStart || scrollableFromTarget) {
                 // Allow native scroll within scrollable element - don't prevent default
@@ -9965,6 +10085,7 @@
         }, { passive: false });
         
         document.addEventListener('touchend', function(e) {
+            if (document.body.classList.contains('nav-overlay-open')) return;
             // Don't intercept if game is active
             if (isInteractingWithGame || (isGameVisible && isGameSectionActive())) return;
             
@@ -9983,7 +10104,7 @@
                 const swipingDown = deltaY > 0;
                 const swipingUp = deltaY < 0;
                 
-                // Only trigger page navigation at boundaries
+                // Boundary swipes are absorbed below; section changes stay nav-only.
                 if (swipingDown && scrollBottom > 5) return;
                 if (swipingUp && scrollTop > 5) return;
             }
@@ -10161,6 +10282,12 @@
                         updateActiveDot(initialHash);
                         updateActiveMenuItem(initialHash);
                         targetSection.classList.add('visible');
+                        syncGameSectionActiveClass();
+                        if (initialHash === 'game') {
+                            isArcadeActive = true;
+                            enableArcadeMode();
+                            setTimeout(enforceGameAspectRatio, 150);
+                        }
                         lastUrlSection = initialHash;
                     }
                     pendingInitialHash = '';
@@ -10707,11 +10834,21 @@
                                         document.msFullscreenElement === container;
             if (inNativeFullscreen) return;
 
-            const isMobile = window.innerWidth <= 768;
-            // Detect tablet: touch device with width between 769-1400px
-            const isTablet = window.innerWidth > 768 && window.innerWidth <= 1400 &&
-                            ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-            const isLandscape = window.innerWidth > window.innerHeight;
+            const viewportWidth = window.visualViewport && window.visualViewport.width
+                ? window.visualViewport.width
+                : window.innerWidth;
+            const viewportHeight = window.visualViewport && window.visualViewport.height
+                ? window.visualViewport.height
+                : window.innerHeight;
+            const isIPad = document.body.classList.contains('is-ipad') ||
+                /iPad/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+            const isMobile = viewportWidth <= 768 && !isIPad;
+            // Detect tablet: prefer the iPad class because Simulator/Safari can report no touch.
+            const isTablet = isIPad || (viewportWidth > 768 && viewportWidth <= 1400 &&
+                            ('ontouchstart' in window || navigator.maxTouchPoints > 0));
+            const isLandscape = viewportWidth > viewportHeight;
 
             // Aspect source: per-game on mobile, fixed brickbreaker ratio on desktop/tablet
             let cssAspectStr, gameRatio;
@@ -10728,37 +10865,66 @@
             
             // Calculate available space
             let availableWidth, availableHeight;
+            const gameSection = document.getElementById('game');
+            const selector = document.querySelector('#game .arcade-selector');
+            const px = function(value) {
+                const parsed = parseFloat(value);
+                return Number.isFinite(parsed) ? parsed : 0;
+            };
             
             if (isMobile) {
                 // Mobile: fill width with small margin, respect viewport height
                 const widthMargin = 0.95;
                 const overhead = 155; // Space for nav, title, game selector (tightened)
-                availableWidth = window.innerWidth * widthMargin;
-                availableHeight = window.innerHeight - overhead;
+                availableWidth = viewportWidth * widthMargin;
+                availableHeight = viewportHeight - overhead;
             } else if (isTablet) {
-                // Tablet (iPad): balanced sizing
+                // Tablet/iPad: measure the real chrome/selector/padding budget instead of
+                // falling through to desktop sizing on iPadOS Simulator/Safari.
+                const sectionStyle = gameSection ? window.getComputedStyle(gameSection) : null;
+                const selectorStyle = selector ? window.getComputedStyle(selector) : null;
+                const containerStyle = window.getComputedStyle(container);
+                const sectionHeight = Math.min(
+                    gameSection && gameSection.clientHeight ? gameSection.clientHeight : viewportHeight,
+                    viewportHeight
+                );
+                const sectionWidth = Math.min(
+                    gameSection && gameSection.clientWidth ? gameSection.clientWidth : viewportWidth,
+                    viewportWidth
+                );
+                const sectionPaddingY = sectionStyle
+                    ? px(sectionStyle.paddingTop) + px(sectionStyle.paddingBottom)
+                    : 0;
+                const sectionPaddingX = sectionStyle
+                    ? px(sectionStyle.paddingLeft) + px(sectionStyle.paddingRight)
+                    : 0;
+                const selectorHeight = selector
+                    ? selector.getBoundingClientRect().height +
+                        (selectorStyle ? px(selectorStyle.marginTop) + px(selectorStyle.marginBottom) : 0)
+                    : 0;
+                const containerMargins = px(containerStyle.marginTop) + px(containerStyle.marginBottom);
+                const safety = isIPad ? (isLandscape ? 10 : 14) : 12;
+                const usableWidth = Math.max(260, sectionWidth - sectionPaddingX);
+                const usableHeight = Math.max(260, sectionHeight - sectionPaddingY - selectorHeight - containerMargins - safety);
+
                 if (isLandscape) {
-                    // Landscape: constrained by height, keep game compact
-                    const maxWidthCap = 530; // 7% larger (was 495)
-                    const widthMargin = 0.73; // 7% larger (was 0.68)
-                    const overhead = 150; // Space for nav and game selector
-                    availableWidth = Math.min(maxWidthCap, window.innerWidth * widthMargin);
-                    availableHeight = window.innerHeight - overhead;
+                    const maxWidthCap = viewportHeight < 800 ? 560 : (viewportHeight < 900 ? 650 : 760);
+                    const widthMargin = viewportHeight < 800 ? 0.88 : (viewportHeight < 900 ? 0.76 : 0.68);
+                    availableWidth = Math.min(maxWidthCap, usableWidth * widthMargin);
+                    availableHeight = usableHeight;
                 } else {
-                    // Portrait: balance width and height
-                    const maxWidthCap = 746; // 7% larger (was 697)
-                    const widthMargin = 0.83; // 7% larger (was 0.78)
-                    const overhead = 160;
-                    availableWidth = Math.min(maxWidthCap, window.innerWidth * widthMargin);
-                    availableHeight = window.innerHeight - overhead;
+                    const maxWidthCap = viewportWidth < 850 ? 690 : (viewportWidth < 1000 ? 760 : 840);
+                    const widthMargin = viewportWidth < 850 ? 0.9 : 0.84;
+                    availableWidth = Math.min(maxWidthCap, usableWidth * widthMargin);
+                    availableHeight = usableHeight;
                 }
             } else {
                 // Desktop: existing logic
                 const maxWidthCap = 660;
                 const widthMargin = 0.95;
                 const overhead = 220;
-                availableWidth = Math.min(maxWidthCap, window.innerWidth * widthMargin);
-                availableHeight = window.innerHeight - overhead;
+                availableWidth = Math.min(maxWidthCap, viewportWidth * widthMargin);
+                availableHeight = viewportHeight - overhead;
             }
             
             // Calculate size that fits both constraints while preserving ratio
@@ -11354,7 +11520,7 @@
         // Check if element is within game area
         function isGameElement(el) {
             if (!el) return false;
-            return el.closest('.game-container') || el.closest('#game iframe');
+            return closestMatch(el, '.game-container') || closestMatch(el, '#game iframe');
         }
         
         // Check if coordinates are within game container
@@ -11455,6 +11621,10 @@
         
         // TOUCH EVENTS - Capture phase for maximum control
         document.addEventListener('touchstart', function(e) {
+            if (document.body.classList.contains('nav-overlay-open') ||
+                closestMatch(e.target, '.nav-overlay, .nav-mobile-toggle')) {
+                return;
+            }
             const touch = e.touches[0];
             if (isGameElement(e.target) || (isGameSectionActive() && isPointInGame(touch.clientX, touch.clientY))) {
                 isInteractingWithGame = true;
@@ -11466,6 +11636,10 @@
         }, { passive: false, capture: true });
         
         document.addEventListener('touchmove', function(e) {
+            if (document.body.classList.contains('nav-overlay-open') ||
+                closestMatch(e.target, '.nav-overlay, .nav-mobile-toggle')) {
+                return;
+            }
             if (isInteractingWithGame) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -11482,6 +11656,10 @@
         }, { passive: false, capture: true });
         
         document.addEventListener('touchend', function(e) {
+            if (document.body.classList.contains('nav-overlay-open') ||
+                closestMatch(e.target, '.nav-overlay, .nav-mobile-toggle')) {
+                return;
+            }
             if (isInteractingWithGame) {
                 // Prevent any default behavior that might cause scroll
                 e.preventDefault();
@@ -11494,6 +11672,10 @@
         }, { passive: false, capture: true });
         
         document.addEventListener('touchcancel', function(e) {
+            if (document.body.classList.contains('nav-overlay-open') ||
+                closestMatch(e.target, '.nav-overlay, .nav-mobile-toggle')) {
+                return;
+            }
             if (isInteractingWithGame) {
                 e.preventDefault();
                 isInteractingWithGame = false;
@@ -11559,7 +11741,7 @@
                 isInteractingWithGame = true;
                 lockScroll();
                 // Only preventDefault on non-interactive elements
-                const isInteractive = e.target.closest('button') || e.target.closest('input');
+                const isInteractive = closestMatch(e.target, 'button') || closestMatch(e.target, 'input');
                 if (!isInteractive) {
                     e.preventDefault();
                 }
@@ -11636,9 +11818,9 @@
                     
                     const delta = e.deltaY;
                     
-                    // At boundary - let it propagate for section navigation
+                    // At boundary - let the document-level nav lock absorb the wheel.
                     if ((scrollTop <= 1 && delta < 0) || (scrollTop >= maxScroll - 1 && delta > 0)) {
-                        return; // Let it bubble to trigger section change
+                        return;
                     }
                     
                     // Within scroll bounds - scroll the container and block everything else
