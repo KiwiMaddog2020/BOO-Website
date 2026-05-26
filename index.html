@@ -6268,7 +6268,8 @@
         }
         
         /* Hide music player in pseudo-fullscreen (all devices) */
-        body.pseudo-fullscreen-active .music-player {
+        body.pseudo-fullscreen-active .music-player,
+        body.pseudo-fullscreen-active .music-toggle {
             display: none !important;
             visibility: hidden !important;
             opacity: 0 !important;
@@ -6277,7 +6278,8 @@
         
         /* Hide music player on game/arcade section for mobile and tablet */
         @media (max-width: 768px), (pointer: coarse) {
-            body.game-section-active .music-player {
+            body.game-section-active .music-player,
+            body.game-section-active .music-toggle {
                 display: none !important;
                 visibility: hidden !important;
                 opacity: 0 !important;
@@ -6288,7 +6290,8 @@
         
         /* Tablet-specific: Hide music player on game section */
         @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) {
-            body.game-section-active .music-player {
+            body.game-section-active .music-player,
+            body.game-section-active .music-toggle {
                 display: none !important;
                 visibility: hidden !important;
                 opacity: 0 !important;
@@ -7081,6 +7084,18 @@
                 padding: 6px 10px 6px 6px;
                 bottom: 15px;
                 gap: 8px;
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+                -webkit-transform: translateX(-50%) translateY(20px);
+                transform: translateX(-50%) translateY(20px);
+            }
+            .music-player.shown {
+                opacity: 1;
+                visibility: visible;
+                pointer-events: auto;
+                -webkit-transform: translateX(-50%) translateY(0);
+                transform: translateX(-50%) translateY(0);
             }
             .player-controls {
                 gap: 4px;
@@ -7114,6 +7129,7 @@
                 width: 42px;
                 height: 42px;
                 font-size: 1.1rem;
+                display: flex;
             }
             .player-hide-btn {
                 font-size: 0.8rem;
@@ -7121,11 +7137,8 @@
             }
         }
         
-        /* V1_148: dropped the mobile auto-hide + toggle entirely. After multiple attempts to
-           make the toggle reliable on Android DuckDuckGo (V1_142, V1_143, V1_144, V1_146,
-           V1_147), the toggle never reliably opened the player. Always-visible player is a
-           strictly better UX than a broken toggle. Toggle stays display:none from base on
-           mobile (no rule shows it); player uses its base display:flex. */
+        /* V1_161: mobile player states are mutually exclusive. Phones start on
+           the circular music toggle; tapping it swaps to the full player. */
         @media (max-width: 768px) {
             /* V1_137 / V1_142 / V1_143: 30px buffer between home title and hero image on mobile.
                !important needed to beat the later .home-section .title-wrapper override at line ~7298. */
@@ -10671,21 +10684,18 @@
             var isSmallPhone = window.innerWidth <= 768;
 
             if (isSmallPhone) {
-                var isCurrentlyShown = player.classList.contains('shown');
-                if (isCurrentlyShown) {
-                    player.classList.remove('shown');
-                    player.style.opacity = '0';
-                    player.style.pointerEvents = 'none';
-                    player.style.transform = 'translateX(-50%) translateY(20px)';
-                    toggle.style.display = 'flex';
-                } else {
-                    player.classList.add('shown');
-                    player.style.opacity = '1';
-                    player.style.pointerEvents = 'auto';
-                    player.style.transform = 'translateX(-50%) translateY(0)';
-                    toggle.style.display = 'none';
-                }
-                try { localStorage.setItem('musicPlayerHidden', isCurrentlyShown ? 'true' : 'false'); } catch (e) {}
+                var shouldShowPlayer = !player.classList.contains('shown');
+                player.classList.toggle('shown', shouldShowPlayer);
+                player.classList.remove('hidden');
+                player.style.opacity = shouldShowPlayer ? '1' : '0';
+                player.style.visibility = shouldShowPlayer ? 'visible' : 'hidden';
+                player.style.pointerEvents = shouldShowPlayer ? 'auto' : 'none';
+                player.style.transform = '';
+                toggle.style.display = shouldShowPlayer ? 'none' : 'flex';
+                toggle.style.visibility = shouldShowPlayer ? 'hidden' : 'visible';
+                toggle.style.opacity = shouldShowPlayer ? '0' : '1';
+                toggle.style.pointerEvents = shouldShowPlayer ? 'none' : 'auto';
+                try { localStorage.setItem('musicPlayerHidden', shouldShowPlayer ? 'false' : 'true'); } catch (e) {}
             } else {
                 player.classList.toggle('hidden');
                 var isHidden = player.classList.contains('hidden');
@@ -10698,17 +10708,23 @@
         function initMusicPlayerVisibility() {
             var player = document.getElementById('music-player');
             var toggle = document.getElementById('music-toggle');
+            if (!player || !toggle) return;
             var isSmallPhone = window.innerWidth <= 768;
-            var savedPref = localStorage.getItem('musicPlayerHidden');
+            var savedPref = null;
+            try { savedPref = localStorage.getItem('musicPlayerHidden'); } catch (e) {}
             
             if (isSmallPhone) {
-                // On small phones, auto-hide unless user chose to show
-                if (savedPref === 'false') {
-                    player.classList.add('shown');
-                    toggle.style.display = 'none';
-                } else {
-                    toggle.style.display = 'flex';
-                }
+                player.classList.remove('shown', 'hidden');
+                player.style.opacity = '0';
+                player.style.visibility = 'hidden';
+                player.style.pointerEvents = 'none';
+                player.style.transform = '';
+                toggle.classList.remove('visible');
+                toggle.style.display = 'flex';
+                toggle.style.visibility = 'visible';
+                toggle.style.opacity = '1';
+                toggle.style.pointerEvents = 'auto';
+                try { localStorage.setItem('musicPlayerHidden', 'true'); } catch (e) {}
             } else {
                 // On larger screens, show unless user chose to hide
                 if (savedPref === 'true') {

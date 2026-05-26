@@ -119,6 +119,28 @@ test.describe('BOO website — critical paths', () => {
     await expect(toggle).toHaveAttribute('aria-label', /music/i);
   });
 
+  test('18. mobile music player starts collapsed and swaps with toggle', async ({ page }, testInfo) => {
+    if (testInfo.project.name === 'chromium') test.skip();
+
+    await page.evaluate(() => localStorage.setItem('musicPlayerHidden', 'false'));
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+
+    const toggle = page.locator('#music-toggle');
+    const player = page.locator('#music-player');
+
+    await expect(toggle).toBeVisible();
+    await expect(player).not.toBeVisible();
+
+    await toggle.click();
+    await expect(toggle).not.toBeVisible();
+    await expect(player).toBeVisible();
+
+    await player.locator('.player-hide-btn').click();
+    await expect(toggle).toBeVisible();
+    await expect(player).not.toBeVisible();
+  });
+
   test('14. brickbreaker iframe responds 200', async ({ page, request }) => {
     const response = await request.get('/Games/neon-brickbreaker.html');
     expect(response.status()).toBe(200);
