@@ -142,3 +142,41 @@ WEIGHTED AVERAGE (88 categories)    CRAFT 5.4 → ~6.1    FIT 5.9 → ~6.5
 - **Round 4 — CSS cascade + a11y:** visible-surface; best done as reviewed proposals, not auto-executed (Kevin "lives in the details").
 - **Round 5 — leaderboard anti-cheat:** needs the App-Check-vs-accept infra decision (open question #1).
 - **Round 6 — maintainability:** palette variables, strip dig debug keys, unify game scaffolding. Low urgency.
+
+---
+
+# Rounds 4–6 — turbo run (commits V1_173–V1_175)
+
+The user enabled turbo + rapid-fire and asked to run all remaining rounds. Honest outcome: **R4 and R5 are mostly not safe/possible to auto-execute**, so only the safe subset of R6 landed. Nothing risky was forced.
+
+## Round 4 (CSS / a11y) — DEFERRED intact (needs your eye + a real device)
+Every item touches something I can't safely change here:
+- **safari-style-fix migration** — edits the runtime-injected sheet that owns all Safari/iOS/Android rendering; can't verify on real Safari/iOS from here. Highest risk in the whole plan.
+- **Reduced-motion Safari fix** — same injected sheet.
+- **Dead CSS deletion** — `.wavy-flutter`/`.psych-fractals` are referenced in ~40 scattered rules + the injected JS (`querySelectorAll`), and `.wavy-flutter` may be a live hidden element. Too intertwined to rush.
+- **Load Tilt Neon / Oxanium** — would change the live appearance (taste — open question #2).
+- **Touch targets ≥44px** — your pixel-tuned music pill (visible).
+- **Viewport zoom lock** — a11y vs the app-like feel (open question #3).
+
+## Round 5 (leaderboard anti-cheat) — DEFERRED (infra decision)
+The real fix is Firebase App Check + a Cloud Function with score bounds — needs console access, a deploy, and possibly billing, none of which I can provision here. Conservative turbo call: **accept the limitation** (it's a fun band arcade, not a ranked ladder). `firestore.rules` is already in version control (V1_167). Open question #1 stands.
+
+## Round 6 (maintainability) — LANDED (safe subset)
+
+| # | Category | Craft | Fit | Note |
+|---|----------|:---:|:---:|------|
+| 27 | Shipped debug affordances | 4 → **6** | 4 → **6** | Dig B/N/M teleport keys gated off (V1_173). Survivors' dead audio sliders still present (visible UI removal — deferred). |
+| 26 | Game scaffolding consistency | 5 → **7** | 5 → **7** | CORS handler ported to snake/clyde's/shooter (V1_174); all 7 games now hardened. Shooter's name-sanitize still divergent (skipped — profanity-filter interaction risk). |
+| 30 | Color palette discipline | 2 → **3** | 4 → **5** | Docs reconciled to real values (V1_175); the ~700 hardcoded literals + var migration remain (risky mass-replace, deferred). |
+
+**Verified:** all 7 games load with zero uncaught JS errors (headless); full suite 98 passed / 7 skipped / 0 failed.
+
+## Final cumulative aggregate (Rounds 1–6 as executed)
+
+```
+WEIGHTED AVERAGE (88 categories)    CRAFT 5.4 → ~6.2    FIT 5.9 → ~6.6
+```
+
+Remaining headroom to 9.0+ is concentrated in the **deferred** items above — all of which need either your taste call, a real device, or infra. They are not safe for autonomous execution.
+
+14 commits total (V1_162–V1_175); suite green.
