@@ -120,7 +120,9 @@ test.describe('BOO website — critical paths', () => {
   });
 
   test('18. mobile music player starts collapsed and swaps with toggle', async ({ page }, testInfo) => {
-    if (testInfo.project.name === 'chromium') test.skip();
+    // Phone-only UI: the circular toggle exists only at <=768px. iPad and
+    // desktop show the full player inline (no toggle), so skip them.
+    if (testInfo.project.name === 'chromium' || /ipad/i.test(testInfo.project.name)) test.skip();
 
     await page.evaluate(() => localStorage.setItem('musicPlayerHidden', 'false'));
     await page.reload();
@@ -223,5 +225,38 @@ test.describe('BOO website — critical paths', () => {
     expect(result.out).toHaveProperty('height');
     expect(result.out.width).toBeGreaterThan(0);
     expect(result.out.height).toBeGreaterThan(0);
+  });
+
+  test('19. all 7 arcade game files respond 200', async ({ request }) => {
+    // Catches a renamed/missing game (which would ship a 404 black-tile iframe).
+    const games = [
+      'neon-brickbreaker', 'neon-survivors', 'neon-tower-defense',
+      'neon-dig', 'neon-snake', 'clydes-big-jump', 'neon-space-shooter',
+    ];
+    for (const g of games) {
+      const res = await request.get(`/Games/${g}.html`);
+      expect(res.status(), `${g}.html should respond 200`).toBe(200);
+    }
+  });
+
+  test('20. iPad: no horizontal overflow', async ({ page }, testInfo) => {
+    // V1_153-160 iPad spacing-matrix regression catcher. Runs only on the
+    // iPad projects; the page must not scroll horizontally.
+    if (!/ipad/i.test(testInfo.project.name)) test.skip();
+    const o = await page.evaluate(() => ({
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+    }));
+    expect(o.scrollW, `horizontal overflow: scrollWidth ${o.scrollW} > clientWidth ${o.clientW}`)
+      .toBeLessThanOrEqual(o.clientW + 2);
+  });
+
+  test('21. game-loop fix guards present (V1_162 regression catcher)', async ({ request }) => {
+    // V1_162 fixed stacked requestAnimationFrame loops that made these two
+    // games speed up after "play again". Fail loudly if the guard is reverted.
+    const shooter = await (await request.get('/Games/neon-space-shooter.html')).text();
+    expect(shooter, 'space-shooter must guard its single gameLoop kick').toContain('gameLoopStarted');
+    const brick = await (await request.get('/Games/neon-brickbreaker.html')).text();
+    expect(brick, 'brickbreaker startGame must have a re-entry guard').toMatch(/if\s*\(\s*gameRunning\s*\)\s*return/);
   });
 });

@@ -22,6 +22,11 @@ module.exports = defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile-android', use: { ...devices['Pixel 7'] } },
     { name: 'mobile-ios', use: { ...devices['iPhone 14 Pro'] } },
+    // V1_169: iPad coverage. V1_153-160 was almost entirely iPad
+    // spacing/breakpoint work but had zero automated coverage. These two
+    // emulate Safari (webkit) on the viewports that drove that work.
+    { name: 'ipad-mini-landscape', use: { ...devices['iPad Mini landscape'] } },
+    { name: 'ipad-pro-portrait', use: { ...devices['iPad Pro 11'] } },
   ],
   webServer: {
     command: 'npm run serve',
