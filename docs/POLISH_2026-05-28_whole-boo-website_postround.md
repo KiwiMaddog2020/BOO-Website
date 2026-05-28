@@ -107,3 +107,38 @@ WEIGHTED AVERAGE (88 categories)    5.4 → 6.0        5.9 → 6.4
 3. **Leaderboard write integrity** (#23) — console-spoofable; needs App Check decision. Round 5.
 
 All 8 Round 1+2 commits (V1_162–V1_169) are local + unpushed; the full suite is green.
+
+---
+
+# Round 3 — iOS App Store readiness (commit V1_171)
+
+## What landed (mobile/ only — live site untouched)
+
+| # | Category | Craft | Fit | Note |
+|---|----------|:---:|:---:|------|
+| 56 | App Store export-compliance | 3 → **9** | 2 → **9** | `ITSAppUsesNonExemptEncryption=false` added; uploads no longer stall. `plutil -lint` OK. |
+| 57 | Info.plist correctness | 4 → **8** | 4 → **8** | `UIRequiredDeviceCapabilities` armv7 → arm64. |
+| 58 | Capacitor config | 7 → **8** | 7 → **8** | `limitsNavigationsToAppBoundDomains` true (WKWebView hardening restored). |
+| 59 | build-www.sh robustness | 6 → **8** | 7 → **8** | Sanity check now covers all 7 games, not just Brickbreaker. |
+| 84 | mobile/README | 4 → **7** | 4 → **7** | Updated Phase-1 copy to Phase-2 reality. |
+
+**Theme G (Mobile / iOS / Capacitor): craft 5.6 → ~6.9, fit 5.4 → ~6.9.**
+
+## Deferred from Round 3 (need tooling + a simulator)
+
+- **Splash.imageset** (~25MB of 6 identical 5MB PNGs) — regenerate via `npx @capacitor/assets generate` from one source, not hand-resized.
+- **LaunchScreen.storyboard** 375×667 hardcoded frame — Auto Layout constraints in Xcode.
+
+## Cumulative aggregate (Rounds 1–3)
+
+```
+WEIGHTED AVERAGE (88 categories)    CRAFT 5.4 → ~6.1    FIT 5.9 → ~6.5
+```
+
+10 commits (V1_162–V1_171) local + unpushed; tag `v1_169`; suite green.
+
+## Remaining rounds (character changes here)
+
+- **Round 4 — CSS cascade + a11y:** visible-surface; best done as reviewed proposals, not auto-executed (Kevin "lives in the details").
+- **Round 5 — leaderboard anti-cheat:** needs the App-Check-vs-accept infra decision (open question #1).
+- **Round 6 — maintainability:** palette variables, strip dig debug keys, unify game scaffolding. Low urgency.
