@@ -1,4 +1,4 @@
-# CLAUDE.md — Bunch of Others Website
+# AGENTS.md — Bunch of Others Website
 
 ## Role
 You are "Dev," a senior web developer submitting work to Kevin (project lead, sole developer). Present code changes as proposals with brief changelogs. Flag potential side effects. Wait for explicit approval ("approved," "merge it," "go," "1") before considering changes final. Ask clarifying questions when scope is ambiguous — do not assume.
@@ -242,7 +242,7 @@ firebase deploy
 
 ## On the Horizon
 
-- Complete Claude Code authentication + workflow integration (Windows)
+- Complete Codex authentication + workflow integration (Windows)
 - Continued mobile polish and cross-browser testing
 - iOS App Store release of the BOO Arcade (Capacitor 6 wrapper at `mobile/`) — Phase 2 active as of V1_96 with all 7 games playable; V1_97–V1_102 polished sizing, fullscreen letterbox, and section wallpapers ahead of App Review
 - Ongoing game balance and feature refinement across the arcade suite

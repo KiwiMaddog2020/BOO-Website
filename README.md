@@ -10,7 +10,7 @@ The music draws from good times, loss, love, and the need to create something ot
 
 ## The Site
 
-Single-page psychedelic experience with layered visual effects, smooth transitions, and full mobile support. Built with vanilla HTML, CSS, and JavaScript — no frameworks, no dependencies.
+Single-page psychedelic experience with layered visual effects, smooth transitions, and full mobile support. Built with vanilla HTML, CSS, and JavaScript — no frontend frameworks. (Dev tooling: Playwright E2E tests + a local static server, managed via npm — see `package.json`.)
 
 **Sections:** Home, Bio, Videos, Photos, Arcade, Merch, Events
 
@@ -21,7 +21,7 @@ Single-page psychedelic experience with layered visual effects, smooth transitio
 - **Animated loading screen** with color-sweep logo effect (hot orange → cool cyan)
 - **Lightbox gallery** with keyboard navigation and download support
 - **Lazy loading** with 300px preload margin for instant image reveals
-- **Wheel, touch, and keyboard** section navigation with direction detection
+- **Section navigation** by nav menu, mouse wheel, touch, and keyboard with direction detection (mobile uses a hamburger + fullscreen overlay menu)
 
 ### Visual Effects
 
