@@ -54,3 +54,56 @@ The needle moved exactly where Round 1 aimed: the two broken game loops and the 
 - **Music-toggle inline-style architecture** — works today; a class-only rewrite risks reintroducing the DuckDuckGo-Android transition bug it was built to fix. Needs device testing if pursued.
 - **DPR zoom-compensation desktop-gating** (#9/#66) — touches mobile arcade sizing ("aspect ratio is sacred"); deferred to the user-gated Round 4.
 - **Leaderboard write integrity** (#23) — architectural; needs the App-Check-vs-accept decision (open question #1).
+
+---
+
+# Round 2 — Safety net + docs (commits V1_166–V1_169)
+
+## What landed
+
+| Commit | Change | Validation |
+|--------|--------|-----------|
+| V1_166 | `static.yml` deploy now gated on the "E2E tests" workflow succeeding (`workflow_run` + conclusion check) | YAML reviewed; deploy no longer fires on red tests |
+| V1_167 | `firestore.rules` + `firebase.json` added (reconstructed, verify-before-deploy warning) | n/a (inert until `firebase deploy`) |
+| V1_168 | Docs truth pass: README deps/nav, package.json 1.103→1.168, sitemap lastmod, canonical link, CLAUDE.md+AGENTS.md through V1_168, tracked AGENTS.md + docs/ | docs-only |
+| V1_169 | Playwright iPad matrix (mini-landscape + Pro portrait) + tests 19 (games 200) / 20 (iPad no-overflow) / 21 (loop-fix guard) | **98 passed / 7 skipped / 0 failed** across 5 projects |
+
+## Category deltas
+
+| # | Category | Craft | Fit | Note |
+|---|----------|:---:|:---:|------|
+| 68 | CI deploy gating | 4 → **8** | 4 → **8** | Red tests no longer ship to prod. |
+| 51 | Firestore rules version control | 2 → **7** | 3 → **7** | In git now; not 9 because it's reconstructed pending console reconciliation. |
+| 69 | iPad responsive coverage | 1 → **7** | 1 → **7** | 2 iPad projects + no-overflow assertion; both iPads pass clean. |
+| 70 | Game / leaderboard coverage | 2 → **5** | 3 → **6** | Games-200 + loop-guard regression tests added; still no gameplay/score-submission test. |
+| 76 | Sitemap freshness | 3 → **8** | 4 → **8** | lastmod current. |
+| 78 | Meta / OG / canonical | 6 → **8** | 7 → 8 | `<link rel="canonical">` added; og:url slash normalized. |
+| 80 | README accuracy | 3 → **7** | 3 → **7** | "no dependencies" + nav corrected. |
+| 81 | CLAUDE.md / AGENTS.md currency | 2 → **7** | 3 → **7** | Extended through V1_168. |
+| 83 | Doc / version-control hygiene | 3 → **7** | 4 → **7** | AGENTS.md + docs/ tracked; version synced; first git tag (`v1_169`). |
+| 73 | Browser coverage | 5 → **7** | 5 → **7** | **Audit correction:** webkit was NOT unused — `mobile-ios` + the new iPad projects all run on webkit (iPhone/iPad descriptors default to it). |
+
+## Aggregate movement (cumulative, Rounds 1+2)
+
+```
+                                  CRAFT (base→now)   FIT (base→now)
+─────────────────────────────────────────────────────────────────
+A  Engineering / JS correctness     6.2 → 6.6        6.9 → 7.1
+B  Arcade & leaderboards             5.6 → 6.7        5.6 → 6.7
+E  Architecture & maintainability    5.0 → 5.3        5.8 → 6.0
+F  Security & data integrity         6.0 → 6.6        6.6 → 6.9
+I  Testing & CI                      3.9 → 6.0        4.1 → 6.3
+J  SEO / PWA / discovery             6.0 → 6.6        6.4 → 6.9
+K  Documentation                     3.8 → 6.0        4.2 → 6.4
+  (C, D, G, H, L unchanged — Rounds 3–6 not executed)
+─────────────────────────────────────────────────────────────────
+WEIGHTED AVERAGE (88 categories)    5.4 → 6.0        5.9 → 6.4
+```
+
+## Still open after Round 2 (top 3)
+
+1. **iOS App Store blockers** (#56/#57) — `ITSAppUsesNonExemptEncryption` missing; `armv7` arch. Round 3.
+2. **CSS cascade fragility** (#28) — JS-injected `safari-style-fix` overrides inline CSS. Round 4 (visual-gated).
+3. **Leaderboard write integrity** (#23) — console-spoofable; needs App Check decision. Round 5.
+
+All 8 Round 1+2 commits (V1_162–V1_169) are local + unpushed; the full suite is green.
