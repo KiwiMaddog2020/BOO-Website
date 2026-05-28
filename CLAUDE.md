@@ -41,10 +41,10 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 
 ## Aesthetic
 
-**Neon palette:**
+**Neon palette** (values reflect actual usage in `index.html` as of V1_175):
 - Cyan `#00ffff` / `#0ff` — primary
-- Magenta `#ff00ff` / `#f0f` — secondary
-- Purple `#8b00ff`
+- Pink / magenta `#ff1493` — secondary (dominant in code; `#ff00ff` appears only rarely)
+- Purple `#9b30ff` — accent (the historical `#8b00ff` is documented-but-unused)
 - Orange `#ff6600`
 - Gold — leaderboard accents
 
