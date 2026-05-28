@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// =============================================================================
+// BOO Arcade — Firestore security rules
+//
+//   ⚠️  RECONSTRUCTED 2026-05-28 (V1_167) from the documented contract in
+//   CLAUDE.md ("name string 2-12 chars, scores int >= 0, no updates, no
+//   deletes") plus the field payloads each game actually writes. The rules
+//   CURRENTLY LIVE in the Firebase console remain AUTHORITATIVE.
+//
+//   DO NOT run `firebase deploy --only firestore:rules` until you have
+//   confirmed this file matches the console (Firebase Console → Firestore
+//   Database → Rules). Deploying a mismatch could break leaderboard writes in
+//   production (e.g. if a game writes a field/type this file rejects).
+//
+//   This file exists so the only server-side trust boundary for the public-
+//   write leaderboards is finally under version control + review + rollback.
+//
+//   KNOWN LIMITATION (audit #23): these rules cannot stop client-side score
+//   spoofing — the games write from reassignable globals, so any value passes
+//   the int>=0 check. True anti-cheat needs Firebase App Check + a Cloud
+//   Function with plausibility bounds (Polish Round 5 / open question #1).
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- shared validators -------------------------------------------------
+    function validName(n) {
+      return n is string && n.size() >= 2 && n.size() <= 12;
+    }
+    function nonNegInt(v) {
+      return v is int && v >= 0;
+    }
+
+    // ---- leaderboard collections (create-only, public read) ----------------
+    // Neon Brickbreaker — name, score, level
+    match /highscores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.score);
+      allow update, delete: if false;
+    }
+
+    // BOO Survivors — name, score
+    match /survivors_scores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.score);
+      allow update, delete: if false;
+    }
+
+    // BOO Tower Defense — name, wave, kills
+    match /towerdefense_scores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.wave)
+                    && nonNegInt(request.resource.data.kills);
+      allow update, delete: if false;
+    }
+
+    // Neon Dig — name, score, depth
+    match /neondig_scores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.score);
+      allow update, delete: if false;
+    }
+
+    // Neon Snake — name, score, length
+    match /snake_scores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.score);
+      allow update, delete: if false;
+    }
+
+    // Clyde's Big Jump — name, score
+    match /clydes_jump_scores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.score);
+      allow update, delete: if false;
+    }
+
+    // Neon Space Shooter (legacy) — name, score, wave
+    match /spaceshooter_scores/{doc} {
+      allow read: if true;
+      allow create: if validName(request.resource.data.name)
+                    && nonNegInt(request.resource.data.score);
+      allow update, delete: if false;
+    }
+
+    // Anything not explicitly matched above is denied by default.
+  }
+}
