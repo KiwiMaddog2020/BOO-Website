@@ -58,9 +58,14 @@ if [ ! -f "$WWW_DIR/index.html" ]; then
     echo "[build-www] ERROR: $WWW_DIR/index.html missing — author it before building." >&2
     exit 1
 fi
-if [ ! -f "$WWW_DIR/Games/neon-brickbreaker.html" ]; then
-    echo "[build-www] ERROR: Games/neon-brickbreaker.html not found in www/ after sync." >&2
-    exit 1
-fi
+# Verify EVERY game file synced — a renamed/missing game would otherwise ship
+# a 404 black-tile iframe in the app, with a green build (V1_171).
+GAMES="neon-brickbreaker neon-survivors neon-tower-defense neon-dig neon-snake clydes-big-jump neon-space-shooter"
+for game in $GAMES; do
+    if [ ! -f "$WWW_DIR/Games/$game.html" ]; then
+        echo "[build-www] ERROR: Games/$game.html not found in www/ after sync." >&2
+        exit 1
+    fi
+done
 
 echo "[build-www] Done. www/ is ready for 'npx cap sync'."

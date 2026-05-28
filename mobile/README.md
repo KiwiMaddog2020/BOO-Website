@@ -1,6 +1,6 @@
 # BOO Arcade — Native iOS / Android wrapper
 
-Phase 1 scaffold (V1_89). Wraps the existing HTML5 games from `../Games/` into a native iOS app via Capacitor 6. The web site at `bunchofothers.com` and this app share the same game source files — there is no parallel codebase.
+Capacitor 6 wrapper (Phase 2, V1_96+). Wraps the existing HTML5 games from `../Games/` into a native iOS app. The web site at `bunchofothers.com` and this app share the same game source files — there is no parallel codebase.
 
 See `/Users/kevin/.claude/plans/i-want-to-take-noble-gizmo.md` for the full plan.
 
@@ -59,17 +59,16 @@ npm run build && npx cap sync ios
 
 Then rebuild in Xcode.
 
-## What's in Phase 1
+## What's shipping (Phase 2, V1_96+)
 
-- One playable game: **Neon Brickbreaker**.
-- Six other games show as "Coming soon" placeholders to demonstrate the full arcade scope to Apple App Review without needing every game polished.
+- Six playable games: **Neon Brickbreaker, BOO Survivors, BOO Tower Defense, Neon Dig, Neon Snake, Clyde's Big Jump**. Neon Space Shooter is commented out in the menu (V1_138 — easy to re-add).
 - Native menu shell with BOO neon identity, ambient psychedelic halos, splash veil.
 - Capacitor plugins: `@capacitor/app` (back button), `@capacitor/haptics` (tap feedback), `@capacitor/share`, `@capacitor/splash-screen`, `@capacitor/status-bar`.
-- Game shell: tapping Brickbreaker opens it in a fullscreen iframe overlay; X button (or Android hardware back) returns to the menu.
+- Game shell: tapping a game opens it in a fullscreen iframe overlay; the X button (or Android hardware back) returns to the menu and clears the iframe `src` (stops game audio/loops).
 
-## Phase 2 — what changes
+## Adding the remaining game
 
-In `www/index.html`, flip `data-active="0"` to `data-active="1"` on the remaining 6 game tiles as each is verified working in the Capacitor WebView. No other changes required — the menu shell already routes to all 7 game files.
+The menu shell already routes to all 7 game files; uncomment the Neon Space Shooter tile in `www/index.html` to re-add it once verified in the WebView.
 
 ## Phase 3 — Android
 
