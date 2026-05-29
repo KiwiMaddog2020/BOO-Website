@@ -5965,6 +5965,102 @@
         let fullscreenLogicalHeight = BASE_HEIGHT;
         let gameWidth = BASE_WIDTH;        // Game logic coordinates
         let gameHeight = BASE_GAME_HEIGHT; // Game area only (not full canvas)
+
+        // ===== CACHED VISUAL OVERLAYS (neon bloom + atmosphere pass) =====
+        // All built once and rebuilt only when the logical game-area size changes
+        // (see rebuildVisualOverlays(), called from calculateScale()). This keeps
+        // render() free of per-frame createRadialGradient/createElement allocations.
+        // Same offscreen-canvas pattern as the minimap fogLayerCanvas.
+        let vignetteCanvas = null;       // always-on arena vignette (game-area sized)
+        let lightPoolCanvas = null;      // soft radial light sprite that follows player
+        let lightPoolRadius = 0;         // half-size of lightPoolCanvas, for centring
+        let timeStopVignetteCanvas = null;  // power-up tint overlays (pre-baked gradients)
+        let speedBoostVignetteCanvas = null;
+        let lowHpVignetteCanvas = null;
+        let overlayCacheW = 0;           // game-area size the overlays were built at
+        let overlayCacheH = 0;
+
+        // Build a game-area-sized offscreen canvas with a radial gradient painted on it.
+        // innerStop/outerStop are fractions of the half-diagonal; stops is an array of
+        // [offset, cssColor]. Returns the canvas (caller caches it).
+        function makeVignetteCanvas(w, h, innerFrac, outerFrac, stops) {
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(w));
+            c.height = Math.max(1, Math.round(h));
+            const cx = c.getContext('2d');
+            const centerX = c.width / 2;
+            const centerY = c.height / 2;
+            // Radius reaches the corners so the darkening fully covers the rectangle.
+            const maxR = Math.hypot(c.width, c.height) / 2;
+            const g = cx.createRadialGradient(
+                centerX, centerY, maxR * innerFrac,
+                centerX, centerY, maxR * outerFrac
+            );
+            for (const [off, col] of stops) g.addColorStop(off, col);
+            cx.fillStyle = g;
+            cx.fillRect(0, 0, c.width, c.height);
+            return c;
+        }
+
+        // (Re)build all cached overlays for the current game-area size. Cheap to call;
+        // it no-ops if the size hasn't changed since the last build.
+        function rebuildVisualOverlays() {
+            const w = gameWidth;
+            const h = gameHeight;
+            if (w === overlayCacheW && h === overlayCacheH && vignetteCanvas) return;
+            overlayCacheW = w;
+            overlayCacheH = h;
+
+            // 1) Always-on arena vignette: transparent center -> deep purple-black edges.
+            vignetteCanvas = makeVignetteCanvas(w, h, 0.45, 1.0, [
+                [0.0, 'rgba(5, 0, 15, 0)'],
+                [0.65, 'rgba(5, 0, 15, 0.12)'],
+                [1.0, 'rgba(5, 0, 15, 0.45)']
+            ]);
+
+            // 2) Power-up tint overlays — identical look to the old per-frame gradients,
+            //    pre-baked once. Sized to the game area; alpha is modulated at draw time
+            //    via globalAlpha so the existing pulse is preserved.
+            //    Time-stop: purple, inner 0.4 -> outer 0.8 of (h*scale). The old code
+            //    used gameHeight as the radius basis; we map that onto the half-diagonal
+            //    so the visual footprint matches regardless of aspect ratio.
+            const diag = Math.hypot(w, h) / 2;
+            const hBasis = h; // old gradients keyed radii off gameHeight
+            const f = (mult) => Math.min(1, (hBasis * mult) / diag);
+            timeStopVignetteCanvas = makeVignetteCanvas(w, h, f(0.4), f(0.8), [
+                [0.0, 'rgba(170, 100, 255, 0)'],
+                [1.0, 'rgba(170, 100, 255, 1)']
+            ]);
+            speedBoostVignetteCanvas = makeVignetteCanvas(w, h, f(0.5), f(0.9), [
+                [0.0, 'rgba(255, 170, 0, 0)'],
+                [1.0, 'rgba(255, 170, 0, 1)']
+            ]);
+            lowHpVignetteCanvas = makeVignetteCanvas(w, h, f(0.3), f(0.7), [
+                [0.0, 'rgba(255, 0, 0, 0)'],
+                [1.0, 'rgba(255, 0, 0, 1)']
+            ]);
+
+            // 5) Player light-pool sprite: soft warm white radial, transparent edge.
+            //    Built once at a fixed pixel size (independent of game-area size).
+            if (!lightPoolCanvas) {
+                const D = 220;
+                lightPoolRadius = D / 2;
+                lightPoolCanvas = document.createElement('canvas');
+                lightPoolCanvas.width = D;
+                lightPoolCanvas.height = D;
+                const lc = lightPoolCanvas.getContext('2d');
+                const lg = lc.createRadialGradient(
+                    lightPoolRadius, lightPoolRadius, 0,
+                    lightPoolRadius, lightPoolRadius, lightPoolRadius
+                );
+                // Warm white -> transparent. Soft falloff so it pools rather than rings.
+                lg.addColorStop(0.0, 'rgba(255, 250, 235, 1)');
+                lg.addColorStop(0.35, 'rgba(255, 240, 210, 0.55)');
+                lg.addColorStop(1.0, 'rgba(255, 240, 210, 0)');
+                lc.fillStyle = lg;
+                lc.fillRect(0, 0, D, D);
+            }
+        }
         let cssWidth = BASE_WIDTH;    // CSS display size
         let cssHeight = BASE_HEIGHT;
         
@@ -6211,8 +6307,12 @@
             
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
+
+            // Rebuild cached visual overlays for the (possibly new) game-area size.
+            // No-ops when the size is unchanged, so calling it every resize is cheap.
+            rebuildVisualOverlays();
         }
-        
+
         function handleFullscreenChange() {
             calculateScale();
         }
@@ -9461,7 +9561,11 @@
                     if (def.type === 'orbit' && state.orbCount) {
                         const orbitR = camera.scale(state.radius);
                         const activeOrbs = state.activeOrbs || state.orbCount;
-                        
+
+                        // Additive blend: the connecting ring + glowing orbs + white
+                        // cores stack to white-hot where they overlap the player glow.
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
                         // Draw faint connecting ring
                         ctx.strokeStyle = def.color;
                         ctx.lineWidth = 1;
@@ -9470,7 +9574,7 @@
                         ctx.arc(sx, sy, orbitR, 0, Math.PI * 2);
                         ctx.stroke();
                         ctx.globalAlpha = 1;
-                        
+
                         // Draw orbs (active ones are bright, inactive are dim)
                         ctx.shadowColor = def.color;
                         ctx.shadowBlur = 15;
@@ -9479,14 +9583,14 @@
                             const ox = sx + Math.cos(angle) * orbitR;
                             const oy = sy + Math.sin(angle) * orbitR;
                             const isActive = i < activeOrbs;
-                            
+
                             // Orb body
                             ctx.globalAlpha = isActive ? 1 : 0.25;
                             ctx.fillStyle = isActive ? def.color : '#444';
                             ctx.beginPath();
                             ctx.arc(ox, oy, camera.scale(12), 0, Math.PI * 2);
                             ctx.fill();
-                            
+
                             // Inner bright core (only on active)
                             if (isActive) {
                                 ctx.fillStyle = '#fff';
@@ -9497,6 +9601,7 @@
                         }
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
+                        ctx.restore();
                     }
                     
                     // AOE wave visual - enhanced neon effect
@@ -9941,7 +10046,11 @@
                         const auraR = camera.scale(state.auraRadius);
                         const pulseT = (Date.now() - (state.auraPulse || 0)) / 1400; // Match tick rate
                         const pulseAlpha = Math.max(0, 0.5 - pulseT * 0.5);
-                        
+
+                        // Additive blend so the toxic-green glow reads as emitted light
+                        // over the ground/player rather than a muddy overlay.
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
                         // Constant outer glow
                         ctx.shadowBlur = 15;
                         ctx.shadowColor = def.color;
@@ -9952,7 +10061,7 @@
                         ctx.beginPath();
                         ctx.arc(sx, sy, auraR, 0, Math.PI * 2);
                         ctx.fill();
-                        
+
                         // Pulse ring - expands outward over tick duration
                         ctx.strokeStyle = def.color;
                         ctx.lineWidth = 3;
@@ -9962,6 +10071,7 @@
                         ctx.stroke();
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
+                        ctx.restore();
                     }
                     
                     // Meteor strike visual
@@ -10204,7 +10314,12 @@
                     // Beam weapon rendering (multiple beams)
                     if (def.type === 'beam' && state.beamActive && state.beams && state.beams.length > 0) {
                         const now = performance.now();
-                        
+
+                        // Additive blend: layered beam (outer glow + middle + white core)
+                        // and impact/splash sparks stack to a clean white-hot lance
+                        // instead of darkening where the layers overlap.
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
                         for (const beam of state.beams) {
                             if (!beam.targetX) continue;
                             
@@ -10347,12 +10462,13 @@
                                 }
                             }
                         }
-                        
+
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
+                        ctx.restore();
                     }
                 }
-                
+
                 // Combined health + shield bar above player
                 // Show when damaged OR when player has shield
                 if (this.hp < this.maxHp || this.maxShieldHp > 0) {
@@ -17226,7 +17342,12 @@
                 
                 // Trail (skip for boomerang and disc types, special handling for bolt)
                 if (this.type === 'bolt') {
-                    // Electric bolt with lightning trail
+                    // Electric bolt with lightning trail.
+                    // Additive blend so the trail, white core, and sparks stack to
+                    // white-hot instead of muddying where they overlap. Nested
+                    // save/restore preserves the outer this.alpha + shadow state.
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter';
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = 2;
                     ctx.globalAlpha = 0.6 * this.alpha;
@@ -17280,6 +17401,7 @@
                         ctx.stroke();
                     }
                     ctx.globalAlpha = this.alpha;
+                    ctx.restore();
                 } else if (this.type !== 'boomerang' && this.type !== 'laser' && this.type !== 'disc' && this.type !== 'gravitywell') {
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = this.type === 'laser' ? 3 : this.type === 'boomerang' ? 2.5 : 2;
@@ -18029,7 +18151,14 @@
         function spawnParticles(x, y, color, count) {
             // Early exit if at particle limit
             if (particles.length >= LIMITS.particles) return;
-            
+
+            // Honor the "Reduced Particles" setting (persisted in the settings IIFE,
+            // exposed via window.GameSettings). Visual-only headroom for low-end devices —
+            // cuts spawn COUNT only; never touches damage/collision/spawn mechanics.
+            if (window.GameSettings && window.GameSettings.reducedParticles) {
+                count = Math.max(1, Math.ceil(count * 0.4));
+            }
+
             // Reduce count if approaching limit
             const available = LIMITS.particles - particles.length;
             const actualCount = Math.min(count, available);
@@ -20991,7 +21120,22 @@
             
             // Draw projectiles (under player)
             for (const proj of projectiles) proj.draw();
-            
+
+            // ===== PLAYER LIGHT-POOL (cached sprite, additive) =====
+            // A soft warm light pool that follows the player, drawn UNDER the player
+            // sprite so the always-on vignette reads as hero-pierces-darkness. Additive
+            // + low alpha: it only lifts the ground around the player and never darkens
+            // or washes out enemies/threats at the edge. [render-only / MECH-safe]
+            if (player && lightPoolCanvas) {
+                const _plx = camera.screenX(player.x);
+                const _ply = camera.screenY(player.y);
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = 0.22;
+                ctx.drawImage(lightPoolCanvas, _plx - lightPoolRadius, _ply - lightPoolRadius);
+                ctx.restore();
+            }
+
             // Draw player and trees with proper Y-sorting (player appears ON TOP of weapons/projectiles)
             drawTreesAndPlayer();
             
@@ -21053,16 +21197,19 @@
             }
 
             // Particles (batched rendering)
+            // Additive blending ('lighter') makes overlapping energy/spark particles
+            // stack toward white-hot glow. This REPLACES the old per-particle shadowBlur
+            // (up to 100 blur passes/frame) — additive looks better AND is much cheaper.
+            // Particles are energy sparks (no smoke/dust type flag exists), so all blend.
             ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
             for (const p of particles) {
                 if (!camera.isVisible(p.x, p.y, 20)) continue;
                 const sx = camera.screenX(p.x);
                 const sy = camera.screenY(p.y);
                 ctx.globalAlpha = p.life / (p.maxLife || 1);
                 ctx.fillStyle = p.color;
-                ctx.shadowBlur = 8;
-                ctx.shadowColor = p.color;
-                
+
                 if (p.isScratch) {
                     // Draw scratch marks as angled lines
                     ctx.strokeStyle = p.color;
@@ -21129,57 +21276,60 @@
             ctx.restore();
 
             // ===== END WORLD PASS: undo screen-shake translate =====
-            // Everything below (full-screen tints, HUD, trackpad, minimap) is drawn
-            // in fixed screen space and must NOT shake.
+            // Everything below (vignette, full-screen tints, HUD, trackpad, minimap) is
+            // drawn in fixed screen space and must NOT shake.
             ctx.restore();
 
+            // ===== ALWAYS-ON ARENA VIGNETTE (cached, screen-fixed) =====
+            // Sits over the game area, under the power-up tints and HUD. Pre-baked
+            // offscreen (rebuilt only on resize); one drawImage/frame, zero alloc.
+            // Drawn in the same game-area space the power-up tints use (gameWidth x
+            // gameHeight), so it never overlaps the trackpad and never shakes.
+            if (vignetteCanvas) {
+                ctx.drawImage(vignetteCanvas, 0, 0, gameWidth, gameHeight);
+            }
+
             // Time stop visual effect (purple tint when active)
+            // Flat fill kept (solid color, no alloc); radial vignette now a cached
+            // overlay modulated by globalAlpha to preserve the original pulse.
             if (timeStopActive) {
                 const pulse = 0.08 + Math.sin(Date.now() * 0.005) * 0.04;
                 ctx.fillStyle = `rgba(170, 100, 255, ${pulse})`;
                 ctx.fillRect(0, 0, gameWidth, gameHeight);
-                
-                // Purple vignette edges
-                const gradient = ctx.createRadialGradient(
-                    gameWidth / 2, gameHeight / 2, gameHeight * 0.4,
-                    gameWidth / 2, gameHeight / 2, gameHeight * 0.8
-                );
-                gradient.addColorStop(0, 'rgba(170, 100, 255, 0)');
-                gradient.addColorStop(1, `rgba(170, 100, 255, ${pulse + 0.1})`);
-                ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, gameWidth, gameHeight);
+
+                if (timeStopVignetteCanvas) {
+                    ctx.save();
+                    ctx.globalAlpha = pulse + 0.1; // matches old outer color-stop alpha
+                    ctx.drawImage(timeStopVignetteCanvas, 0, 0, gameWidth, gameHeight);
+                    ctx.restore();
+                }
             }
-            
+
             // Speed boost visual effect (subtle orange glow at edges)
             if (speedBoostActive) {
                 const pulse = 0.05 + Math.sin(Date.now() * 0.008) * 0.03;
-                const gradient = ctx.createRadialGradient(
-                    gameWidth / 2, gameHeight / 2, gameHeight * 0.5,
-                    gameWidth / 2, gameHeight / 2, gameHeight * 0.9
-                );
-                gradient.addColorStop(0, 'rgba(255, 170, 0, 0)');
-                gradient.addColorStop(1, `rgba(255, 170, 0, ${pulse})`);
-                ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, gameWidth, gameHeight);
+                if (speedBoostVignetteCanvas) {
+                    ctx.save();
+                    ctx.globalAlpha = pulse; // matches old outer color-stop alpha
+                    ctx.drawImage(speedBoostVignetteCanvas, 0, 0, gameWidth, gameHeight);
+                    ctx.restore();
+                }
             }
-            
+
             // Low health warning flash
             if (player && player.hp / player.maxHp < 0.3) {
                 const pulse = 0.15 + Math.sin(Date.now() * 0.008) * 0.1;
                 ctx.fillStyle = `rgba(255, 0, 0, ${pulse})`;
                 ctx.fillRect(0, 0, gameWidth, gameHeight);
-                
-                // Red vignette edges
-                const gradient = ctx.createRadialGradient(
-                    gameWidth / 2, gameHeight / 2, gameHeight * 0.3,
-                    gameWidth / 2, gameHeight / 2, gameHeight * 0.7
-                );
-                gradient.addColorStop(0, 'rgba(255, 0, 0, 0)');
-                gradient.addColorStop(1, `rgba(255, 0, 0, ${pulse + 0.15})`);
-                ctx.fillStyle = gradient;
-                ctx.fillRect(0, 0, gameWidth, gameHeight);
+
+                if (lowHpVignetteCanvas) {
+                    ctx.save();
+                    ctx.globalAlpha = pulse + 0.15; // matches old outer color-stop alpha
+                    ctx.drawImage(lowHpVignetteCanvas, 0, 0, gameWidth, gameHeight);
+                    ctx.restore();
+                }
             }
-            
+
             // ===== TRACKPAD AREA (bottom 200px) =====
             drawTrackpad();
             
