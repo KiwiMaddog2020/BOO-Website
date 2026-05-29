@@ -5231,6 +5231,38 @@
                 font-size: 12px;
             }
         }
+
+        /* Respect reduced-motion: disable decorative menu/overlay entrance + pulse
+           animations only. Canvas gameplay is JS-driven and untouched. */
+        @media (prefers-reduced-motion: reduce) {
+            .menu-overlay,
+            .menu-overlay *,
+            .pause-overlay,
+            .pause-overlay *,
+            .settings-overlay,
+            .settings-overlay *,
+            .weapon-select-overlay,
+            .weapon-select-overlay *,
+            .upgrade-overlay,
+            .upgrade-overlay *,
+            .shrine-overlay,
+            .shrine-overlay *,
+            #chestModal,
+            #chestModal *,
+            .legendary-overlay,
+            .legendary-overlay *,
+            .score-modal,
+            .score-modal *,
+            .leaderboard-overlay,
+            .leaderboard-overlay *,
+            .tutorial-overlay,
+            .tutorial-overlay *,
+            .confirm-overlay,
+            .confirm-overlay * {
+                animation: none !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -5238,8 +5270,11 @@
         <canvas id="gameCanvas" width="800" height="820"></canvas>
         
         <!-- Pause button -->
-        <div class="pause-btn" id="pauseBtn" title="Pause (P)">⏸</div>
-        
+        <div class="pause-btn" id="pauseBtn" title="Pause (P)" role="button" aria-label="Pause" tabindex="0">⏸</div>
+
+        <!-- Mute button (sibling of pause; offset right to clear pause + minimap) -->
+        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:6px;left:48px;z-index:100;width:36px;height:36px;border-radius:6px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.7);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;opacity:0.7;">🔊</button>
+
         <!-- Power-up timer bar -->
         <div class="power-timer-bar" id="powerTimerBar">
             <div class="power-timer speed-boost" id="speedBoostTimer" style="width: 0%;"></div>
@@ -5401,7 +5436,7 @@
 
     <!-- Start/Game Over Menu -->
     <div class="menu-overlay" id="menuOverlay">
-        <button class="settings-btn" id="menuSettingsBtn" title="Settings">⚙</button>
+        <button class="settings-btn" id="menuSettingsBtn" title="Settings" aria-label="Settings">⚙</button>
         <div class="game-title">BOO SURVIVORS</div>
         <div class="game-subtitle">Survive the neon horde</div>
         <div class="menu-buttons">
@@ -5418,7 +5453,8 @@
         <div class="settings-panel">
             <div class="settings-section">
                 <div class="settings-section-title">Audio</div>
-                <div class="settings-row">
+                <!-- music slider hidden: no music layer in this build -->
+                <div class="settings-row" style="display:none">
                     <span class="settings-label">Music</span>
                     <input type="range" class="settings-slider" id="musicVolumeSlider" min="0" max="100" value="50">
                     <span class="settings-value" id="musicVolumeValue">50%</span>
@@ -5501,7 +5537,7 @@
     
     <!-- Pause Menu Overlay -->
     <div class="pause-overlay" id="pauseOverlay">
-        <button class="settings-btn" id="pauseSettingsBtn" title="Settings">⚙</button>
+        <button class="settings-btn" id="pauseSettingsBtn" title="Settings" aria-label="Settings">⚙</button>
         <div class="pause-title">Paused</div>
         <div class="pause-menu-buttons">
             <div class="pause-menu-btn btn-resume" id="resumeBtn">Resume</div>
@@ -5526,7 +5562,7 @@
         <div class="tutorial-container">
             <div class="tutorial-header">
                 <div class="tutorial-title">HOW TO PLAY</div>
-                <button class="tutorial-close" id="tutorialClose">✕</button>
+                <button class="tutorial-close" id="tutorialClose" aria-label="Close">✕</button>
             </div>
             <div class="tutorial-content" id="tutorialContent">
                 <!-- Step 1: Movement -->
@@ -5650,7 +5686,7 @@
         <div class="leaderboard-container">
             <div class="leaderboard-header">
                 <div class="leaderboard-title">🏆 TOP 100</div>
-                <button class="leaderboard-close" id="leaderboardClose">✕</button>
+                <button class="leaderboard-close" id="leaderboardClose" aria-label="Close">✕</button>
             </div>
             <div class="leaderboard-list" id="leaderboardList">
                 <div class="leaderboard-loading">Loading scores...</div>
@@ -5662,7 +5698,126 @@
         // ===== CANVAS SETUP =====
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
+
+        // ===== Synth WebAudio SFX engine (BOO Survivors) =====
+        const SFX = (function () {
+            let actx = null, master = null, muted = false, vol = 1;
+            try { muted = localStorage.getItem('survivors_muted') === '1'; } catch (e) {}
+            function ensure() {
+                if (actx) return actx;
+                try {
+                    const AC = window.AudioContext || window.webkitAudioContext;
+                    if (!AC) return null;
+                    actx = new AC();
+                    master = actx.createGain();
+                    master.gain.value = muted ? 0 : 0.32 * vol;
+                    master.connect(actx.destination);
+                } catch (e) { actx = null; }
+                return actx;
+            }
+            function tone(freq, dur, type, gain, sweepTo) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, osc = a.createOscillator(), g = a.createGain();
+                    osc.type = type || 'triangle';
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, sweepTo), t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(g); g.connect(master);
+                    osc.start(t); osc.stop(t + dur + 0.02);
+                } catch (e) {}
+            }
+            function noise(dur, gain) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, n = Math.max(1, Math.floor(a.sampleRate * dur));
+                    const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+                    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+                    const src = a.createBufferSource(); src.buffer = buf;
+                    const g = a.createGain(); g.gain.value = gain || 0.2;
+                    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100;
+                    src.connect(f); f.connect(g); g.connect(master);
+                    src.start(t); src.stop(t + dur);
+                } catch (e) {}
+            }
+            const _last = Object.create(null);
+            function gate(key, minMs) {
+                const now = (window.performance && performance.now) ? performance.now() : Date.now();
+                if (_last[key] && now - _last[key] < minMs) return false;
+                _last[key] = now; return true;
+            }
+            return {
+                get muted() { return muted; },
+                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('survivors_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                toggle: function () { this.setMuted(!muted); return muted; },
+                setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
+                tone: tone, noise: noise, gate: gate,
+                // ---- per-weapon cues (21, all distinct) ----
+                wEnergyBolt:  function () { tone(620, 0.06, 'square', 0.14, 840); },
+                wPlasmaOrbit: function () { if (!gate('worb', 90)) return; tone(300, 0.05, 'triangle', 0.10, 200); },
+                wBoomBox:     function () { tone(110, 0.22, 'square', 0.20, 55); noise(0.12, 0.14); },
+                wBeam:        function () { if (!gate('wbeam', 360)) return; tone(880, 0.10, 'sawtooth', 0.07, 920); },
+                wStarField:   function () { tone(1320, 0.07, 'sine', 0.10, 1760); },
+                wVoidDaggers: function () { tone(740, 0.05, 'sawtooth', 0.12, 1100); },
+                wFlame:       function () { if (!gate('wflame', 240)) return; noise(0.18, 0.10); tone(180, 0.12, 'sawtooth', 0.05, 90); },
+                wSquirrel:    function () { tone(1000, 0.05, 'square', 0.12, 1900); tone(1500, 0.04, 'square', 0.08); },
+                wThunder:     function () { noise(0.16, 0.18); tone(140, 0.10, 'sawtooth', 0.12, 60); },
+                wToxic:       function () { tone(220, 0.12, 'sine', 0.07, 160); },
+                wIce:         function () { tone(1500, 0.06, 'triangle', 0.10, 2100); },
+                wMeteor:      function () { tone(90, 0.22, 'sawtooth', 0.16, 300); noise(0.14, 0.14); },
+                wGhost:       function () { tone(520, 0.12, 'sine', 0.10, 260); },
+                wBoomerang:   function () { tone(680, 0.10, 'triangle', 0.11, 300); },
+                wChain:       function () { tone(1400, 0.05, 'square', 0.10, 2400); tone(2400, 0.04, 'square', 0.07); },
+                wArrow:       function () { tone(900, 0.04, 'sawtooth', 0.10, 1500); },
+                wGravity:     function () { tone(160, 0.26, 'sine', 0.12, 40); },
+                wRicochet:    function () { tone(820, 0.05, 'square', 0.11, 1240); },
+                wMineDrop:    function () { tone(440, 0.05, 'square', 0.09, 330); },
+                wMineBlast:   function () { noise(0.16, 0.18); tone(120, 0.12, 'square', 0.14, 60); },
+                wShotgun:     function () { noise(0.10, 0.18); tone(220, 0.07, 'square', 0.12, 90); },
+                // ---- event cues ----
+                hit:        function () { if (!gate('hit', 55)) return; noise(0.03, 0.06); },
+                kill:       function () { if (!gate('kill', 40)) return; tone(180, 0.07, 'square', 0.12, 90); noise(0.05, 0.08); },
+                hurt:       function () { tone(200, 0.16, 'sawtooth', 0.20, 90); },
+                shieldBlock:function () { if (!gate('shield', 60)) return; tone(520, 0.08, 'sine', 0.14, 260); noise(0.04, 0.08); },
+                playerDeath:function () { tone(330, 0.5, 'sawtooth', 0.22, 60); },
+                levelup:    function () { tone(523, 0.10, 'square', 0.18, 784); setTimeout(function(){ tone(784, 0.12, 'square', 0.16, 1046); }, 110); },
+                confirm:    function () { tone(660, 0.08, 'square', 0.16, 990); },
+                gem:        function () { if (!gate('gem', 60)) return; tone(1046, 0.04, 'sine', 0.08, 1568); },
+                chest:      function () { tone(440, 0.10, 'triangle', 0.16, 880); setTimeout(function(){ tone(660, 0.12, 'triangle', 0.16, 1320); }, 120); },
+                legendary:  function () { tone(784, 0.12, 'square', 0.18, 1046); setTimeout(function(){ tone(1318, 0.18, 'square', 0.16); }, 150); },
+                bossWarn:   function () { tone(110, 0.4, 'sawtooth', 0.22, 70); },
+                powerup:    function () { tone(880, 0.10, 'square', 0.14, 1320); },
+                gameover:   function () { tone(440, 0.6, 'sawtooth', 0.22, 110); },
+                submit:     function () { tone(660, 0.10, 'square', 0.16, 990); setTimeout(function(){ tone(990, 0.12, 'square', 0.16, 1320); }, 100); },
+                pause:      function (resuming) { tone(330, 0.08, 'square', 0.12, resuming ? 440 : 220); },
+                uiClick:    function () { tone(520, 0.04, 'square', 0.10, 620); }
+            };
+        })();
+        window.SFX = SFX;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { SFX.unlock(); }, { once: true, passive: true });
+        });
+        // Delegated UI-click cue (avoids editing every button handler)
+        document.addEventListener('click', function (e) {
+            if (e.target && e.target.closest && e.target.closest('.menu-btn, .settings-close-btn, .settings-btn, .weapon-select-card, .weapon-select-btn, .pause-menu-btn, .score-btn, #startBtn, #weaponConfirmBtn')) {
+                SFX.uiClick();
+            }
+        });
+        // Mute button wiring
+        (function () {
+            var mb = document.getElementById('muteBtn');
+            if (!mb) return;
+            function r() { mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true' : 'false'); }
+            r();
+            mb.addEventListener('click', function (e) { e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
+            mb.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
+        })();
+
         // ========== CANVAS-ONLY LAYOUT ==========
         // All UI rendered on single canvas for zoom independence
         const BASE_WIDTH = 800;
@@ -7198,7 +7353,8 @@
                     } else {
                         this.xpToNext = Math.floor(this.xpToNext * 1.3) + 5;
                     }
-                    
+
+                    SFX.levelup();
                     showUpgradeSelection();
                 }
             }
@@ -7229,22 +7385,26 @@
                     if (this.shieldHp >= reducedDamage) {
                         this.shieldHp -= reducedDamage;
                         spawnParticles(this.x, this.y, '#4488ff', 12); // Blue particles for shield hit
+                        SFX.shieldBlock();
                     } else {
                         const overflow = reducedDamage - this.shieldHp;
                         this.shieldHp = 0;
                         this.hp -= overflow;
                         spawnParticles(this.x, this.y, '#4488ff', 8);
                         spawnParticles(this.x, this.y, COLORS.pink, 8);
+                        SFX.hurt();
                     }
                 } else {
                     this.hp -= reducedDamage;
                     spawnParticles(this.x, this.y, COLORS.pink, 10);
+                    SFX.hurt();
                 }
-                
+
                 this.invincible = this.invincibilityDuration;
-                
+
                 if (this.hp <= 0) {
                     startDeathAnimation(this.x, this.y);
+                    SFX.playerDeath();
                 }
             }
 
@@ -7460,8 +7620,9 @@
                 if (!target) return;
                 
                 state.lastFire = now;
+                SFX.wEnergyBolt();
                 const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
-                
+
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 const spread = 0.2;
                 
@@ -7520,6 +7681,7 @@
                             player.onDealDamage(damage);
                             applyStatusEffects(enemy, damage);
                             enemy.orbHitCooldown = 250;
+                            SFX.wPlasmaOrbit();
                             
                             // Knockback (smooth)
                             if (def.knockbackForce) {
@@ -7586,7 +7748,8 @@
                 
                 // Consume a charge
                 weaponState.shieldCharges--;
-                
+                SFX.shieldBlock();
+
                 // Start regen timer for this charge
                 const regenTime = def.chargeRegenTime || 8000;
                 weaponState.chargeRegenTimers.push(Date.now() + regenTime);
@@ -7643,9 +7806,10 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 state.lastFire = now;
+                SFX.wBoomBox();
                 const radius = def.baseRadius + level * 10;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                
+
                 // Visual wave
                 state.waveRadius = 0;
                 state.waveMaxRadius = radius;
@@ -7819,7 +7983,8 @@
                     const tickInterval = 100 / this.attackSpeedMultiplier;
                     if (!beam.lastTick || now - beam.lastTick >= tickInterval) {
                         beam.lastTick = now;
-                        
+                        SFX.wBeam();
+
                         const tickDamage = baseDamage * beam.ramp * 0.1; // DPS / 10 ticks per second
                         
                         const { damage, isCrit } = this.calcDamage(tickDamage);
@@ -7922,6 +8087,7 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 state.lastFire = now;
+                SFX.wVoidDaggers();
                 const daggerCount = def.baseDaggers + Math.floor(level / 2);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const pierce = 1 + Math.floor(level / 5); // +1 pierce per 5 levels
@@ -7973,7 +8139,8 @@
                 }
                 
                 state.lastFire = now;
-                
+                SFX.wFlame();
+
                 // Find the direction with the most enemies (AOE targeting)
                 let targetAngle = state.targetAngle || 0;
                 
@@ -8135,6 +8302,7 @@
                 if (!target) return;
                 
                 state.lastFire = now;
+                SFX.wBoomerang();
                 const count = def.baseCount + Math.floor(level / 6);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
@@ -8169,6 +8337,7 @@
                 if (allTargets.length === 0) return;
                 
                 state.lastFire = now;
+                SFX.wThunder();
                 const strikeCount = def.baseStrikes + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 
@@ -8200,9 +8369,10 @@
                 if (now - (state.lastTick || 0) < tickRate) return;
                 
                 state.lastTick = now;
+                SFX.wToxic();
                 const radius = def.baseRadius + level * 10;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                
+
                 // Store for rendering
                 state.auraRadius = radius;
                 state.auraPulse = now;
@@ -8240,9 +8410,10 @@
                 if (now - (state.lastTick || 0) < tickRate) return;
                 
                 state.lastTick = now;
+                SFX.wStarField();
                 const radius = def.baseRadius + level * 15;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                
+
                 // Initialize falling stars array
                 if (!state.fallingStars) state.fallingStars = [];
                 
@@ -8321,8 +8492,9 @@
                 if (!target) return;
                 
                 state.lastFire = now;
+                SFX.wIce();
                 const pierce = 1 + Math.floor(level / 4); // +1 pierce per 4 levels
-                
+
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 const spread = 0.25;
                 
@@ -8360,6 +8532,7 @@
                 }
                 
                 state.lastFire = now;
+                SFX.wMeteor();
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const blastRadius = def.blastRadius + level * 5;
                 const meteorCount = 1 + Math.floor(level / 5);
@@ -8443,10 +8616,11 @@
                 if (!hasTargets) return;
                 
                 state.lastFire = now;
+                SFX.wGhost();
                 const orbCount = def.baseOrbs + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
-                
+
                 // Random base angle so orbs don't always exit from same direction
                 const baseAngle = Math.random() * Math.PI * 2;
                 
@@ -8594,6 +8768,7 @@
                     if (bestTarget) {
                         // Start pounce! Store reference to track enemy
                         sq.squirrelState = 'winding';
+                        SFX.wSquirrel();
                         sq.windStart = now;
                         sq.pounceTargetRef = bestTarget; // Store enemy reference
                         sq.pounceTarget = { x: bestTarget.x, y: bestTarget.y };
@@ -8615,6 +8790,7 @@
                 if (!target) return;
                 
                 state.lastFire = now;
+                SFX.wChain();
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const chainCount = def.baseChains + Math.floor(level / 4);
                 const chainRange = def.chainRange + level * 10;
@@ -8708,6 +8884,7 @@
                 if (!target) return;
                 
                 state.lastFire = now;
+                SFX.wArrow();
                 state.burstShots++;
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
@@ -8795,7 +8972,8 @@
                 if (!bestPos) return;
                 
                 state.lastFire = now;
-                
+                SFX.wGravity();
+
                 // Initialize wells array
                 if (!state.wells) state.wells = [];
                 
@@ -8831,7 +9009,8 @@
                 if (!target) return;
                 
                 state.lastFire = now;
-                
+                SFX.wRicochet();
+
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const bounces = def.baseBounces + Math.floor(level / 3);
                 const bounceRange = def.bounceRange + level * 10;
@@ -8866,10 +9045,11 @@
                 }
                 
                 state.lastFire = now;
-                
+                SFX.wMineDrop();
+
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
                 const blastRadius = def.blastRadius + level * 5;
-                
+
                 // Drop behind player based on movement
                 const dropX = this.x - (this.lastMoveX || 0) * 40;
                 const dropY = this.y - (this.lastMoveY || 0) * 40;
@@ -8924,7 +9104,8 @@
                 if (!bestTarget) return;
                 
                 state.lastFire = now;
-                
+                SFX.wShotgun();
+
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.06);
                 const pelletCount = def.pelletCount + Math.floor(level / 3);
                 const spreadAngle = def.spreadAngle + level * 0.02;
@@ -10445,7 +10626,8 @@
                 // Reduce tracked incoming damage (projectile has hit)
                 this.incomingDamage = Math.max(0, this.incomingDamage - amount);
                 spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
-                
+                SFX.hit();
+
                 if (this.hp <= 0 && !this.dead) {
                     this.die();
                 }
@@ -10455,6 +10637,7 @@
                 if (this.dead) return; // Prevent double death
                 this.dead = true;
                 kills++;
+                SFX.kill();
                 const killEl = document.getElementById('killCount'); if (killEl) killEl.textContent = kills;
                 
                 // Spawn XP gem - find valid position outside terrain
@@ -12564,7 +12747,8 @@
                 
                 // Show modal with slot spinning
                 DOM.chestModal.classList.add('visible');
-                
+                SFX.chest();
+
                 // Store contents for reveal
                 const contents = this.contents;
                 const chestColor = color;
@@ -14833,7 +15017,8 @@
                 
                 if (shouldExplode) {
                     mine.exploded = true;
-                    
+                    SFX.wMineBlast();
+
                     // AOE damage
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
@@ -15675,7 +15860,8 @@
 
         function showLegendaryUpgrade() {
             gamePaused = true;
-            
+            SFX.legendary();
+
             // Create overlay
             let overlay = document.getElementById('legendaryOverlay');
             if (!overlay) {
@@ -17278,7 +17464,8 @@
                 // Collect
                 if (dist < player.radius + this.radius) {
                     player.gainXP(this.value);
-                    
+                    SFX.gem();
+
                     // Gold from collecting orbs (based on XP value)
                     const goldDrop = Math.max(1, Math.floor(this.value / 2));
                     playerGold += goldDrop;
@@ -18233,6 +18420,7 @@
         }
         
         function showBossWarning(text, color) {
+            SFX.bossWarn();
             showStackedWarning({
                 html: `<div style="font-size: 36px;">${text} INCOMING!</div>`,
                 color: color,
@@ -18805,9 +18993,10 @@
             
             DOM.upgradeOverlay.classList.remove('active');
             gamePaused = false;
+            SFX.confirm();
             updateWeaponsDisplay();
             updateTomesDisplay();
-            
+
             // Process any queued warnings after a short delay
             setTimeout(processWarningQueue, 300);
         }
@@ -21771,7 +21960,8 @@
 
         function gameOver() {
             gameRunning = false;
-            
+            SFX.gameover();
+
             // Store stats for later display
             const minutes = Math.floor(gameTime / 60);
             const seconds = Math.floor(gameTime % 60);
@@ -21842,6 +22032,7 @@
                 DOM.chestModal.classList.contains('visible')) return;
             
             gamePaused = !gamePaused;
+            SFX.pause(!gamePaused); // resume tone when unpausing
             DOM.pauseBtn.textContent = gamePaused ? '▶' : '⏸';
             DOM.pauseBtn.classList.toggle('paused', gamePaused);
             
@@ -22137,6 +22328,7 @@
                 } else {
                     saveLocalScore(username, pendingScore, pendingTime);
                 }
+                SFX.submit();
                 hideScoreModal();
             } catch (e) {
                 console.warn('Score submission failed:', e);
@@ -22465,6 +22657,7 @@
             if (fpsToggle) fpsToggle.classList.toggle('active', settings.showFps);
             if (particlesToggle) particlesToggle.classList.toggle('active', settings.reducedParticles);
             if (fpsCounter) fpsCounter.classList.toggle('active', settings.showFps);
+            if (window.SFX) SFX.setVolume((settings.sfxVolume || 100) / 100);
         }
         
         // Apply zoom to camera if available
@@ -22524,6 +22717,7 @@
             settings.sfxVolume = parseInt(e.target.value);
             saveSettings();
             updateUI();
+            if (window.SFX) SFX.setVolume((settings.sfxVolume || 100) / 100);
         });
         
         if (zoomSlider) zoomSlider.addEventListener('input', function(e) {
