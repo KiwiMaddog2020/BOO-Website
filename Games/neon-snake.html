@@ -1004,7 +1004,19 @@
             0%, 100% { opacity: 0.5; transform: scale(0.9); }
             50% { opacity: 1; transform: scale(1.1); }
         }
-        
+
+        /* Respect reduced-motion: kill looping/decorative keyframe animations.
+           Canvas Math.sin pulses are unaffected. */
+        @media (prefers-reduced-motion: reduce) {
+            .powerup-overlay.active .powerup-title,
+            .powerup-overlay.active .powerup-slot::before,
+            .powerup-slot.rolling .powerup-content,
+            .powerup-slot.rolling .powerup-icon,
+            .score-input.error {
+                animation: none !important;
+            }
+        }
+
         .powerup-slot.revealed {
             border-color: #0ff;
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.4), inset 0 0 20px rgba(0, 255, 255, 0.1);
@@ -1382,7 +1394,7 @@
         <div class="tutorial-container">
             <div class="tutorial-header">
                 <div class="tutorial-title">📖 HOW TO PLAY</div>
-                <button class="tutorial-close" id="tutorialClose">✕</button>
+                <button class="tutorial-close" id="tutorialClose" type="button" aria-label="Close tutorial">✕</button>
             </div>
             <div class="tutorial-content" id="tutorialContent">
                 <!-- Step 1: Controls -->
@@ -1433,6 +1445,7 @@
     <div class="game-container">
         <div class="canvas-wrapper">
             <canvas id="gameCanvas"></canvas>
+            <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:8px;left:8px;z-index:60;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
             <div class="game-over" id="gameOver">
                 <h2>GAME OVER</h2>
                 <p>Score: <span id="finalScore">0</span></p>
@@ -1488,7 +1501,7 @@
         <div class="leaderboard-container">
             <div class="leaderboard-header">
                 <div class="leaderboard-title">🏆 TOP 100</div>
-                <button class="leaderboard-close" id="leaderboardClose">✕</button>
+                <button class="leaderboard-close" id="leaderboardClose" type="button" aria-label="Close leaderboard">✕</button>
             </div>
             <div class="leaderboard-list" id="leaderboardList">
                 <div class="leaderboard-loading">Loading scores...</div>
@@ -1528,6 +1541,93 @@
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+
+        // ===== Synth WebAudio SFX engine (Snake Racing) =====
+        const SFX = (function () {
+            let actx = null, master = null, muted = false, vol = 1;
+            try { muted = localStorage.getItem('snake_muted') === '1'; } catch (e) {}
+            function ensure() {
+                if (actx) return actx;
+                try {
+                    const AC = window.AudioContext || window.webkitAudioContext;
+                    if (!AC) return null;
+                    actx = new AC();
+                    master = actx.createGain();
+                    master.gain.value = muted ? 0 : 0.32 * vol;
+                    master.connect(actx.destination);
+                } catch (e) { actx = null; }
+                return actx;
+            }
+            function tone(freq, dur, type, gain, sweepTo) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, osc = a.createOscillator(), g = a.createGain();
+                    osc.type = type || 'triangle';
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, sweepTo), t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(g); g.connect(master);
+                    osc.start(t); osc.stop(t + dur + 0.02);
+                } catch (e) {}
+            }
+            function noise(dur, gain) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, n = Math.max(1, Math.floor(a.sampleRate * dur));
+                    const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+                    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+                    const src = a.createBufferSource(); src.buffer = buf;
+                    const g = a.createGain(); g.gain.value = gain || 0.2;
+                    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100;
+                    src.connect(f); f.connect(g); g.connect(master);
+                    src.start(t); src.stop(t + dur);
+                } catch (e) {}
+            }
+            const _last = Object.create(null);
+            function gate(key, minMs) {
+                const now = (window.performance && performance.now) ? performance.now() : Date.now();
+                if (_last[key] && now - _last[key] < minMs) return false;
+                _last[key] = now; return true;
+            }
+            return {
+                get muted() { return muted; },
+                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('snake_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                toggle: function () { this.setMuted(!muted); return muted; },
+                setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
+                tone: tone, noise: noise, gate: gate,
+                eat:        function (len) { tone(440 + Math.min((len || 0) * 14, 520), 0.06, 'triangle', 0.22); },
+                powerup:    function () { tone(523, 0.10, 'square', 0.18); setTimeout(function(){ tone(784, 0.12, 'square', 0.18); }, 70); },
+                slotReveal: function (i) { tone(660 + (i || 0) * 120, 0.05, 'square', 0.16); },
+                choose:     function () { tone(523, 0.10, 'triangle', 0.24); setTimeout(function(){ tone(659, 0.10, 'triangle', 0.24); }, 100); setTimeout(function(){ tone(880, 0.12, 'triangle', 0.24); }, 205); },
+                kill:       function () { tone(660, 0.08, 'triangle', 0.20); setTimeout(function(){ tone(990, 0.08, 'triangle', 0.20); }, 70); setTimeout(function(){ tone(1320, 0.10, 'triangle', 0.20); }, 150); },
+                enemyGone:  function () { tone(280, 0.10, 'sine', 0.14, 200); },
+                gameover:   function () { tone(440, 0.25, 'sawtooth', 0.26, 210); setTimeout(function(){ tone(220, 0.30, 'sawtooth', 0.26, 90); }, 200); },
+                submit:     function () { tone(523, 0.12, 'triangle', 0.24); setTimeout(function(){ tone(784, 0.16, 'triangle', 0.24); }, 110); },
+                submitError:function () { tone(300, 0.14, 'sawtooth', 0.20, 170); },
+                uiClick:    function () { tone(600, 0.04, 'sine', 0.12, 520); }
+            };
+        })();
+        window.SFX = SFX;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { SFX.unlock(); }, { once: true, passive: true });
+        });
+
+        // Delegated UI click blip (click only — buttons also bind touchend, avoid double-fire)
+        document.addEventListener('click', function (e) {
+            if (e.target.closest && e.target.closest('.menu-btn, .score-btn, .btn-leaderboard, #menuStartBtn, #leaderboardClose, #startBtn')) SFX.uiClick();
+        });
+
+        // Mute button wiring (persistent overlay button, top-left of the game area)
+        (function () { var mb = document.getElementById('muteBtn'); if (!mb) return;
+          function r(){ mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true':'false'); } r();
+          mb.addEventListener('click', function(e){ e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
+          mb.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:true}); })();
+
         const startBtn = document.getElementById('startBtn');
         const scoreEl = document.getElementById('score');
         const highScoreEl = document.getElementById('highScore');
@@ -2199,6 +2299,7 @@
                 setTimeout(() => {
                     clearInterval(intervalId);
                     slot.classList.remove('rolling');
+                    SFX.slotReveal(i);
                     slot.classList.add('revealed');
                     
                     const powerup = currentPowerupChoices[i];
@@ -2234,6 +2335,7 @@
             });
             
             // Apply powerup
+            SFX.choose();
             choice.apply();
             
             // Close overlay
@@ -2537,6 +2639,7 @@
         
         // Simple kill for wall/self collision (no animation)
         function simpleKillEnemy(enemy, currentTime) {
+            SFX.enemyGone();
             enemy.alive = false;
             enemy.spawning = false;
             enemy.segments = [];
@@ -2917,6 +3020,7 @@
                 const points = activePowerups.doublePoints ? 20 : 10;
                 score += points;
                 scoreEl.textContent = score;
+                SFX.eat(snake.length);
                 spawnFood();
                 // Speed up gradually (stays playable)
                 if (speed > 100) speed -= 2;
@@ -2930,6 +3034,7 @@
                 powerupFood.spawning = false;
                 powerupFood.x = -1;
                 powerupFood.y = -1;
+                SFX.powerup();
                 showPowerupSelector();
             }
             
@@ -2942,6 +3047,7 @@
                 gameOver();
                 return;
             } else if (collision.result === 'enemy_dies') {
+                SFX.kill();
                 startKillAnimation(collision.enemy, currentTime);
             }
 
@@ -2949,6 +3055,7 @@
         }
 
         function gameOver() {
+            SFX.gameover();
             gameRunning = false;
             controlsButtons.style.display = 'flex';
             powerupTimerEl.classList.remove('active');
@@ -3504,6 +3611,7 @@
             // Validation
             if (username.length < 2) {
                 scoreErrorMsg.textContent = 'Name must be at least 2 characters';
+                SFX.submitError();
                 usernameInput.classList.add('error');
                 setTimeout(() => usernameInput.classList.remove('error'), 400);
                 return;
@@ -3511,6 +3619,7 @@
             
             if (containsProfanity(rawName) || containsProfanity(username)) {
                 scoreErrorMsg.textContent = 'Please choose an appropriate name';
+                SFX.submitError();
                 usernameInput.classList.add('error');
                 setTimeout(() => usernameInput.classList.remove('error'), 400);
                 return;
@@ -3532,9 +3641,10 @@
                     // Offline mode - save to localStorage
                     saveLocalScore(username, pendingScore, pendingLength);
                 }
-                
+
+                SFX.submit();
                 hideScoreModal();
-                
+
             } catch (e) {
                 console.warn('Score submission failed:', e);
                 // Fallback to local storage
@@ -3656,7 +3766,7 @@
                 html += `
                     <div class="leaderboard-row ${rankClass}">
                         <div class="leaderboard-rank">#${rank}</div>
-                        <div class="leaderboard-name">${escapeHtml(entry.name)}</div>
+                        <div class="leaderboard-name">${escapeHtml(entry.name || '???')}</div>
                         <div class="leaderboard-score">${(Number(entry.score) || 0).toLocaleString()}</div>
                         <div class="leaderboard-length">🐍${lengthDisplay}</div>
                     </div>
