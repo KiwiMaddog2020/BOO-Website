@@ -635,6 +635,16 @@
             50% { opacity: 1; text-shadow: 0 0 15px #00ff88, 0 0 30px #00ff88; }
         }
 
+        @media (prefers-reduced-motion: reduce) {
+            .title,
+            .upgrade-title,
+            .auto-fire-indicator,
+            .upgrade-slot::before,
+            .upgrade-slot.rolling .upgrade-content {
+                animation: none !important;
+            }
+        }
+
         @media (hover: hover) and (pointer: fine) {
             .touch-controls {
                 display: none !important;
@@ -677,18 +687,19 @@
 <body>
     <div class="game-container">
         <canvas id="gameCanvas"></canvas>
-        
+        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:8px;left:8px;z-index:60;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
+
         <div class="hud">
             <div class="hud-left">
                 <div class="hud-item">
                     <span class="hud-label">WAVE</span>
-                    <span class="hud-value" id="waveDisplay">1</span>
+                    <span class="hud-value" id="waveDisplay" aria-live="polite">1</span>
                 </div>
             </div>
             <div class="hud-right">
                 <div class="hud-item">
                     <span class="hud-label">SCORE</span>
-                    <span class="hud-value" id="scoreDisplay">0</span>
+                    <span class="hud-value" id="scoreDisplay" aria-live="polite">0</span>
                 </div>
             </div>
         </div>
@@ -716,7 +727,7 @@
 
         <!-- Score Input Modal -->
         <div class="score-modal" id="scoreModal">
-            <div class="score-modal-content">
+            <div class="score-modal-content" role="dialog" aria-modal="true" aria-label="Submit your score">
                 <div class="score-modal-title">🏆 NEW SCORE!</div>
                 <label class="score-input-label">Enter your name for the leaderboard:</label>
                 <input type="text" class="score-input" id="usernameInput" maxlength="12" placeholder="Your name">
@@ -730,10 +741,10 @@
 
         <!-- Leaderboard Overlay -->
         <div class="leaderboard-overlay" id="leaderboardOverlay">
-            <div class="leaderboard-container">
+            <div class="leaderboard-container" role="dialog" aria-modal="true" aria-label="Top scores leaderboard">
                 <div class="leaderboard-header">
                     <div class="leaderboard-title">🏆 TOP SCORES</div>
-                    <button class="leaderboard-close" id="leaderboardClose">✕</button>
+                    <button class="leaderboard-close" id="leaderboardClose" aria-label="Close leaderboard">✕</button>
                 </div>
                 <div class="leaderboard-list" id="leaderboardList">
                     <div class="leaderboard-loading">Loading scores...</div>
@@ -807,6 +818,107 @@
             window.addEventListener('unhandledrejection', function(e) {
                 if (isCorsPromiseRejection(e)) { e.preventDefault(); e.stopPropagation(); return true; }
             }, true);
+        })();
+
+        // ===== Synth WebAudio SFX engine (Neon Space Shooter) =====
+        const SFX = (function () {
+            let actx = null, master = null, muted = false, vol = 1;
+            try { muted = localStorage.getItem('spaceshooter_muted') === '1'; } catch (e) {}
+            function ensure() {
+                if (actx) return actx;
+                try {
+                    const AC = window.AudioContext || window.webkitAudioContext;
+                    if (!AC) return null;
+                    actx = new AC();
+                    master = actx.createGain();
+                    master.gain.value = muted ? 0 : 0.32 * vol;
+                    master.connect(actx.destination);
+                } catch (e) { actx = null; }
+                return actx;
+            }
+            function tone(freq, dur, type, gain, sweepTo) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, osc = a.createOscillator(), g = a.createGain();
+                    osc.type = type || 'triangle';
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, sweepTo), t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(g); g.connect(master);
+                    osc.start(t); osc.stop(t + dur + 0.02);
+                } catch (e) {}
+            }
+            function noise(dur, gain) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, n = Math.max(1, Math.floor(a.sampleRate * dur));
+                    const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+                    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+                    const src = a.createBufferSource(); src.buffer = buf;
+                    const g = a.createGain(); g.gain.value = gain || 0.2;
+                    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100;
+                    src.connect(f); f.connect(g); g.connect(master);
+                    src.start(t); src.stop(t + dur);
+                } catch (e) {}
+            }
+            const _last = Object.create(null);
+            function gate(key, minMs) {
+                const now = (window.performance && performance.now) ? performance.now() : Date.now();
+                if (_last[key] && now - _last[key] < minMs) return false;
+                _last[key] = now; return true;
+            }
+            return {
+                get muted() { return muted; },
+                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('spaceshooter_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                toggle: function () { this.setMuted(!muted); return muted; },
+                setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
+                tone: tone, noise: noise, gate: gate,
+                shoot:      function () { tone(660, 0.05, 'square', 0.12, 240); },
+                shootMulti: function () { tone(660, 0.05, 'square', 0.13, 240); tone(880, 0.04, 'square', 0.07, 520); },
+                enemyShoot: function () { if (!gate('eshoot', 50)) return; tone(300, 0.10, 'sawtooth', 0.14, 180); },
+                bossFire:   function () { tone(900, 0.10, 'sawtooth', 0.15, 170); },
+                hit:        function () { if (!gate('hit', 40)) return; tone(720, 0.045, 'triangle', 0.12, 560); },
+                crit:       function () { if (!gate('hit', 40)) return; tone(990, 0.06, 'square', 0.16, 620); },
+                enemyDeath: function () { noise(0.14, 0.20); tone(180, 0.16, 'sawtooth', 0.18, 60); },
+                playerHit:  function () { tone(360, 0.30, 'sine', 0.24, 90); },
+                playerHitHeavy: function () { noise(0.18, 0.22); tone(300, 0.30, 'sine', 0.24, 80); },
+                waveStart:  function () { tone(523, 0.10, 'triangle', 0.20); setTimeout(function(){ tone(784, 0.14, 'triangle', 0.22); }, 90); },
+                wavePanel:  function () { tone(660, 0.08, 'triangle', 0.18); setTimeout(function(){ tone(990, 0.10, 'triangle', 0.20); }, 70); },
+                slotTick:   function () { if (!gate('slot', 120)) return; tone(740, 0.04, 'square', 0.10, 600); },
+                slotReveal: function () { tone(880, 0.06, 'square', 0.14, 560); },
+                upgrade:    function () { tone(523, 0.10, 'triangle', 0.22); setTimeout(function(){ tone(659, 0.10, 'triangle', 0.22); }, 100); setTimeout(function(){ tone(880, 0.16, 'triangle', 0.22); }, 205); },
+                bossSpawn:  function () { tone(110, 0.40, 'sawtooth', 0.22, 70); noise(0.30, 0.18); },
+                bossHit:    function () { if (!gate('bhit', 40)) return; tone(170, 0.07, 'sawtooth', 0.18, 110); },
+                bossDeath:  function () { noise(0.35, 0.30); tone(220, 0.45, 'sawtooth', 0.26, 55); },
+                gameover:   function () { tone(440, 0.25, 'sawtooth', 0.24, 210); setTimeout(function(){ tone(220, 0.50, 'sawtooth', 0.24, 90); }, 200); },
+                submit:     function () { tone(523, 0.10, 'triangle', 0.22); setTimeout(function(){ tone(784, 0.16, 'triangle', 0.22); }, 110); },
+                uiClick:    function () { tone(660, 0.06, 'square', 0.16, 220); }
+            };
+        })();
+        window.SFX = SFX;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { SFX.unlock(); }, { once: true, passive: true });
+        });
+
+        // ===== UI click SFX (delegated) + mute button wiring =====
+        document.addEventListener('click', function (e) {
+            if (!(e.target && e.target.closest)) return;
+            // Exclude upgrade slots — they emit the richer SFX.upgrade() arpeggio.
+            if (e.target.closest('.upgrade-slot')) return;
+            if (e.target.closest('button, .btn, .btn-leaderboard, .leaderboard-close')) SFX.uiClick();
+        });
+        (function () {
+            var mb = document.getElementById('muteBtn');
+            if (!mb) return;
+            function r() { mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true' : 'false'); }
+            r();
+            mb.addEventListener('click', function (e) { e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
+            mb.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
         })();
 
         // ========== CONFIGURATION ==========
@@ -1111,7 +1223,6 @@
         let touchLeft = false;
         let touchRight = false;
         let mouseX = null;
-        let mouseDown = false;
 
         // Upgrade system
         let upgradeSelectionActive = false;
@@ -1250,12 +1361,6 @@
         canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
         canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
-        canvas.addEventListener('mousedown', (e) => {
-            if (gameState !== 'playing') return;
-            e.preventDefault();
-            mouseDown = true;
-        });
-
         canvas.addEventListener('mousemove', (e) => {
             if (gameState === 'playing') {
                 const rect = canvas.getBoundingClientRect();
@@ -1270,9 +1375,7 @@
             }
         });
 
-        canvas.addEventListener('mouseup', () => { mouseDown = false; });
         canvas.addEventListener('mouseleave', () => { mouseX = null; });
-        document.addEventListener('mouseup', () => { mouseDown = false; });
 
         startBtn.addEventListener('click', startGame);
         restartBtn.addEventListener('click', startGame);
@@ -1513,6 +1616,9 @@
                     hue: 180 + Math.random() * 40 // Cyan-ish hue variation
                 });
             }
+
+            // One shoot cue per fire (not per projectile)
+            if (totalProjectiles > 1) SFX.shootMulti(); else SFX.shoot();
 
             // Plasma muzzle flash
             for (let i = 0; i < 6; i++) {
@@ -1755,7 +1861,8 @@
                 damage: 25,
                 color: '#ff4444'
             });
-            
+            SFX.enemyShoot();
+
             // Muzzle flash particles
             for (let i = 0; i < 6; i++) {
                 particles.push({
@@ -1783,6 +1890,7 @@
                 if (!player.invincible && circleRectCollision(p.x, p.y, p.radius, player)) {
                     const damage = p.damage * (1 - Math.min(playerStats.armor, 0.75));
                     player.health -= damage;
+                    SFX.playerHit();
                     createExplosion(p.x, p.y, p.color);
                     
                     if (player.health <= 0) {
@@ -2000,6 +2108,7 @@
                         const damage = isCrit ? baseDmg * CONFIG.critMultiplier : baseDmg;
                         
                         e.health -= damage;
+                        if (isCrit) SFX.crit(); else SFX.hit();
                         createDamageNumber(b.x + b.width/2, e.y, damage, isCrit);
                         createHitParticles(b.x + b.width / 2, b.y, e.color);
                         
@@ -2013,6 +2122,7 @@
                         
                         if (e.health <= 0) {
                             createExplosion(e.x + e.width / 2, e.y + e.height / 2, e.color);
+                            SFX.enemyDeath();
                             score += e.points;
                             enemies.splice(i, 1);
                             hudNeedsUpdate = true;
@@ -2033,9 +2143,10 @@
                         const damage = rawDamage * (1 - Math.min(playerStats.armor, 0.75)); // Cap at 75% reduction
                         
                         player.health -= damage;
+                        SFX.playerHit();
                         createExplosion(e.x + e.width / 2, e.y + e.height / 2, e.color);
                         enemies.splice(i, 1);
-                        
+
                         if (player.health <= 0) {
                             endGame();
                         } else {
@@ -2133,6 +2244,7 @@
                 aoeCooldown: 8000,
                 entering: true
             };
+            SFX.bossSpawn();
             bossProjectiles = [];
             bossAOEWarning = null;
         }
@@ -2193,6 +2305,7 @@
                 if (!player.invincible && circleRectCollision(p.x, p.y, p.radius, player)) {
                     const damage = 20 * (1 - Math.min(playerStats.armor, 0.75));
                     player.health -= damage;
+                    SFX.playerHit();
                     createExplosion(p.x, p.y, '#88ffff');
                     
                     if (player.health <= 0) {
@@ -2217,6 +2330,7 @@
                     const damage = isCrit ? baseDmg * CONFIG.critMultiplier : baseDmg;
                     
                     boss.health -= damage;
+                    SFX.bossHit();
                     createDamageNumber(b.x + b.width/2, boss.y + boss.height, damage, isCrit);
                     createHitParticles(b.x + b.width/2, b.y, '#ff0000');
                     
@@ -2253,7 +2367,8 @@
                 phase: 0,
                 color: '#88ffff'
             });
-            
+            SFX.bossFire();
+
             // Spark particles
             for (let i = 0; i < 8; i++) {
                 particles.push({
@@ -2292,7 +2407,8 @@
                 if (Math.abs(playerCX - strikeX) < strikeWidth / 2 + player.width / 2) {
                     const damage = 35 * (1 - Math.min(playerStats.armor, 0.75));
                     player.health -= damage;
-                    
+                    SFX.playerHitHeavy();
+
                     if (player.health <= 0) {
                         endGame();
                     } else {
@@ -2321,6 +2437,7 @@
         }
         
         function defeatBoss() {
+            SFX.bossDeath();
             // Big explosion
             for (let i = 0; i < 50; i++) {
                 const angle = (TWO_PI * i) / 50;
@@ -2541,6 +2658,7 @@
             });
             
             upgradeOverlay.classList.add('active');
+            SFX.wavePanel();
             rollSlots();
         }
         
@@ -2557,12 +2675,14 @@
                     slot.querySelector('.upgrade-icon').textContent = randomUpgrade.icon;
                     slot.querySelector('.upgrade-name').textContent = randomUpgrade.name;
                     slot.querySelector('.upgrade-desc').textContent = randomUpgrade.desc;
+                    SFX.slotTick();
                 }, 70);
                 
                 setTimeout(() => {
                     clearInterval(rollInterval);
                     const choice = currentUpgradeChoices[index];
                     slot.className = 'upgrade-slot revealed';
+                    SFX.slotReveal();
                     slot.dataset.type = choice.id;
                     slot.querySelector('.upgrade-icon').textContent = choice.icon;
                     slot.querySelector('.upgrade-name').textContent = choice.name;
@@ -2600,11 +2720,13 @@
             });
             
             choice.apply();
-            
+            SFX.upgrade();
+
             // Advance wave
             setTimeout(() => {
                 upgradeOverlay.classList.remove('active');
                 wave++;
+                SFX.waveStart();
                 waveStartTime = performance.now();
                 updateHUD();
                 
@@ -2764,6 +2886,7 @@
 
         function endGame() {
             gameState = 'gameover';
+            SFX.gameover();
             finalScore.textContent = score.toLocaleString();
             finalWave.textContent = wave;
             gameOverScreen.classList.add('active');
@@ -2896,6 +3019,7 @@
                         wave: pendingWave,
                         timestamp: firebase.firestore.FieldValue.serverTimestamp()
                     });
+                    SFX.submit();
                 } else {
                     saveLocalScore(username, pendingScore, pendingWave);
                 }
