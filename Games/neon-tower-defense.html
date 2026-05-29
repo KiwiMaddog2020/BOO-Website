@@ -2933,6 +2933,32 @@
                 font-size: 13px;
             }
         }
+
+        /* Accessibility: honor reduced-motion for decorative CSS animations.
+           Canvas rendering (the gameplay) is untouched — this only calms looping
+           UI flourishes (title pulse, slot shine, transition pulses, bounce arrow, etc.).
+           Reveal/transition logic is JS-driven, so disabling the visuals is cosmetic only. */
+        @media (prefers-reduced-motion: reduce) {
+            .upgrade-overlay.active::before,
+            .upgrade-title,
+            .upgrade-overlay.active .upgrade-title,
+            .upgrade-overlay.active .upgrade-subtitle,
+            .upgrade-overlay.active .upgrade-slot,
+            .upgrade-slot::before,
+            .upgrade-slot.rolling .upgrade-content,
+            .upgrade-slot.rolling .upgrade-icon,
+            .upgrade-slot.rarity-rare.revealed,
+            .upgrade-slot.rarity-epic.revealed,
+            .upgrade-slot.rarity-legendary.revealed,
+            .map-transition-overlay.active,
+            .transition-text,
+            .transition-progress-bar,
+            .tutorial-step,
+            .first-placement-arrow,
+            .score-input.error {
+                animation: none !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -2973,7 +2999,7 @@
         <div class="tutorial-container">
             <div class="tutorial-header">
                 <div class="tutorial-title">📖 HOW TO PLAY</div>
-                <button class="tutorial-close" id="tutorialClose">✕</button>
+                <button class="tutorial-close" id="tutorialClose" aria-label="Close">✕</button>
             </div>
             
             <div class="tutorial-step active" data-step="0">
@@ -3108,8 +3134,8 @@
         <div class="placement-preview-container">
             <div class="placement-preview-text">Place here?</div>
             <div class="placement-preview-buttons">
-                <button class="placement-btn yes" id="placementConfirm">✓</button>
-                <button class="placement-btn no" id="placementCancel">✕</button>
+                <button class="placement-btn yes" id="placementConfirm" aria-label="Confirm placement">✓</button>
+                <button class="placement-btn no" id="placementCancel" aria-label="Cancel placement">✕</button>
             </div>
         </div>
     </div>
@@ -3185,7 +3211,7 @@
         <div class="leaderboard-container">
             <div class="leaderboard-header">
                 <div class="leaderboard-title">🏆 LEADERBOARD</div>
-                <button class="leaderboard-close" id="leaderboardClose">✕</button>
+                <button class="leaderboard-close" id="leaderboardClose" aria-label="Close">✕</button>
             </div>
             <div class="leaderboard-tabs">
                 <button class="leaderboard-tab active-campaign" id="tabCampaign">Campaign</button>
@@ -3223,8 +3249,8 @@
             <div class="hud-item">🌊 <span class="hide-mobile">Wave </span><span id="waveDisplay">1</span></div>
             <div class="hud-item">💀 <span id="killsDisplay">0</span></div>
         </div>
-        <button class="speed-btn" id="speedBtn">▶▶ 1x</button>
-        <button class="exit-btn" id="exitBtn">✕ EXIT</button>
+        <button class="speed-btn" id="speedBtn" aria-label="Game speed">▶▶ 1x</button>
+        <button class="exit-btn" id="exitBtn" aria-label="Exit">✕ EXIT</button>
         <canvas id="gameCanvas" width="648" height="576"></canvas>
         <div class="placement-tooltip" id="placementTooltip">
             <span class="tower-name"></span><span class="tower-desc"></span>
@@ -3324,7 +3350,129 @@
         </div>
     </div>
 
+    <!-- Sound toggle: body-level fixed element so it stays visible in windowed AND fullscreen/iframe modes -->
+    <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:fixed;top:8px;left:8px;z-index:9999;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
+
     <script>
+        // ===== Synth WebAudio SFX engine (BOO Tower Defense) =====
+        const SFX = (function () {
+            let actx = null, master = null, muted = false, vol = 1;
+            try { muted = localStorage.getItem('towerdefense_muted') === '1'; } catch (e) {}
+            function ensure() {
+                if (actx) return actx;
+                try {
+                    const AC = window.AudioContext || window.webkitAudioContext;
+                    if (!AC) return null;
+                    actx = new AC();
+                    master = actx.createGain();
+                    master.gain.value = muted ? 0 : 0.32 * vol;
+                    master.connect(actx.destination);
+                } catch (e) { actx = null; }
+                return actx;
+            }
+            function tone(freq, dur, type, gain, sweepTo) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, osc = a.createOscillator(), g = a.createGain();
+                    osc.type = type || 'triangle';
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, sweepTo), t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(g); g.connect(master);
+                    osc.start(t); osc.stop(t + dur + 0.02);
+                } catch (e) {}
+            }
+            function noise(dur, gain) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, n = Math.max(1, Math.floor(a.sampleRate * dur));
+                    const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+                    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+                    const src = a.createBufferSource(); src.buffer = buf;
+                    const g = a.createGain(); g.gain.value = gain || 0.2;
+                    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100;
+                    src.connect(f); f.connect(g); g.connect(master);
+                    src.start(t); src.stop(t + dur);
+                } catch (e) {}
+            }
+            const _last = Object.create(null);
+            function gate(key, minMs) {
+                const now = (window.performance && performance.now) ? performance.now() : Date.now();
+                if (_last[key] && now - _last[key] < minMs) return false;
+                _last[key] = now; return true;
+            }
+            return {
+                get muted() { return muted; },
+                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                suspend: function () { if (actx && actx.state === 'running') actx.suspend().catch(function () {}); },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('towerdefense_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                toggle: function () { this.setMuted(!muted); return muted; },
+                setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
+                tone: tone, noise: noise, gate: gate,
+                // ---- per-tower fire dispatcher (distinct + throttled per type) ----
+                fire: function (type) {
+                    var minMs = (type === 'minigun' || type === 'laser') ? 150 : (type === 'tesla' || type === 'inferno') ? 110 : 80;
+                    if (!gate('fire_' + type, minMs)) return;
+                    switch (type) {
+                        case 'basic':   tone(660, 0.05, 'square', 0.16, 520); break;
+                        case 'sniper':  tone(1400, 0.09, 'sawtooth', 0.18, 300); break;
+                        case 'freeze':  tone(900, 0.12, 'sine', 0.13, 1500); break;
+                        case 'splash':  tone(220, 0.10, 'square', 0.18, 130); break;
+                        case 'laser':   tone(300, 0.08, 'sawtooth', 0.06, 360); break;
+                        case 'minigun': tone(520, 0.03, 'square', 0.10); break;
+                        case 'cannon':  tone(160, 0.14, 'sawtooth', 0.20, 90); break;
+                        case 'poison':  tone(400, 0.08, 'triangle', 0.12, 280); noise(0.04, 0.04); break;
+                        case 'chain':   tone(740, 0.05, 'square', 0.12, 1100); break;
+                        case 'tesla':   tone(1000, 0.07, 'sawtooth', 0.13, 1600); noise(0.05, 0.06); break;
+                        case 'inferno': tone(180, 0.12, 'square', 0.16, 110); break;
+                        case 'railgun': tone(1800, 0.14, 'sawtooth', 0.18, 200); break;
+                        case 'nova':    tone(300, 0.25, 'sine', 0.20, 60); noise(0.12, 0.10); break;
+                        default:        tone(600, 0.05, 'square', 0.10, 500);
+                    }
+                },
+                infernoImpact: function () { noise(0.18, 0.12); tone(120, 0.20, 'sawtooth', 0.14, 60); },
+                splashImpact:  function () { if (!gate('splashimp', 40)) return; noise(0.10, 0.10); },
+                place:      function () { tone(440, 0.07, 'square', 0.14, 660); },
+                buffPlace:  function () { tone(523, 0.10, 'sine', 0.14, 784); },
+                deny:       function () { tone(160, 0.12, 'square', 0.12, 110); },
+                enemyDeath: function (kind) { if (!gate('edeath', 28)) return; if (kind === 'fast') tone(700, 0.06, 'square', 0.10, 420); else if (kind === 'tank') tone(260, 0.10, 'square', 0.10, 160); else tone(500, 0.06, 'square', 0.10, 360); },
+                bossDeath:  function () { tone(180, 0.22, 'sawtooth', 0.18, 70); noise(0.10, 0.10); },
+                leprechaun: function () { tone(784, 0.06, 'square', 0.14); setTimeout(function(){ tone(1047, 0.08, 'square', 0.14); }, 70); },
+                lifeLost:   function () { tone(200, 0.18, 'sawtooth', 0.16, 90); },
+                bossSpawn:  function () { tone(110, 0.30, 'sawtooth', 0.16, 150); },
+                waveStart:  function () { tone(330, 0.08, 'square', 0.14); setTimeout(function(){ tone(440, 0.10, 'square', 0.14); }, 90); },
+                waveClear:  function () { tone(523, 0.09, 'sine', 0.15); setTimeout(function(){ tone(659, 0.09, 'sine', 0.15); }, 90); setTimeout(function(){ tone(784, 0.12, 'sine', 0.15); }, 180); },
+                upgradeTower: function () { tone(600, 0.08, 'square', 0.14, 900); },
+                cardPick:   function () { tone(700, 0.10, 'sine', 0.16, 1050); },
+                reroll:     function () { noise(0.05, 0.06); tone(500, 0.05, 'square', 0.10); },
+                stageClear: function () { [523, 659, 784, 1047].forEach(function(f, i){ setTimeout(function(){ tone(f, 0.10, 'triangle', 0.16); }, i * 90); }); },
+                gameover:   function () { tone(400, 0.15, 'sawtooth', 0.16, 200); setTimeout(function(){ tone(200, 0.30, 'sawtooth', 0.16, 80); }, 150); },
+                submit:     function () { tone(659, 0.10, 'sine', 0.15, 988); },
+                submitError:function () { tone(200, 0.15, 'square', 0.12, 140); },
+                uiClick:    function () { tone(440, 0.04, 'square', 0.08); }
+            };
+        })();
+        window.SFX = SFX;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { SFX.unlock(); }, { once: true, passive: true });
+        });
+        document.addEventListener('visibilitychange', function () { if (document.hidden) SFX.suspend(); else SFX.unlock(); });
+
+        // Delegated UI click sound (mute button uses stopPropagation, so it won't double-fire)
+        document.addEventListener('click', function (e) {
+            if (e.target.closest && e.target.closest('button, .menu-btn, .mode-btn, .tower-btn, .exit-btn, .speed-btn, .wave-btn, .back-btn, .tower-action-btn, .focus-option, .rotate-btn')) SFX.uiClick();
+        });
+
+        // Mute button wiring (button lives at body level so it survives fullscreen HUD hiding)
+        (function () { var mb = document.getElementById('muteBtn'); if (!mb) return;
+          function r(){ mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true':'false'); } r();
+          mb.addEventListener('click', function(e){ e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
+          mb.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:true}); })();
+
         // ========== FIREBASE CONFIGURATION ==========
         const firebaseConfig = {
             apiKey: "AIzaSyBPuBuo8DbG4dz_sYuLpmWYFGS9YbpwOg",
@@ -5311,7 +5459,7 @@
             document.getElementById('mainMenuButtons').style.display = 'flex';
             
             // Reset game state
-            gold = gameMode === 'campaign' ? 65 : 65; // Starting gold
+            gold = 65; // Starting gold
             lives = 20;
             wave = 0;
             kills = 0;
@@ -5377,10 +5525,6 @@
             } else {
                 document.body.classList.remove('campaign-mode');
             }
-            
-            // ====== TEST: Wave 30 test build (no pre-placed towers) ======
-            // Champions and towers available, place them manually to test
-            // ====== END TEST SETUP ======
             
             // Reset tutorial
             tutorialActive = true;
@@ -5722,6 +5866,7 @@
             // Pushed back special enemy wave requirements
             if (wave >= 30 && roll < megabossChance) {
                 type = 'megaboss';
+                SFX.bossSpawn();
             } else if (wave >= 15 && roll < bossChance) {
                 type = 'boss';
             } else if (wave >= 6 && roll < tankChance) {
@@ -5851,6 +5996,7 @@
                     livesLost = 3;
                 }
                 lives -= livesLost;
+                SFX.lifeLost();
                 updateHUD();
                 createParticles(enemy.x, enemy.y, '#ff0000', enemy.type === 'megaboss' ? 25 : 10);
                 
@@ -5929,6 +6075,7 @@
                     createParticles(enemy.x, enemy.y, '#ffffff', 15);
                     createSplashRing(enemy.x, enemy.y, '#00ff66', 100);
                     createSplashRing(enemy.x, enemy.y, '#ffd700', 70);
+                    SFX.leprechaun();
                     // Delay upgrade selector slightly for visual effect
                     setTimeout(() => {
                         showUpgradeSelector();
@@ -5940,8 +6087,10 @@
                     createParticles(enemy.x, enemy.y, '#ffffff', 15);
                     createSplashRing(enemy.x, enemy.y, '#ff00ff', 120);
                     createSplashRing(enemy.x, enemy.y, '#ff6600', 80);
+                    SFX.bossDeath();
                 } else {
                     createParticles(enemy.x, enemy.y, enemy.color, 15);
+                    SFX.enemyDeath(enemy.type);
                 }
             }
         }
@@ -6422,15 +6571,18 @@
                 updateHUD();
                 updateTowerButtons();
                 createParticles(x, y, def.color, 8);
-                
+                if (selectedTower === 'buff') SFX.buffPlace(); else SFX.place();
+
                 // Reset placement rotation and deselect tower
                 placementRotation = 0;
                 selectedTower = null;
                 towerBar.querySelectorAll('.tower-btn').forEach(b => b.classList.remove('selected'));
                 updatePlacementTooltip();
+            } else {
+                SFX.deny();
             }
         }
-        
+
         function placeChampion(x, y, type) {
             // Check if already placed
             if (isChampionPlaced(type)) return;
@@ -6684,6 +6836,7 @@
                         tower.beamTarget = bestTarget;
                         tower.beamLockTime = now;
                         tower.beamRetargetTime = now; // Track when we switched targets
+                        SFX.fire('laser'); // sound on lock-change only (gate also protects)
                     }
                     
                     // Retargeting delay - beam needs 800ms to acquire new target before dealing damage
@@ -6727,6 +6880,7 @@
                     // Store arc targets for rendering
                     tower.teslaTargets = targets.map(t => t.enemy);
                     tower.teslaFireTime = now;
+                    SFX.fire('tesla');
                     
                     // Damage all targets
                     for (const t of targets) {
@@ -6839,7 +6993,8 @@
                         
                         if (dist > 0) {
                             tower.lastFired = now;
-                            
+                            SFX.fire('inferno');
+
                             // Create slow-moving boulder projectile
                             projectiles.push({
                                 x: tower.x,
@@ -7055,6 +7210,7 @@
                     
                     tower.novaFireTime = now;
                     tower.novaRadius = novaRadius;
+                    SFX.fire('nova');
                     
                     // Damage all enemies in nova radius
                     for (const enemy of enemies) {
@@ -7094,6 +7250,7 @@
                     const beamWidth = def.beamWidth;
                     
                     tower.railFireTime = now;
+                    SFX.fire('railgun');
                     tower.railDirection = tower.railDirection || 0; // 0=right, 1=down, 2=left, 3=up
                     
                     // Calculate beam direction vector
@@ -7189,7 +7346,8 @@
             
             // Tower firing pulse effect
             tower.lastFired = performance.now();
-            
+            SFX.fire(tower.type);
+
             projectiles.push({
                 x: tower.x,
                 y: tower.y,
@@ -7696,9 +7854,10 @@
                     createParticles(proj.targetX, proj.targetY, '#ff4400', 20);
                     createParticles(proj.targetX, proj.targetY, '#ffaa00', 15);
                     createSplashRing(proj.targetX, proj.targetY, '#ff4400', proj.infernoRadius);
+                    SFX.infernoImpact();
                     return;
                 }
-                
+
                 // Clear incoming damage tracking from intended target
                 if (proj.intendedTarget && proj.intendedTarget.incomingDamage) {
                     proj.intendedTarget.incomingDamage = Math.max(0, proj.intendedTarget.incomingDamage - proj.damage);
@@ -7742,9 +7901,10 @@
                     createParticles(proj.targetX, proj.targetY, '#ff4400', 20);
                     createParticles(proj.targetX, proj.targetY, '#ffaa00', 15);
                     createParticles(proj.targetX, proj.targetY, '#8B4513', 10);
-                    
+
                     // Create impact ring
                     createSplashRing(proj.targetX, proj.targetY, '#ff4400', proj.infernoRadius);
+                    SFX.infernoImpact();
                 }
                 return; // Boulder doesn't collide with enemies directly
             }
@@ -7807,6 +7967,7 @@
                         }
                         createParticles(proj.x, proj.y, proj.color, 20);
                         createSplashRing(proj.x, proj.y, proj.color, splashRadius);
+                        SFX.splashImpact();
                     } else if (towerDef.isPiercing) {
                         // Piercing projectile - damage enemy and continue through
                         damageEnemy(enemy, damage, isCrit);
@@ -7894,7 +8055,8 @@
             }
             
             wave++;
-            
+            SFX.waveStart();
+
             // Track highest wave for tower unlocks (campaign mode)
             highestWaveReached = Math.max(highestWaveReached, wave);
             
@@ -8052,6 +8214,7 @@
 
         function waveComplete() {
             waveInProgress = false;
+            SFX.waveClear();
             waveBtn.disabled = false;
             waveBtn.textContent = 'START WAVE';
             towerBar.classList.remove('wave-active');
@@ -8086,6 +8249,7 @@
         
         // Trigger campaign stage transition (every 5 waves)
         function triggerCampaignStageTransition() {
+            SFX.stageClear();
             const overlay = document.getElementById('mapTransitionOverlay');
             const transitionText = document.getElementById('transitionText');
             const transitionSubtext = document.getElementById('transitionSubtext');
@@ -8380,7 +8544,8 @@
         
         function rerollUpgrades() {
             if (rerollsRemaining <= 0 || !upgradeSelectionActive) return;
-            
+
+            SFX.reroll();
             rerollsRemaining--;
             updateRerollDisplay();
             upgradeSelectionActive = false;
@@ -8471,6 +8636,7 @@
             });
             
             // Apply upgrade
+            SFX.cardPick();
             choice.apply();
             
             // Track stacks
@@ -8527,6 +8693,7 @@
         // ========== GAME OVER ==========
         function gameOver() {
             gameRunning = false;
+            SFX.gameover();
             gameoverOverlay.classList.add('active');
             
             let statsHtml;
@@ -8647,13 +8814,15 @@
                 scoreErrorMsg.textContent = 'Name must be at least 2 characters';
                 usernameInput.classList.add('error');
                 setTimeout(() => usernameInput.classList.remove('error'), 400);
+                SFX.submitError();
                 return;
             }
-            
+
             if (containsProfanity(rawName) || containsProfanity(username)) {
                 scoreErrorMsg.textContent = 'Please choose an appropriate name';
                 usernameInput.classList.add('error');
                 setTimeout(() => usernameInput.classList.remove('error'), 400);
+                SFX.submitError();
                 return;
             }
             
@@ -8672,9 +8841,10 @@
                 } else {
                     saveLocalScore(username, pendingWave, pendingKills, pendingMode);
                 }
-                
+
+               SFX.submit();
                hideScoreModal();
-                
+
             } catch (e) {
                 console.warn('Score submission failed:', e);
                 saveLocalScore(username, pendingWave, pendingKills, pendingMode);
@@ -8942,11 +9112,12 @@
         
         function purchaseUpgrade(type) {
             const cost = getUpgradeCost(type);
-            if (gold < cost) return;
+            if (gold < cost) { SFX.deny(); return; }
             if (!isTowerUnlocked(type)) return; // Extra safety check
-            
+
             gold -= cost;
             towerLevels[type]++;
+            SFX.upgradeTower();
             
             updateHUD();
             updateTowerButtons();
