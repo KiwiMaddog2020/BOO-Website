@@ -7312,6 +7312,11 @@
                 // Rolling animation
                 this.rollAngle = 0;
                 this.moveAngle = -Math.PI / 2; // Default to upward
+                // Render-only run-cycle state (no gameplay effect). prevRollAngle lets
+                // draw() detect movement (rollAngle only advances while moving), and
+                // moveBlend smooths the squash/lean in and out so it never snaps.
+                this.prevRollAngle = 0;
+                this.moveBlend = 0;
                 
                 // Give starting weapon (uses selected weapon from weapon select screen)
                 this.addWeapon(selectedStartingWeapon);
@@ -9434,10 +9439,33 @@
                 ctx.ellipse(sx, sy + r * 0.8, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
                 ctx.fill();
                 
+                // ===== RUN-CYCLE + LEAN (render-only) =====
+                // rollAngle only advances in update() while moving, so a change since
+                // last frame means the orb is moving. moveBlend eases the squash/lean
+                // in and out (no snap). All purely visual: hitbox/this.radius untouched.
+                const moving = Math.abs(this.rollAngle - this.prevRollAngle) > 0.0001;
+                this.moveBlend += ((moving ? 1 : 0) - this.moveBlend) * 0.15;
+                this.prevRollAngle = this.rollAngle;
+                const runPhase = this.rollAngle * 2;            // bounce keyed to travel
+                const squash = Math.sin(runPhase) * 0.04 * this.moveBlend;
+                const bodyScaleY = 1 + squash;                 // squash & stretch (volume-ish)
+                const bodyScaleX = 1 - squash;
+                const leanX = Math.cos(this.moveAngle) * r * 0.12 * this.moveBlend;
+                const leanY = Math.sin(this.moveAngle) * r * 0.12 * this.moveBlend;
+
+                // Wrap the orb body in its own transform so the squash/lean affect only
+                // the body, core, energy ring, eyes & glint — not the glow ring, ground
+                // shadow, hat, or weapons (those keep their original screen coords).
+                ctx.save();
+                ctx.translate(leanX, leanY);
+                ctx.translate(sx, sy);
+                ctx.scale(bodyScaleX, bodyScaleY);
+                ctx.translate(-sx, -sy);
+
                 // Main glow
                 ctx.shadowBlur = 20;
                 ctx.shadowColor = baseColor;
-                
+
                 // Body with gradient for 3D effect
                 const bodyGrad = ctx.createRadialGradient(
                     sx, sy, 0,
@@ -9496,7 +9524,36 @@
                     ctx.fill();
                     ctx.globalAlpha = 1;
                 }
-                
+
+                // ===== EYES (render-only) — gives the orb a face like the enemies =====
+                // Skip on the invincibility blink frames where the body draws transparent.
+                const eyesHidden = isInvincible && Math.floor(time / 50) % 2;
+                if (!eyesHidden) {
+                    ctx.shadowBlur = 0;
+                    const eyeOffX = r * 0.32;           // horizontal eye separation
+                    const eyeY = sy - r * 0.18;         // slightly above center
+                    const eyeRX = r * 0.2, eyeRY = r * 0.26;
+                    // Pupils drift toward facing direction while moving, center when idle.
+                    const look = r * 0.1 * this.moveBlend;
+                    const pupX = Math.cos(this.moveAngle) * look;
+                    const pupY = Math.sin(this.moveAngle) * look;
+                    // Whites
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.ellipse(sx - eyeOffX, eyeY, eyeRX, eyeRY, 0, 0, Math.PI * 2);
+                    ctx.ellipse(sx + eyeOffX, eyeY, eyeRX, eyeRY, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Pupils
+                    ctx.fillStyle = '#101015';
+                    ctx.beginPath();
+                    ctx.arc(sx - eyeOffX + pupX, eyeY + pupY, r * 0.11, 0, Math.PI * 2);
+                    ctx.arc(sx + eyeOffX + pupX, eyeY + pupY, r * 0.11, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Close the orb-body transform (squash/lean) opened before "Main glow".
+                ctx.restore();
+
                 // Draw cowboy hat if player has it
                 if (playerHasCowboyHat) {
                     ctx.shadowBlur = 8;
@@ -12139,16 +12196,20 @@
                 const time = Date.now();
                 
                 ctx.save();
-                
-                // Pulsing glow
-                const pulse = 0.8 + Math.sin(time * 0.005) * 0.2;
-                
+
+                // Enrage tell (render-only): below 33% HP the aura pulses faster and
+                // recolors toward red. Reads hp/maxHp ONLY — no gameplay effect.
+                const enraged = this.hp / this.maxHp < 0.33;
+                // Pulsing glow (faster when enraged)
+                const pulse = 0.8 + Math.sin(time * (enraged ? 0.012 : 0.005)) * (enraged ? 0.25 : 0.2);
+                const auraColor = enraged ? '#ff2200' : '#ff6600';
+
                 // Outer fire aura ring
-                ctx.strokeStyle = '#ff6600';
-                ctx.lineWidth = 3;
+                ctx.strokeStyle = auraColor;
+                ctx.lineWidth = enraged ? 4 : 3;
                 ctx.globalAlpha = 0.4 * pulse;
-                ctx.shadowColor = '#ff6600';
-                ctx.shadowBlur = 20;
+                ctx.shadowColor = auraColor;
+                ctx.shadowBlur = enraged ? 28 : 20;
                 ctx.beginPath();
                 ctx.arc(sx, sy, s * 1.5, 0, Math.PI * 2);
                 ctx.stroke();
@@ -12624,11 +12685,57 @@
                 const time = Date.now();
                 
                 ctx.save();
-                
+
+                // ===== ATTACK TELEGRAPH (render-only / fairness tell) =====
+                // Reads attackCooldown + isCharging ONLY; never writes them, so attack
+                // timing, count, damage and cooldown are completely unaffected. The
+                // cooldown counts DOWN each frame and resets to 2500/3500/4500ms on fire,
+                // so a small remaining value means an attack is imminent. Rings are drawn
+                // at multiples of the VISUAL radius r — this.radius is never touched.
+                const TELEGRAPH_MS = 600;
+                if (this.isCharging) {
+                    // Charge already launched: steady lock-on ring + core flare for drama.
+                    const cp = 0.6 + Math.sin(time * 0.02) * 0.4;
+                    ctx.save();
+                    ctx.strokeStyle = '#ff2200';
+                    ctx.shadowColor = '#ff0000';
+                    ctx.shadowBlur = 30;
+                    ctx.lineWidth = 4;
+                    ctx.globalAlpha = 0.85 * cp;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, r * 1.35, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (this.attackCooldown > 0 && this.attackCooldown < TELEGRAPH_MS) {
+                    // Imminent attack: brightening + contracting warning ring ramps as it nears.
+                    const t = 1 - this.attackCooldown / TELEGRAPH_MS; // 0 (far) -> 1 (firing)
+                    const warnR = r * (1.9 - 0.55 * t);               // contracts inward
+                    const flick = 0.85 + Math.sin(time * (0.01 + t * 0.03)) * 0.15;
+                    ctx.save();
+                    // Core flare swelling under the boss
+                    const flareGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * (0.6 + 0.5 * t));
+                    flareGrad.addColorStop(0, `rgba(255, 80, 0, ${0.45 * t})`);
+                    flareGrad.addColorStop(1, 'rgba(255, 80, 0, 0)');
+                    ctx.fillStyle = flareGrad;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, r * (0.6 + 0.5 * t), 0, Math.PI * 2);
+                    ctx.fill();
+                    // Warning ring
+                    ctx.strokeStyle = this.phase === 3 ? '#ff2200' : '#ffcc00';
+                    ctx.shadowColor = ctx.strokeStyle;
+                    ctx.shadowBlur = 15 + 20 * t;
+                    ctx.lineWidth = (1.5 + 4 * t);
+                    ctx.globalAlpha = (0.35 + 0.55 * t) * flick;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, warnR, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
                 // Intense pulsing glow (faster in higher phases)
                 const pulseSpeed = 0.003 + this.phase * 0.002;
                 const pulse = 0.7 + Math.sin(time * pulseSpeed) * 0.3;
-                
+
                 // Animated flame aura around boss ghost
                 ctx.shadowBlur = 50 * pulse;
                 ctx.shadowColor = this.phase === 3 ? '#ff0000' : '#ff4400';
@@ -17702,7 +17809,31 @@
                 this.y = y;
                 this.value = value;
                 this.radius = 3 + value * 0.5;
-                this.color = COLORS.cyan;  // Cyan color matching player
+                // RARITY COLOR TIERS (visual only — value/radius/pickup unchanged).
+                // Set once at construction; zero per-frame cost. Thresholds chosen from
+                // actual value assignment: common enemies=1, tank=3, time/difficulty
+                // scaling pushes commons up over a run, miniboss gem=15, major boss=20.
+                if (value >= 15) {           // boss-tier gems (mini=15, major=20)
+                    this.color = COLORS.gold;       // #ffd700
+                    this.glowColor = COLORS.gold;
+                    this.tier = 4;
+                } else if (value >= 10) {    // heavily-scaled / late-game
+                    this.color = COLORS.purple;     // #9b30ff
+                    this.glowColor = COLORS.purple;
+                    this.tier = 3;
+                } else if (value >= 6) {     // mid-late scaled drops
+                    this.color = COLORS.blue;       // #00aaff
+                    this.glowColor = COLORS.blue;
+                    this.tier = 2;
+                } else if (value >= 3) {     // tanks / lightly-scaled commons
+                    this.color = COLORS.neonGreen;  // #39ff14
+                    this.glowColor = COLORS.neonGreen;
+                    this.tier = 1;
+                } else {                     // common (value 1–2)
+                    this.color = COLORS.cyan;       // #0ff, matches player
+                    this.glowColor = COLORS.cyan;
+                    this.tier = 0;
+                }
                 this.pulse = 0;
                 this.magnetized = false;
                 this.magnetStrength = 6; // Reduced from 12 for smoother vacuum
@@ -17761,20 +17892,37 @@
                 ctx.save();
                 const glow = 10 + Math.sin(this.pulse) * 4;
                 ctx.shadowBlur = glow;
-                ctx.shadowColor = COLORS.cyan;
-                
-                // Cyan gem circle
-                ctx.fillStyle = COLORS.cyan;
+                ctx.shadowColor = this.glowColor;
+
+                // Rarity-tinted gem circle (color set once at construction)
+                ctx.fillStyle = this.color;
                 ctx.beginPath();
                 ctx.arc(sx, sy, r, 0, Math.PI * 2);
                 ctx.fill();
-                
+
                 // Inner shine (white core)
                 ctx.fillStyle = '#ffffff';
                 ctx.beginPath();
                 ctx.arc(sx - r * 0.25, sy - r * 0.25, r * 0.35, 0, Math.PI * 2);
                 ctx.fill();
-                
+
+                // Tiny rotating sparkle glint on higher-tier gems (blue+).
+                // On-screen only (draw() already early-returns on !isVisible).
+                if (this.tier >= 2) {
+                    const spin = this.pulse * 0.8;
+                    const reach = r * (1.5 + this.tier * 0.15);
+                    ctx.globalAlpha = 0.85;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = Math.max(0.75, r * 0.12);
+                    ctx.beginPath();
+                    ctx.moveTo(sx + Math.cos(spin) * reach, sy + Math.sin(spin) * reach);
+                    ctx.lineTo(sx - Math.cos(spin) * reach, sy - Math.sin(spin) * reach);
+                    ctx.moveTo(sx + Math.cos(spin + Math.PI / 2) * reach, sy + Math.sin(spin + Math.PI / 2) * reach);
+                    ctx.lineTo(sx - Math.cos(spin + Math.PI / 2) * reach, sy - Math.sin(spin + Math.PI / 2) * reach);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+
                 ctx.restore();
             }
         }
