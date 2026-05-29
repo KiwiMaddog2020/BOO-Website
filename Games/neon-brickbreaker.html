@@ -1754,6 +1754,7 @@
                 powerup:    function () { tone(520, 0.10, 'square', 0.18, 0); setTimeout(function () { tone(784, 0.12, 'square', 0.18, 0); }, 70); },
                 slotTick:   function () { tone(740, 0.045, 'square', 0.15, 600); },
                 upgrade:    function () { tone(523, 0.10, 'triangle', 0.24, 0); setTimeout(function () { tone(659, 0.10, 'triangle', 0.24, 0); }, 100); setTimeout(function () { tone(880, 0.18, 'triangle', 0.26, 0); }, 205); },
+                star:       function () { tone(660, 0.08, 'triangle', 0.20, 0); setTimeout(function () { tone(990, 0.10, 'triangle', 0.22, 0); }, 70); setTimeout(function () { tone(1320, 0.14, 'triangle', 0.24, 0); }, 150); },
                 debuff:     function () { tone(300, 0.14, 'sawtooth', 0.22, 170); setTimeout(function () { tone(190, 0.22, 'sawtooth', 0.22, 110); }, 120); },
                 bossFire:   function () { tone(900, 0.10, 'sawtooth', 0.16, 170); },
                 bossHit:    function () { tone(170, 0.09, 'sawtooth', 0.24, 110); },
@@ -2305,6 +2306,7 @@
         let bossDeathParticles = []; // Particles for boss death explosions
         let bossDeathAnimationEnd = 0; // Time when last boss death animation ends
         let waitingForBossDeathAnimation = false; // True when waiting for animation before level transition
+        let suppressDeltaSpike = false; // V1_187: neutralize the 1-frame delta catch-up lurch after a boss-death frame (the "screen jump")
         const bossConfig = {
             width: 50,
             height: 25,
@@ -3298,6 +3300,7 @@
                     if (dist < ball.radius + immunityStar.size) {
                         // Collected! Grant immunity
                         paddleImmunity.active = true;
+                        SFX.star();
                         paddleImmunity.timeLeft = paddleImmunity.duration;
                         immunityStar = null;
                         break;
@@ -3403,6 +3406,7 @@
                             // Create death explosion AFTER setting freeze flag
                             createBossDeathExplosion(boss);
                             SFX.bossDeath();
+                            suppressDeltaSpike = true; // V1_187: avoid the next-frame catch-up lurch from this heavy frame
                             bossDeathAnimationEnd = now + bossConfig.deathAnimationDuration;
                             
                             // If ball is now frozen, don't bounce - exit immediately
@@ -5048,6 +5052,10 @@
             // Calculate speed multiplier (1.0 at 60fps, higher if slower, lower if faster)
             // Clamp to prevent huge jumps if tab was inactive
             deltaMultiplier = Math.min(deltaTime / targetFrameTime, 3);
+            // V1_187: after a boss-death frame (heavy: explosion + sound), the next frame's
+            // delta spikes and would lurch the ball/boss forward ("screen jump"). Skip the
+            // catch-up for that one frame. No steady-state change.
+            if (suppressDeltaSpike) { deltaMultiplier = 1; suppressDeltaSpike = false; }
             
             // Check if life lost pause is over
             if (lifeLostPause) {
