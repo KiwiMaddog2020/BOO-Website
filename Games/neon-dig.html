@@ -2112,6 +2112,24 @@
             50% { transform: translate(0, -30px) scale(0.95); opacity: 1; }
             75% { transform: translate(30px, 0) scale(0.95); opacity: 1; }
         }
+
+        /* Respect reduced-motion: silence decorative CSS keyframe loops only.
+           Canvas rendering and functional fuel/hull warning pulses are untouched. */
+        @media (prefers-reduced-motion: reduce) {
+            .upgrade-title { animation: none !important; }
+            .upgrade-slot.rolling .upgrade-content { animation: none !important; }
+            .boss-intro-icon { animation: none !important; }
+            .boss-victory-title { animation: none !important; }
+            .boss-victory-key { animation: none !important; }
+            .score-input.error { animation: none !important; }
+            .tutorial-step { animation: none !important; }
+            .alien-key { animation: none !important; }
+            .upgrade-arrow.visible { animation: none !important; }
+            .upgrade-arrow.visible .upgrade-arrow-tail,
+            .upgrade-arrow.visible .upgrade-arrow-head { animation: none !important; }
+            .tutorial-joystick-thumb { animation: none !important; }
+            .tutorial-finger { animation: none !important; }
+        }
     </style>
 </head>
 <body>
@@ -2175,7 +2193,9 @@
         </div>
         
         <!-- Pause Button -->
-        <div class="pause-btn" id="pauseBtn" title="Pause (P)">⏸</div>
+        <button class="pause-btn" id="pauseBtn" type="button" aria-label="Pause" title="Pause (P)">⏸</button>
+        <!-- Mute Button (sibling to pause, offset right so it never overlaps) -->
+        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:8px;left:50px;z-index:60;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
         
         <div class="upgrade-arrow" id="upgradeArrow">
             <div class="upgrade-arrow-tail"></div>
@@ -2247,7 +2267,7 @@
             <div class="leaderboard-container">
                 <div class="leaderboard-header">
                     <div class="leaderboard-title">HIGH SCORES</div>
-                    <button class="leaderboard-close" id="leaderboardClose">✕</button>
+                    <button class="leaderboard-close" id="leaderboardClose" type="button" aria-label="Close leaderboard">✕</button>
                 </div>
                 <div class="leaderboard-list" id="leaderboardList"></div>
             </div>
@@ -2270,7 +2290,7 @@
         <!-- Tutorial Overlay -->
         <div class="tutorial-overlay" id="tutorialOverlay">
             <div class="tutorial-container">
-                <button class="tutorial-close" id="tutorialClose">✕</button>
+                <button class="tutorial-close" id="tutorialClose" type="button" aria-label="Close tutorial">✕</button>
                 <div class="tutorial-title">📖 HOW TO PLAY</div>
                 
                 <div class="tutorial-step active" data-step="0">
@@ -2288,7 +2308,7 @@
                     <div class="tutorial-text">
                         Dig through colored blocks to find treasures:<br>
                         <span class="tutorial-highlight">🟤 Dirt</span> - Easy to dig<br>
-                        <span class="tutorial-highlight">�ite;🪨 Rock</span> - Generates heat<br>
+                        <span class="tutorial-highlight">🪨 Rock</span> - Generates heat<br>
                         <span class="tutorial-highlight">💎 Gems</span> - Worth points!<br>
                         Deeper gems = higher value!
                     </div>
@@ -2375,7 +2395,7 @@
         <!-- Shop Overlay -->
         <div class="shop-overlay" id="shopOverlay">
             <div class="shop-container">
-                <button class="shop-close" id="shopClose">✕</button>
+                <button class="shop-close" id="shopClose" type="button" aria-label="Close shop">✕</button>
                 <div class="shop-header">
                     <div class="shop-title">⚙️ UPGRADES</div>
                     <div class="shop-score">💰 <span id="shopScore">0</span></div>
@@ -2425,7 +2445,112 @@
     <script>
     (function() {
         'use strict';
-        
+
+        // ===== Synth WebAudio SFX engine (Neon Dig) =====
+        const SFX = (function () {
+            let actx = null, master = null, muted = false, vol = 1;
+            try { muted = localStorage.getItem('neondig_muted') === '1'; } catch (e) {}
+            function ensure() {
+                if (actx) return actx;
+                try {
+                    const AC = window.AudioContext || window.webkitAudioContext;
+                    if (!AC) return null;
+                    actx = new AC();
+                    master = actx.createGain();
+                    master.gain.value = muted ? 0 : 0.32 * vol;
+                    master.connect(actx.destination);
+                } catch (e) { actx = null; }
+                return actx;
+            }
+            function tone(freq, dur, type, gain, sweepTo) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, osc = a.createOscillator(), g = a.createGain();
+                    osc.type = type || 'triangle';
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, sweepTo), t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(g); g.connect(master);
+                    osc.start(t); osc.stop(t + dur + 0.02);
+                } catch (e) {}
+            }
+            function noise(dur, gain) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, n = Math.max(1, Math.floor(a.sampleRate * dur));
+                    const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+                    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+                    const src = a.createBufferSource(); src.buffer = buf;
+                    const g = a.createGain(); g.gain.value = gain || 0.2;
+                    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1100;
+                    src.connect(f); f.connect(g); g.connect(master);
+                    src.start(t); src.stop(t + dur);
+                } catch (e) {}
+            }
+            const _last = Object.create(null);
+            function gate(key, minMs) {
+                const now = (window.performance && performance.now) ? performance.now() : Date.now();
+                if (_last[key] && now - _last[key] < minMs) return false;
+                _last[key] = now; return true;
+            }
+            return {
+                get muted() { return muted; },
+                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                suspend: function () { if (actx && actx.state === 'running') actx.suspend().catch(function () {}); },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('neondig_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                toggle: function () { this.setMuted(!muted); return muted; },
+                setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
+                tone: tone, noise: noise, gate: gate,
+                // ---- per-material dig cues (dirt/rock/hard throttled; gems emphasized) ----
+                digDirt:    function () { if (!gate('dig', 85)) return; noise(0.04, 0.05); },
+                digRock:    function () { if (!gate('dig', 85)) return; tone(180, 0.05, 'square', 0.06, 130); },
+                digHard:    function () { if (!gate('dig', 95)) return; tone(90, 0.06, 'sawtooth', 0.07, 70); noise(0.03, 0.04); },
+                digUnstable:function () { noise(0.08, 0.09); tone(120, 0.06, 'sawtooth', 0.05, 60); },
+                gemCommon:  function () { tone(660, 0.10, 'sine', 0.10, 990); },
+                gemRare:    function () { tone(880, 0.12, 'sine', 0.11, 1320); },
+                gemEpic:    function () { tone(1046, 0.14, 'triangle', 0.12, 1568); setTimeout(function(){ tone(1568, 0.10, 'sine', 0.09); }, 90); },
+                digFuel:    function () { tone(440, 0.10, 'triangle', 0.10, 660); },
+                alienNode:  function () { tone(523, 0.08, 'sine', 0.09, 784); setTimeout(function(){ tone(784, 0.10, 'sine', 0.08, 1175); }, 90); },
+                magnetOre:  function () { tone(300, 0.18, 'sine', 0.07, 1200); },
+                chainCrystal:function () { if (!gate('chain', 55)) return; tone(700, 0.05, 'square', 0.07, 1100); },
+                mysteryBlock:function () { tone(500, 0.06, 'square', 0.06, 800); },
+                bedrockClank:function () { if (!gate('bedrock', 160)) return; tone(80, 0.04, 'square', 0.03); },
+                // ---- event cues ----
+                gateLocked: function () { tone(150, 0.12, 'square', 0.06, 110); noise(0.05, 0.04); },
+                gateUnlock: function () { tone(523, 0.10, 'sine', 0.10, 784); setTimeout(function(){ tone(784, 0.12, 'sine', 0.10, 1046); }, 110); },
+                chestOpen:  function () { tone(784, 0.10, 'triangle', 0.12, 1046); setTimeout(function(){ tone(1046, 0.12, 'sine', 0.10, 1568); }, 110); },
+                upgradeChest:function () { [523, 659, 784].forEach(function(f, i){ setTimeout(function(){ tone(f, 0.10, 'sine', 0.10); }, i * 100); }); },
+                depthMilestone:function () { if (!gate('depth', 1500)) return; tone(330, 0.12, 'sine', 0.07, 495); },
+                hazard:     function () { noise(0.14, 0.13); tone(140, 0.16, 'sawtooth', 0.10, 70); },
+                damage:     function () { tone(220, 0.10, 'sawtooth', 0.11, 110); noise(0.06, 0.08); },
+                lowHealth:  function () { if (!gate('lowhp', 1200)) return; tone(120, 0.12, 'sine', 0.08); },
+                lowFuel:    function () { if (!gate('lowfuel', 1200)) return; tone(200, 0.10, 'triangle', 0.07, 160); },
+                fever:      function () { tone(440, 0.08, 'square', 0.12, 880); setTimeout(function(){ tone(880, 0.12, 'square', 0.10, 1320); }, 90); },
+                bomb:       function () { noise(0.22, 0.18); tone(90, 0.20, 'sawtooth', 0.12, 40); },
+                cherryBomb: function () { noise(0.14, 0.13); tone(120, 0.14, 'square', 0.10, 50); },
+                depthCharge:function () { tone(200, 0.25, 'sawtooth', 0.12, 30); },
+                overheat:   function () { tone(400, 0.18, 'sawtooth', 0.10, 120); noise(0.10, 0.10); },
+                bossIntro:  function () { tone(110, 0.20, 'sawtooth', 0.12, 165); },
+                bossVictory:function () { [523, 784, 1046].forEach(function(f, i){ setTimeout(function(){ tone(f, 0.14, 'triangle', 0.12); }, i * 120); }); },
+                teleport:   function () { tone(660, 0.12, 'sine', 0.08, 330); },
+                death:      function () { tone(330, 0.40, 'sawtooth', 0.12, 60); },
+                gameover:   function () { tone(160, 0.50, 'triangle', 0.10, 80); },
+                submit:     function () { tone(660, 0.10, 'sine', 0.10, 990); setTimeout(function(){ tone(990, 0.12, 'sine', 0.08); }, 110); },
+                buy:        function () { tone(720, 0.06, 'square', 0.06, 900); },
+                selectUpgrade:function () { tone(659, 0.10, 'sine', 0.10, 988); },
+                uiClick:    function () { tone(600, 0.04, 'square', 0.05, 720); }
+            };
+        })();
+        window.SFX = SFX;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { SFX.unlock(); }, { once: true, passive: true });
+        });
+        document.addEventListener('visibilitychange', function () { if (document.hidden) SFX.suspend(); else SFX.unlock(); });
+
         // ==================== FIREBASE CONFIGURATION ====================
         // BOO Website Game Leaderboard (consolidated)
         const firebaseConfig = {
@@ -2787,6 +2912,7 @@
             spentScore += cost;
             shopUpgrades[upgradeId] = currentLevel + 1;
             updatePointsDisplay();
+            SFX.buy();
             return true;
         }
         
@@ -4257,7 +4383,7 @@
             
             const tile = world[ty][tx];
             if (tile === TILE.AIR) return;
-            if (tile === TILE.BEDROCK) return; // Can't dig bedrock
+            if (tile === TILE.BEDROCK) { SFX.bedrockClank(); return; } // Can't dig bedrock
             if (drillOverheated) return; // Can't dig when overheated
             
             // Portal tiles are entered by collision, not digging
@@ -4275,6 +4401,7 @@
                     // Blocked! Need boss key
                     triggerScreenFlash('#ff0000', 0.2, 10);
                     screenShake = 5;
+                    SFX.gateLocked();
                     createFloatingText('🔒 LOCKED!', tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE - 10, '#ff6666');
                     createFloatingText(`Defeat boss at ${gate.forBossDepth}m`, tx * TILE_SIZE + TILE_SIZE/2, absoluteTy * TILE_SIZE + 15, '#ffaa00');
                     return;
@@ -4359,6 +4486,7 @@
         }
         
         function activateFeverMode() {
+            SFX.fever();
             feverMode = true;
             feverTimer = getFeverDuration();
             triggerScreenFlash('#ff00ff', 0.4, 20);
@@ -4371,6 +4499,7 @@
         }
         
         function triggerGateUnlockAnimation(tx, absoluteTy, bossDepth) {
+            SFX.gateUnlock();
             // Epic unlock animation
             const centerX = BASE_WIDTH / 2;
             const worldY = absoluteTy * TILE_SIZE + TILE_SIZE / 2;
@@ -4455,6 +4584,7 @@
         }
         
         function explodeBomb(centerTX, centerAbsTY) {
+            SFX.bomb(); // one cue per trigger (clears many tiles in a loop)
             // 5x5 explosion (big bomb)
             let totalGemValue = 0;
             let fuelCollected = 0;
@@ -4704,6 +4834,7 @@
         
         // Cherry Bomb - smaller 3x3 explosion (red)
         function explodeCherryBomb(centerTX, centerAbsTY) {
+            SFX.cherryBomb(); // one cue per trigger
             // 3x3 explosion (cherry bomb)
             let totalGemValue = 0;
             let fuelCollected = 0;
@@ -4839,6 +4970,7 @@
         
         // Chain Crystal - breaks all adjacent chain crystals in a chain reaction
         function triggerChainCrystalExplosion(startTX, startAbsTY) {
+            SFX.chainCrystal(); // one cue per trigger (internally gated)
             const MAX_CHAIN_SIZE = 50; // Maximum blocks in a chain
             let crystalsToBreak = [{tx: startTX, absoluteTy: startAbsTY}];
             let brokenCrystals = new Set();
@@ -4928,6 +5060,7 @@
         
         // Depth Charge - clears 7 blocks directly below (purple themed)
         function triggerDepthCharge(tx, startAbsTY) {
+            SFX.depthCharge(); // one cue per trigger (clears 7 blocks in a loop)
             const centerX = tx * TILE_SIZE + TILE_SIZE/2;
             let blocksCleared = 0;
             let totalValue = 0;
@@ -5041,6 +5174,7 @@
         
         // Magnet Ore - pulls all gems within 3 tiles toward player
         function triggerMagnetPull(centerTX, centerAbsTY) {
+            SFX.magnetOre(); // one cue per trigger (pulls many gems in a loop)
             const MAGNET_RANGE = 5; // Increased range for better pull effect
             let gemsCollected = 0;
             let totalValue = 0;
@@ -5127,6 +5261,7 @@
         }
         
         function openChest(tx, absoluteTy) {
+            SFX.chestOpen();
             // Huge gem payout!
             const baseValue = 150 + Math.floor(Math.random() * 100);
             const totalGemBonus = permanentUpgrades.gemValue + getShopBonus('gemValue');
@@ -5160,8 +5295,9 @@
         }
         
         function openUpgradeChest(tx, absoluteTy) {
+            SFX.upgradeChest();
             const worldY = absoluteTy * TILE_SIZE;
-            
+
             // Pick a random upgrade from all available (regular + legendary)
             const allUpgrades = [...upgradeDefinitions, ...legendaryUpgradeDefinitions];
             const upgrade = allUpgrades[Math.floor(Math.random() * allUpgrades.length)];
@@ -5412,7 +5548,8 @@
             // ===== ALIEN GEM NODE =====
             if (tile === TILE.ALIEN_NODE) {
                 world[ty][tx] = TILE.AIR;
-                
+                SFX.alienNode(); // one cue per node (spawns many gems in a loop)
+
                 // Determine gem count based on depth (4-8 gems, starts at 100m)
                 const nodeDepth = absoluteTy - 2; // Actual depth in meters
                 const baseGems = 4;
@@ -5522,6 +5659,7 @@
             
             // ===== HAZARDS =====
             if (tile === TILE.LAVA || tile === TILE.GAS) {
+                SFX.hazard();
                 const baseDamage = tile === TILE.LAVA ? 30 : 20; // Lava damage reduced
                 const shopArmor = getShopBonus('armor');
                 const damage = baseDamage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
@@ -5562,6 +5700,7 @@
             // ===== MYSTERY BLOCK =====
             if (tile === TILE.MYSTERY_BLOCK) {
                 world[ty][tx] = TILE.AIR;
+                SFX.mysteryBlock();
                 const roll = Math.random();
                 
                 if (roll < 0.40) {
@@ -5707,7 +5846,17 @@
             // Clear tile
             world[ty][tx] = TILE.AIR;
             createDigParticles(tileCenterX, absoluteTy * TILE_SIZE + TILE_SIZE/2, tile);
-            
+
+            // Per-material dig cue (gems/fuel/unstable fall through to here; special blocks return earlier)
+            if (tile === TILE.GEM_EPIC) SFX.gemEpic();
+            else if (tile === TILE.GEM_RARE) SFX.gemRare();
+            else if (tile === TILE.GEM_COMMON) SFX.gemCommon();
+            else if (tile === TILE.FUEL) SFX.digFuel();
+            else if (tile === TILE.HARD_ROCK) SFX.digHard();
+            else if (tile === TILE.UNSTABLE) SFX.digUnstable();
+            else if (tile === TILE.ROCK) SFX.digRock();
+            else SFX.digDirt();
+
             // When drilling DOWN, snap player horizontally and slide vertically
             if (lastDigDirection === 'down') {
                 // Snap X immediately to stay in the same column (funnel behavior)
@@ -6320,6 +6469,7 @@
                     }
                     
                     // Take damage from enemy
+                    SFX.damage();
                     const shopArmor = getShopBonus('armor');
                     const damage = enemy.damage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
                     hull -= damage;
@@ -6659,6 +6809,7 @@
         }
         
         function startBossBattle() {
+            SFX.bossIntro();
             const portalDepth = parseInt(document.getElementById('bossIntroOverlay').dataset.portalDepth);
             hideBossIntro();
             
@@ -8400,6 +8551,7 @@
         }
         
         function triggerBossVictory() {
+            SFX.bossVictory();
             // Pause game updates
             bossTransitionPhase = 'victory_screen';
             
@@ -8455,6 +8607,7 @@
         }
         
         function teleportFromBoss() {
+            SFX.teleport();
             hideBossVictory();
             exitBossArena(true);
             
@@ -9725,6 +9878,7 @@
                         // Check for overheat
                         if (drillHeat >= maxDrillHeat && !drillOverheated) {
                             drillOverheated = true;
+                            SFX.overheat();
                             drillCooldownTimer = DRILL_COOLDOWN_FRAMES;
                             player.digging = false;
                             player.digTarget = null;
@@ -10131,6 +10285,7 @@
             
             // Max depth only increases
             if (currentDepth > maxDepthThisRun) {
+                SFX.depthMilestone(); // internally gated to ~1.5s
                 maxDepthThisRun = currentDepth;
                 maxDepthEl.textContent = maxDepthThisRun;
                 maxDepthBottomEl.textContent = maxDepthThisRun;
@@ -10154,6 +10309,7 @@
             
             if ((fuel <= 0 || hull <= 0) && !deathAnimationActive) {
                 deathAnimationActive = true;
+                SFX.death();
                 deathAnimationTimer = DEATH_ANIMATION_DURATION;
                 deathReason = hull <= 0 ? 'hull' : 'fuel';
                 screenShake = 8; // Reduced shake for more subdued death
@@ -10813,6 +10969,7 @@
             // ===== LOW HULL WARNING (cyan pulse + screen flash) =====
             const hullPercent = hull / maxHull;
             if (hullPercent < 0.30 && hullPercent > 0) {
+                SFX.lowHealth(); // internally gated to 1.2s
                 const pulseSpeed = hullPercent < 0.15 ? 0.151 : 0.0756; // 20% slower
                 const pulse = 0.5 + Math.sin(globalTime * pulseSpeed) * 0.5;
                 const baseAlpha = hullPercent < 0.15 ? 0.319 : 0.191; // 50% more transparent
@@ -10838,6 +10995,7 @@
             // ===== LOW FUEL WARNING (orange pulse + screen flash) =====
             const fuelPercent = fuel / maxFuel;
             if (fuelPercent < 0.30 && fuelPercent > 0) {
+                SFX.lowFuel(); // internally gated to 1.2s
                 const pulseSpeed = fuelPercent < 0.15 ? 0.151 : 0.0756; // 20% slower
                 const pulse = 0.5 + Math.sin(globalTime * pulseSpeed) * 0.5;
                 const baseAlpha = fuelPercent < 0.15 ? 0.319 : 0.191; // 50% more transparent
@@ -13455,6 +13613,7 @@
         function selectUpgrade(index) {
             if (!upgradeSelectionActive || upgradeSelected) return;
             upgradeSelected = true;
+            SFX.selectUpgrade();
             
             slots.forEach((slot, i) => {
                 if (i === index) {
@@ -13511,6 +13670,7 @@
         
         // ==================== GAME OVER ====================
         function gameOver() {
+            SFX.gameover();
             gameRunning = false;
             gamePaused = false;
             deathAnimationActive = false;
@@ -14041,6 +14201,7 @@
             const success = await saveScore(name, score, maxDepthThisRun);
             
             if (success) {
+                SFX.submit();
                 hideScoreModal();
             } else {
                 scoreError.textContent = 'Failed to save score. Try again.';
@@ -14385,6 +14546,21 @@
             e.preventDefault();
             togglePause();
         });
+
+        // ===== Mute button wiring =====
+        (function () { var mb = document.getElementById('muteBtn'); if (!mb) return;
+          function r(){ mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true':'false'); } r();
+          mb.addEventListener('click', function(e){ e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
+          mb.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:true}); })();
+
+        // ===== Delegated UI-click cue =====
+        // Only buttons WITHOUT a dedicated cue (shop buy / score submit / upgrade select /
+        // boss battle / teleport already emit their own sound) to avoid double-firing.
+        document.addEventListener('click', function (e) {
+            if (e.target && e.target.closest && e.target.closest('.menu-btn, .surface-upgrade-btn, .tutorial-nav-btn, .leaderboard-close, .shop-close, .tutorial-close, .skip')) {
+                SFX.uiClick();
+            }
+        });
         
         // ===== CANVAS UI CLICK HANDLING =====
         function getCanvasCoords(e) {
@@ -14509,6 +14685,13 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'p' || e.key === 'P') {
                 togglePause();
+            }
+            // M key to mute (skip when dev debug-keys are active to avoid clobbering them)
+            if ((e.key === 'm' || e.key === 'M') && !window.DEBUG_KEYS) {
+                SFX.unlock();
+                SFX.toggle();
+                var mbEl = document.getElementById('muteBtn');
+                if (mbEl) { mbEl.textContent = SFX.muted ? '🔇' : '🔊'; mbEl.setAttribute('aria-pressed', SFX.muted ? 'true' : 'false'); }
             }
         });
         
