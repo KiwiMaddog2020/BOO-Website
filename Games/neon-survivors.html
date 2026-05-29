@@ -2385,7 +2385,62 @@
             color: rgba(255, 255, 255, 0.7);
             text-align: center;
         }
-        
+
+        /* ===== UPGRADE EFFECT BLOCK (DISPLAY ONLY) =====
+           Renders "what this grants" between the name and the (demoted) flavor
+           desc. Compact so 3 cards stay the same footprint; on-brand cyan for
+           stat lines, gold highlight for an instance gain. Pure presentation. */
+        .upgrade-card .level-chip {
+            font-size: 10px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            color: #00ffff;
+            background: rgba(0, 255, 255, 0.12);
+            border: 1px solid rgba(0, 255, 255, 0.5);
+            border-radius: 999px;
+            padding: 1px 8px;
+            text-shadow: 0 0 4px rgba(0, 255, 255, 0.6);
+        }
+        .upgrade-card .upgrade-effect {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            width: 100%;
+            text-align: center;
+        }
+        .upgrade-card .ue-headline {
+            font-size: 12px;
+            font-weight: bold;
+            line-height: 1.15;
+        }
+        /* Instance gain — the headline fix (e.g. "+1 Squirrel"). Gold, glowing. */
+        .upgrade-card .ue-instance {
+            color: #ffd700;
+            text-shadow: 0 0 6px rgba(255, 200, 40, 0.7);
+        }
+        /* "Adds: ..." line for a brand-new weapon. */
+        .upgrade-card .ue-add {
+            color: #00ffff;
+            text-shadow: 0 0 5px rgba(0, 255, 255, 0.55);
+        }
+        /* Tome per-level grant headline. */
+        .upgrade-card .ue-tome {
+            color: #ffd700;
+            text-shadow: 0 0 5px rgba(255, 200, 40, 0.55);
+        }
+        .upgrade-card .ue-line {
+            font-size: 11px;
+            line-height: 1.15;
+            color: rgba(180, 245, 255, 0.92);
+        }
+        /* Flavor text demoted: smaller, dimmer, reads after the effect. */
+        .upgrade-card .desc-flavor {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            font-style: italic;
+        }
+
         /* Reroll Button */
         .reroll-button {
             margin-top: 20px;
@@ -5262,7 +5317,12 @@
             .upgrade-card .desc {
                 font-size: 9px;
             }
-            
+            /* Mobile: keep the effect block compact on the 105px card. */
+            .upgrade-card .level-chip { font-size: 9px; padding: 1px 6px; }
+            .upgrade-card .ue-headline { font-size: 10px; }
+            .upgrade-card .ue-line { font-size: 9px; }
+            .upgrade-card .desc-flavor { font-size: 8px; }
+
             /* Mobile: Shrine overlay */
             .shrine-title {
                 font-size: 22px;
@@ -19329,8 +19389,16 @@
                         ? `<div class="slot-rarity" style="font-size:9px;text-transform:uppercase;color:#fff;">${newLabel}</div>`
                         : (rarityInfo ? `<div class="slot-rarity" style="color:${rarityInfo.color};font-size:9px;text-transform:uppercase;">${rarityInfo.name}</div>` : '');
                     
-                    const levelText = isNew ? '' : `Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}`;
-                    
+                    let levelText = isNew ? '' : `Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}`;
+                    // Mirror the headline instance gain onto the reel (display only).
+                    if (!isNew && upgrade.type === 'weapon') {
+                        const reelEff = describeUpgrade(upgrade.id, upgrade.currentLevel, upgrade.currentLevel + 1);
+                        if (reelEff && reelEff.gain) {
+                            const reelNoun = reelEff.gain.noun + (reelEff.gain.delta === 1 ? '' : 's');
+                            levelText += ` · +${reelEff.gain.delta} ${reelNoun}`;
+                        }
+                    }
+
                     content.innerHTML = `
                         ${topLabel}
                         <div class="slot-icon">${iconHtml}</div>
@@ -19368,7 +19436,138 @@
             
             return selected;
         }
-        
+
+        // ===== UPGRADE CARD EFFECT DESCRIPTIONS (DISPLAY ONLY) =====
+        // Pure, read-only helpers that DESCRIBE what a weapon level-up grants.
+        // Every formula below MIRRORS the inline math in the matching fire
+        // function EXACTLY (verified line refs in comments). Nothing here is
+        // ever used to compute gameplay — it only reads WEAPONS[id].base* and
+        // re-derives the same numbers the fire fn would, at two endpoints, so
+        // the card can show absolute before -> after values.
+        //
+        // dmgScale: per-level damage growth coefficient (damage = baseDamage*(1+(lvl-1)*scale)).
+        // count:    { field, noun, fn(level,def) } — fn returns the instance count at a level.
+        // range:    { fn(level,def), label } — additive range/radius that may step per level.
+        // pierce:   { fn(level), label } — additive pierce that may step per level.
+        // cdScale:  per-level cooldown coefficient (cooldown = baseFireRate*pow(cdScale,lvl-1));
+        //           null when the weapon's fire rate does NOT scale with level.
+        const UPGRADE_DISPLAY_META = {
+            // fireProjectile (L7953): dmg .04, count baseProjectiles+floor(lvl/4), pierce 1+floor(lvl/3), cd .985
+            energyBolt:    { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Bolt',   fn: (l, d) => d.baseProjectiles + Math.floor(l / 4) }, pierce: { label: 'Pierce', fn: (l) => 1 + Math.floor(l / 3) } },
+            // updateOrbit (L7980): dmg .04, orbs baseOrbs+floor(lvl/4), radius 70+lvl*5, no cooldown (passive)
+            plasmaOrbit:   { dmgScale: 0.04, cdScale: null,  count: { noun: 'Orb',    fn: (l, d) => d.baseOrbs + Math.floor(l / 4) }, range: { label: 'Radius', fn: (l) => 70 + l * 5 } },
+            // fireAOE (L8147): dmg .04, radius baseRadius+lvl*10, cd .985
+            boomBox:       { dmgScale: 0.04, cdScale: 0.985, range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 10 } },
+            // updateBeam (L8208): dmg .05, beams baseBeams+floor(lvl/4), range baseRange+lvl*15, acquire .97 (cd n/a, continuous)
+            beam:          { dmgScale: 0.05, cdScale: null,  count: { noun: 'Beam',   fn: (l, d) => d.baseBeams + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.baseRange + l * 15 } },
+            // updateStarfall (L8751): dmg .04, AoE radius baseRadius+lvl*15 (star count is visual only); tick rate fixed (cd n/a)
+            starField:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 15 } },
+            // fireDaggers (L8428): dmg .04, daggers baseDaggers+floor(lvl/2), pierce 1+floor(lvl/5), cd .985
+            voidDaggers:   { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Dagger', fn: (l, d) => d.baseDaggers + Math.floor(l / 2) }, pierce: { label: 'Pierce', fn: (l) => 1 + Math.floor(l / 5) } },
+            // updateFlame (L8448): dmg .04, range baseRange+lvl*12, fire rate NOT level-scaled (cd null)
+            flameThrower:  { dmgScale: 0.04, cdScale: null,  range: { label: 'Range', fn: (l, d) => d.baseRange + l * 12 } },
+            // fireSquirrel (L8983): dmg .04, squirrels baseSquirrels+floor(lvl/2), cd .985
+            blackSquirrel: { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Squirrel', fn: (l, d) => d.baseSquirrels + Math.floor(l / 2) } },
+            // fireThunder (L8668): dmg .04, strikes baseStrikes+floor(lvl/4), range baseRange+lvl*10, cd .985
+            thunderStrike: { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseStrikes + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.baseRange + l * 10 } },
+            // updateAura (L8710): dmg .04, radius baseRadius+lvl*10, tick rate fixed (cd n/a)
+            toxicAura:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 10 } },
+            // fireIceShards (L8826): dmg .04, shards baseProjectiles+floor(lvl/4), pierce 1+floor(lvl/4), cd .985
+            iceShard:      { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Shard',  fn: (l, d) => d.baseProjectiles + Math.floor(l / 4) }, pierce: { label: 'Pierce', fn: (l) => 1 + Math.floor(l / 4) } },
+            // fireMeteor (L8854): dmg .04, meteors 1+floor(lvl/5), blast blastRadius+lvl*5, cd .985
+            meteorStrike:  { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Meteor', fn: (l) => 1 + Math.floor(l / 5) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + l * 5 } },
+            // fireSpiritOrbs (L8953): dmg .04, orbs baseOrbs+floor(lvl/4), cd .985
+            spiritOrbs:    { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Orb',    fn: (l, d) => d.baseOrbs + Math.floor(l / 4) } },
+            // fireBoomerang (L8640): dmg .04, count baseCount+floor(lvl/6), range 250+lvl*12, cd .985
+            boomerang:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Boomerang', fn: (l, d) => d.baseCount + Math.floor(l / 6) }, range: { label: 'Range', fn: (l) => 250 + l * 12 } },
+            // fireChainLightning (L9130): dmg .04, chains baseChains+floor(lvl/4), range chainRange+lvl*10, cd .985
+            chainLightning:{ dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Jump',   fn: (l, d) => d.baseChains + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.chainRange + l * 10 } },
+            // fireArrows (L9207): dmg .04, arrows lvl>=3 ? 3+floor((lvl-3)/5)*2 : baseArrows; pierce pierce+floor(lvl/4); cd .985 (within burst)
+            spectralArrows:{ dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Arrow',  fn: (l, d) => l >= 3 ? 3 + Math.floor((l - 3) / 5) * 2 : d.baseArrows }, pierce: { label: 'Pierce', fn: (l, d) => d.pierce + Math.floor(l / 4) } },
+            // fireGravityWell (L9255): dmg .05, pull radius pullRadius+lvl*5, cd .985 (single well)
+            gravityWell:   { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Pull', fn: (l, d) => d.pullRadius + l * 5 } },
+            // fireRicochetDisc (L9349): dmg .04, bounces baseBounces+floor(lvl/3), range bounceRange+lvl*10, cd .985
+            ricochetDisc:  { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Bounce', fn: (l, d) => d.baseBounces + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => d.bounceRange + l * 10 } },
+            // dropMine (L9376): dmg .04, max mines maxMines+floor(lvl/5), blast blastRadius+lvl*5, cd .985
+            pulseMine:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Mine',   fn: (l, d) => d.maxMines + Math.floor(l / 5) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + l * 5 } },
+            // fireShotgun (L9416): dmg .06, pellets pelletCount+floor(lvl/3), range maxRange+lvl*15, cd .97
+            shotgun:       { dmgScale: 0.06, cdScale: 0.97,  count: { noun: 'Pellet', fn: (l, d) => d.pelletCount + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => d.maxRange + l * 15 } }
+        };
+
+        // Mirror of fire-time damage scaling: baseDamage * (1 + (level-1)*scale).
+        function weaponDamageAt(def, meta, level) {
+            return def.baseDamage * (1 + (level - 1) * (meta.dmgScale || 0.04));
+        }
+        // Trim trailing ".0" so "18.0" reads as "18" but "18.7" stays "18.7".
+        function fmtStat(n) {
+            const r = Math.round(n * 10) / 10;
+            return Number.isInteger(r) ? String(r) : r.toFixed(1);
+        }
+
+        // Returns the effect description for a NEW weapon (level 0 -> 1):
+        // { startCount, noun, damage } so the card can read "Adds: 1 Squirrel · 18 DMG".
+        function describeNewWeapon(id) {
+            const def = WEAPONS[id];
+            const meta = UPGRADE_DISPLAY_META[id];
+            if (!def || !meta) return null;
+            let startCount = null, noun = null;
+            if (meta.count) {
+                startCount = meta.count.fn(1, def);
+                noun = meta.count.noun;
+            }
+            return { startCount, noun, damage: fmtStat(weaponDamageAt(def, meta, 1)) };
+        }
+
+        // Returns what a weapon LEVEL-UP grants (fromLevel -> toLevel), all numbers
+        // re-derived from the fire-fn formulas at both endpoints:
+        //   { gain: {noun, before, after} | null, lines: ["DMG 18 → 18.7", ...] }
+        // gain is set only when an instance count actually STEPS this level (the
+        // headline "+1 Squirrel" fix).
+        function describeUpgrade(id, fromLevel, toLevel) {
+            const def = WEAPONS[id];
+            const meta = UPGRADE_DISPLAY_META[id];
+            if (!def || !meta) return null;
+
+            const lines = [];
+            let gain = null;
+
+            // Instance count step (headline).
+            if (meta.count) {
+                const before = meta.count.fn(fromLevel, def);
+                const after = meta.count.fn(toLevel, def);
+                if (after > before) {
+                    gain = { noun: meta.count.noun, before, after, delta: after - before };
+                }
+            }
+
+            // Damage always scales every level.
+            const dmgFrom = weaponDamageAt(def, meta, fromLevel);
+            const dmgTo = weaponDamageAt(def, meta, toLevel);
+            lines.push(`DMG ${fmtStat(dmgFrom)} → ${fmtStat(dmgTo)}`);
+
+            // Range / radius step (only when it changes this level).
+            if (meta.range) {
+                const rFrom = Math.round(meta.range.fn(fromLevel, def));
+                const rTo = Math.round(meta.range.fn(toLevel, def));
+                if (rTo !== rFrom) lines.push(`${meta.range.label} ${rFrom} → ${rTo}`);
+            }
+
+            // Pierce step (only when it changes this level).
+            if (meta.pierce) {
+                const pFrom = meta.pierce.fn(fromLevel, def);
+                const pTo = meta.pierce.fn(toLevel, def);
+                if (pTo !== pFrom) lines.push(`${meta.pierce.label} ${pFrom} → ${pTo}`);
+            }
+
+            // If nothing but cooldown moved this level, surface the faster-attack note.
+            // (Only meaningful when the weapon's fire rate actually scales.)
+            if (!gain && lines.length === 1 && meta.cdScale) {
+                lines.push('⚡ Attacks faster');
+            }
+
+            return { gain, lines };
+        }
+
         function showUpgradeCards() {
 
             // Hide slot machine completely
@@ -19415,9 +19614,7 @@
                     if (rarity) card.classList.add('rarity-' + rarity);
                 }
                 card.style.cursor = 'pointer';
-                
-                const levelText = isNew ? '' : ` (Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1})`;
-                
+
                 // Custom boombox icon
                 let upgradeIcon = upgrade.icon;
                 if (upgrade.id === 'boomBox') {
@@ -19460,12 +19657,81 @@
                         }
                     }
                 }
-                
+
+                // ===== EFFECT SECTION (DISPLAY ONLY) =====
+                // A clear "what this grants" block, read first; the flavor desc is
+                // demoted below it. All numbers come from the read-only helpers
+                // above (which mirror the fire-fn formulas) — no gameplay touched.
+                let effectHtml = '';
+                if (upgrade.type === 'tome') {
+                    // Tome: show the per-level grant (the existing accurate value line,
+                    // reused as descText) as the headline, plus owned total after pick.
+                    const tdef = TOMES[upgrade.id];
+                    if (tdef) {
+                        const mult = upgrade.rarityMultiplier || 1; // null for new tomes -> common (1x)
+                        const perLevel = tdef.value * mult;
+                        let total = '';
+                        const ownedAfter = (upgrade.currentLevel || 0) + 1;
+                        if (ownedAfter > 1) {
+                            const totalVal = perLevel * ownedAfter;
+                            if (tdef.stat === 'maxHpBonus') total = `Total +${Math.round(totalVal)} max HP`;
+                            else if (tdef.stat === 'regenBonus') total = `Total +${totalVal.toFixed(1)} HP/sec`;
+                            else total = `Total +${Math.round(totalVal * 100)}%`;
+                        }
+                        effectHtml = `<div class="upgrade-effect">
+                            <div class="ue-headline ue-tome">${descText}</div>
+                            ${total ? `<div class="ue-line">${total}</div>` : ''}
+                        </div>`;
+                    }
+                } else if (upgrade.type === 'weapon') {
+                    if (isNew) {
+                        // New weapon: "Adds: N Noun · D DMG", flavor desc stays below.
+                        const nw = describeNewWeapon(upgrade.id);
+                        if (nw) {
+                            const countPart = (nw.startCount != null && nw.noun)
+                                ? `${nw.startCount} ${nw.noun}${nw.startCount === 1 ? '' : 's'} · `
+                                : '';
+                            effectHtml = `<div class="upgrade-effect">
+                                <div class="ue-headline ue-add">Adds: ${countPart}${nw.damage} DMG</div>
+                            </div>`;
+                        }
+                    } else {
+                        // Level-up: prominent instance gain (if any) + DMG + range/pierce/cooldown.
+                        const eff = describeUpgrade(upgrade.id, upgrade.currentLevel, upgrade.currentLevel + 1);
+                        if (eff) {
+                            let parts = '';
+                            if (eff.gain) {
+                                // Pluralize by how many are ADDED this level (delta): "+1 Squirrel", "+2 Arrows".
+                                const noun = eff.gain.noun + (eff.gain.delta === 1 ? '' : 's');
+                                parts += `<div class="ue-headline ue-instance">➕ +${eff.gain.delta} ${noun} (${eff.gain.before} → ${eff.gain.after})</div>`;
+                            }
+                            for (const line of eff.lines) {
+                                parts += `<div class="ue-line">${line}</div>`;
+                            }
+                            if (parts) effectHtml = `<div class="upgrade-effect">${parts}</div>`;
+                        }
+                    }
+                }
+
+                // Level chip: own badge instead of only a name suffix (clearer "Lv X → Y").
+                const levelChip = isNew
+                    ? ''
+                    : `<div class="level-chip">Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}</div>`;
+
+                // Flavor line: weapons keep their flavor text below the effect.
+                // Tomes already show their accurate grant in the headline, so the
+                // identical desc isn't repeated below.
+                const flavorHtml = (upgrade.type === 'tome')
+                    ? ''
+                    : `<div class="desc desc-flavor">${descText}</div>`;
+
                 card.innerHTML = `
                     ${rarityBadge}
                     <div class="icon">${iconHtml}</div>
-                    <div class="name">${upgrade.name}${levelText}</div>
-                    <div class="desc">${descText}</div>
+                    <div class="name">${upgrade.name}</div>
+                    ${levelChip}
+                    ${effectHtml}
+                    ${flavorHtml}
                 `;
                 
                 // Use onclick directly for simplicity
