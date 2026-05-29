@@ -2271,6 +2271,85 @@
             transform: scale(1);
         }
 
+        /* ===== RARITY SHEEN (render-only, paused screen) =====
+           A diagonal white-gradient highlight sweeps across each card once on
+           reveal via a GPU transform on a ::after layer. Rarity scales the
+           intensity (set per-card via --sheen-alpha); epic/legendary also get a
+           slow repeating shimmer, and legendary gets an animated gold aura.
+           Pure CSS, clip to the rounded card, no layout/size change. */
+        .upgrade-card {
+            --sheen-alpha: 0.18; /* common/uncommon default; overridden per rarity */
+            overflow: hidden; /* clip the sweep to the card's rounded corners */
+        }
+        .upgrade-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 60%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 11; /* above card content, below nothing interactive */
+            background: linear-gradient(
+                115deg,
+                transparent 0%,
+                rgba(255, 255, 255, var(--sheen-alpha)) 50%,
+                transparent 100%
+            );
+            transform: translateX(-180%) skewX(-18deg) translateZ(0);
+            will-change: transform;
+            backface-visibility: hidden;
+        }
+        /* Sweep tied to the card-enter cascade (0.2s/0.3s/0.4s base delays). */
+        .upgrade-overlay.active .upgrade-card:nth-child(1)::after {
+            animation: cardSheen 0.6s ease-out 0.45s 1;
+        }
+        .upgrade-overlay.active .upgrade-card:nth-child(2)::after {
+            animation: cardSheen 0.6s ease-out 0.55s 1;
+        }
+        .upgrade-overlay.active .upgrade-card:nth-child(3)::after {
+            animation: cardSheen 0.6s ease-out 0.65s 1;
+        }
+        @keyframes cardSheen {
+            0%   { transform: translateX(-180%) skewX(-18deg) translateZ(0); }
+            100% { transform: translateX(320%)  skewX(-18deg) translateZ(0); }
+        }
+
+        /* Rarity intensities + repeating shimmer for the high tiers. */
+        .upgrade-card.rarity-rare { --sheen-alpha: 0.26; }
+        .upgrade-card.rarity-epic { --sheen-alpha: 0.34; }
+        .upgrade-card.rarity-legendary { --sheen-alpha: 0.5; }
+
+        /* Epic/legendary keep a slow secondary shimmer after the entry sweep. */
+        .upgrade-overlay.active .upgrade-card.rarity-epic::after {
+            animation: cardSheen 0.6s ease-out 0.55s 1,
+                       cardShimmer 3.2s ease-in-out 1.4s infinite;
+        }
+        .upgrade-overlay.active .upgrade-card.rarity-legendary::after {
+            animation: cardSheen 0.6s ease-out 0.65s 1,
+                       cardShimmer 2.6s ease-in-out 1.4s infinite;
+        }
+        @keyframes cardShimmer {
+            0%, 100% { transform: translateX(-180%) skewX(-18deg) translateZ(0); }
+            50%      { transform: translateX(320%)  skewX(-18deg) translateZ(0); }
+        }
+
+        /* Legendary: animated gold aura/border glow (pulses the box-shadow,
+           which JS seeds inline; this layers an extra gold halo on top). */
+        .upgrade-card.rarity-legendary {
+            animation: legendaryAura 1.8s ease-in-out infinite;
+        }
+        @keyframes legendaryAura {
+            0%, 100% {
+                box-shadow: 0 0 16px rgba(255, 170, 0, 0.45),
+                            0 0 6px rgba(255, 215, 0, 0.35) inset;
+            }
+            50% {
+                box-shadow: 0 0 34px rgba(255, 200, 40, 0.85),
+                            0 0 12px rgba(255, 230, 120, 0.6) inset;
+            }
+        }
+
         .upgrade-card:hover {
             transform: scale(1.08);
         }
@@ -5980,6 +6059,15 @@
         let overlayCacheW = 0;           // game-area size the overlays were built at
         let overlayCacheH = 0;
 
+        // HUD XP-bar polish (render-only). The fill uses a horizontal
+        // magenta->cyan gradient cached here and rebuilt only when the bar's
+        // logical width changes (lazily, in drawTrackpad). xpFlash is a short
+        // decaying timer fired purely in REACTION to a detected level-up — it
+        // never touches XP/level state.
+        let xpBarGradient = null;        // cached CanvasGradient for the XP fill
+        let xpBarGradientW = 0;          // bar width the gradient was built at
+        let xpFlash = 0;                 // 0..1 white-flash intensity on level-up
+
         // Build a game-area-sized offscreen canvas with a radial gradient painted on it.
         // innerStop/outerStop are fractions of the half-diagonal; stops is an array of
         // [offset, cssColor]. Returns the canvas (caller caches it).
@@ -7519,6 +7607,12 @@
                     }
 
                     SFX.levelup();
+                    // Render-only: one-shot world pop tying the DOM level-up
+                    // overlay to the player in-world. Cyan ground ring + a small
+                    // upward puff. Reacts to the level-up; does not alter XP/level
+                    // logic. Reuses the capped fxRings + particle pools.
+                    addRing(this.x, this.y, this.radius * 2, COLORS.cyan);
+                    spawnParticles(this.x, this.y - this.radius, COLORS.cyan, 10);
                     showUpgradeSelection();
                 }
             }
@@ -13671,7 +13765,7 @@
             }
             
             const chest = pendingChest;
-            
+
             // Deduct gold if not free
             if (!chest.isFree) {
                 if (playerGold < chest.cost) return;
@@ -13688,7 +13782,18 @@
                     }
                 }
             }
-            
+
+            // Render-only: one-shot in-world pop at the chest, fired only once
+            // the open is committed (after the affordability guard). Ties the DOM
+            // reward modal to a satisfying burst in the world. Gold for a
+            // legendary drop or a free (gold) chest, else the silver chest color.
+            // Reuses the existing capped particle pool + fxRings (no new system).
+            const burstColor = (chest.contents && chest.contents.type === 'legendary') || chest.isFree
+                ? COLORS.gold
+                : '#c0c0c0';
+            spawnParticles(chest.x, chest.y, burstColor, 20);
+            addRing(chest.x, chest.y, chest.radius || 30, burstColor);
+
             // Apply contents
             if (chest.contents.type === 'legendary') {
                 legendaryCount++;
@@ -19223,6 +19328,9 @@
                     const borderColor = rarityInfo ? rarityInfo.color : upgrade.color;
                     card.style.borderColor = borderColor;
                     card.style.boxShadow = `0 0 20px ${borderColor}40`;
+                    // Render-only CSS hook: scales the sheen intensity by rarity
+                    // and gives legendary its animated gold aura (see .rarity-* CSS).
+                    if (rarity) card.classList.add('rarity-' + rarity);
                 }
                 card.style.cursor = 'pointer';
                 
@@ -20294,6 +20402,9 @@
                 if (uiState.xpPercent < uiState.xpPercentDisplay - 50) {
                     // Level up detected - snap to new value
                     uiState.xpPercentDisplay = uiState.xpPercent;
+                    // Render-only reaction: fire the XP-bar white flash. Reads the
+                    // existing snap-back condition; does not alter leveling/XP.
+                    xpFlash = 1;
                 } else {
                     // Smoothly lerp toward target (slower = smoother)
                     const lerpSpeed = 0.08;
@@ -20403,15 +20514,55 @@
             ctx.roundRect(xpMargin, xpY, xpW, xpH, 3);
             ctx.stroke();
             
-            const xpFill = (xpW - 2) * (uiState.xpPercentDisplay / 100);
+            const xpInnerW = xpW - 2;            // full-bar interior width
+            const xpFill = xpInnerW * (uiState.xpPercentDisplay / 100);
             if (xpFill > 0) {
-                ctx.fillStyle = '#ff00ff';
+                // (a) Cached magenta->cyan gradient. Built across the full bar
+                //     interior so the colour mapping is stable as the fill grows;
+                //     rebuilt only when the bar's logical width changes.
+                if (!xpBarGradient || xpBarGradientW !== xpInnerW) {
+                    const g = ctx.createLinearGradient(xpMargin + 1, 0, xpMargin + 1 + xpInnerW, 0);
+                    g.addColorStop(0, '#ff00ff');   // magenta (unchanged left anchor)
+                    g.addColorStop(1, '#00ffff');   // cyan
+                    xpBarGradient = g;
+                    xpBarGradientW = xpInnerW;
+                }
+                ctx.fillStyle = xpBarGradient;
                 ctx.shadowColor = 'rgba(255, 0, 255, 0.5)';
                 ctx.shadowBlur = 4;
                 ctx.beginPath();
                 ctx.roundRect(xpMargin + 1, xpY + 1, xpFill, xpH - 2, 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
+
+                // (b) Thin brighter highlight stripe at the bar's leading (right)
+                //     edge. Only drawn when the fill is wide enough to host it.
+                if (xpFill > 3) {
+                    const stripeW = 2;
+                    ctx.fillStyle = 'rgba(220, 255, 255, 0.9)';
+                    ctx.shadowColor = 'rgba(0, 255, 255, 0.8)';
+                    ctx.shadowBlur = 5;
+                    ctx.beginPath();
+                    ctx.roundRect(xpMargin + 1 + xpFill - stripeW, xpY + 1, stripeW, xpH - 2, 1.5);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+            }
+
+            // (c) Level-up white flash: full-bar interior wash that decays. Driven
+            //     purely by xpFlash, which is set in reaction to the existing
+            //     level-up detection (no XP/level state touched here).
+            if (xpFlash > 0.01) {
+                ctx.save();
+                ctx.globalAlpha = xpFlash;
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.9)';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.roundRect(xpMargin + 1, xpY + 1, xpInnerW, xpH - 2, 2);
+                ctx.fill();
+                ctx.restore();
+                xpFlash *= 0.88; // ~frame-rate decay; visual only
             }
             
             // ===== MAIN LAYOUT: [OFFENSE][WEAPONS][MINIMAP][TOMES][DEFENSE] =====
