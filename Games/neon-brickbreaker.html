@@ -1689,7 +1689,101 @@
         // Enable anti-aliasing for smoother ball rendering
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        
+
+        // ===== V1_184: WebAudio SFX engine (synth-based, no assets, persisted mute) =====
+        // SAFE: pure feedback layer — touches no game mechanics. Lazy AudioContext so
+        // it only spins up after a user gesture (iOS/Safari requirement).
+        const SFX = (function () {
+            let actx = null, master = null;
+            let muted = false;
+            try { muted = localStorage.getItem('brickbreaker_muted') === '1'; } catch (e) {}
+            function ensure() {
+                if (actx) return actx;
+                try {
+                    const AC = window.AudioContext || window.webkitAudioContext;
+                    if (!AC) return null;
+                    actx = new AC();
+                    master = actx.createGain();
+                    master.gain.value = muted ? 0 : 0.32;
+                    master.connect(actx.destination);
+                } catch (e) { actx = null; }
+                return actx;
+            }
+            function tone(freq, dur, type, gain, sweepTo) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime;
+                    const osc = a.createOscillator(), g = a.createGain();
+                    osc.type = type || 'triangle';
+                    osc.frequency.setValueAtTime(freq, t);
+                    if (sweepTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, sweepTo), t + dur);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(gain || 0.25, t + 0.006);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(g); g.connect(master);
+                    osc.start(t); osc.stop(t + dur + 0.02);
+                } catch (e) {}
+            }
+            function noise(dur, gain) {
+                if (muted) return;
+                const a = ensure(); if (!a) return;
+                try {
+                    const t = a.currentTime, n = Math.max(1, Math.floor(a.sampleRate * dur));
+                    const buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+                    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+                    const src = a.createBufferSource(); src.buffer = buf;
+                    const g = a.createGain(); g.gain.value = gain || 0.2;
+                    const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1100;
+                    src.connect(f); f.connect(g); g.connect(master);
+                    src.start(t); src.stop(t + dur);
+                } catch (e) {}
+            }
+            return {
+                get muted() { return muted; },
+                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                setMuted: function (m) {
+                    muted = !!m;
+                    try { localStorage.setItem('brickbreaker_muted', muted ? '1' : '0'); } catch (e) {}
+                    if (master) master.gain.value = muted ? 0 : 0.32;
+                },
+                toggle: function () { this.setMuted(!muted); return muted; },
+                paddle:     function () { tone(420, 0.07, 'triangle', 0.30, 300); },
+                wall:       function () { tone(300, 0.05, 'sine', 0.16, 240); },
+                brick:      function () { tone(720, 0.06, 'triangle', 0.22, 560); },
+                powerup:    function () { tone(520, 0.10, 'square', 0.18, 0); setTimeout(function () { tone(784, 0.12, 'square', 0.18, 0); }, 70); },
+                bossHit:    function () { tone(170, 0.09, 'sawtooth', 0.24, 110); },
+                bossDeath:  function () { noise(0.35, 0.30); tone(220, 0.40, 'sawtooth', 0.26, 55); },
+                lifeLost:   function () { tone(360, 0.50, 'sine', 0.28, 90); },
+                levelClear: function () { tone(523, 0.12, 'triangle', 0.24, 0); setTimeout(function () { tone(784, 0.18, 'triangle', 0.24, 0); }, 110); },
+                gameOver:   function () { tone(440, 0.25, 'sawtooth', 0.26, 210); setTimeout(function () { tone(220, 0.50, 'sawtooth', 0.26, 90); }, 200); }
+            };
+        })();
+        // Unlock audio on the first user gesture (iOS/Safari requirement).
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function unlockOnce() { SFX.unlock(); }, { once: true, passive: true });
+        });
+        // Canvas-drawn mute toggle: rect (logical 653x700 coords) is set in drawHUD().
+        let muteBtnRect = { x: 0, y: 0, w: 30, h: 26 };
+        function eventToGameCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return null;
+            const src = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+            if (src.clientX == null) return null;
+            return { x: (src.clientX - rect.left) / rect.width * 653, y: (src.clientY - rect.top) / rect.height * 700 };
+        }
+        function hitMute(e) {
+            const p = eventToGameCoords(e);
+            return !!p && p.x >= muteBtnRect.x - 6 && p.x <= muteBtnRect.x + muteBtnRect.w + 6 &&
+                   p.y >= muteBtnRect.y - 6 && p.y <= muteBtnRect.y + muteBtnRect.h + 6;
+        }
+        canvas.addEventListener('click', function (e) {
+            if (hitMute(e)) { e.stopImmediatePropagation(); SFX.unlock(); SFX.toggle(); }
+        });
+        canvas.addEventListener('touchend', function (e) {
+            if (hitMute(e)) { e.preventDefault(); e.stopImmediatePropagation(); SFX.unlock(); SFX.toggle(); }
+        }, { passive: false });
+
         const startBtn = document.getElementById('menuStartBtn');
         const leaderboardBtn = document.getElementById('menuLeaderboardBtn');
         const tutorialBtn = document.getElementById('menuTutorialBtn');
@@ -3285,6 +3379,7 @@
                         boss.hits += damageDealt;
                         boss.flashUntil = now + 150; // Flash for 150ms
                         score += bossConfig.pointsPerHit * damageDealt;
+                        SFX.bossHit();
                         uiState.score = score;
                         
                         // Check if boss is destroyed
@@ -3302,6 +3397,7 @@
                             
                             // Create death explosion AFTER setting freeze flag
                             createBossDeathExplosion(boss);
+                            SFX.bossDeath();
                             bossDeathAnimationEnd = now + bossConfig.deathAnimationDuration;
                             
                             // If ball is now frozen, don't bounce - exit immediately
@@ -3702,6 +3798,7 @@
                     // Normalize velocity to maintain consistent speed
                     ball.dx = ball.speed * Math.sin(angle * Math.PI / 2);
                     ball.dy = -ball.speed * Math.cos(angle * Math.PI / 2);
+                    SFX.paddle();
                     
                     // Ensure ball always moves upward
                     if (ball.dy > -ball.speed * 0.3) {
@@ -3775,6 +3872,7 @@
                                         
                                         brick.alive = false;
                                         score += 1;
+                                        SFX.brick();
                                         uiState.score = score;
                                     
                                     // Activate power-up if brick had one
@@ -3847,6 +3945,7 @@
 
         // Show life lost message and pause briefly
         function showLifeLostMessage() {
+            SFX.lifeLost();
             lifeLostPause = true;
             lifeLostPauseEnd = performance.now() + 1275; // 1.275 second pause (15% shorter)
             
@@ -4346,6 +4445,7 @@
         }
 
         function activatePowerUp(type) {
+            SFX.powerup();
             switch(type) {
                 case 'bigPaddle':
                     activePowerUps.bigPaddle.active = true;
@@ -4545,6 +4645,7 @@
         }
 
         function nextLevel() {
+            SFX.levelClear();
             level++;
             uiState.level = level;
             
@@ -4642,6 +4743,7 @@
 
         function gameOver() {
             gameRunning = false;
+            SFX.gameOver();
             
             uiState.powerUpTimers = [];
             lastPowerUpBarContent = '';
@@ -4738,6 +4840,15 @@
                 }
             });
             
+            // V1_184: mute toggle in the HUD's free top-right corner (tap-handled via muteBtnRect)
+            muteBtnRect = { x: gameWidth - 42, y: (LAYOUT.hudHeight - 26) / 2, w: 30, h: 26 };
+            ctx.textAlign = 'center';
+            ctx.font = '20px "Segoe UI", sans-serif';
+            ctx.shadowColor = SFX.muted ? '#f06' : '#0ff';
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = SFX.muted ? 'rgba(255,90,130,0.95)' : '#0ff';
+            ctx.fillText(SFX.muted ? '🔇' : '🔊', muteBtnRect.x + muteBtnRect.w / 2, hudY);
+
             // HUD bottom border
             ctx.shadowBlur = 4;
             ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
