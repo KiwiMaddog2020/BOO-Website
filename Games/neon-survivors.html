@@ -6463,7 +6463,11 @@
         const FOG_CELL_SIZE = 100; // Each cell is 100x100 world units
         const FOG_GRID_SIZE = Math.ceil(WORLD.width / FOG_CELL_SIZE);
         let fogGrid = []; // 2D array: true = explored, false = unexplored
-        
+        // Perf: the static fog/explored/lake layer is cached to an offscreen canvas
+        // (see drawMinimap) and only re-rendered when this flag is set, i.e. when a
+        // new cell is revealed or the grid is reset. Pixel-identical to per-frame draw.
+        let fogLayerDirty = true;
+
         function initFogGrid() {
             fogGrid = [];
             for (let y = 0; y < FOG_GRID_SIZE; y++) {
@@ -6472,6 +6476,7 @@
                     fogGrid[y][x] = false;
                 }
             }
+            fogLayerDirty = true; // new run: re-render cached fog layer (lakes re-spawn right after)
         }
         
         function updateFogOfWar() {
@@ -6493,7 +6498,10 @@
                     const cellCenterY = (cy + 0.5) * FOG_CELL_SIZE;
                     const dist = Math.hypot(cellCenterX - player.x, cellCenterY - player.y);
                     if (dist < viewRadius) {
-                        fogGrid[cy][cx] = true;
+                        if (!fogGrid[cy][cx]) {
+                            fogGrid[cy][cx] = true;
+                            fogLayerDirty = true; // new cell revealed: rebuild cached fog layer next draw
+                        }
                     }
                 }
             }
@@ -20974,60 +20982,80 @@
         const minimapCanvas = document.getElementById('minimapCanvas');
         const minimapCtx = minimapCanvas.getContext('2d');
         const mapSize = 156; // Fixed size - CSS handles display scaling
-        
+
+        // Perf: offscreen cache for the static fog/explored/lake layer.
+        // Same backing-store size as minimapCanvas (156x156, no DPR), so it is
+        // copied back with a 1:1 drawImage at origin (0,0) -> pixel-identical.
+        const fogLayerCanvas = document.createElement('canvas');
+        fogLayerCanvas.width = mapSize;
+        fogLayerCanvas.height = mapSize;
+        const fogLayerCtx = fogLayerCanvas.getContext('2d');
+
+
         function drawMinimap() {
             const scale = mapSize / WORLD.width;
             const fogCellScale = FOG_CELL_SIZE * scale;
-            
-            // Clear minimap
-            minimapCtx.clearRect(0, 0, mapSize, mapSize);
-            
-            // Draw fog of war (unexplored = dark, explored = slightly visible)
-            minimapCtx.fillStyle = 'rgba(0, 0, 0, 0.95)';
-            minimapCtx.fillRect(0, 0, mapSize, mapSize);
-            
-            // Draw explored areas
-            minimapCtx.fillStyle = 'rgba(20, 20, 40, 0.9)';
-            for (let cy = 0; cy < FOG_GRID_SIZE; cy++) {
-                for (let cx = 0; cx < FOG_GRID_SIZE; cx++) {
-                    if (fogGrid[cy] && fogGrid[cy][cx]) {
-                        minimapCtx.fillRect(
-                            cx * fogCellScale,
-                            cy * fogCellScale,
-                            fogCellScale + 0.5,
-                            fogCellScale + 0.5
-                        );
+
+            // Re-render the STATIC fog/explored/lake layer into the offscreen cache only
+            // when it changed (a new cell was revealed, or the grid was reset). Same ctx
+            // ops, same fillStyles/coords as before, just drawn to fogLayerCtx.
+            if (fogLayerDirty) {
+                // Clear cache
+                fogLayerCtx.clearRect(0, 0, mapSize, mapSize);
+
+                // Draw fog of war (unexplored = dark, explored = slightly visible)
+                fogLayerCtx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+                fogLayerCtx.fillRect(0, 0, mapSize, mapSize);
+
+                // Draw explored areas
+                fogLayerCtx.fillStyle = 'rgba(20, 20, 40, 0.9)';
+                for (let cy = 0; cy < FOG_GRID_SIZE; cy++) {
+                    for (let cx = 0; cx < FOG_GRID_SIZE; cx++) {
+                        if (fogGrid[cy] && fogGrid[cy][cx]) {
+                            fogLayerCtx.fillRect(
+                                cx * fogCellScale,
+                                cy * fogCellScale,
+                                fogCellScale + 0.5,
+                                fogCellScale + 0.5
+                            );
+                        }
                     }
                 }
+
+                // Draw lakes on minimap (only in explored areas)
+                fogLayerCtx.fillStyle = 'rgba(30, 80, 120, 0.8)';
+                fogLayerCtx.strokeStyle = 'rgba(60, 140, 180, 0.6)';
+                fogLayerCtx.lineWidth = 1;
+                for (const obs of terrainObstacles) {
+                    if (obs.type !== 'lake') continue;
+
+                    // Check if any part of lake is explored
+                    const lakeExplored = isExplored(obs.x, obs.y) ||
+                        isExplored(obs.x + obs.radiusX * 0.7, obs.y) ||
+                        isExplored(obs.x - obs.radiusX * 0.7, obs.y) ||
+                        isExplored(obs.x, obs.y + obs.radiusY * 0.7) ||
+                        isExplored(obs.x, obs.y - obs.radiusY * 0.7);
+
+                    if (!lakeExplored) continue;
+
+                    const lx = obs.x * scale;
+                    const ly = obs.y * scale;
+                    const lrx = obs.radiusX * scale;
+                    const lry = obs.radiusY * scale;
+
+                    fogLayerCtx.beginPath();
+                    fogLayerCtx.ellipse(lx, ly, lrx, lry, 0, 0, Math.PI * 2);
+                    fogLayerCtx.fill();
+                    fogLayerCtx.stroke();
+                }
+
+                fogLayerDirty = false;
             }
-            
-            // Draw lakes on minimap (only in explored areas)
-            minimapCtx.fillStyle = 'rgba(30, 80, 120, 0.8)';
-            minimapCtx.strokeStyle = 'rgba(60, 140, 180, 0.6)';
-            minimapCtx.lineWidth = 1;
-            for (const obs of terrainObstacles) {
-                if (obs.type !== 'lake') continue;
-                
-                // Check if any part of lake is explored
-                const lakeExplored = isExplored(obs.x, obs.y) || 
-                    isExplored(obs.x + obs.radiusX * 0.7, obs.y) ||
-                    isExplored(obs.x - obs.radiusX * 0.7, obs.y) ||
-                    isExplored(obs.x, obs.y + obs.radiusY * 0.7) ||
-                    isExplored(obs.x, obs.y - obs.radiusY * 0.7);
-                    
-                if (!lakeExplored) continue;
-                
-                const lx = obs.x * scale;
-                const ly = obs.y * scale;
-                const lrx = obs.radiusX * scale;
-                const lry = obs.radiusY * scale;
-                
-                minimapCtx.beginPath();
-                minimapCtx.ellipse(lx, ly, lrx, lry, 0, 0, Math.PI * 2);
-                minimapCtx.fill();
-                minimapCtx.stroke();
-            }
-            
+
+            // Blit the cached static layer (1:1, pixel-identical to drawing it inline)
+            minimapCtx.clearRect(0, 0, mapSize, mapSize);
+            minimapCtx.drawImage(fogLayerCanvas, 0, 0);
+
             // Viewport indicator (always visible)
             const viewWidth = gameWidth / camera.zoom;
             const viewHeight = gameHeight / camera.zoom;

@@ -1281,6 +1281,7 @@
                 submit:      function () { tone(520, 0.08, 'square', 0.18, 0); setTimeout(function () { tone(780, 0.10, 'square', 0.18, 0); }, 80); }
             };
         })();
+        window.SFX = SFX;
         ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
             window.addEventListener(ev, function unlockOnce() { SFX.unlock(); }, { once: true, passive: true });
         });
@@ -1955,7 +1956,10 @@
             // Cache the mushroom caps to off-screen canvases (all devices now)
             pipeObj.cachedCapTop = createCachedCap(pipeObj, true);
             pipeObj.cachedCapBottom = createCachedCap(pipeObj, false);
-            
+            // Cache the per-frame stalk color (deterministic from stemColorIndex; no RNG)
+            // so drawMushroom doesn't rebuild the full color object every frame.
+            pipeObj.cachedStem = mushroomPalette.stems[stemColorIndex];
+
             pipes.push(pipeObj);
         }
         
@@ -2446,13 +2450,15 @@
             const capHeight = 51 * scale;
             const stemWidth = 40;
             const centerX = pipe.x + pipeWidth / 2;
-            const colors = getMushroomColors(pipe.capColorIndex, pipe.stemColorIndex);
-            
+            // Stalk color cached at spawn (identical to getMushroomColors(...).stem,
+            // which is a deterministic palette lookup) — avoids per-frame rebuilds.
+            const stem = pipe.cachedStem || mushroomPalette.stems[pipe.stemColorIndex];
+
             if (isTop) {
                 // Top mushroom: cap hangs down from top, gap starts at gapY
                 const capY = pipe.gapY - capHeight;
                 // Draw stalk
-                ctx.fillStyle = colors.stem;
+                ctx.fillStyle = stem;
                 ctx.fillRect(centerX - stemWidth/2, 0, stemWidth, capY + 12);
                 // Draw cached cap
                 if (pipe.cachedCapTop) {
@@ -2462,7 +2468,7 @@
                 // Bottom mushroom: cap sits at bottom of gap (gapY + pipeGap)
                 const capY = pipe.gapY + pipeGap;
                 // Draw stalk
-                ctx.fillStyle = colors.stem;
+                ctx.fillStyle = stem;
                 ctx.fillRect(centerX - stemWidth/2, capY + capHeight - 12, stemWidth, baseHeight - capY - capHeight + 12);
                 // Draw cached cap
                 if (pipe.cachedCapBottom) {

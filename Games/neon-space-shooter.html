@@ -1648,6 +1648,24 @@
             });
         }
 
+        // Cached inner-core radial gradient. Its radius is b.width * 0.5, which is
+        // constant for all bullets between canvas resizes (b.width === CONFIG.bulletWidth,
+        // never mutated). Built once at origin (0,0) and repositioned per bullet via
+        // ctx.translate(), which is pixel-identical to a fresh createRadialGradient(cx,cy,...).
+        // Rebuilt only when bullet width changes (resize / DPR change).
+        let _innerGlowGrad = null;
+        let _innerGlowGradWidth = -1;
+        function getInnerGlowGradient(bw) {
+            if (_innerGlowGrad === null || bw !== _innerGlowGradWidth) {
+                _innerGlowGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, bw * 0.5);
+                _innerGlowGrad.addColorStop(0, '#ffffff');
+                _innerGlowGrad.addColorStop(0.5, '#00ffff');
+                _innerGlowGrad.addColorStop(1, 'rgba(0, 255, 255, 0)');
+                _innerGlowGradWidth = bw;
+            }
+            return _innerGlowGrad;
+        }
+
         function drawBullets() {
             ctx.save();
             
@@ -1693,18 +1711,18 @@
                 ctx.fill();
 
                 // Inner plasma core (bright cyan/white)
+                // Reuse a cached radial gradient (constant radius b.width*0.5) positioned
+                // via translate — identical output to a per-frame createRadialGradient at (cx,cy).
                 ctx.shadowBlur = 15;
                 ctx.shadowColor = '#0ff';
-                
-                const innerGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, b.width * 0.5);
-                innerGrad.addColorStop(0, '#ffffff');
-                innerGrad.addColorStop(0.5, '#00ffff');
-                innerGrad.addColorStop(1, 'rgba(0, 255, 255, 0)');
-                
-                ctx.fillStyle = innerGrad;
+
+                ctx.fillStyle = getInnerGlowGradient(b.width);
+                ctx.save();
+                ctx.translate(cx, cy);
                 ctx.beginPath();
-                ctx.ellipse(cx, cy, b.width * 0.5 * pulseSize, b.height * 0.35 * pulseSize, 0, 0, TWO_PI);
+                ctx.ellipse(0, 0, b.width * 0.5 * pulseSize, b.height * 0.35 * pulseSize, 0, 0, TWO_PI);
                 ctx.fill();
+                ctx.restore();
 
                 // Energy sparks around plasma
                 ctx.shadowBlur = 5;
