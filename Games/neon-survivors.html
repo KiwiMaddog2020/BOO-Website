@@ -1029,19 +1029,27 @@
             display: none;
             align-items: center;
             justify-content: center;
+            /* V1_169: allow the popup to scroll if it ever outgrows a short viewport
+               instead of clipping the title / "Got it!" button. */
+            overflow-y: auto;
+            padding: 16px 12px;
+            box-sizing: border-box;
             z-index: 700;
         }
-        
+
         .weapon-tutorial-popup.active {
             display: flex;
         }
-        
+
         .weapon-tutorial-content {
             background: rgba(0, 0, 0, 0.95);
             border: 2px solid #0ff;
             border-radius: 8px;
             padding: 30px 35px;
             max-width: 380px;
+            max-height: 100%;
+            margin: auto;
+            box-sizing: border-box;
             text-align: center;
             box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
         }
@@ -1926,6 +1934,14 @@
             pointer-events: auto;
             margin-top: 15px;
             flex-shrink: 0;
+            /* V1_169: pin BACK/CONFIRM to the bottom of the scroll area so they are always
+               reachable. On short/embedded viewports the weapon grid + colour picker
+               overflowed and CONFIRM dropped below the fold (the round couldn't be started). */
+            position: sticky;
+            bottom: 0;
+            padding: 12px 0 6px;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.97) 55%, rgba(0, 0, 0, 0));
+            z-index: 5;
         }
         
         .weapon-select-btn {
@@ -6353,7 +6369,13 @@
                 const remainingHeight = availHeight - scaledGameHeight;
                 const trackpadScaled = remainingHeight / scaleFromWidth; // Convert back to logical coords
                 const minTrackpad = 120;
-                const finalTrackpadLogical = Math.max(minTrackpad, trackpadScaled);
+                // V1_169: Cap the trackpad so the game keeps ~60% of the canvas and the
+                // trackpad ~40%. Previously uncapped — on tall phones the parent stretches
+                // the fullscreen iframe (8% letterbox cap) and ALL the extra height fed the
+                // trackpad, so it ballooned to ~60% and the game shrank to ~40% (flipped).
+                // Min (120) unchanged; we only add an upper bound on the trade-off.
+                const maxTrackpad = BASE_GAME_HEIGHT * (40 / 60); // ≈386.7 → game ≥ 60%
+                const finalTrackpadLogical = Math.max(minTrackpad, Math.min(maxTrackpad, trackpadScaled));
                 
                 // Total logical height
                 const totalLogicalHeight = BASE_GAME_HEIGHT + finalTrackpadLogical;
@@ -6404,14 +6426,19 @@
                 canvas.style.width = cssWidth + 'px';
                 canvas.style.height = cssHeight + 'px';
                 
-                // Position invisible trackpad overlay for touch events
+                // Position invisible trackpad overlay for touch events.
+                // V1_169: the canvas is centered in the container (justify-content:center),
+                // so when the trackpad cap leaves the canvas shorter than the iframe there
+                // is a letterbox bar below it. Offset the touch zone up by that bar so it
+                // stays aligned with the trackpad the canvas actually renders.
                 const trackpadEl = document.getElementById('trackpadZone');
                 if (trackpadEl) {
                     const trackpadHeightPx = finalTrackpadLogical * scaleFromWidth;
+                    const letterboxBottom = Math.max(0, (availHeight - cssHeight) / 2);
                     trackpadEl.style.position = 'absolute';
                     trackpadEl.style.width = cssWidth + 'px';
                     trackpadEl.style.height = trackpadHeightPx + 'px';
-                    trackpadEl.style.bottom = '0';
+                    trackpadEl.style.bottom = letterboxBottom + 'px';
                     trackpadEl.style.left = '50%';
                     trackpadEl.style.transform = 'translateX(-50%)';
                 }
@@ -9669,11 +9696,19 @@
                 ctx.stroke();
                 ctx.globalAlpha = 1;
                 
-                // Ground shadow
+                // Ground shadow (V1_169: deeper + nudged opposite the top-left light so
+                // the orb feels planted rather than floating).
                 ctx.shadowBlur = 0;
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                const groundGrad = ctx.createRadialGradient(
+                    sx + r * 0.1, sy + r * 0.86, 0,
+                    sx + r * 0.1, sy + r * 0.86, r * 0.78
+                );
+                groundGrad.addColorStop(0, 'rgba(0, 0, 0, 0.45)');
+                groundGrad.addColorStop(0.7, 'rgba(0, 0, 0, 0.28)');
+                groundGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = groundGrad;
                 ctx.beginPath();
-                ctx.ellipse(sx, sy + r * 0.8, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
+                ctx.ellipse(sx + r * 0.1, sy + r * 0.86, r * 0.78, r * 0.28, 0, 0, Math.PI * 2);
                 ctx.fill();
                 
                 // ===== RUN-CYCLE + LEAN (render-only) =====
@@ -9703,34 +9738,64 @@
                 ctx.shadowBlur = 20;
                 ctx.shadowColor = baseColor;
 
-                // Body with gradient for 3D effect
+                // ===== 3D LIT SPHERE (V1_169) =====
+                // Light source sits top-left; the body gradient is anchored there so the
+                // orb reads as a lit sphere (bright top-left -> shaded bottom-right) instead
+                // of a flat glowing disc. A crisp specular dot + a bottom-right rim light
+                // sell the roundness. Blink branch (invincibility) unchanged in spirit.
+                const lit = !(isInvincible && Math.floor(time / 50) % 2);
+                const lightX = sx - r * 0.32;
+                const lightY = sy - r * 0.34;
                 const bodyGrad = ctx.createRadialGradient(
-                    sx, sy, 0,
-                    sx, sy, r
+                    lightX, lightY, r * 0.08,
+                    sx, sy, r * 1.12
                 );
-                if (isInvincible && Math.floor(time / 50) % 2) {
+                if (!lit) {
                     bodyGrad.addColorStop(0, 'transparent');
                     bodyGrad.addColorStop(1, 'transparent');
                 } else {
-                    bodyGrad.addColorStop(0, baseColor);
-                    bodyGrad.addColorStop(0.6, baseColor + 'aa');
-                    bodyGrad.addColorStop(1, baseColor + '55');
+                    bodyGrad.addColorStop(0.0, '#ffffff');        // hot spot at the light
+                    bodyGrad.addColorStop(0.14, baseColor);       // quick falloff into body colour
+                    bodyGrad.addColorStop(0.58, baseColor);       // even mid tone
+                    bodyGrad.addColorStop(0.84, baseColor + 'cc');// shading toward the far side
+                    bodyGrad.addColorStop(1.0, baseColor + '2e'); // dark terminator (reads as shadow)
                 }
                 ctx.fillStyle = bodyGrad;
                 ctx.beginPath();
                 ctx.arc(sx, sy, r, 0, Math.PI * 2);
                 ctx.fill();
-                
-                // Inner core (bright center)
-                const coreGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 0.5);
-                coreGrad.addColorStop(0, '#ffffff');
-                coreGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.6)');
-                coreGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-                ctx.fillStyle = coreGrad;
-                ctx.beginPath();
-                ctx.arc(sx, sy, r * 0.5, 0, Math.PI * 2);
-                ctx.fill();
-                
+
+                if (lit) {
+                    // Bottom-right rim light — a thin bright crescent that pops the silhouette
+                    // off the dark arena and reinforces the spherical curve.
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                    ctx.clip();
+                    ctx.shadowBlur = 6;
+                    ctx.shadowColor = baseColor;
+                    ctx.globalAlpha = 0.5;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                    ctx.lineWidth = r * 0.14;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, r * 0.96, Math.PI * 0.12, Math.PI * 0.92);
+                    ctx.stroke();
+                    ctx.restore();
+                    ctx.globalAlpha = 1;
+
+                    // Specular highlight — small offset glint near the light source.
+                    ctx.shadowBlur = 0;
+                    const specX = sx - r * 0.34, specY = sy - r * 0.40;
+                    const specGrad = ctx.createRadialGradient(specX, specY, 0, specX, specY, r * 0.55);
+                    specGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+                    specGrad.addColorStop(0.45, 'rgba(255, 255, 255, 0.25)');
+                    specGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                    ctx.fillStyle = specGrad;
+                    ctx.beginPath();
+                    ctx.ellipse(specX, specY, r * 0.42, r * 0.34, -Math.PI * 0.25, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
                 // Energy ring effect (rotating)
                 ctx.strokeStyle = baseColor;
                 ctx.lineWidth = 1.5;
@@ -21193,22 +21258,33 @@
                 ctx.fillText(tomeLvlText, tomeLvlX + tomeLvlW / 2, tomeLvlY + tomeLvlH / 2);
             }
             
-            // ===== MINIMAP (center) =====
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            // ===== MINIMAP (center) ===== V1_169: matching glassy cyan frame
+            const mmGrad = ctx.createLinearGradient(mmX, mmY - 2, mmX, mmY + mmSize + 2);
+            mmGrad.addColorStop(0, 'rgba(0, 255, 255, 0.10)');
+            mmGrad.addColorStop(0.14, 'rgba(4, 8, 10, 0.84)');
+            mmGrad.addColorStop(1, 'rgba(0, 0, 0, 0.86)');
+            ctx.fillStyle = mmGrad;
             ctx.beginPath();
             ctx.roundRect(mmX - 2, mmY - 2, mmSize + 4, mmSize + 4, 5);
             ctx.fill();
-            
-            ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.55)';
             ctx.lineWidth = 2;
-            ctx.shadowColor = 'rgba(0, 255, 255, 0.2)';
-            ctx.shadowBlur = 10;
+            ctx.shadowColor = 'rgba(0, 255, 255, 0.35)';
+            ctx.shadowBlur = 12;
             ctx.stroke();
             ctx.shadowBlur = 0;
-            
+
             if (minimapCanvas) {
                 ctx.drawImage(minimapCanvas, mmX, mmY, mmSize, mmSize);
             }
+
+            // Inner inset highlight for the glassy edge
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.18)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(mmX, mmY, mmSize, mmSize, 4);
+            ctx.stroke();
             
             // ===== INSTRUCTIONS =====
             const instY = y + h - 14;
@@ -21224,26 +21300,35 @@
         }
         
         function drawStatPanel(x, y, w, h, title, stats, type) {
-            // Background - original: background: rgba(0, 0, 0, 0.7)
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            // V1_169 polish: tinted gradient fill + glassy double border + accent glow
+            // (was a flat rgba(0,0,0,0.7) box with a thin border — read a bit "low budget").
+            // Geometry is unchanged; this is purely the panel's surface treatment.
+            const accent = type === 'offense' ? '255, 110, 110' : '110, 195, 255';
+
+            // Background - subtle vertical gradient: faint accent at the top fading to black
+            const bgGrad = ctx.createLinearGradient(x, y, x, y + h);
+            bgGrad.addColorStop(0, `rgba(${accent}, 0.12)`);
+            bgGrad.addColorStop(0.14, 'rgba(6, 8, 12, 0.82)');
+            bgGrad.addColorStop(1, 'rgba(0, 0, 0, 0.86)');
+            ctx.fillStyle = bgGrad;
             ctx.beginPath();
             ctx.roundRect(x, y, w, h, 8);
             ctx.fill();
-            
-            // Border and glow based on panel type
-            // OFFENSE: border-color: rgba(255, 100, 100, 0.5); box-shadow: 0 0 10px rgba(255, 100, 100, 0.15)
-            // DEFENSE: border-color: rgba(100, 200, 255, 0.5); box-shadow: 0 0 10px rgba(100, 200, 255, 0.15)
-            if (type === 'offense') {
-                ctx.strokeStyle = 'rgba(255, 100, 100, 0.5)';
-                ctx.shadowColor = 'rgba(255, 100, 100, 0.15)';
-            } else {
-                ctx.strokeStyle = 'rgba(100, 200, 255, 0.5)';
-                ctx.shadowColor = 'rgba(100, 200, 255, 0.15)';
-            }
+
+            // Outer border + soft accent glow
+            ctx.strokeStyle = `rgba(${accent}, 0.55)`;
+            ctx.shadowColor = `rgba(${accent}, 0.35)`;
             ctx.lineWidth = 2;
-            ctx.shadowBlur = 10;
+            ctx.shadowBlur = 12;
             ctx.stroke();
             ctx.shadowBlur = 0;
+
+            // Inner inset highlight for a glassy edge
+            ctx.strokeStyle = `rgba(${accent}, 0.22)`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(x + 2, y + 2, w - 4, h - 4, 6);
+            ctx.stroke();
             
             // Title - original: font-size: 12px; font-weight: bold; letter-spacing: 2px
             // OFFENSE title: color: rgba(255, 150, 150, 1); text-shadow: 0 0 8px rgba(255, 100, 100, 0.5)
@@ -21261,8 +21346,12 @@
             ctx.fillText(title, x + w / 2, y + 16);
             ctx.shadowBlur = 0;
             
-            // Title underline - original: border-bottom: 1px solid rgba(255, 255, 255, 0.2)
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            // Title underline - V1_169: accent-tinted gradient that fades at both ends
+            const ulGrad = ctx.createLinearGradient(x + 10, 0, x + w - 10, 0);
+            ulGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+            ulGrad.addColorStop(0.5, `rgba(${accent}, 0.6)`);
+            ulGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.strokeStyle = ulGrad;
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(x + 10, y + 30);
