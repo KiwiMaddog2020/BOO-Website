@@ -6364,31 +6364,51 @@
                 // Scale factor based on width
                 const scaleFromWidth = availWidth / BASE_WIDTH;
                 const scaledGameHeight = BASE_GAME_HEIGHT * scaleFromWidth;
-                
+
                 // Remaining height for trackpad
                 const remainingHeight = availHeight - scaledGameHeight;
                 const trackpadScaled = remainingHeight / scaleFromWidth; // Convert back to logical coords
                 const minTrackpad = 120;
-                // V1_169: Cap the trackpad so the game keeps ~60% of the canvas and the
-                // trackpad ~40%. Previously uncapped — on tall phones the parent stretches
-                // the fullscreen iframe (8% letterbox cap) and ALL the extra height fed the
-                // trackpad, so it ballooned to ~60% and the game shrank to ~40% (flipped).
-                // Min (120) unchanged; we only add an upper bound on the trade-off.
-                const maxTrackpad = BASE_GAME_HEIGHT * (40 / 60); // ≈386.7 → game ≥ 60%
-                const finalTrackpadLogical = Math.max(minTrackpad, Math.min(maxTrackpad, trackpadScaled));
-                
+                const maxTrackpad = BASE_GAME_HEIGHT * (40 / 60); // ≈386.7 → game ≥ 60% (letterbox path)
+
+                // V1_170: On portrait phones, FILL the iframe instead of letterboxing.
+                // The game area grows to take the bulk of the height while the trackpad is
+                // sized to its actual content (panels cap at ~165, so anything beyond ~360 is
+                // dead space). The camera zoom stays WIDTH-driven (see updateZoom), so the
+                // player keeps its on-screen size and the taller view simply reveals more
+                // vertical arena — no black bars, no distortion, no dead trackpad space.
+                const availLogicalHeight = availHeight / scaleFromWidth;
+                const portraitFill = isMobileView && availHeight > availWidth * 1.05;
+
+                let gameLogicalHeight, finalTrackpadLogical;
+                if (portraitFill) {
+                    // Trackpad: ~34% of the screen, clamped to a content-appropriate range.
+                    finalTrackpadLogical = Math.max(240, Math.min(360, availLogicalHeight * 0.34));
+                    // Game fills the rest of the iframe (no internal black bars), capped at
+                    // 2.2× base as a sanity bound for extreme/foldable aspect ratios.
+                    gameLogicalHeight = Math.max(BASE_GAME_HEIGHT,
+                        Math.min(BASE_GAME_HEIGHT * 2.2, availLogicalHeight - finalTrackpadLogical));
+                } else {
+                    // Desktop / landscape / tablet fullscreen: keep the V1_169 letterbox cap.
+                    gameLogicalHeight = BASE_GAME_HEIGHT;
+                    finalTrackpadLogical = Math.max(minTrackpad, Math.min(maxTrackpad, trackpadScaled));
+                }
+
+                // Game logic renders the (possibly taller) arena.
+                gameHeight = gameLogicalHeight;
+
                 // Total logical height
-                const totalLogicalHeight = BASE_GAME_HEIGHT + finalTrackpadLogical;
-                
+                const totalLogicalHeight = gameLogicalHeight + finalTrackpadLogical;
+
                 // Update layout for dynamic trackpad
-                LAYOUT.gameHeight = BASE_GAME_HEIGHT;
-                LAYOUT.trackpadTop = BASE_GAME_HEIGHT;
+                LAYOUT.gameHeight = gameLogicalHeight;
+                LAYOUT.trackpadTop = gameLogicalHeight;
                 LAYOUT.trackpadHeight = finalTrackpadLogical;
-                
-                // CSS dimensions fill viewport
+
+                // CSS dimensions (fills the iframe in portrait; any residual is centered)
                 cssWidth = Math.floor(availWidth);
-                cssHeight = Math.floor(BASE_GAME_HEIGHT * scaleFromWidth + finalTrackpadLogical * scaleFromWidth);
-                
+                cssHeight = Math.floor(totalLogicalHeight * scaleFromWidth);
+
                 // Set logical dimensions for rendering (in BASE_WIDTH coordinate space)
                 fullscreenLogicalWidth = BASE_WIDTH;
                 fullscreenLogicalHeight = totalLogicalHeight;
@@ -6626,6 +6646,26 @@
             shock: '#ffff00'    // Status: shock
         };
 
+        // V1_170: memoized hex shader for lit-sphere gradients (player + enemies).
+        // factor > 1 brightens (highlight), < 1 darkens (terminator). Accepts #rgb / #rrggbb.
+        const _shadeHexCache = {};
+        function shadeHex(hex, f) {
+            const key = hex + '|' + f;
+            const cached = _shadeHexCache[key];
+            if (cached) return cached;
+            let h = String(hex).replace('#', '');
+            if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+            const n = parseInt(h, 16);
+            if (isNaN(n)) return hex; // non-hex fallback: leave colour untouched
+            const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
+            const r = clamp(((n >> 16) & 255) * f);
+            const g = clamp(((n >> 8) & 255) * f);
+            const b = clamp((n & 255) * f);
+            const out = '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+            _shadeHexCache[key] = out;
+            return out;
+        }
+
         // ===== BLACK SQUIRREL SPRITES =====
         const squirrelSprites = {
             breathe: [],
@@ -6743,11 +6783,20 @@
                 // Calculate zoom needed to fit target visible area
                 const zoomForWidth = gameWidth / TARGET_VISIBLE_WIDTH;
                 const zoomForHeight = gameHeight / TARGET_VISIBLE_HEIGHT;
-                
+
                 // Use the LARGER zoom to keep player consistently sized
                 // This means on smaller screens, you see less of the world but player is same size
-                this.zoom = Math.max(zoomForWidth, zoomForHeight);
-                
+                // V1_170: but when the game area is TALLER than the design aspect (mobile
+                // portrait fill), the extra height should reveal MORE vertical world rather
+                // than zoom in — otherwise growing the area would shrink the horizontal view
+                // and enlarge the player. So in that case zoom by width only.
+                const designAspect = TARGET_VISIBLE_HEIGHT / TARGET_VISIBLE_WIDTH;
+                if (gameHeight / gameWidth > designAspect) {
+                    this.zoom = zoomForWidth;
+                } else {
+                    this.zoom = Math.max(zoomForWidth, zoomForHeight);
+                }
+
                 // Ensure minimum zoom so things don't get too small on small screens
                 // And cap maximum zoom so desktop doesn't get too zoomed in
                 this.zoom = Math.max(this.zoom, 0.5);
@@ -11278,11 +11327,19 @@
                     ctx.globalAlpha = 1;
                 }
                 
-                // ===== GHOST BODY SHAPE =====
-                ctx.fillStyle = mainColor;
+                // ===== GHOST BODY SHAPE ===== (V1_170: lit gradient body so enemies read
+                // as rounded volumes instead of flat fills — matches the player's 3D pass.)
+                const ghostGrad = ctx.createRadialGradient(
+                    sx - s * 0.3, ghostY - s * 0.45, s * 0.1,
+                    sx, ghostY + s * 0.1, s * 1.5
+                );
+                ghostGrad.addColorStop(0, shadeHex(mainColor, 1.5));   // lit top-left
+                ghostGrad.addColorStop(0.5, mainColor);                 // body colour
+                ghostGrad.addColorStop(1, shadeHex(mainColor, 0.5));    // shaded far side
+                ctx.fillStyle = ghostGrad;
                 ctx.shadowColor = this.color;
                 ctx.shadowBlur = 12;
-                
+
                 ctx.beginPath();
                 // Dome top (semicircle from left to right)
                 ctx.arc(sx, ghostY - s * 0.2, s, Math.PI, 0, false);
@@ -23792,7 +23849,13 @@
                 camera.updateZoom = function() {
                     var zoomForWidth = gameWidth / TARGET_VISIBLE_WIDTH;
                     var zoomForHeight = gameHeight / TARGET_VISIBLE_HEIGHT;
-                    var baseZoom = Math.max(zoomForWidth, zoomForHeight);
+                    // V1_170: match the base updateZoom — in portrait fill (game area taller
+                    // than the design aspect) zoom by width only so the taller area reveals
+                    // more world instead of zooming in.
+                    var designAspect = TARGET_VISIBLE_HEIGHT / TARGET_VISIBLE_WIDTH;
+                    var baseZoom = (gameHeight / gameWidth > designAspect)
+                        ? zoomForWidth
+                        : Math.max(zoomForWidth, zoomForHeight);
                     baseZoom = Math.max(baseZoom, 0.5);
                     baseZoom = Math.min(baseZoom, 2.5);
                     this.zoom = baseZoom * (settings.zoom / 100);
