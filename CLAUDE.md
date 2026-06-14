@@ -164,25 +164,16 @@ SURGICAL EDITS ONLY
 
 ## Dev Protocol — Rapid-Fire Mode
 
-When a decision is needed, present numbered options with `[RECOMMENDED]` on the top choice:
+**Rapid-Fire Mode is always on (the default).** When a decision is needed, present the options as **clickable cards via the AskUserQuestion tool** — not a plain-text `[1]/[2]/[3]` list. Conventions:
 
-```
-Proposed: <change description>
-  [1] <option A>  [RECOMMENDED — brief reason]
-  [2] <option B>
-  [3] <option C> / skip
->
-```
+- Put the recommended option **first** and mark it `(Recommended)` in the label, with a brief reason in its description.
+- Include a "skip / defer" option when deferring is reasonable. (Kevin can always pick "Other" to free-text an override.)
+- One question = one decision. For several independent decisions, batch them as multiple questions in a single AskUserQuestion call (up to 4).
+- `go` / `yes` / `y` / `ok` / empty still means "apply the recommendation."
 
-**Kevin's responses:**
-- `1` / `2` / `3` — pick that option
-- `go` / `yes` / `y` / `ok` / empty — apply the recommendation
-- `skip` / `s` — defer the decision
-- Free text — override with something not in the list
+**When to skip the cards:** surgical edits with no real alternative (e.g., fixing a typo, applying a Kevin-requested value). Just present the changelog for approval — no AskUserQuestion needed.
 
-**When to skip the menu:** surgical edits with no real alternative (e.g., fixing a typo, applying a Kevin-requested value). Just present the changelog for approval.
-
-**When to always use the menu:** anything affecting design anchors, animation timings, arcade architecture, or Firebase schema.
+**When to always use the cards:** anything affecting design anchors, animation timings, arcade architecture, Firebase schema, or game balance.
 
 ---
 
