@@ -6832,7 +6832,58 @@
             }
         }
         generateGrassTufts();
-        
+
+        // ===== PROCEDURAL GROUND PATCHES (V1_216) =====
+        // Asset-free, GPU-cheap ground detailing: big soft moss/dirt blobs anchored
+        // to world coords (so they scroll with the camera) plus a faint per-tile shade
+        // on the existing 60-unit grid. All colors are named consts below — tweak freely.
+        //
+        // Patches are precomputed ONCE into a flat array via a seeded hash so they're
+        // perfectly stable (no per-frame flicker, no per-frame allocation here). Cells
+        // are coarse (640 units) so only a handful are ever on-screen at once, keeping
+        // the per-frame radial-gradient count tiny.
+        const GROUND_PALETTE = {
+            // Soft moss/dirt blob tones (dark, earthy — read as ground, not neon).
+            patches: [
+                'rgba(26, 42, 24, 0.55)',   // mossy green
+                'rgba(34, 30, 18, 0.50)',   // dry dirt brown
+                'rgba(18, 34, 28, 0.50)',   // damp teal-green
+                'rgba(40, 34, 20, 0.45)',   // sandy clay
+                'rgba(22, 30, 20, 0.55)'    // deep shadow moss
+            ],
+            // Faint per-tile checker shade (alternating cells) — very low alpha.
+            tileShade: 'rgba(255, 255, 255, 0.012)',
+            tileShadeDark: 'rgba(0, 0, 0, 0.05)'
+        };
+        const GROUND_PATCH_CELL = 640; // world units per coarse patch cell
+        const groundPatches = [];
+        (function generateGroundPatches() {
+            const cols = Math.ceil(WORLD.width / GROUND_PATCH_CELL);
+            const rows = Math.ceil(WORLD.height / GROUND_PATCH_CELL);
+            // Cheap deterministic hash -> [0,1) from two ints.
+            const hash = (a, b) => {
+                let h = (a * 73856093) ^ (b * 19349663);
+                h = (h ^ (h >>> 13)) >>> 0;
+                return (h % 100000) / 100000;
+            };
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    // Skip ~35% of cells so the field isn't uniformly covered.
+                    if (hash(c, r) < 0.35) continue;
+                    const cx = c * GROUND_PATCH_CELL;
+                    const cy = r * GROUND_PATCH_CELL;
+                    const toneIdx = Math.floor(hash(c + 7, r + 13) * GROUND_PALETTE.patches.length);
+                    groundPatches.push({
+                        x: cx + hash(c + 1, r + 2) * GROUND_PATCH_CELL,
+                        y: cy + hash(c + 3, r + 4) * GROUND_PATCH_CELL,
+                        // Large, overlapping radii for a soft layered base.
+                        radius: 220 + hash(c + 5, r + 6) * 260, // 220-480 world units
+                        color: GROUND_PALETTE.patches[toneIdx % GROUND_PALETTE.patches.length]
+                    });
+                }
+            }
+        })();
+
         // Target visible world area - consistent across all devices
         // Desktop baseline: 800x600 canvas at 0.665 zoom shows ~1203x903 world units
         const TARGET_VISIBLE_WIDTH = 1144;  // 10% more zoomed out
@@ -21688,6 +21739,58 @@
             ctx.save();
             ctx.translate(_shake.x, _shake.y);
 
+            // ===== PROCEDURAL GROUND LAYER (V1_216) =====
+            // Drawn under the grass tufts/grid so it reads as the ground base.
+            // 1) Soft moss/dirt patches (only those near the viewport) — a few large
+            //    radial gradients per frame, anchored to world coords (camera.screenX/Y).
+            // 2) A faint per-tile checker shade on the existing 60-unit world grid,
+            //    so the field reads as tiled ground rather than a flat void.
+            {
+                const gZoom = camera.zoom;
+                const gpLeft = camera.x;
+                const gpRight = camera.x + gameWidth / gZoom;
+                const gpTop = camera.y;
+                const gpBottom = camera.y + gameHeight / gZoom;
+
+                // --- Soft moss/dirt patches ---
+                for (let p = 0; p < groundPatches.length; p++) {
+                    const patch = groundPatches[p];
+                    // Cull patches whose bounding circle can't touch the viewport.
+                    if (patch.x + patch.radius < gpLeft || patch.x - patch.radius > gpRight ||
+                        patch.y + patch.radius < gpTop || patch.y - patch.radius > gpBottom) continue;
+                    const psx = camera.screenX(patch.x);
+                    const psy = camera.screenY(patch.y);
+                    const pr = patch.radius * gZoom;
+                    const grad = ctx.createRadialGradient(psx, psy, 0, psx, psy, pr);
+                    grad.addColorStop(0, patch.color);
+                    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(psx, psy, pr, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // --- Faint per-tile checker shade (aligned to the 60-unit grid) ---
+                const tileWorld = 60;
+                const tilePx = tileWorld * gZoom;
+                if (tilePx >= 6) { // skip when zoomed way out (would be noise + cost)
+                    const tStartCol = Math.floor(gpLeft / tileWorld);
+                    const tEndCol = Math.ceil(gpRight / tileWorld);
+                    const tStartRow = Math.floor(gpTop / tileWorld);
+                    const tEndRow = Math.ceil(gpBottom / tileWorld);
+                    for (let tr = tStartRow; tr < tEndRow; tr++) {
+                        for (let tc = tStartCol; tc < tEndCol; tc++) {
+                            // Checkerboard: alternate light/dark on (col+row) parity.
+                            const even = ((tc + tr) & 1) === 0;
+                            ctx.fillStyle = even ? GROUND_PALETTE.tileShade : GROUND_PALETTE.tileShadeDark;
+                            const txs = camera.screenX(tc * tileWorld);
+                            const tys = camera.screenY(tr * tileWorld);
+                            ctx.fillRect(txs, tys, tilePx + 1, tilePx + 1);
+                        }
+                    }
+                }
+            }
+
             // Draw grass tufts using spatial grid for efficiency
             const viewMargin = GRASS_CELL_SIZE;
             const viewLeft = camera.x - viewMargin;
@@ -21762,7 +21865,29 @@
                 ctx.lineTo(gameWidth, y);
                 ctx.stroke();
             }
-            
+
+            // Subtle corner ticks at every other grid intersection (V1_216).
+            // Faint little plus-marks, batched into a single path; skipped when the
+            // grid is too small on-screen to keep it tasteful and cheap.
+            if (screenGridSize >= 18) {
+                const tick = Math.max(1.5, 2 * camera.zoom);
+                const step2 = screenGridSize * 2; // every other intersection
+                const ox = ((camera.x % (worldGridSize * 2)) * camera.zoom);
+                const oy = ((camera.y % (worldGridSize * 2)) * camera.zoom);
+                ctx.strokeStyle = 'rgba(50, 255, 100, 0.06)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let x = -ox; x < gameWidth + step2; x += step2) {
+                    for (let y = -oy; y < gameHeight + step2; y += step2) {
+                        ctx.moveTo(x - tick, y);
+                        ctx.lineTo(x + tick, y);
+                        ctx.moveTo(x, y - tick);
+                        ctx.lineTo(x, y + tick);
+                    }
+                }
+                ctx.stroke();
+            }
+
             // World boundary indicator (dotted purple)
             ctx.strokeStyle = '#9b30ff';
             ctx.lineWidth = 2;
