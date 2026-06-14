@@ -4167,6 +4167,62 @@
             pointer-events: none;
         }
 
+        /* ===== On-screen JUMP button (V1_215) ===== */
+        /* Bottom-RIGHT, opposite the left-thumb joystick (which spawns under the
+           touch on the left/center of the trackpad). Hidden until the game runs. */
+        .jump-btn {
+            position: absolute;
+            right: calc(18px + env(safe-area-inset-right, 0px));
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: 2px solid #0ff;
+            background: rgba(0, 0, 0, 0.4);
+            color: #0ff;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 26px;
+            line-height: 1;
+            display: none;               /* shown via .visible while gameRunning */
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1px;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.45), inset 0 0 8px rgba(0, 255, 255, 0.18);
+            text-shadow: 0 0 8px #0ff;
+            z-index: 320;                /* above trackpad (10) and joystick (300) */
+            pointer-events: auto;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            cursor: pointer;
+            transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.08s ease;
+        }
+        .jump-btn.visible {
+            display: flex;
+        }
+        .jump-btn .jump-btn-label {
+            font-size: 9px;
+            letter-spacing: 1px;
+            opacity: 0.85;
+        }
+        .jump-btn.pressed {
+            transform: scale(0.9);
+            background: rgba(0, 255, 255, 0.25);
+            box-shadow: 0 0 22px rgba(0, 255, 255, 0.8), inset 0 0 12px rgba(0, 255, 255, 0.3);
+        }
+        /* Slightly smaller on the OnePlus 13R / narrow phones (412px target) */
+        @media (max-width: 480px) {
+            .jump-btn {
+                width: 58px;
+                height: 58px;
+                font-size: 23px;
+                right: calc(14px + env(safe-area-inset-right, 0px));
+                bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            }
+        }
+
         /* Timer display - part of bottom bar now */
         .timer {
             font-size: 16px;
@@ -5605,6 +5661,12 @@
                 <div class="joystick-knob" id="joystickKnob"></div>
             </div>
         </div>
+
+        <!-- On-screen JUMP button (V1_215) — bottom-right, opposite the left-thumb
+             joystick. Sibling of .trackpad-zone (NOT a child) so the trackpad's
+             "hide all children" rule can't hide it, and so its touches never reach
+             the trackpad's spawn-joystick handler. -->
+        <button class="jump-btn" id="jumpBtn" type="button" aria-label="Jump">⤒<span class="jump-btn-label">JUMP</span></button>
     </div>
     
     <!-- Upgrade Selection - OUTSIDE game-container for touch events -->
@@ -6713,7 +6775,15 @@
             width: 7776,
             height: 7776
         };
-        
+
+        // ===== JUMP TUNING (V1_215) =====
+        // Faux-Z hop tuned for a readable, satisfying arc. Values are per-16ms
+        // (one ~60fps frame) and scaled by dtScale in Player.update so the hop is
+        // frame-rate independent. Peak height ~45-50 world units, air-time ~0.45s.
+        const JUMP_VELOCITY = 6.2;   // initial up-velocity per 16ms
+        const JUMP_GRAVITY  = 0.42;  // down-accel per 16ms
+        const JUMP_LAND_LOCK = 110;  // ms ground lockout between jumps
+
         // Generate grass tufts for cartoon grass texture (Stardew Valley style)
         const GRASS_CELL_SIZE = 60; // World units per grass cell
         const GRASS_COLS = Math.ceil(WORLD.width / GRASS_CELL_SIZE);
@@ -7422,7 +7492,21 @@
             maxHp: { name: 'Vitality', icon: '❤️', color: COLORS.pink, desc: '+25 max HP' },
             damage: { name: 'Power Up', icon: '💪', color: COLORS.orange, desc: '+12% damage' },
             pickupRange: { name: 'Magnet', icon: '🧲', color: COLORS.blue, desc: '+30% pickup range' },
-            regen: { name: 'Regen', icon: '💚', color: COLORS.teal, desc: 'Heal 1.5 HP/sec' }
+            regen: { name: 'Regen', icon: '💚', color: COLORS.teal, desc: 'Heal 1.5 HP/sec' },
+            // ===== JUMP AUGMENTS (V1_215) — enhance the always-available hop =====
+            extraJump: { name: 'Double Jump', icon: '🦘', color: COLORS.teal,  desc: '+1 mid-air jump' },
+            jumpPower:  { name: 'Spring Step',  icon: '⬆️', color: COLORS.blue,  desc: '+18% jump height' },
+            hangTime:   { name: 'Feather Fall', icon: '🪶', color: COLORS.white, desc: '+15% air time' }
+        };
+
+        // Which passives are actually offered in level-up upgrades, with their hard caps.
+        // (Existing stat passives in PASSIVES aren't surfaced through the upgrade pool —
+        //  this registry is the jump-augment offer set introduced in V1_215.)
+        // extraJump x2 => triple jump max; jumpPower x5 => +90% height; hangTime x4 => +60% air-time.
+        const OFFERED_PASSIVE_CAPS = {
+            extraJump: 2,
+            jumpPower: 5,
+            hangTime: 4
         };
 
         // ===== TOME UPGRADES (Stat-focused, max 4 unique) =====
@@ -7624,7 +7708,20 @@
                 // moveBlend smooths the squash/lean in and out so it never snaps.
                 this.prevRollAngle = 0;
                 this.moveBlend = 0;
-                
+
+                // ===== JUMP / FAUX-Z HOP (V1_215) =====
+                // Pure vertical "height above ground" hop. Does NOT touch x/y — you
+                // still steer mid-air. z lifts the body sprite in draw(); the shadow
+                // stays planted. Airborne = invulnerable dodge (see takeDamage).
+                this.z = 0;              // height above ground (world units)
+                this.vz = 0;             // vertical velocity
+                this.airborne = false;
+                this.jumpsMax = 1;       // base; augmentable to 2/3 via passives
+                this.jumpsRemaining = 1;
+                this.jumpGroundLock = 0; // ms lockout after landing (anti perma-air)
+                this.jumpStrengthMult = 1;
+                this.airTimeMult = 1;
+
                 // Give starting weapon (uses selected weapon from weapon select screen)
                 this.addWeapon(selectedStartingWeapon);
             }
@@ -7708,6 +7805,14 @@
                 
                 // Regen from base + passives + shrine + tome
                 this.regenRate = 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0);
+
+                // Jump augments (V1_215). Base hop works from level 1 (jumpsMax 1);
+                // these only enhance it. Refill mid-air-jumps only while grounded so
+                // grabbing Double Jump never gifts a free extra hop in the current arc.
+                this.jumpsMax = 1 + (this.passives.extraJump || 0);
+                this.jumpStrengthMult = 1 + (this.passives.jumpPower || 0) * 0.18;
+                this.airTimeMult = 1 + (this.passives.hangTime || 0) * 0.15;
+                if (!this.airborne) this.jumpsRemaining = this.jumpsMax;
                 
                 // Attack speed from shrine + tome
                 this.attackSpeedMultiplier = 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus;
@@ -7838,7 +7943,11 @@
 
             takeDamage(amount) {
                 if (this.invincible > 0) return;
-                
+                if (this.airborne) return;  // V1_215: airborne = invulnerable dodge
+                                            // (no i-frame consumed, so the dodge lasts
+                                            // the whole hop; balanced by limited jumps,
+                                            // finite air-time, and the landing lockout)
+
                 // Check plasma shield charges first
                 if (this.weapons.plasmaOrbit) {
                     const shieldDef = WEAPONS.plasmaOrbit;
@@ -7912,7 +8021,35 @@
                 const dtScale = dt / 16;
                 this.x += dx * this.speed * dtScale;
                 this.y += dy * this.speed * dtScale;
-                
+
+                // ===== JUMP / FAUX-Z HOP (V1_215) =====
+                // Vertical-only: never touches x/y, so steering mid-air still works.
+                // Land lock prevents instantly re-jumping (which would chain perma-air
+                // invulnerability). Gravity + finite jumps guarantee you come down.
+                if (this.jumpGroundLock > 0) {
+                    this.jumpGroundLock = Math.max(0, this.jumpGroundLock - dt);
+                }
+                if (inputObj.jumpQueued) {
+                    inputObj.jumpQueued = false; // consume edge-triggered press
+                    if (this.jumpsRemaining > 0 && this.jumpGroundLock <= 0) {
+                        this.vz = JUMP_VELOCITY * this.jumpStrengthMult;
+                        this.airborne = true;
+                        this.jumpsRemaining--;
+                    }
+                }
+                if (this.airborne || this.z > 0) {
+                    this.vz -= (JUMP_GRAVITY / this.airTimeMult) * dtScale;
+                    this.z += this.vz * dtScale;
+                    if (this.z <= 0) {
+                        // Landed
+                        this.z = 0;
+                        this.vz = 0;
+                        this.airborne = false;
+                        this.jumpsRemaining = this.jumpsMax;
+                        this.jumpGroundLock = JUMP_LAND_LOCK;
+                    }
+                }
+
                 // Track last movement direction for caltrops
                 if (dx !== 0 || dy !== 0) {
                     this.lastMoveX = dx;
@@ -9723,7 +9860,12 @@
 
             draw() {
                 const sx = camera.screenX(this.x);
-                const sy = camera.screenY(this.y);
+                // V1_215: faux-Z hop — the BODY lifts by this.z, the SHADOW stays
+                // planted at the ground point (groundSy). All body parts use sy (lifted);
+                // only the ground-shadow ellipse uses groundSy and shrinks/fades with height.
+                const groundSy = camera.screenY(this.y);
+                const lift = camera.scale(this.z);
+                const sy = groundSy - lift;
                 const r = camera.scale(this.radius);
                 const time = Date.now();
                 
@@ -9747,17 +9889,25 @@
                 
                 // Ground shadow (V1_169: deeper + nudged opposite the top-left light so
                 // the orb feels planted rather than floating).
+                // V1_215: shadow stays at groundSy (planted) while the body lifts; it also
+                // shrinks + fades with height so the hop reads as leaving the ground.
                 ctx.shadowBlur = 0;
+                const shFrac = 1 / (1 + this.z * 0.018); // 1 at ground, shrinks with height
+                const shAlpha = Math.max(0.35, shFrac);
+                const shRx = r * 0.78 * shFrac;
+                const shRy = r * 0.28 * shFrac;
+                const shCx = sx + r * 0.1;
+                const shCy = groundSy + r * 0.86;
                 const groundGrad = ctx.createRadialGradient(
-                    sx + r * 0.1, sy + r * 0.86, 0,
-                    sx + r * 0.1, sy + r * 0.86, r * 0.78
+                    shCx, shCy, 0,
+                    shCx, shCy, Math.max(0.01, shRx)
                 );
-                groundGrad.addColorStop(0, 'rgba(0, 0, 0, 0.45)');
-                groundGrad.addColorStop(0.7, 'rgba(0, 0, 0, 0.28)');
+                groundGrad.addColorStop(0, `rgba(0, 0, 0, ${0.45 * shAlpha})`);
+                groundGrad.addColorStop(0.7, `rgba(0, 0, 0, ${0.28 * shAlpha})`);
                 groundGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
                 ctx.fillStyle = groundGrad;
                 ctx.beginPath();
-                ctx.ellipse(sx + r * 0.1, sy + r * 0.86, r * 0.78, r * 0.28, 0, 0, Math.PI * 2);
+                ctx.ellipse(shCx, shCy, shRx, shRy, 0, 0, Math.PI * 2);
                 ctx.fill();
                 
                 // ===== RUN-CYCLE + LEAN (render-only) =====
@@ -19387,7 +19537,26 @@
                     });
                 }
             }
-            
+
+            // Add jump-augment passives (V1_215). Each is capped per OFFERED_PASSIVE_CAPS
+            // so it stops being offered once maxed; below the cap it uses the same
+            // offer-fatigue weight curve as weapons/tomes.
+            for (const [id, cap] of Object.entries(OFFERED_PASSIVE_CAPS)) {
+                const def = PASSIVES[id];
+                if (!def) continue;
+                const level = player.passives[id] || 0;
+                if (level >= cap) continue; // maxed — don't offer
+                const offeredCount = offerHistory[`passive_${id}`] || 0;
+                const weight = Math.max(0.25, 1.0 - offeredCount * 0.15);
+                available.push({
+                    ...def,
+                    type: 'passive',
+                    id,
+                    currentLevel: level,
+                    weight
+                });
+            }
+
             // Weighted random selection - pick 3 upgrades based on weights and rarity
             // Roll for minimum rarity threshold based on luck
             const rolledRarity = rollRarity();
@@ -19495,7 +19664,7 @@
                         reel.style.boxShadow = `0 0 25px ${borderColor}50`;
                     }
                     
-                    const newLabel = upgrade.type === 'tome' ? 'NEW TOME' : 'NEW WEAPON';
+                    const newLabel = upgrade.type === 'tome' ? 'NEW TOME' : (upgrade.type === 'passive' ? 'NEW SKILL' : 'NEW WEAPON');
                     // Only show rarity for existing items being upgraded
                     const topLabel = isNew
                         ? `<div class="slot-rarity" style="font-size:9px;text-transform:uppercase;color:#fff;">${newLabel}</div>`
@@ -19748,7 +19917,7 @@
                     : upgradeIcon;
                 
                 // Show NEW or rarity badge in same position (mutually exclusive)
-                const newBadgeLabel = upgrade.type === 'tome' ? 'NEW TOME' : 'NEW WEAPON';
+                const newBadgeLabel = upgrade.type === 'tome' ? 'NEW TOME' : (upgrade.type === 'passive' ? 'NEW SKILL' : 'NEW WEAPON');
                 const rarityBadge = isNew
                     ? `<div class="rarity-badge" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;color:#fff;">${newBadgeLabel}</div>`
                     : (rarityInfo ? `<div class="rarity-badge" style="color:${rarityInfo.color};font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${rarityInfo.name}</div>` : '');
@@ -20087,8 +20256,13 @@
         // ===== INPUT HANDLING =====
         const input = {
             left: false, right: false, up: false, down: false,
-            joystickX: 0, joystickY: 0
+            joystickX: 0, joystickY: 0,
+            jumpQueued: false   // V1_215: edge-triggered jump request (consumed in Player.update)
         };
+
+        // V1_215: edge-trigger Space so holding it doesn't auto-spam jumps;
+        // discrete presses are what enable deliberate double/triple jumps.
+        let spaceHeld = false;
 
         document.addEventListener('keydown', e => {
             const key = e.key.toLowerCase();
@@ -20096,6 +20270,10 @@
             if (e.key === 'ArrowRight' || key === 'd') input.right = true;
             if (e.key === 'ArrowUp' || key === 'w') input.up = true;
             if (e.key === 'ArrowDown' || key === 's') input.down = true;
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (!spaceHeld) { input.jumpQueued = true; spaceHeld = true; }
+            }
         });
 
         document.addEventListener('keyup', e => {
@@ -20104,6 +20282,7 @@
             if (e.key === 'ArrowRight' || key === 'd') input.right = false;
             if (e.key === 'ArrowUp' || key === 'w') input.up = false;
             if (e.key === 'ArrowDown' || key === 's') input.down = false;
+            if (e.code === 'Space') spaceHeld = false;
         });
 
         // ===== BOO EASTER EGG - Invert colors when B+O+0 pressed =====
@@ -20237,6 +20416,51 @@
         
         document.addEventListener('touchend', endJoystick);
         document.addEventListener('touchcancel', endJoystick);
+
+        // ===== ON-SCREEN JUMP BUTTON (V1_215) =====
+        // Lives outside .trackpad-zone, so a touch here is NOT a touch on the
+        // trackpad and never spawns the movement joystick. We still stop the event
+        // (preventDefault + stopPropagation) so the document-level touchmove/scroll
+        // and any capture handlers stay out of it.
+        const jumpBtn = document.getElementById('jumpBtn');
+        if (jumpBtn) {
+            const queueJump = () => {
+                if (gamePaused || !gameRunning) return;
+                input.jumpQueued = true;
+            };
+            const pressOn = () => jumpBtn.classList.add('pressed');
+            const pressOff = () => jumpBtn.classList.remove('pressed');
+
+            jumpBtn.addEventListener('touchstart', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                pressOn();
+                queueJump();
+            }, { passive: false });
+            jumpBtn.addEventListener('touchend', e => {
+                e.preventDefault();
+                e.stopPropagation();
+                pressOff();
+            }, { passive: false });
+            jumpBtn.addEventListener('touchcancel', pressOff);
+
+            // Desktop / pointer fallback (also lets mouse-testing trigger jump).
+            jumpBtn.addEventListener('pointerdown', e => {
+                if (e.pointerType === 'touch') return; // touch* handlers own touch
+                e.preventDefault();
+                e.stopPropagation();
+                pressOn();
+                queueJump();
+            });
+            jumpBtn.addEventListener('pointerup', pressOff);
+            jumpBtn.addEventListener('pointerleave', pressOff);
+            jumpBtn.addEventListener('click', e => { e.stopPropagation(); });
+        }
+
+        // Show/hide the JUMP button with the run state.
+        function setJumpButtonVisible(visible) {
+            if (jumpBtn) jumpBtn.classList.toggle('visible', !!visible);
+        }
 
         // ===== GAME LOOP =====
         let lastTime = performance.now(); // Fix: Initialize properly to avoid first-frame spike
@@ -22909,7 +23133,8 @@
             playerLastCombatTime = 0;
             
             DOM.menuOverlay.classList.add('hidden');
-            
+            setJumpButtonVisible(true); // V1_215: show on-screen JUMP during play
+
             // Reset pause button
             if (DOM.pauseBtn) {
                 DOM.pauseBtn.textContent = '⏸';
@@ -23131,6 +23356,7 @@
 
         function gameOver() {
             gameRunning = false;
+            setJumpButtonVisible(false); // V1_215
             SFX.gameover();
 
             // Store stats for later display
@@ -23236,6 +23462,7 @@
         function exitToMenu() {
             gameRunning = false;
             gamePaused = false;
+            setJumpButtonVisible(false); // V1_215
             DOM.pauseOverlay.classList.remove('active');
             DOM.confirmOverlay.classList.remove('active');
             DOM.pauseBtn.textContent = '⏸';
