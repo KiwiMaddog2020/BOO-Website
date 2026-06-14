@@ -6543,15 +6543,15 @@
             cancelTowerAction();
         }
 
-        // Tower limits: 4 for buff, 8 for others
-        // Campaign mode has dynamic limits within stages
+        // Tower limits: 4 for every tower except Nova (1) and Rail Gun (2)
+        // Campaign mode has dynamic limits within stages (still capped at baseMax)
         function getTowerLimit(type) {
             // Special fixed limits for certain towers
             if (type === 'nova') return 1;
             if (type === 'railgun') return 2;
             if (type === 'buff') return 4;
-            
-            const baseMax = 8;
+
+            const baseMax = 4;
             
             if (gameMode === 'classic') {
                 // Classic mode: fixed limits
@@ -7295,18 +7295,22 @@
                         }
                     }
                     
-                    // Create expanding ring particles
-                    for (let i = 0; i < 16; i++) {
-                        const angle = (i / 16) * Math.PI * 2;
+                    // Create expanding ring particles (two-speed burst for more punch:
+                    // fast white leading edge + slower golden body)
+                    const novaBurst = Math.min(28, Math.max(0, MAX_PARTICLES - particles.length));
+                    for (let i = 0; i < novaBurst; i++) {
+                        const angle = (i / novaBurst) * Math.PI * 2;
+                        const fast = i % 2 === 0;
+                        const spd = fast ? 7 : 4;
                         particles.push({
                             x: tower.x,
                             y: tower.y,
-                            vx: Math.cos(angle) * 4,
-                            vy: Math.sin(angle) * 4,
-                            size: 4,
-                            color: def.color,
-                            life: 400,
-                            maxLife: 400,
+                            vx: Math.cos(angle) * spd,
+                            vy: Math.sin(angle) * spd,
+                            size: fast ? 3 : 5,
+                            color: fast ? '#ffffff' : def.color,
+                            life: fast ? 320 : 460,
+                            maxLife: fast ? 320 : 460,
                             type: 'nova'
                         });
                     }
@@ -10381,33 +10385,86 @@
                     ctx.globalAlpha = 1;
                 }
                 
-                // Nova effect - expanding blast ring
-                if (def.isNova && tower.novaFireTime && now - tower.novaFireTime < 600) {
+                // Nova effect - supernova detonation (flash + glowing shockwave + star-burst rays)
+                if (def.isNova && tower.novaFireTime && now - tower.novaFireTime < 700) {
                     const elapsed = now - tower.novaFireTime;
-                    const progress = elapsed / 600;
-                    const ringRadius = tower.novaRadius * progress;
-                    const ringAlpha = 1 - progress;
-                    
-                    // Outer ring
-                    ctx.strokeStyle = def.color;
-                    ctx.lineWidth = 4 * (1 - progress);
-                    ctx.globalAlpha = ringAlpha * 0.8;
+                    const t = elapsed / 700;                  // 0..1 lifetime
+                    const ease = 1 - Math.pow(1 - t, 3);      // ease-out expansion
+                    const R = tower.novaRadius || def.novaRadius;
+                    const edge = Math.max(1, R * ease);       // shockwave radius
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter'; // additive = bright explosion
+
+                    // White-hot flash core (first ~180ms)
+                    if (elapsed < 180) {
+                        const ft = elapsed / 180;
+                        const fr = R * (0.45 + ft * 0.35);
+                        const fa = (1 - ft) * 0.9;
+                        const fg = ctx.createRadialGradient(tower.x, tower.y, 0, tower.x, tower.y, fr);
+                        fg.addColorStop(0, `rgba(255,255,255,${fa})`);
+                        fg.addColorStop(0.45, `rgba(255,240,150,${fa * 0.7})`);
+                        fg.addColorStop(1, 'rgba(255,200,0,0)');
+                        ctx.fillStyle = fg;
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, fr, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Glowing blast body trailing the shockwave edge
+                    const bg = ctx.createRadialGradient(tower.x, tower.y, edge * 0.2, tower.x, tower.y, edge);
+                    bg.addColorStop(0, 'rgba(255,210,90,0)');
+                    bg.addColorStop(0.75, `rgba(255,160,30,${(1 - t) * 0.28})`);
+                    bg.addColorStop(0.95, `rgba(255,110,0,${(1 - t) * 0.5})`);
+                    bg.addColorStop(1, 'rgba(255,90,0,0)');
+                    ctx.fillStyle = bg;
+                    ctx.beginPath();
+                    ctx.arc(tower.x, tower.y, edge, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Leading shockwave ring (golden glow + white-hot core edge)
                     ctx.shadowColor = def.color;
-                    ctx.shadowBlur = 15;
+                    ctx.shadowBlur = 22;
+                    ctx.strokeStyle = `rgba(255,180,40,${(1 - t) * 0.55})`;
+                    ctx.lineWidth = 12 * (1 - t);
                     ctx.beginPath();
-                    ctx.arc(tower.x, tower.y, ringRadius, 0, Math.PI * 2);
+                    ctx.arc(tower.x, tower.y, edge, 0, Math.PI * 2);
                     ctx.stroke();
-                    
-                    // Inner bright ring
-                    ctx.strokeStyle = '#ffffff';
-                    ctx.lineWidth = 2 * (1 - progress);
-                    ctx.globalAlpha = ringAlpha * 0.6;
-                    ctx.beginPath();
-                    ctx.arc(tower.x, tower.y, ringRadius * 0.8, 0, Math.PI * 2);
-                    ctx.stroke();
-                    
                     ctx.shadowBlur = 0;
-                    ctx.globalAlpha = 1;
+                    ctx.strokeStyle = `rgba(255,255,255,${(1 - t) * 0.9})`;
+                    ctx.lineWidth = 4 * (1 - t);
+                    ctx.beginPath();
+                    ctx.arc(tower.x, tower.y, edge, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Trailing inner ring (delayed for depth)
+                    const t2 = (elapsed - 110) / 590;
+                    if (t2 > 0 && t2 < 1) {
+                        const e2 = 1 - Math.pow(1 - t2, 3);
+                        ctx.strokeStyle = `rgba(255,140,0,${(1 - t2) * 0.45})`;
+                        ctx.lineWidth = 3 * (1 - t2);
+                        ctx.beginPath();
+                        ctx.arc(tower.x, tower.y, R * e2 * 0.82, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+
+                    // Radiating nova rays (star-burst)
+                    ctx.lineCap = 'round';
+                    const rays = 10;
+                    for (let r = 0; r < rays; r++) {
+                        const a = (r / rays) * Math.PI * 2 + tower.novaFireTime * 0.0004;
+                        const x1 = tower.x + Math.cos(a) * R * 0.12;
+                        const y1 = tower.y + Math.sin(a) * R * 0.12;
+                        const x2 = tower.x + Math.cos(a) * edge * 1.02;
+                        const y2 = tower.y + Math.sin(a) * edge * 1.02;
+                        ctx.strokeStyle = `rgba(255,250,210,${(1 - t) * 0.45})`;
+                        ctx.lineWidth = 2.5 * (1 - t);
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
                 }
                 
                 // Rail Gun beam effect - electric beam with energy pulse
@@ -12395,64 +12452,93 @@
         
         function drawInfernoZones() {
             const now = performance.now();
-            
+
             for (const zone of infernoZones) {
                 const elapsed = now - zone.startTime;
                 const remaining = zone.duration - elapsed;
-                const fadeAlpha = Math.min(1, remaining / 500); // Fade out in last 500ms
-                const pulseAlpha = 0.6 + Math.sin(now / 150) * 0.15;
-                const safeRadius = Math.max(1, zone.radius); // Ensure positive radius
-                
+                const fade = Math.min(1, remaining / 600);          // fade out over last 600ms
+                const grow = Math.min(1, elapsed / 220);            // grow in over first 220ms
+                const R = Math.max(1, zone.radius) * grow;
+                // Deterministic per-zone seed from position: cracks stay put frame-to-frame
+                // (only their brightness flickers), so the pool reads as solid molten rock.
+                const seed = (Math.abs(Math.floor(zone.x * 13.13 + zone.y * 7.77)) % 1000) / 1000;
+                const breathe = 0.85 + Math.sin(now / 95 + seed * 60) * 0.15;
+
                 ctx.save();
-                
-                // Outer lava glow ring (50% transparent)
-                ctx.strokeStyle = `rgba(255, 60, 0, ${0.3 * fadeAlpha})`;
-                ctx.lineWidth = 1.5;
-                ctx.shadowColor = '#ff4400';
-                ctx.shadowBlur = 12;
+
+                // Soft outer heat glow
+                ctx.shadowColor = '#ff5500';
+                ctx.shadowBlur = 16;
+                ctx.fillStyle = `rgba(110, 22, 0, ${0.16 * fade})`;
                 ctx.beginPath();
-                ctx.arc(zone.x, zone.y, safeRadius, 0, Math.PI * 2);
-                ctx.stroke();
+                ctx.arc(zone.x, zone.y, R, 0, Math.PI * 2);
+                ctx.fill();
                 ctx.shadowBlur = 0;
-                
-                // Solid orange-red base
-                ctx.fillStyle = `rgba(180, 50, 0, ${0.7 * fadeAlpha * pulseAlpha})`;
+
+                // Dark scorched crust base
+                const crust = ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, R);
+                crust.addColorStop(0, `rgba(64, 16, 4, ${0.92 * fade})`);
+                crust.addColorStop(0.7, `rgba(34, 9, 3, ${0.9 * fade})`);
+                crust.addColorStop(1, `rgba(14, 4, 2, ${0.55 * fade})`);
+                ctx.fillStyle = crust;
                 ctx.beginPath();
-                ctx.arc(zone.x, zone.y, safeRadius * 0.95, 0, Math.PI * 2);
+                ctx.arc(zone.x, zone.y, R, 0, Math.PI * 2);
                 ctx.fill();
-                
-                // Inner brighter gradient layer
-                const innerGrad = ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, safeRadius * 0.7);
-                innerGrad.addColorStop(0, `rgba(255, 180, 50, ${0.8 * fadeAlpha * pulseAlpha})`);
-                innerGrad.addColorStop(0.6, `rgba(255, 100, 20, ${0.6 * fadeAlpha * pulseAlpha})`);
-                innerGrad.addColorStop(1, 'rgba(200, 60, 0, 0)');
-                ctx.fillStyle = innerGrad;
+
+                // Molten interior (glowing cracks + core), clipped to the pool
+                ctx.save();
                 ctx.beginPath();
-                ctx.arc(zone.x, zone.y, safeRadius * 0.7, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Floating hot spots (6 orbs, 750ms speed, larger size)
-                ctx.globalAlpha = fadeAlpha;
-                for (let h = 0; h < 6; h++) {
-                    const hotPhase = (now / 750 + h * 1.0) % 2;
-                    const hotAngle = (h / 6) * Math.PI * 2 + Math.sin(now / 1050 + h * 2) * 0.5;
-                    const hotDist = safeRadius * (0.2 + h % 3 * 0.2);
-                    const hx = zone.x + Math.cos(hotAngle) * hotDist;
-                    const hy = zone.y + Math.sin(hotAngle) * hotDist;
-                    const hsize = Math.max(1, 8.8 + Math.sin(hotPhase * Math.PI) * 6.6);
-                    const hAlpha = 0.5 + Math.sin(hotPhase * Math.PI) * 0.4;
-                    
-                    const hotGrad = ctx.createRadialGradient(hx, hy, 0, hx, hy, hsize);
-                    hotGrad.addColorStop(0, `rgba(255, 240, 100, ${hAlpha})`);
-                    hotGrad.addColorStop(0.4, `rgba(255, 180, 50, ${hAlpha * 0.6})`);
-                    hotGrad.addColorStop(1, 'rgba(255, 100, 0, 0)');
-                    
-                    ctx.fillStyle = hotGrad;
-                    ctx.beginPath();
-                    ctx.arc(hx, hy, hsize, 0, Math.PI * 2);
-                    ctx.fill();
+                ctx.arc(zone.x, zone.y, R, 0, Math.PI * 2);
+                ctx.clip();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.lineCap = 'round';
+
+                // Branching molten cracks/veins (geometry fixed per zone, brightness flickers)
+                const branches = 6;
+                for (let b = 0; b < branches; b++) {
+                    const rnd = (n) => { const s = Math.sin(seed * 100 + b * 97.3 + n * 51.7) * 43758.5453; return s - Math.floor(s); };
+                    const flick = 0.55 + Math.sin(now / 110 + b * 1.7 + seed * 30) * 0.45;
+                    let cx = zone.x, cy = zone.y, ca = rnd(1) * Math.PI * 2;
+                    for (let s = 0; s < 3; s++) {
+                        const len = R * (0.22 + rnd(s + 2) * 0.3);
+                        ca += (rnd(s + 5) - 0.5) * 1.1;
+                        const nx = cx + Math.cos(ca) * len;
+                        const ny = cy + Math.sin(ca) * len;
+                        const w = (3 - s) * 1.3;
+                        ctx.strokeStyle = `rgba(255, 90, 0, ${0.45 * fade * flick})`;   // glow underlay
+                        ctx.lineWidth = w + 3;
+                        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
+                        ctx.strokeStyle = `rgba(255, 225, 130, ${0.85 * fade * flick})`; // hot core line
+                        ctx.lineWidth = Math.max(0.6, w);
+                        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
+                        cx = nx; cy = ny;
+                    }
                 }
-                
+
+                // Pulsing molten core
+                const coreR = Math.max(1, R * (0.48 + Math.sin(now / 300 + seed * 20) * 0.06));
+                const core = ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, coreR);
+                core.addColorStop(0, `rgba(255, 240, 165, ${0.6 * fade * breathe})`);
+                core.addColorStop(0.45, `rgba(255, 135, 30, ${0.4 * fade * breathe})`);
+                core.addColorStop(1, 'rgba(255, 80, 0, 0)');
+                ctx.fillStyle = core;
+                ctx.beginPath(); ctx.arc(zone.x, zone.y, coreR, 0, Math.PI * 2); ctx.fill();
+                ctx.restore(); // drop clip + reset composite
+
+                // Rising embers (pop up out of the pool)
+                ctx.globalCompositeOperation = 'lighter';
+                const embers = 5;
+                for (let e = 0; e < embers; e++) {
+                    const ep = (now / 720 + e * 0.41 + seed) % 1;             // 0..1 lifecycle
+                    const ea = (e / embers) * Math.PI * 2 + seed * 6;
+                    const ex = zone.x + Math.cos(ea) * R * 0.45;
+                    const ey = zone.y + Math.sin(ea) * R * 0.25 - ep * R * 0.95; // rise upward
+                    const eAlpha = (1 - ep) * fade;
+                    const eSize = Math.max(0.6, 2.4 * (1 - ep * 0.6));
+                    ctx.fillStyle = `rgba(255, ${180 + Math.floor(ep * 50)}, 70, ${eAlpha})`;
+                    ctx.beginPath(); ctx.arc(ex, ey, eSize, 0, Math.PI * 2); ctx.fill();
+                }
+
                 ctx.restore();
             }
         }
