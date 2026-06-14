@@ -5754,6 +5754,28 @@
         }
 
         // ========== ENEMY SYSTEM ==========
+        // V1_223: smooth campaign enemy-HP curve for wave 21+. The old per-bracket
+        // healthMult had artificial cliffs (+45% at wave 20->21, +35% at 50->51) that
+        // made the difficulty wall *feel* like it arrived in the mid-20s. This replaces
+        // those brackets with ONE smooth ramp anchored at wave 20's value (no seam):
+        // per-wave growth g = min(10% + 0.000402*n + 0.0000337*n^2, 22%)  (n = wave-21),
+        // so 21-30 grows ~10%/wave and the real wall ramps in gradually at the endgame
+        // (caps at 22%/wave ~wave 75). HP-only; speed/enemy-type pacing is unchanged.
+        // Memoized cumulative product (built forward from the highest cached wave).
+        const CAMPAIGN_W20_HP = (20 + 200) * ((1.2 + 9 * 0.06) * 1.15) * 0.90; // 396.2 — wave-20 anchor (12-20 bracket)
+        const _campaignHpCache = { 20: CAMPAIGN_W20_HP };
+        function campaignTargetHp(wave) {
+            if (_campaignHpCache[wave] !== undefined) return _campaignHpCache[wave];
+            let w = 20;
+            while (_campaignHpCache[w + 1] !== undefined) w++;
+            for (let k = w + 1; k <= wave; k++) {
+                const n = k - 21;
+                const g = Math.min(0.10 + 0.000402 * n + 0.0000337 * n * n, 0.22);
+                _campaignHpCache[k] = _campaignHpCache[k - 1] * (1 + g);
+            }
+            return _campaignHpCache[wave];
+        }
+
         function spawnEnemy() {
             // Progressive difficulty scaling
             let healthMult = 1;
@@ -5883,7 +5905,14 @@
             if (wave >= 10) {
                 healthMult *= 0.90;
             }
-            
+
+            // V1_223: override HP scaling for campaign wave 21+ with the smooth curve
+            // (removes the bracket cliffs; ramps the wall in at the endgame). The
+            // bracket above still sets speedMult/dangerMult, which we keep as-is.
+            if (gameMode === 'campaign' && wave >= 21) {
+                healthMult = campaignTargetHp(wave) / (20 + wave * 10);
+            }
+
             // Base stats with scaling applied
             // Reduced base formula for gentler early game
             const baseHealth = (20 + wave * 10) * healthMult;
