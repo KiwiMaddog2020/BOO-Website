@@ -256,12 +256,13 @@ firebase deploy
 - **Music player (V1_161, V1_165):** mobile toggle single debounced handler; V1_165 stopped page-init from clobbering the saved preference
 - **Polish round (V1_162 → V1_168, Opus 4.8):** fixed stacked-`requestAnimationFrame` loops in Space Shooter + Brickbreaker (compounding speed after "play again"); hardened all 7 leaderboard renders against malformed docs; iOS-WebView `localStorage` boot guards; lightbox arrow-key guard; CI deploy now **gated on the E2E suite** (V1_166); `firestore.rules` + `firebase.json` added to version control (V1_167); docs truth pass (V1_168). Full audit + remaining rounds: `docs/POLISH_2026-05-28_whole-boo-website.md`
 
-**V1_240 → V1_245 (Opus 4.8 — arcade upgrade-screen / font / UX pass):**
+**V1_240 → V1_248 (Opus 4.8 — arcade upgrade-screen / font / UX pass):**
 
 - **Upgrade screens unified to the "Goldmine" (neon-dig) look (V1_240, V1_242, V1_243):** radial-gradient + `blur(12px)` backdrop, Oxanium type, thin glowing slot cards. Covers Survivors (level-up + shrine / leprechaun / legendary reward overlays), Snake, Space Shooter, Brickbreaker, and Tower Defense — TD's single `.upgrade-overlay` serves between-rounds, leprechaun-kill, and campaign stage transitions. Brickbreaker tick sound applied everywhere.
 - **Goldmine combat sounds (V1_241):** gated boss-hit / boss-attack / boss-surface / enemy-spawn / enemy-death cues (SFX only, no logic change).
 - **Tower Defense UX (V1_244):** tower-button emoji nudged down 2px; title screen contained to its window (`justify-content: safe center` + `overflow-y: auto`) so the START → mode-select screen no longer clips on short / landscape windows.
 - **Fonts unified to Oxanium (V1_245):** all 7 games now load + use Oxanium for both CSS and canvas-drawn text (was a mix of Orbitron / Arial / monospace / Tilt Neon / Bebas Neue). Fixed Survivors (declared Orbitron) and Space Shooter (declared Oxanium) silently falling back to monospace because the font was never loaded.
+- **Font pass finished (V1_247, V1_248):** V1_245 had skipped TD + Goldmine (only their upgrade overlays were Oxanium). TD's `.game-title` was still inheriting `'Segoe UI'` from its body — the "wrong title font." Converted both games' body + remaining canvas `Arial`/bare-`sans-serif` strings, then removed Goldmine's last `Exo 2` (body + stat-panel labels + font link). All 7 games are now **100% Oxanium** (CSS + canvas); titles already uniform at 42px / 4px letter-spacing (32px mobile). Exo 2 remains the site's secondary-UI font on the main page only.
 
 ---
 
