@@ -26,9 +26,9 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 
 **Fonts (current):**
 - Tilt Neon — display / psychedelic titles (declared)
-- Oxanium — body / UI
+- Oxanium — body / UI; **unified font across all 7 arcade games (CSS + canvas) per V1_245**
 - Exo 2 — secondary UI
-- Orbitron — games (arcade HTML files)
+- Orbitron — *historical games font; replaced by Oxanium across the arcade in V1_245 — avoid in new work*
 - Poppins — navigation (loaded via Google Fonts)
 - Rumble Brave — home h1 + section h2 headers (V1_110 promoted this from historical; declared with cursive fallback per V1_123 — Kevin prefers the system-cursive look it falls back to)
 - Bebas Neue — *historical, avoid in new work*
@@ -101,7 +101,7 @@ Reference builds when design drifts. Match exactly when reverting.
 
 ## Arcade Suite
 
-Seven HTML5 games, iframe-embedded into main site. All use Orbitron font, cyan/magenta/gold button palette, Firebase leaderboards.
+Seven HTML5 games, iframe-embedded into main site. All use Oxanium font (unified V1_245), cyan/magenta/gold button palette, Firebase leaderboards.
 
 | File | Game | Collection | Fields |
 |------|------|------------|--------|
@@ -255,6 +255,13 @@ firebase deploy
 - **Content (V1_155):** Okanagan Tattoo Show event
 - **Music player (V1_161, V1_165):** mobile toggle single debounced handler; V1_165 stopped page-init from clobbering the saved preference
 - **Polish round (V1_162 → V1_168, Opus 4.8):** fixed stacked-`requestAnimationFrame` loops in Space Shooter + Brickbreaker (compounding speed after "play again"); hardened all 7 leaderboard renders against malformed docs; iOS-WebView `localStorage` boot guards; lightbox arrow-key guard; CI deploy now **gated on the E2E suite** (V1_166); `firestore.rules` + `firebase.json` added to version control (V1_167); docs truth pass (V1_168). Full audit + remaining rounds: `docs/POLISH_2026-05-28_whole-boo-website.md`
+
+**V1_240 → V1_245 (Opus 4.8 — arcade upgrade-screen / font / UX pass):**
+
+- **Upgrade screens unified to the "Goldmine" (neon-dig) look (V1_240, V1_242, V1_243):** radial-gradient + `blur(12px)` backdrop, Oxanium type, thin glowing slot cards. Covers Survivors (level-up + shrine / leprechaun / legendary reward overlays), Snake, Space Shooter, Brickbreaker, and Tower Defense — TD's single `.upgrade-overlay` serves between-rounds, leprechaun-kill, and campaign stage transitions. Brickbreaker tick sound applied everywhere.
+- **Goldmine combat sounds (V1_241):** gated boss-hit / boss-attack / boss-surface / enemy-spawn / enemy-death cues (SFX only, no logic change).
+- **Tower Defense UX (V1_244):** tower-button emoji nudged down 2px; title screen contained to its window (`justify-content: safe center` + `overflow-y: auto`) so the START → mode-select screen no longer clips on short / landscape windows.
+- **Fonts unified to Oxanium (V1_245):** all 7 games now load + use Oxanium for both CSS and canvas-drawn text (was a mix of Orbitron / Arial / monospace / Tilt Neon / Bebas Neue). Fixed Survivors (declared Orbitron) and Space Shooter (declared Oxanium) silently falling back to monospace because the font was never loaded.
 
 ---
 
