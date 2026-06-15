@@ -4227,6 +4227,8 @@
             background: rgba(0, 255, 255, 0.25);
             box-shadow: 0 0 22px rgba(0, 255, 255, 0.8), inset 0 0 12px rgba(0, 255, 255, 0.3);
         }
+        /* V1_233: dim the BOOST button while it has no charge (on cooldown). */
+        .jump-btn.boost-empty { opacity: 0.4; }
         /* Slightly smaller on the OnePlus 13R / narrow phones (412px target) */
         @media (max-width: 480px) {
             .jump-btn {
@@ -5667,7 +5669,7 @@
              joystick. Sibling of .trackpad-zone (NOT a child) so the trackpad's
              "hide all children" rule can't hide it, and so its touches never reach
              the trackpad's spawn-joystick handler. -->
-        <button class="jump-btn" id="jumpBtn" type="button" aria-label="Jump">⤒<span class="jump-btn-label">JUMP</span></button>
+        <button class="jump-btn" id="jumpBtn" type="button" aria-label="Boost">💨<span class="jump-btn-label">BOOST</span></button>
     </div>
     
     <!-- Upgrade Selection - OUTSIDE game-container for touch events -->
@@ -6646,20 +6648,18 @@
                 GameDebug.hide();
             }
             
-            // V1_224: pin the on-screen JUMP button to the canvas's bottom-right
-            // corner in every layout mode. The canvas is centered in the container,
-            // so anchoring the button to the container alone (CSS right/bottom) drops
-            // it into the bottom letterbox bar below the playfield. Measure the canvas
-            // vs container rects and offset the button up/in by that letterbox gap,
-            // plus the original CSS inset. (Mirrors the V1_169 trackpad letterbox fix.)
+            // V1_233: pin the BOOST button to the playfield's bottom-right, just ABOVE
+            // the trackpad touch zone (not inside it).
             const jumpBtnEl = document.getElementById('jumpBtn');
+            const tpEl = document.getElementById('trackpadZone');
             if (jumpBtnEl && gameContainer) {
                 const contRect = gameContainer.getBoundingClientRect();
                 const canvRect = canvas.getBoundingClientRect();
                 const insetX = canvRect.width <= 480 ? 14 : 18;
-                const insetY = canvRect.width <= 480 ? 16 : 20;
                 jumpBtnEl.style.right = (Math.max(0, contRect.right - canvRect.right) + insetX) + 'px';
-                jumpBtnEl.style.bottom = (Math.max(0, contRect.bottom - canvRect.bottom) + insetY) + 'px';
+                const tpRect = tpEl ? tpEl.getBoundingClientRect() : null;
+                const aboveTrackpad = tpRect ? (contRect.bottom - tpRect.top) : (canvRect.width <= 480 ? 16 : 20);
+                jumpBtnEl.style.bottom = (aboveTrackpad + 10) + 'px';
             }
 
             ctx.imageSmoothingEnabled = true;
@@ -6793,13 +6793,11 @@
             height: 7776
         };
 
-        // ===== JUMP TUNING (V1_215) =====
-        // Faux-Z hop tuned for a readable, satisfying arc. Values are per-16ms
-        // (one ~60fps frame) and scaled by dtScale in Player.update so the hop is
-        // frame-rate independent. Peak height ~45-50 world units, air-time ~0.45s.
-        const JUMP_VELOCITY = 6.2;   // initial up-velocity per 16ms
-        const JUMP_GRAVITY  = 0.42;  // down-accel per 16ms
-        const JUMP_LAND_LOCK = 110;  // ms ground lockout between jumps
+        // ===== BOOST TUNING (V1_233) =====
+        const BOOST_SPEED = 20;          // dash velocity per 16ms frame (tunable)
+        const BOOST_DURATION = 280;      // ms of dash + invincibility
+        const BOOST_COOLDOWN = 8000;     // ms per charge (flat)
+        const BOOST_MAX_CHARGES_CAP = 2; // hard cap; a boss reward raises base toward this later
 
         // Generate grass tufts for cartoon grass texture (Stardew Valley style)
         const GRASS_CELL_SIZE = 60; // World units per grass cell
@@ -7777,18 +7775,17 @@
                 this.prevRollAngle = 0;
                 this.moveBlend = 0;
 
-                // ===== JUMP / FAUX-Z HOP (V1_215) =====
-                // Pure vertical "height above ground" hop. Does NOT touch x/y — you
-                // still steer mid-air. z lifts the body sprite in draw(); the shadow
-                // stays planted. Airborne = invulnerable dodge (see takeDamage).
-                this.z = 0;              // height above ground (world units)
-                this.vz = 0;             // vertical velocity
-                this.airborne = false;
-                this.jumpsMax = 1;       // base; augmentable to 2/3 via passives
-                this.jumpsRemaining = 1;
-                this.jumpGroundLock = 0; // ms lockout after landing (anti perma-air)
-                this.jumpStrengthMult = 1;
-                this.airTimeMult = 1;
+                // ===== BOOST DASH (V1_233) =====
+                this.z = 0;                      // kept 0 (no more hop); draw still references it
+                this.boostCharges = 1;
+                this.boostMaxCharges = 1;        // raised toward BOOST_MAX_CHARGES_CAP by a boss reward later
+                this.boostCooldownTimer = 0;     // ms until next charge refunds
+                this.boostActiveTimer = 0;       // ms of dash remaining (>0 = invincible)
+                this.boostDirX = 1; this.boostDirY = 0;
+                this.boostTrail = [];            // recent {x,y} for the gust trail
+                this.boostSpeedMult = 1;
+                this.boostDurationMult = 1;
+                this.boostCooldownMult = 1;
 
                 // Give starting weapon (uses selected weapon from weapon select screen)
                 this.addWeapon(selectedStartingWeapon);
@@ -7874,13 +7871,12 @@
                 // Regen from base + passives + shrine + tome
                 this.regenRate = 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0);
 
-                // Jump augments (V1_215). Base hop works from level 1 (jumpsMax 1);
-                // these only enhance it. Refill mid-air-jumps only while grounded so
-                // grabbing Double Jump never gifts a free extra hop in the current arc.
-                this.jumpsMax = 1 + (this.passives.extraJump || 0);
-                this.jumpStrengthMult = 1 + (this.passives.jumpPower || 0) * 0.18;
-                this.airTimeMult = 1 + (this.passives.hangTime || 0) * 0.15;
-                if (!this.airborne) this.jumpsRemaining = this.jumpsMax;
+                // Boost upgrades (V1_233) — granted via mini-boss/boss rewards (later phase).
+                this.boostMaxCharges = Math.min(BOOST_MAX_CHARGES_CAP, 1 + (this.passives.extraBoost || 0));
+                this.boostSpeedMult = 1 + (this.passives.tailwind || 0) * 0.20;
+                this.boostDurationMult = 1 + (this.passives.slipstream || 0) * 0.18;
+                this.boostCooldownMult = Math.max(0.625, 1 - (this.passives.quickRecovery || 0) * 0.125); // 8s -> floor 5s
+                if (this.boostCharges > this.boostMaxCharges) this.boostCharges = this.boostMaxCharges;
                 
                 // Attack speed from shrine + tome
                 this.attackSpeedMultiplier = 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus;
@@ -8011,10 +8007,7 @@
 
             takeDamage(amount) {
                 if (this.invincible > 0) return;
-                if (this.airborne) return;  // V1_215: airborne = invulnerable dodge
-                                            // (no i-frame consumed, so the dodge lasts
-                                            // the whole hop; balanced by limited jumps,
-                                            // finite air-time, and the landing lockout)
+                if (this.boostActiveTimer > 0) return;  // invincible during boost dash
 
                 // Check plasma shield charges first
                 if (this.weapons.plasmaOrbit) {
@@ -8090,32 +8083,40 @@
                 this.x += dx * this.speed * dtScale;
                 this.y += dy * this.speed * dtScale;
 
-                // ===== JUMP / FAUX-Z HOP (V1_215) =====
-                // Vertical-only: never touches x/y, so steering mid-air still works.
-                // Land lock prevents instantly re-jumping (which would chain perma-air
-                // invulnerability). Gravity + finite jumps guarantee you come down.
-                if (this.jumpGroundLock > 0) {
-                    this.jumpGroundLock = Math.max(0, this.jumpGroundLock - dt);
-                }
-                if (inputObj.jumpQueued) {
-                    inputObj.jumpQueued = false; // consume edge-triggered press
-                    if (this.jumpsRemaining > 0 && this.jumpGroundLock <= 0) {
-                        this.vz = JUMP_VELOCITY * this.jumpStrengthMult;
-                        this.airborne = true;
-                        this.jumpsRemaining--;
+                // ===== BOOST DASH (V1_233) =====
+                // Recharge: tick cooldown; refund a charge when it elapses (flat 8s/charge).
+                if (this.boostCooldownTimer > 0) {
+                    this.boostCooldownTimer = Math.max(0, this.boostCooldownTimer - dt);
+                    if (this.boostCooldownTimer === 0 && this.boostCharges < this.boostMaxCharges) {
+                        this.boostCharges++;
+                        if (this.boostCharges < this.boostMaxCharges) this.boostCooldownTimer = BOOST_COOLDOWN * this.boostCooldownMult;
                     }
                 }
-                if (this.airborne || this.z > 0) {
-                    this.vz -= (JUMP_GRAVITY / this.airTimeMult) * dtScale;
-                    this.z += this.vz * dtScale;
-                    if (this.z <= 0) {
-                        // Landed
-                        this.z = 0;
-                        this.vz = 0;
-                        this.airborne = false;
-                        this.jumpsRemaining = this.jumpsMax;
-                        this.jumpGroundLock = JUMP_LAND_LOCK;
+                // Start a dash on edge-triggered press.
+                if (inputObj.boostQueued) {
+                    inputObj.boostQueued = false;
+                    if (this.boostCharges > 0 && this.boostActiveTimer <= 0) {
+                        let bx = dx, by = dy;
+                        if (bx === 0 && by === 0) { bx = this.lastMoveX || 0; by = this.lastMoveY || 0; }
+                        if (bx === 0 && by === 0) { bx = 1; by = 0; }
+                        const mag = Math.hypot(bx, by) || 1;
+                        this.boostDirX = bx / mag; this.boostDirY = by / mag;
+                        this.boostActiveTimer = BOOST_DURATION * this.boostDurationMult;
+                        this.boostCharges--;
+                        if (this.boostCooldownTimer <= 0) this.boostCooldownTimer = BOOST_COOLDOWN * this.boostCooldownMult;
+                        this.boostTrail = [];
+                        if (typeof SFX !== 'undefined' && SFX.powerup) SFX.powerup();
                     }
+                }
+                // Apply dash velocity + record trail while active.
+                if (this.boostActiveTimer > 0) {
+                    this.boostActiveTimer = Math.max(0, this.boostActiveTimer - dt);
+                    this.x += this.boostDirX * BOOST_SPEED * this.boostSpeedMult * dtScale;
+                    this.y += this.boostDirY * BOOST_SPEED * this.boostSpeedMult * dtScale;
+                    this.boostTrail.push({ x: this.x, y: this.y });
+                    if (this.boostTrail.length > 6) this.boostTrail.shift();
+                } else if (this.boostTrail.length) {
+                    this.boostTrail.length = 0;
                 }
 
                 // Track last movement direction for caltrops
@@ -9941,8 +9942,30 @@
                 
                 // Pulse effect based on time
                 const pulse = 1 + Math.sin(time * 0.005) * 0.05;
-                const isInvincible = this.invincible > 0;
+                const isInvincible = this.invincible > 0 || this.boostActiveTimer > 0;
                 const baseColor = isInvincible ? COLORS.pink : selectedPlayerColor;
+
+                // ===== BOOST GUST TRAIL (V1_233) =====
+                // Cheap ghost copies behind the dash, drawn in world->screen coords
+                // (camera.screenX/screenY) so they trail the player's path. Oldest
+                // points fade lowest; newest brightest. Fully isolated save/restore.
+                if (this.boostTrail && this.boostTrail.length) {
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = COLORS.cyan || '#0ff';
+                    const tn = this.boostTrail.length;
+                    for (let ti = 0; ti < tn; ti++) {
+                        const tp = this.boostTrail[ti];
+                        const tsx = camera.screenX(tp.x);
+                        const tsy = camera.screenY(tp.y);
+                        ctx.globalAlpha = 0.05 + (0.25 * (ti / Math.max(1, tn - 1)));
+                        ctx.beginPath();
+                        ctx.arc(tsx, tsy, r, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.globalAlpha = 1;
+                    ctx.restore();
+                }
                 
                 // Outer glow ring (static)
                 ctx.shadowBlur = 25;
@@ -19606,24 +19629,9 @@
                 }
             }
 
-            // Add jump-augment passives (V1_215). Each is capped per OFFERED_PASSIVE_CAPS
-            // so it stops being offered once maxed; below the cap it uses the same
-            // offer-fatigue weight curve as weapons/tomes.
-            for (const [id, cap] of Object.entries(OFFERED_PASSIVE_CAPS)) {
-                const def = PASSIVES[id];
-                if (!def) continue;
-                const level = player.passives[id] || 0;
-                if (level >= cap) continue; // maxed — don't offer
-                const offeredCount = offerHistory[`passive_${id}`] || 0;
-                const weight = Math.max(0.25, 1.0 - offeredCount * 0.15);
-                available.push({
-                    ...def,
-                    type: 'passive',
-                    id,
-                    currentLevel: level,
-                    weight
-                });
-            }
+            // V1_233: Boost upgrades are no longer offered in the level-up slot machine.
+            // They're granted via boss rewards instead (mini-boss -> pick-1-of-3 boost
+            // upgrade; first Inferno Boss -> extra boost charge). Wired up in Phase 2.
 
             // Weighted random selection - pick 3 upgrades based on weights and rarity
             // Roll for minimum rarity threshold based on luck
@@ -20325,7 +20333,7 @@
         const input = {
             left: false, right: false, up: false, down: false,
             joystickX: 0, joystickY: 0,
-            jumpQueued: false   // V1_215: edge-triggered jump request (consumed in Player.update)
+            boostQueued: false   // V1_233: edge-triggered boost request (consumed in Player.update)
         };
 
         // V1_215: edge-trigger Space so holding it doesn't auto-spam jumps;
@@ -20340,7 +20348,7 @@
             if (e.key === 'ArrowDown' || key === 's') input.down = true;
             if (e.code === 'Space') {
                 e.preventDefault();
-                if (!spaceHeld) { input.jumpQueued = true; spaceHeld = true; }
+                if (!spaceHeld) { input.boostQueued = true; spaceHeld = true; }
             }
         });
 
@@ -20494,7 +20502,7 @@
         if (jumpBtn) {
             const queueJump = () => {
                 if (gamePaused || !gameRunning) return;
-                input.jumpQueued = true;
+                input.boostQueued = true;
             };
             const pressOn = () => jumpBtn.classList.add('pressed');
             const pressOff = () => jumpBtn.classList.remove('pressed');
@@ -20974,6 +20982,9 @@
                 // Update
                 if (!player) return;
                 player.update(dt, input);
+                // V1_233: dim the BOOST button while it has no charge (on cooldown).
+                const jb = document.getElementById('jumpBtn');
+                if (jb) jb.classList.toggle('boost-empty', player.boostCharges <= 0);
                 camera.update();
                 updateFogOfWar();
                 spawnEnemies(effectiveDt);
