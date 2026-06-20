@@ -5809,7 +5809,7 @@
             </div>
             <div class="trackpad-spacer">&nbsp;</div>
             <div class="trackpad-instructions">
-                ← TOUCH AND DRAG OR WASD/ARROWS TO MOVE →
+                ← DRAG / WASD TO MOVE · SPACE or 💨 TO BOOST →
             </div>
             <div class="active-buffs-wrapper">
                 <div class="active-buffs" id="activeBuffsBar"></div>
@@ -7394,7 +7394,14 @@
             epic:      { name: 'Epic',      color: '#4b0082', weight: 2 },
             legendary: { name: 'Legendary', color: '#ffaa00', weight: 1 }
         };
-        
+
+        // V1_253: Rarity → bonus levels for weapons. A weapon picked at a given
+        // rarity gains these extra "levels" ON TOP of the normal +1, fed through
+        // the existing per-weapon level scaling (damage / projectile count /
+        // radius / cooldown). bonusLevel is uncapped and separate from the
+        // displayed level (which stays capped at 20).
+        const WEAPON_RARITY_BONUS = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 5 };
+
         // Weapon rarities
         const WEAPON_RARITIES = {
             energyBolt: 'common',
@@ -7974,15 +7981,18 @@
                 this.addWeapon(selectedStartingWeapon);
             }
 
-            addWeapon(weaponId) {
+            addWeapon(weaponId, rarity = 'common') {
                 if (!this.weapons[weaponId]) {
                     this.weapons[weaponId] = {
                         level: 1,
                         lastFire: 0,
-                        angle: 0  // for orbit weapons
+                        angle: 0,  // for orbit weapons
+                        bonusLevel: (WEAPON_RARITY_BONUS[rarity] || 0)  // V1_253: rarity bonus levels
                     };
                 } else {
                     this.weapons[weaponId].level = Math.min(this.weapons[weaponId].level + 1, 20);
+                    // V1_253: accumulate this pick's rarity bonus (uncapped, on top of base level)
+                    this.weapons[weaponId].bonusLevel = (this.weapons[weaponId].bonusLevel || 0) + (WEAPON_RARITY_BONUS[rarity] || 0);
                 }
             }
 
@@ -7998,27 +8008,29 @@
             addTome(tomeId, rarity = 'common') {
                 const def = TOMES[tomeId];
                 if (!def) return;
-                
-                // Get rarity multiplier
+
+                // V1_253: rarity is rolled PER PICK (no longer locked on first acquire).
+                // This pick's multiplier applies only to the increment it adds, so a
+                // tome's total bonus = sum over picks of (def.value × thatPickMultiplier).
                 const multiplier = TOME_RARITY_MULTIPLIERS[rarity] || 1;
-                
+
                 if (!this.tomes[tomeId]) {
-                    // New tome - store with rarity
-                    this.tomes[tomeId] = { level: 1, rarity: rarity };
+                    // New tome - start the running rarity-multiplier sum at this pick's mult.
+                    this.tomes[tomeId] = { level: 1, raritySum: multiplier, rarity: rarity };
                 } else {
-                    // Existing tome - keep same rarity, increase level
+                    // Existing tome - increase level (capped) and accumulate this pick's mult.
                     this.tomes[tomeId].level = Math.min(this.tomes[tomeId].level + 1, 20);
-                    // Use stored rarity for multiplier
-                    rarity = this.tomes[tomeId].rarity;
+                    this.tomes[tomeId].raritySum = (this.tomes[tomeId].raritySum || 0) + multiplier;
+                    // Track most-recent rarity (display only).
+                    this.tomes[tomeId].rarity = rarity;
                 }
-                
-                // Calculate value with rarity multiplier
-                const actualMultiplier = TOME_RARITY_MULTIPLIERS[rarity] || 1;
-                const boostedValue = def.value * actualMultiplier;
-                
-                // Apply tome bonus with rarity multiplier
+
+                // Incremental accumulator: add only THIS pick's contribution. applyPassives()
+                // consumes the flat tomeBonuses totals (it does NOT recompute them from the
+                // tomes object), so this adds exactly once and cannot double-count.
+                const pickValue = def.value * multiplier;
                 if (this.tomeBonuses.hasOwnProperty(def.stat)) {
-                    this.tomeBonuses[def.stat] += boostedValue;
+                    this.tomeBonuses[def.stat] += pickValue;
                 }
                 this.applyPassives();
             }
@@ -8405,7 +8417,7 @@
                 
                 for (const [weaponId, weaponState] of Object.entries(this.weapons)) {
                     const weaponDef = WEAPONS[weaponId];
-                    const level = weaponState.level;
+                    const level = weaponState.level + (weaponState.bonusLevel || 0); // V1_253: rarity bonus levels
                     
                     switch (weaponDef.type) {
                         case 'projectile':
@@ -8625,7 +8637,7 @@
                 
                 // AOE burst damage
                 if (def.burstDamage && def.burstRadius) {
-                    const level = weaponState.level || 1;
+                    const level = (weaponState.level || 1) + (weaponState.bonusLevel || 0); // V1_253: rarity bonus levels
                     const burstDmg = def.burstDamage * (1 + level * 0.05);
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
@@ -18698,7 +18710,7 @@
                 const r = camera.scale(this.radius);
                 
                 ctx.save();
-                const glow = 10 + Math.sin(this.pulse) * 4;
+                const glow = 6; // V1_253: calmer constant glow (less flicker/clutter)
                 ctx.shadowBlur = glow;
                 ctx.shadowColor = this.glowColor;
 
@@ -18713,23 +18725,6 @@
                 ctx.beginPath();
                 ctx.arc(sx - r * 0.25, sy - r * 0.25, r * 0.35, 0, Math.PI * 2);
                 ctx.fill();
-
-                // Tiny rotating sparkle glint on higher-tier gems (blue+).
-                // On-screen only (draw() already early-returns on !isVisible).
-                if (this.tier >= 2) {
-                    const spin = this.pulse * 0.8;
-                    const reach = r * (1.5 + this.tier * 0.15);
-                    ctx.globalAlpha = 0.85;
-                    ctx.strokeStyle = '#ffffff';
-                    ctx.lineWidth = Math.max(0.75, r * 0.12);
-                    ctx.beginPath();
-                    ctx.moveTo(sx + Math.cos(spin) * reach, sy + Math.sin(spin) * reach);
-                    ctx.lineTo(sx - Math.cos(spin) * reach, sy - Math.sin(spin) * reach);
-                    ctx.moveTo(sx + Math.cos(spin + Math.PI / 2) * reach, sy + Math.sin(spin + Math.PI / 2) * reach);
-                    ctx.lineTo(sx - Math.cos(spin + Math.PI / 2) * reach, sy - Math.sin(spin + Math.PI / 2) * reach);
-                    ctx.stroke();
-                    ctx.globalAlpha = 1;
-                }
 
                 ctx.restore();
             }
@@ -19848,45 +19843,19 @@
             // They're granted via boss rewards instead (mini-boss -> pick-1-of-3 boost
             // upgrade; first Inferno Boss -> extra boost charge). Wired up in Phase 2.
 
-            // Weighted random selection - pick 3 upgrades based on weights and rarity
-            // Roll for minimum rarity threshold based on luck
-            const rolledRarity = rollRarity();
-            const rarityOrder = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-            const rolledIndex = rarityOrder.indexOf(rolledRarity);
-            
-            // Add rarity info and adjust weights based on rarity
+            // V1_253: rarity is now decoupled from WHICH items appear. Each offered
+            // upgrade (weapon AND tome, new AND level-up) rolls its OWN luck-weighted
+            // rarity per offer. rollRarity() already folds in player.luck internally,
+            // so no luck argument is passed here (passing player.luck would double it).
+            // The old rarity-based offer weighting is removed; the offer-history
+            // de-weighting (baked into u.weight above) is preserved.
             available.forEach(u => {
-                const isNew = u.currentLevel === 0;
-                
-                if (u.type === 'weapon') {
-                    // Weapons have fixed rarity, new weapons use 'common' for weighting
-                    u.rarity = isNew ? null : getUpgradeRarity(u.type, u.id);
-                } else if (u.type === 'tome') {
-                    // Existing tomes keep their acquired rarity
-                    // New tomes don't have rarity yet - it's rolled on selection
-                    if (!isNew && player.tomes[u.id] && player.tomes[u.id].rarity) {
-                        u.rarity = player.tomes[u.id].rarity;
-                        u.rarityMultiplier = TOME_RARITY_MULTIPLIERS[u.rarity] || 1;
-                    } else {
-                        // New tome - no rarity yet
-                        u.rarity = null;
-                        u.rarityMultiplier = null;
-                    }
-                }
-                
-                // Apply rarity weighting (only for items with rarity)
-                if (u.rarity) {
-                    const uRarityIndex = rarityOrder.indexOf(u.rarity);
-                    
-                    // Boost weight for items at or above rolled rarity
-                    if (uRarityIndex >= rolledIndex) {
-                        u.weight *= (1 + uRarityIndex * 0.5); // Rarer = more weight when rolled
-                    } else {
-                        u.weight *= 0.5; // Reduce weight for items below rolled rarity
-                    }
+                u.rarity = rollRarity(); // fresh per-card rarity (luck-weighted)
+                if (u.type === 'tome') {
+                    u.rarityMultiplier = TOME_RARITY_MULTIPLIERS[u.rarity] || 1;
                 }
             });
-            
+
             upgradeSlotResults = weightedRandomSelect(available, 3);
             
             // Track what we offered
@@ -19936,32 +19905,31 @@
                         ? `<span style="position:relative;display:inline-block;"><span style="font-size:1.2em;opacity:0.6;">📖</span><span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0.7em;filter:drop-shadow(0 0 2px #000);">${upgrade.icon}</span></span>`
                         : upgrade.icon;
                     
-                    // Use rarity color for both weapons and tomes
-                    const rarity = upgrade.rarity || getUpgradeRarity(upgrade.type, upgrade.id);
-                    const rarityInfo = rarity ? RARITIES[rarity] : null;
-                    
-                    // Show NEW or rarity in same position (mutually exclusive)
+                    // V1_253: every reel has a freshly-rolled rarity (weapons AND tomes,
+                    // new AND level-up). rarity is always set now.
+                    const rarity = upgrade.rarity || 'common';
+                    const rarityInfo = RARITIES[rarity] || RARITIES.common;
+
                     const isNew = upgrade.currentLevel === 0;
-                    
+
                     if (isNew) {
-                        // New abilities get animated color pulse
+                        // New abilities still get the animated color pulse (visual flair),
+                        // but seeded from the rarity color so the reel reads its rarity.
                         reel.classList.add('new-ability');
-                        reel.style.setProperty('--ability-color', upgrade.color);
-                        // Set initial border color (animation will override)
-                        reel.style.borderColor = upgrade.color;
-                        reel.style.boxShadow = `0 0 25px ${upgrade.color}50`;
+                        reel.style.setProperty('--ability-color', rarityInfo.color);
+                        reel.style.borderColor = rarityInfo.color;
+                        reel.style.boxShadow = `0 0 25px ${rarityInfo.color}50`;
                     } else {
                         // Upgrades get static rarity color
-                        const borderColor = rarityInfo ? rarityInfo.color : upgrade.color;
+                        const borderColor = rarityInfo.color;
                         reel.style.borderColor = borderColor;
                         reel.style.boxShadow = `0 0 25px ${borderColor}50`;
                     }
-                    
+
                     const newLabel = upgrade.type === 'tome' ? 'NEW TOME' : (upgrade.type === 'passive' ? 'NEW SKILL' : 'NEW WEAPON');
-                    // Only show rarity for existing items being upgraded
-                    const topLabel = isNew
-                        ? `<div class="slot-rarity" style="font-size:9px;text-transform:uppercase;color:#fff;">${newLabel}</div>`
-                        : (rarityInfo ? `<div class="slot-rarity" style="color:${rarityInfo.color};font-size:9px;text-transform:uppercase;">${rarityInfo.name}</div>` : '');
+                    // Always show rarity; prepend a small NEW tag for first-time picks.
+                    const newTag = isNew ? `<span style="color:#fff;">${newLabel} · </span>` : '';
+                    const topLabel = `<div class="slot-rarity" style="color:${rarityInfo.color};font-size:9px;text-transform:uppercase;">${newTag}${rarityInfo.name}</div>`;
                     
                     let levelText = isNew ? '' : `Lv ${upgrade.currentLevel} → ${upgrade.currentLevel + 1}`;
                     // Mirror the headline instance gain onto the reel (display only).
@@ -20164,28 +20132,23 @@
                 const card = document.createElement('div');
                 card.className = 'upgrade-card revealed';
                 
-                // Use rarity color for border
-                const rarity = upgrade.rarity || getUpgradeRarity(upgrade.type, upgrade.id);
-                const rarityInfo = rarity ? RARITIES[rarity] : null;
-                
-                // Show NEW or rarity in same position (mutually exclusive)
+                // V1_253: every card has a freshly-rolled rarity (weapons AND tomes,
+                // new AND level-up). rarity is always set now.
+                const rarity = upgrade.rarity || 'common';
+                const rarityInfo = RARITIES[rarity] || RARITIES.common;
+
                 const isNew = upgrade.currentLevel === 0;
-                
+
+                // Rarity drives border/glow on EVERY card now (incl. brand-new picks).
+                card.style.borderColor = rarityInfo.color;
+                card.style.boxShadow = `0 0 20px ${rarityInfo.color}40`;
+                // Render-only CSS hook: scales the sheen intensity by rarity
+                // and gives legendary its animated gold aura (see .rarity-* CSS).
+                card.classList.add('rarity-' + rarity);
                 if (isNew) {
-                    // New abilities get animated color pulse between ability color and white
+                    // New picks keep the animated pulse, seeded from the rarity color.
                     card.classList.add('new-ability');
-                    card.style.setProperty('--ability-color', upgrade.color);
-                    // Set initial border color (animation will override)
-                    card.style.borderColor = upgrade.color;
-                    card.style.boxShadow = `0 0 20px ${upgrade.color}40`;
-                } else {
-                    // Upgrades get static rarity color
-                    const borderColor = rarityInfo ? rarityInfo.color : upgrade.color;
-                    card.style.borderColor = borderColor;
-                    card.style.boxShadow = `0 0 20px ${borderColor}40`;
-                    // Render-only CSS hook: scales the sheen intensity by rarity
-                    // and gives legendary its animated gold aura (see .rarity-* CSS).
-                    if (rarity) card.classList.add('rarity-' + rarity);
+                    card.style.setProperty('--ability-color', rarityInfo.color);
                 }
                 card.style.cursor = 'pointer';
 
@@ -20209,11 +20172,11 @@
                     ? `<span style="position:relative;display:inline-block;"><span style="font-size:1.2em;opacity:0.6;">📖</span><span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0.6em;filter:drop-shadow(0 0 2px #000);">${upgrade.icon}</span></span>`
                     : upgradeIcon;
                 
-                // Show NEW or rarity badge in same position (mutually exclusive)
+                // V1_253: always show the rolled rarity badge; prepend a small NEW
+                // tag for first-time picks so brand-new weapons show rarity too.
                 const newBadgeLabel = upgrade.type === 'tome' ? 'NEW TOME' : (upgrade.type === 'passive' ? 'NEW SKILL' : 'NEW WEAPON');
-                const rarityBadge = isNew
-                    ? `<div class="rarity-badge" style="font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;color:#fff;">${newBadgeLabel}</div>`
-                    : (rarityInfo ? `<div class="rarity-badge" style="color:${rarityInfo.color};font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${rarityInfo.name}</div>` : '');
+                const newBadgeTag = isNew ? `<span style="color:#fff;">${newBadgeLabel} · </span>` : '';
+                const rarityBadge = `<div class="rarity-badge" style="color:${rarityInfo.color};font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">${newBadgeTag}${rarityInfo.name}</div>`;
                 
                 // For existing tomes with rarity, show boosted value in description
                 let descText = upgrade.desc;
@@ -20444,11 +20407,11 @@
 
         function selectUpgrade(upgrade) {
             if (upgrade.type === 'weapon') {
-                player.addWeapon(upgrade.id);
+                // V1_253: pass the per-card rolled rarity → adds rarity bonus levels.
+                player.addWeapon(upgrade.id, upgrade.rarity || 'common');
             } else if (upgrade.type === 'tome') {
-                // For new tomes, roll rarity now; existing tomes already have rarity
-                const tomeRarity = upgrade.rarity || rollRarity();
-                player.addTome(upgrade.id, tomeRarity);
+                // V1_253: each pick applies its own rolled rarity multiplier.
+                player.addTome(upgrade.id, upgrade.rarity || rollRarity());
             } else {
                 player.addPassive(upgrade.id);
             }
@@ -22015,13 +21978,26 @@
                     const psx = camera.screenX(patch.x);
                     const psy = camera.screenY(patch.y);
                     const pr = patch.radius * gZoom;
-                    const grad = ctx.createRadialGradient(psx, psy, 0, psx, psy, pr);
-                    grad.addColorStop(0, patch.color);
-                    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-                    ctx.fillStyle = grad;
-                    ctx.beginPath();
-                    ctx.arc(psx, psy, pr, 0, Math.PI * 2);
-                    ctx.fill();
+                    // V1_253: cache each patch's radial-gradient disc to an offscreen
+                    // canvas once (color/radius are static), then blit it scaled to pr
+                    // each frame — avoids rebuilding a radial gradient per patch/frame.
+                    if (!patch._sprite) {
+                        const sp = Math.max(2, Math.ceil(patch.radius * 2));
+                        const oc = document.createElement('canvas');
+                        oc.width = sp;
+                        oc.height = sp;
+                        const octx = oc.getContext('2d');
+                        const cr = sp / 2;
+                        const sgrad = octx.createRadialGradient(cr, cr, 0, cr, cr, cr);
+                        sgrad.addColorStop(0, patch.color);
+                        sgrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                        octx.fillStyle = sgrad;
+                        octx.beginPath();
+                        octx.arc(cr, cr, cr, 0, Math.PI * 2);
+                        octx.fill();
+                        patch._sprite = oc;
+                    }
+                    ctx.drawImage(patch._sprite, psx - pr, psy - pr, pr * 2, pr * 2);
                 }
 
                 // --- Faint per-tile checker shade (aligned to the 60-unit grid) ---
@@ -22206,7 +22182,7 @@
             if (player && player.weapons.beam) {
                 const beamState = player.weapons.beam;
                 const beamDef = WEAPONS.beam;
-                const level = beamState.level || 1;
+                const level = (beamState.level || 1) + (beamState.bonusLevel || 0); // V1_253: rarity bonus levels (match fired beam range)
                 const range = beamDef.baseRange + level * 15;
                 const isCurrentlyActive = beamState.beamActive && beamState.beams && beamState.beams.length > 0;
                 
