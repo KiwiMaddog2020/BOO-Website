@@ -7403,6 +7403,9 @@
         const WEAPON_RARITY_BONUS = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 5 };
 
         // Weapon rarities
+        // V1_253: OBSOLETE for magnitude — rarity is now rolled per offer (see
+        // rollRarity + WEAPON_RARITY_BONUS). Kept defined (no live callers) to
+        // avoid touching unrelated code; safe to delete in a later cleanup pass.
         const WEAPON_RARITIES = {
             energyBolt: 'common',
             plasmaOrbit: 'common',
@@ -17178,8 +17181,9 @@
             for (const [id, def] of Object.entries(WEAPONS)) {
                 // Skip starting weapon
                 if (id === selectedStartingWeapon) continue;
-                
-                const rarity = WEAPON_RARITIES[id] || 'common';
+
+                // V1_253: weapons roll their own rarity per card (like tomes).
+                const rarity = rollRarity();
                 available.push({
                     ...def,
                     type: 'weapon',
@@ -17188,7 +17192,7 @@
                     currentLevel: 0
                 });
             }
-            
+
             // Add all tomes (each rolls for rarity dynamically)
             for (const [id, def] of Object.entries(TOMES)) {
                 const rarity = rollRarity(); // Roll rarity for each tome
@@ -17201,11 +17205,10 @@
                     currentLevel: 0
                 });
             }
-            
-            // Weight by rarity (no luck bonus)
-            const rarityWeights = { common: 50, uncommon: 30, rare: 15, epic: 4, legendary: 1 };
+
+            // Equal selection weight; rarity is decoupled from which items appear (V1_253).
             available.forEach(u => {
-                u.weight = rarityWeights[u.rarity] || 50;
+                u.weight = 50;
             });
             
             // Pick 3 random upgrades
@@ -17308,7 +17311,8 @@
                     
                     // Apply upgrade
                     if (upgrade.type === 'weapon') {
-                        player.addWeapon(upgrade.id);
+                        // V1_253: pass the rolled rarity → adds rarity bonus levels.
+                        player.addWeapon(upgrade.id, upgrade.rarity || 'common');
                     } else if (upgrade.type === 'tome') {
                         player.addTome(upgrade.id, upgrade.rarity || 'common');
                     }
@@ -20205,12 +20209,16 @@
                     // reused as descText) as the headline, plus owned total after pick.
                     const tdef = TOMES[upgrade.id];
                     if (tdef) {
-                        const mult = upgrade.rarityMultiplier || 1; // null for new tomes -> common (1x)
-                        const perLevel = tdef.value * mult;
+                        const mult = upgrade.rarityMultiplier || 1; // this pick's rolled multiplier
                         let total = '';
                         const ownedAfter = (upgrade.currentLevel || 0) + 1;
                         if (ownedAfter > 1) {
-                            const totalVal = perLevel * ownedAfter;
+                            // V1_253: accurate total uses the accumulated rarity-multiplier
+                            // sum (raritySum) from prior picks + this pick's multiplier,
+                            // since rarity now varies per pick.
+                            const owned = player.tomes[upgrade.id];
+                            const priorSum = (owned && typeof owned.raritySum === 'number') ? owned.raritySum : (ownedAfter - 1);
+                            const totalVal = tdef.value * (priorSum + mult);
                             if (tdef.stat === 'maxHpBonus') total = `Total +${Math.round(totalVal)} max HP`;
                             else if (tdef.stat === 'regenBonus') total = `Total +${totalVal.toFixed(1)} HP/sec`;
                             else total = `Total +${Math.round(totalVal * 100)}%`;
