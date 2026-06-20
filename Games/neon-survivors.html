@@ -8420,7 +8420,7 @@
                 
                 for (const [weaponId, weaponState] of Object.entries(this.weapons)) {
                     const weaponDef = WEAPONS[weaponId];
-                    const level = weaponState.level + (weaponState.bonusLevel || 0); // V1_253: rarity bonus levels
+                    const level = Math.min(weaponState.level + (weaponState.bonusLevel || 0), 40); // V1_253: rarity bonus levels (capped to bound projectile/entity counts)
                     
                     switch (weaponDef.type) {
                         case 'projectile':
@@ -8640,7 +8640,7 @@
                 
                 // AOE burst damage
                 if (def.burstDamage && def.burstRadius) {
-                    const level = (weaponState.level || 1) + (weaponState.bonusLevel || 0); // V1_253: rarity bonus levels
+                    const level = Math.min((weaponState.level || 1) + (weaponState.bonusLevel || 0), 40); // V1_253: rarity bonus levels (capped)
                     const burstDmg = def.burstDamage * (1 + level * 0.05);
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
@@ -13390,8 +13390,9 @@
                 const count = 4 + this.phase * 2;
                 for (let i = 0; i < count; i++) {
                     const angle = (i / count) * Math.PI * 2;
-                    const spawnX = this.x + Math.cos(angle) * 80;
-                    const spawnY = this.y + Math.sin(angle) * 80;
+                    let spawnX = this.x + Math.cos(angle) * 80;
+                    let spawnY = this.y + Math.sin(angle) * 80;
+                    ({ x: spawnX, y: spawnY } = pushOutOfLake(spawnX, spawnY, 20)); // V1_253: no spawning in water
                     const type = Math.random() < 0.3 ? 'fast' : 'swarm';
                     enemies.push(new Enemy(type, spawnX, spawnY));
                 }
@@ -16522,9 +16523,13 @@
                 const nx = (x - obs.x) / rx, ny = (y - obs.y) / ry;
                 const d2 = nx*nx + ny*ny;
                 if (d2 < 1) {
-                    const d = Math.sqrt(d2) || 0.0001;
-                    x = obs.x + (x - obs.x) / d;
-                    y = obs.y + (y - obs.y) / d;
+                    if (d2 < 1e-9) {
+                        x = obs.x + rx; // exact-centre point: push out along +x
+                    } else {
+                        const d = Math.sqrt(d2);
+                        x = obs.x + (x - obs.x) / d;
+                        y = obs.y + (y - obs.y) / d;
+                    }
                 }
             }
             return { x, y };
@@ -20472,6 +20477,16 @@
             }
         }
 
+        // V1_253: map an (averaged) tome multiplier back to the nearest rarity tier for display.
+        function nearestTomeRarity(mult) {
+            let best = 'common', bestDiff = Infinity;
+            for (const tier in TOME_RARITY_MULTIPLIERS) {
+                const diff = Math.abs(TOME_RARITY_MULTIPLIERS[tier] - mult);
+                if (diff < bestDiff) { bestDiff = diff; best = tier; }
+            }
+            return best;
+        }
+
         function updateTomesDisplay() {
             DOM.tomesDisplay.innerHTML = '';
             
@@ -20479,10 +20494,13 @@
                 const def = TOMES[id];
                 if (!def) continue;
                 
-                // Get rarity info for this tome
-                const rarity = tomeData.rarity || 'common';
+                // V1_253: rarity is per-pick — derive an effective tier + average multiplier from
+                // the accumulated raritySum so the badge/value reflect ALL picks, not just the last.
+                const _tlvl = tomeData.level || 1;
+                const _tavg = (typeof tomeData.raritySum === 'number' ? tomeData.raritySum : (TOME_RARITY_MULTIPLIERS[tomeData.rarity || 'common'] || 1) * _tlvl) / _tlvl;
+                const rarity = nearestTomeRarity(_tavg);
                 const rarityInfo = RARITIES[rarity];
-                const multiplier = TOME_RARITY_MULTIPLIERS[rarity] || 1;
+                const multiplier = _tavg;
                 
                 // Calculate boosted value for tooltip
                 let tooltipDesc = def.desc;
@@ -20689,7 +20707,7 @@
         const jumpBtn = document.getElementById('jumpBtn');
         if (jumpBtn) {
             // V1_253: desktop uses Spacebar for boost — relabel the button accordingly.
-            if (isLaptopOrDesktop || !isTouchDevice) {
+            if (!isTouchDevice) { // V1_253: keyboard (true desktop) uses Spacebar; touch tablets keep the tap label
                 const lbl = jumpBtn.querySelector('.jump-btn-label');
                 if (lbl) lbl.textContent = 'SPACE';
             }
@@ -21405,7 +21423,9 @@
                 for (const [id, tomeData] of Object.entries(player.tomes)) {
                     const def = TOMES[id];
                     if (def) {
-                        const rarity = tomeData.rarity || 'common';
+                        const _slvl = tomeData.level || 1;
+                        const _savg = (typeof tomeData.raritySum === 'number' ? tomeData.raritySum : (TOME_RARITY_MULTIPLIERS[tomeData.rarity || 'common'] || 1) * _slvl) / _slvl;
+                        const rarity = nearestTomeRarity(_savg);
                         const rarityInfo = RARITIES[rarity];
                         uiState.tomes.push({
                             id: id,
@@ -22190,7 +22210,7 @@
             if (player && player.weapons.beam) {
                 const beamState = player.weapons.beam;
                 const beamDef = WEAPONS.beam;
-                const level = (beamState.level || 1) + (beamState.bonusLevel || 0); // V1_253: rarity bonus levels (match fired beam range)
+                const level = Math.min((beamState.level || 1) + (beamState.bonusLevel || 0), 40); // V1_253: rarity bonus levels (capped, match fired beam range)
                 const range = beamDef.baseRange + level * 15;
                 const isCurrentlyActive = beamState.beamActive && beamState.beams && beamState.beams.length > 0;
                 
