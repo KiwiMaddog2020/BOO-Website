@@ -7658,7 +7658,7 @@
                 name: 'Void Daggers',
                 icon: '🗡️',
                 color: '#9400d3',
-                desc: 'Fast daggers in all directions',
+                desc: 'Phantom daggers blink-strike the nearest foes',
                 baseDamage: 7,
                 baseFireRate: 960,
                 baseDaggers: 4,
@@ -9059,21 +9059,45 @@
             fireDaggers(id, def, state, level, now) {
                 const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
-                
+
+                // Phantom Flurry (V1_268): daggers BLINK onto the nearest enemies and strike
+                // instantly — no projectile travel, no aiming. More strikes per volley as it levels.
+                const blinkRange = 470;
+                const aliveEnemies = enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < blinkRange);
+                const aliveBosses = bosses.filter(b => !b.dead && Math.hypot(b.x - this.x, b.y - this.y) < blinkRange);
+                const aliveLeprechauns = leprechauns.filter(l => !l.dead && Math.hypot(l.x - this.x, l.y - this.y) < blinkRange);
+                const allTargets = [...aliveEnemies, ...aliveBosses, ...aliveLeprechauns];
+                if (allTargets.length === 0) return; // hold the volley until something's in reach
+
                 state.lastFire = now;
                 SFX.wVoidDaggers();
-                const daggerCount = def.baseDaggers + Math.floor(level / 2);
+
+                const strikeCount = def.baseDaggers + Math.floor(level / 2);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                const pierce = 1 + Math.floor(level / 5); // +1 pierce per 5 levels
-                const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
-                
-                // Fire daggers in all directions
-                for (let i = 0; i < daggerCount; i++) {
-                    const angle = (Math.PI * 2 / daggerCount) * i;
-                    projectiles.push(new Projectile(
-                        this.x, this.y, angle, 7, baseDamage, def.color, 'dagger', pierce, sizeScale
-                    ));
+
+                // Nearest-first so the flurry focuses the closest threats; wrap to re-hit when
+                // there are fewer enemies than strikes (single targets still get the full burst).
+                allTargets.sort((a, b) => Math.hypot(a.x - this.x, a.y - this.y) - Math.hypot(b.x - this.x, b.y - this.y));
+
+                if (!state.phantomStrikes) state.phantomStrikes = [];
+                for (let i = 0; i < strikeCount; i++) {
+                    const target = allTargets[i % allTargets.length];
+                    const { damage, isCrit } = this.calcDamage(baseDamage);
+                    target.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    // small knockback away from the player (regular enemies only — not bosses)
+                    if (target.knockbackVelX !== undefined && target.radius < 30) {
+                        const ka = Math.atan2(target.y - this.y, target.x - this.x);
+                        target.knockbackVelX += Math.cos(ka) * 1.8;
+                        target.knockbackVelY += Math.sin(ka) * 1.8;
+                    }
+                    // VFX: blink streak (drawn from state) + a void burst at the target
+                    state.phantomStrikes.push({ x: target.x, y: target.y, time: now, slashAngle: Math.random() * Math.PI });
+                    addRing(target.x, target.y, 14, def.color);
+                    spawnParticles(target.x, target.y, def.color, 4);
                 }
+                // Cleanup old strike marks (matches the 240ms draw life)
+                state.phantomStrikes = state.phantomStrikes.filter(s => now - s.time < 240);
             }
             
             updateFlame(id, def, state, level, now, dt) {
@@ -10441,7 +10465,17 @@
                     ctx.shadowColor = '#8B4513';
                     const s = (v) => camera.scale(v * 1.265); // 26.5% larger (was 15%, +10%)
                     const hatY = sy - r * 0.7 - 2; // Nudged up (V1_253: +2px)
-                    
+
+                    // V1_268: hat follows facing like the eyes — drift toward moveAngle, scaled by
+                    // moveBlend (0 idle, 1 moving), with a subtle jaunty tilt. Rotated about (sx, hatY).
+                    const hatShiftX = Math.cos(this.moveAngle) * s(5) * this.moveBlend;
+                    const hatShiftY = Math.sin(this.moveAngle) * s(3) * this.moveBlend;
+                    const hatTilt = Math.cos(this.moveAngle) * 0.14 * this.moveBlend;
+                    ctx.save();
+                    ctx.translate(sx + hatShiftX, hatY + hatShiftY);
+                    ctx.rotate(hatTilt);
+                    ctx.translate(-sx, -hatY);
+
                     // Brim base (flat middle)
                     ctx.fillStyle = '#8B4513';
                     ctx.beginPath();
@@ -10489,7 +10523,8 @@
                     // Band buckle
                     ctx.fillStyle = '#ffd700';
                     ctx.fillRect(sx - s(2), hatY - s(3), s(4), s(3));
-                    
+
+                    ctx.restore();
                     ctx.shadowBlur = 0;
                 }
                 
@@ -11252,7 +11287,45 @@
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
                     }
-                    
+
+                    // Phantom Flurry blink-strikes (V1_268): fading streak from the player + a
+                    // slashed burst at each struck enemy.
+                    if (def.type === 'daggers' && state.phantomStrikes && state.phantomStrikes.length) {
+                        const pnow = Date.now();
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.shadowColor = def.color;
+                        for (const st of state.phantomStrikes) {
+                            const age = pnow - st.time;
+                            if (age > 240) continue;
+                            const k = 1 - age / 240;
+                            const tx = camera.screenX(st.x);
+                            const ty = camera.screenY(st.y);
+                            // Blink streak from the player to the struck enemy
+                            ctx.strokeStyle = def.color;
+                            ctx.shadowBlur = 12;
+                            ctx.globalAlpha = k * 0.65;
+                            ctx.lineWidth = camera.scale(2.4) * k;
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(tx, ty);
+                            ctx.stroke();
+                            // Slash "X" at the target
+                            const sl = camera.scale(11) * (0.55 + k * 0.6);
+                            ctx.globalAlpha = k;
+                            for (let b2 = 0; b2 < 2; b2++) {
+                                const aa = (st.slashAngle || 0) + b2 * Math.PI / 2;
+                                ctx.beginPath();
+                                ctx.moveTo(tx - Math.cos(aa) * sl, ty - Math.sin(aa) * sl);
+                                ctx.lineTo(tx + Math.cos(aa) * sl, ty + Math.sin(aa) * sl);
+                                ctx.stroke();
+                            }
+                        }
+                        ctx.restore();
+                        ctx.globalAlpha = 1;
+                        ctx.shadowBlur = 0;
+                    }
+
                     // Beam weapon rendering (multiple beams)
                     if (def.type === 'beam' && state.beamActive && state.beams && state.beams.length > 0) {
                         const now = performance.now();
@@ -20142,8 +20215,8 @@
             beam:          { dmgScale: 0.05, cdScale: null,  count: { noun: 'Beam',   fn: (l, d) => d.baseBeams + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.baseRange + l * 15 } },
             // updateStarfall (L8751): dmg .04, AoE radius baseRadius+lvl*15 (star count is visual only); tick rate fixed (cd n/a)
             starField:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 15 } },
-            // fireDaggers (L8428): dmg .04, daggers baseDaggers+floor(lvl/2), pierce 1+floor(lvl/5), cd .985
-            voidDaggers:   { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Dagger', fn: (l, d) => d.baseDaggers + Math.floor(l / 2) }, pierce: { label: 'Pierce', fn: (l) => 1 + Math.floor(l / 5) } },
+            // fireDaggers (Phantom Flurry, V1_268): dmg .04, blink-strikes baseDaggers+floor(lvl/2), cd .985
+            voidDaggers:   { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseDaggers + Math.floor(l / 2) } },
             // updateFlame (L8448): dmg .04, range baseRange+lvl*12, fire rate NOT level-scaled (cd null)
             flameThrower:  { dmgScale: 0.04, cdScale: null,  range: { label: 'Range', fn: (l, d) => d.baseRange + l * 12 } },
             // fireSquirrel (L8983): dmg .04, squirrels baseSquirrels+floor(lvl/2), cd .985
