@@ -21446,6 +21446,7 @@
                 updateShrineSpawning(dt);
                 updateLeprechaunSpawning(dt);
                 updateBossSpawning(dt);
+                updateDirectives(dt);   // V1_276: late-game directives
                 
                 // Update enemies with distance-based culling for performance
                 const cullDistance = 800; // Full update within this distance
@@ -22207,6 +22208,305 @@
             }
         }
 
+        // ========================================================================
+        // V1_276: LATE-GAME DIRECTIVES
+        // From DIRECTIVE_START_TIME on, exactly ONE world objective is active at a time
+        // (the anti-overwhelm rule). A compass + minimap marker point to it; finishing it
+        // grants gold + a Legendary. The pool rotates and reuses existing systems:
+        //   • Elite Hunt     — a roaming high-HP named Enemy (uses the Enemy class as-is)
+        //   • Void Rift      — a STATIONARY high-HP Enemy that bleeds minions on a timer
+        //   • Treasure Vault — a stationary channel-to-open objective (no combat) with a seal timer
+        // All state lives here; integration is a handful of one-line hooks (update/draw/reset).
+        // ========================================================================
+        const DIRECTIVE_START_TIME    = 900;  // seconds (15:00) before directives begin
+        const DIRECTIVE_COOLDOWN      = 50;   // seconds between a finished directive and the next
+        const DIRECTIVE_MISS_COOLDOWN = 25;   // shorter breather after an expiry/miss
+        const DIRECTIVE_ELITE_HP_MULT = 5;    // tuning knobs — feel-tune after playtest
+        const DIRECTIVE_RIFT_HP_MULT  = 7;
+        const DIRECTIVE_TYPES = ['elite', 'rift', 'vault'];
+
+        let directiveActive = null;                  // the current directive object, or null
+        let directiveNextAt = DIRECTIVE_START_TIME;  // gameTime (s) when the next may spawn
+        let directiveLastType = null;                // avoid an immediate back-to-back repeat
+        let directiveBanner = null;                  // { text, sub, color, until } transient announce
+
+        function resetDirectives() {
+            directiveActive = null;
+            directiveNextAt = DIRECTIVE_START_TIME;
+            directiveLastType = null;
+            directiveBanner = null;
+        }
+
+        // An off-screen world position a given distance from the player, avoiding
+        // terrain/lakes — mirrors the boss-spawn placement logic.
+        function directiveSpawnPos(dist) {
+            let x = player.x, y = player.y;
+            for (let attempt = 0; attempt < 14; attempt++) {
+                const ang = Math.random() * Math.PI * 2;
+                x = player.x + Math.cos(ang) * dist;
+                y = player.y + Math.sin(ang) * dist;
+                x = Math.max(140, Math.min(WORLD.width - 140, x));
+                y = Math.max(140, Math.min(WORLD.height - 140, y));
+                if (!isInTerrain(x, y, 40) && !isInLake(x, y, 60)) break;
+            }
+            const fixed = pushOutOfLake(x, y, 60);
+            return { x: fixed.x, y: fixed.y };
+        }
+
+        function directiveReward(x, y, color) {
+            const gold = Math.floor(60 + gameTime / 8);   // scales gently with run length
+            playerGold += gold;
+            updateGoldDisplay();
+            spawnParticles(x, y, color, 36);
+            spawnParticles(x, y, COLORS.gold, 24);
+            addRing(x, y, 120, color);
+            try { if (typeof SFX !== 'undefined' && SFX.legendary) SFX.legendary(); } catch (e) {}
+            // The headline reward — the Legendary overlay pauses the run cleanly.
+            showLegendaryUpgrade();
+        }
+
+        function spawnDirective() {
+            // Rotate the pool, never repeating the previous type back-to-back.
+            const pool = DIRECTIVE_TYPES.filter(t => t !== directiveLastType);
+            const type = pool[Math.floor(Math.random() * pool.length)];
+            directiveLastType = type;
+
+            if (type === 'elite' || type === 'rift') {
+                const pos = directiveSpawnPos(700 + Math.random() * 250);
+                const e = new Enemy('tank', pos.x, pos.y);
+                e.isDirectiveTarget = true;
+                if (type === 'elite') {
+                    e.maxHp = Math.floor(e.maxHp * DIRECTIVE_ELITE_HP_MULT);
+                    e.hp = e.maxHp;
+                    e.radius = Math.max(e.radius * 1.4, 30);
+                    e.color = '#ff7a18';
+                    e.directiveName = 'ELITE';
+                } else {
+                    e.maxHp = Math.floor(e.maxHp * DIRECTIVE_RIFT_HP_MULT);
+                    e.hp = e.maxHp;
+                    e.radius = Math.max(e.radius * 1.5, 32);
+                    e.color = '#b150ff';
+                    e.speed = 0;                       // stationary (also pinned each frame)
+                    e.isRift = true;
+                    e.homeX = pos.x; e.homeY = pos.y;
+                    e.directiveName = 'VOID RIFT';
+                }
+                enemies.push(e);
+                directiveActive = {
+                    type: type, enemy: e, x: pos.x, y: pos.y, color: e.color,
+                    name: type === 'elite' ? '⚔ ELITE HUNT' : '🌀 VOID RIFT',
+                    expiresAt: gameTime + 100,         // despawns if ignored, keeps the loop moving
+                    minionTimer: 0
+                };
+            } else { // vault
+                const pos = directiveSpawnPos(560 + Math.random() * 200);
+                directiveActive = {
+                    type: 'vault', x: pos.x, y: pos.y, color: COLORS.gold || '#ffd24a',
+                    name: '💎 TREASURE VAULT',
+                    radius: 64, progress: 0, required: 2400,  // ms of channel to crack it open
+                    expiresAt: gameTime + 42, pulse: 0        // seal timer — reach it before it closes
+                };
+            }
+            directiveBanner = { text: directiveActive.name, sub: 'Follow the marker', color: directiveActive.color, until: gameTime + 5 };
+            spawnParticles(directiveActive.x, directiveActive.y, directiveActive.color, 30);
+            try { if (typeof SFX !== 'undefined' && SFX.bossSpawn) SFX.bossSpawn(); } catch (e) {}
+        }
+
+        function completeDirective() {
+            const d = directiveActive;
+            if (!d) return;
+            directiveBanner = { text: 'DIRECTIVE COMPLETE', sub: '+Legendary  +Gold', color: '#00ffaa', until: gameTime + 4 };
+            directiveActive = null;
+            directiveNextAt = gameTime + DIRECTIVE_COOLDOWN;
+            directiveReward(d.x, d.y, d.color);
+        }
+
+        function expireDirective(reason) {
+            const d = directiveActive;
+            if (!d) return;
+            if (d.enemy && !d.enemy.dead) d.enemy.dead = true;   // clean up a lingering target
+            directiveBanner = { text: 'DIRECTIVE EXPIRED', sub: reason || '', color: '#ff5566', until: gameTime + 3 };
+            directiveActive = null;
+            directiveNextAt = gameTime + DIRECTIVE_MISS_COOLDOWN;
+        }
+
+        function updateDirectives(dt) {
+            if (!gameRunning || gamePaused || !player) return;
+            if (gameTime < DIRECTIVE_START_TIME) return;
+
+            if (!directiveActive) {
+                if (gameTime >= directiveNextAt) spawnDirective();
+                return;
+            }
+
+            const d = directiveActive;
+            if (d.type === 'elite' || d.type === 'rift') {
+                const e = d.enemy;
+                if (!e || e.dead) { completeDirective(); return; }
+                if (d.type === 'rift') { e.x = e.homeX; e.y = e.homeY; }   // pin it stationary
+                d.x = e.x; d.y = e.y;                                      // track for compass/minimap
+                if (d.type === 'rift') {
+                    d.minionTimer += dt;
+                    const near = Math.hypot(player.x - e.x, player.y - e.y) < 720;
+                    let minionCount = 0;
+                    for (const m of enemies) if (m.isRiftMinion && !m.dead) minionCount++;
+                    if (near && d.minionTimer >= 2600 && minionCount < 5) {
+                        d.minionTimer = 0;
+                        const ma = Math.random() * Math.PI * 2;
+                        let mx = e.x + Math.cos(ma) * 70, my = e.y + Math.sin(ma) * 70;
+                        mx = Math.max(120, Math.min(WORLD.width - 120, mx));
+                        my = Math.max(120, Math.min(WORLD.height - 120, my));
+                        const m = new Enemy('fast', mx, my);
+                        m.isRiftMinion = true;
+                        enemies.push(m);
+                        spawnParticles(mx, my, d.color, 8);
+                    }
+                }
+                if (gameTime >= d.expiresAt) expireDirective('It slipped away');
+            } else if (d.type === 'vault') {
+                d.pulse += dt;
+                const dist = Math.hypot(player.x - d.x, player.y - d.y);
+                if (dist < d.radius) {
+                    d.progress += dt;
+                    if ((d.pulse % 120) < dt) spawnParticles(d.x, d.y, d.color, 4);
+                    if (d.progress >= d.required) { completeDirective(); return; }
+                }
+                if (gameTime >= d.expiresAt) expireDirective('The vault sealed');
+            }
+        }
+
+        // ---- Directive rendering -------------------------------------------------
+        function drawDirectivesWorld() {
+            const d = directiveActive;
+            if (!d) return;
+            const sx = camera.screenX(d.x), sy = camera.screenY(d.y);
+            const t = performance.now() / 1000;
+
+            if (d.type === 'vault') {
+                const r = camera.scale(d.radius);
+                ctx.save();
+                const prog = Math.min(1, d.progress / d.required);
+                ctx.lineWidth = camera.scale(4);
+                ctx.strokeStyle = 'rgba(255, 210, 74, 0.22)';
+                ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+                ctx.strokeStyle = d.color; ctx.shadowColor = d.color; ctx.shadowBlur = 14;
+                ctx.beginPath(); ctx.arc(sx, sy, r, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); ctx.stroke();
+                ctx.shadowBlur = 0;
+                const bs = camera.scale(18 + Math.sin(t * 3) * 2);
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.strokeStyle = d.color; ctx.lineWidth = camera.scale(2.5);
+                ctx.beginPath(); ctx.rect(sx - bs, sy - bs * 0.8, bs * 2, bs * 1.6); ctx.fill(); ctx.stroke();
+                ctx.font = `${camera.scale(22)}px Oxanium, monospace`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText('💎', sx, sy);
+                ctx.restore();
+            } else {
+                const e = d.enemy;
+                if (!e || e.dead) return;
+                const r = camera.scale(e.radius + 14);
+                ctx.save();
+                ctx.strokeStyle = d.color; ctx.lineWidth = 2;
+                ctx.shadowColor = d.color; ctx.shadowBlur = 12;
+                ctx.globalAlpha = 0.6 + Math.sin(t * 4) * 0.25;
+                ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+                if (d.type === 'rift') {
+                    ctx.globalAlpha = 0.5;
+                    for (let i = 0; i < 3; i++) {
+                        const a = t * 2 + i * (Math.PI * 2 / 3);
+                        ctx.beginPath(); ctx.arc(sx, sy, r * 0.7, a, a + 1.2); ctx.stroke();
+                    }
+                }
+                ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+                const w = camera.scale(e.radius * 2.4), h = camera.scale(5);
+                const hpFrac = Math.max(0, e.hp / e.maxHp);
+                const by = sy - r - camera.scale(12);
+                ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx - w / 2, by, w, h);
+                ctx.fillStyle = d.color; ctx.fillRect(sx - w / 2, by, w * hpFrac, h);
+                ctx.fillStyle = d.color;
+                ctx.font = `bold ${camera.scale(11)}px Oxanium, monospace`;
+                ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+                ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+                ctx.fillText(e.directiveName || 'TARGET', sx, by - camera.scale(3));
+                ctx.restore();
+            }
+        }
+
+        function drawDirectivesHUD() {
+            let bannerShown = false;
+            if (directiveBanner && gameTime < directiveBanner.until) {
+                bannerShown = true;
+                const b = directiveBanner;
+                ctx.save();
+                ctx.globalAlpha = Math.min(1, b.until - gameTime);   // fade out in the final second
+                ctx.textAlign = 'center';
+                ctx.shadowColor = b.color; ctx.shadowBlur = 16;
+                ctx.fillStyle = b.color;
+                ctx.font = 'bold 26px Oxanium, monospace';
+                ctx.fillText(b.text, gameWidth / 2, gameHeight * 0.16);
+                if (b.sub) {
+                    ctx.shadowBlur = 6;
+                    ctx.font = '12px Oxanium, monospace';
+                    ctx.fillStyle = '#cfefff';
+                    ctx.fillText(b.sub, gameWidth / 2, gameHeight * 0.16 + 20);
+                }
+                ctx.restore();
+            }
+
+            const d = directiveActive;
+            if (!d) return;
+
+            // Compass: an edge chevron toward the objective (with distance), or an on-screen diamond.
+            const sx = camera.screenX(d.x), sy = camera.screenY(d.y);
+            const margin = 26;
+            const onScreen = sx >= margin && sx <= gameWidth - margin && sy >= margin && sy <= gameHeight - margin;
+            const distM = Math.floor(Math.hypot(player.x - d.x, player.y - d.y));
+            ctx.save();
+            ctx.shadowColor = d.color; ctx.shadowBlur = 10;
+            ctx.fillStyle = d.color;
+            if (onScreen) {
+                ctx.globalAlpha = 0.85;
+                ctx.beginPath();
+                ctx.moveTo(sx, sy - 9); ctx.lineTo(sx + 8, sy); ctx.lineTo(sx, sy + 9); ctx.lineTo(sx - 8, sy);
+                ctx.closePath(); ctx.fill();
+            } else {
+                const cx = Math.max(margin, Math.min(gameWidth - margin, sx));
+                const cy = Math.max(margin, Math.min(gameHeight - margin, sy));
+                const ang = Math.atan2(sy - cy, sx - cx);
+                ctx.translate(cx, cy); ctx.rotate(ang);
+                ctx.beginPath();
+                ctx.moveTo(12, 0); ctx.lineTo(-8, -8); ctx.lineTo(-3, 0); ctx.lineTo(-8, 8);
+                ctx.closePath(); ctx.fill();
+                ctx.rotate(-ang);
+                ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
+                ctx.font = 'bold 10px Oxanium, monospace';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(distM + 'm', 0, 16);
+            }
+            if (d.type === 'vault') {
+                const remain = Math.max(0, Math.ceil(d.expiresAt - gameTime));
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = remain <= 10 ? '#ff5566' : '#ffd24a';
+                ctx.font = 'bold 12px Oxanium, monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('SEALS IN ' + remain + 's', gameWidth / 2, gameHeight * 0.16 + (bannerShown ? 40 : 8));
+            }
+            ctx.restore();
+        }
+
+        function drawDirectivesMinimap(scale) {
+            const d = directiveActive;
+            if (!d) return;
+            const mx = d.x * scale, my = d.y * scale;
+            const a = 0.6 + Math.sin(performance.now() / 300) * 0.4;   // pulse so it stands out
+            minimapCtx.save();
+            minimapCtx.fillStyle = d.color; minimapCtx.strokeStyle = d.color;
+            minimapCtx.globalAlpha = a;
+            minimapCtx.beginPath(); minimapCtx.arc(mx, my, 4, 0, Math.PI * 2); minimapCtx.fill();
+            minimapCtx.globalAlpha = 1; minimapCtx.lineWidth = 1;
+            minimapCtx.beginPath(); minimapCtx.arc(mx, my, 6, 0, Math.PI * 2); minimapCtx.stroke();
+            minimapCtx.restore();
+        }
+
         function render() {
             // Get actual canvas logical dimensions (dynamic in fullscreen)
             const canvasLogicalWidth = fullscreenLogicalWidth;
@@ -22535,7 +22835,8 @@
             for (const boss of bosses) {
                 if (!boss.dead) boss.draw();
             }
-            
+            drawDirectivesWorld();   // V1_276: directive marker/nameplate/vault (world space)
+
             // Draw gravity wells (under player)
             if (player && player.weapons.gravityWell) {
                 const state = player.weapons.gravityWell;
@@ -22993,6 +23294,7 @@
             
             // Minimap (draws to its own canvas, then gets composited in drawTrackpad)
             drawMinimap();
+            drawDirectivesHUD();   // V1_276: banner + compass, drawn on top of everything
         }
 
         // ===== MINIMAP =====
@@ -23203,6 +23505,7 @@
             }
             
             // Player (always visible)
+            drawDirectivesMinimap(scale);   // V1_276: pulsing directive marker (under the player dot)
             minimapCtx.fillStyle = selectedPlayerColor;
             minimapCtx.shadowBlur = 5;
             minimapCtx.shadowColor = selectedPlayerColor;
@@ -23674,6 +23977,7 @@
             shrines = [];
             shrinesActivatedTotal = 0; // V1_263
             leprechauns = [];
+            resetDirectives(); // V1_276
             rainbows = [];
             ghosts = [];
             chests = [];
