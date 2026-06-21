@@ -19813,13 +19813,23 @@
         // ===== UPGRADE SELECTION =====
         let upgradeSlotResults = [];
         
+        let slotGeneration = 0;
         function showUpgradeSelection() {
+            // V1_257: bump a generation token so any pending reel/reveal timeouts from a
+            // prior spin no-op — overlapping calls (rapid level-ups, reroll/banish) can't
+            // reveal the cards early.
+            const gen = ++slotGeneration;
             gamePaused = true;
             DOM.upgradeOverlay.classList.add('active');
             DOM.upgradeSlotMachine.innerHTML = '';
             DOM.upgradeSlotMachine.style.display = 'flex';
             DOM.upgradeSlotMachine.style.visibility = 'visible';
             DOM.upgradeOptions.innerHTML = '';
+            // Drop stale reroll/banish buttons so they can't be clicked mid-spin.
+            const staleReroll = DOM.upgradeOverlay.querySelector('.reroll-button');
+            if (staleReroll) staleReroll.remove();
+            const staleBanish = DOM.upgradeOverlay.querySelector('.banish-button');
+            if (staleBanish) staleBanish.remove();
             
             // Generate available upgrades with weights
             const available = [];
@@ -19947,6 +19957,7 @@
             // Animate slot machine reveal
             upgradeSlotResults.forEach((upgrade, i) => {
                 setTimeout(() => {
+                    if (gen !== slotGeneration) return; // V1_257: superseded by a newer spin
                     const reel = document.getElementById(`upgradeReel${i}`);
                     if (!reel) return;
                     reel.classList.remove('spinning');
@@ -20005,7 +20016,7 @@
                     
                     // Show clickable cards after last reel
                     if (i === upgradeSlotResults.length - 1) {
-                        setTimeout(() => showUpgradeCards(), 300);
+                        setTimeout(() => { if (gen === slotGeneration) showUpgradeCards(); }, 300);
                     }
                 }, 400 + i * 500);
             });
