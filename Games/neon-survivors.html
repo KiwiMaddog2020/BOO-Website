@@ -7016,6 +7016,8 @@
         const GRASS_COLS = Math.ceil(WORLD.width / GRASS_CELL_SIZE);
         const GRASS_ROWS = Math.ceil(WORLD.height / GRASS_CELL_SIZE);
         const grassGrid = []; // 2D grid for spatial lookup
+        const flowerGrid = []; // V1_265: sparse wildflowers, same cell grid as grass
+        const FLOWER_COLORS = ['#eef0ff', '#ffd24a', '#c9a8ff']; // daisy white, buttercup gold, soft lavender
         
         function generateGrassTufts() {
             // Seeded random for consistent grass placement
@@ -7029,8 +7031,10 @@
             // Initialize grid
             for (let r = 0; r < GRASS_ROWS; r++) {
                 grassGrid[r] = [];
+                flowerGrid[r] = [];
                 for (let c = 0; c < GRASS_COLS; c++) {
                     grassGrid[r][c] = [];
+                    flowerGrid[r][c] = [];
                 }
             }
             
@@ -7053,6 +7057,16 @@
                             height: 5 + seededRandom() * 7, // 5-12 pixels
                             shade: seededRandom(), // For color variation
                             lean: (seededRandom() - 0.5) * 0.25 // Slight lean
+                        });
+                    }
+
+                    // V1_265: occasional wildflower in this cell (natural-meadow flecks)
+                    if (seededRandom() < 0.06) {
+                        flowerGrid[r][c].push({
+                            x: wx + seededRandom() * GRASS_CELL_SIZE,
+                            y: wy + seededRandom() * GRASS_CELL_SIZE,
+                            color: FLOWER_COLORS[Math.floor(seededRandom() * FLOWER_COLORS.length)],
+                            size: 1.6 + seededRandom() * 1.2
                         });
                     }
                 }
@@ -8104,7 +8118,7 @@
                 this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult * tomeSpeedMult * hatSpeedMult * dropSpeedMult;
                 
                 // Max HP from base + passives + tomes + shrines
-                this.maxHp = 120 + (this.passives.maxHp || 0) * 25 + (this.tomeBonuses.maxHpBonus || 0) + (this.shrineBonuses.maxHpBonus || 0);
+                this.maxHp = 120 + (this.passives.maxHp || 0) * 25 + (this.tomeBonuses.maxHpBonus || 0) + (this.shrineBonuses.maxHpBonus || 0) + (legendaryEffects.holyBook.maxHpBonus || 0); // V1_265: holyBook persists
                 this.hp = Math.min(this.hp, this.maxHp);
                 
                 // Damage multiplier combines passive, shrine, and tome bonuses
@@ -8115,7 +8129,7 @@
                 this.pickupRange = 50 * (1 + (this.passives.pickupRange || 0) * 0.30 + (this.tomeBonuses.pickupBonus || 0) + (this.shrineBonuses.pickupBonus || 0));
                 
                 // Regen from base + passives + shrine + tome
-                this.regenRate = Math.min(15, 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0)); // V1_258: cap 15 HP/s
+                this.regenRate = Math.min(15, 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0) + (legendaryEffects.holyBook.regenBonus || 0)); // V1_258: cap 15 HP/s; V1_265: + holyBook
 
                 // Boost upgrades (V1_233) — granted via mini-boss/boss rewards (later phase).
                 this.boostMaxCharges = Math.min(BOOST_MAX_CHARGES_CAP, 1 + (this.passives.extraBoost || 0));
@@ -17212,10 +17226,10 @@
                     legendaryEffects.holyBook.active = true;
                     legendaryEffects.holyBook.maxHpBonus += 25;
                     legendaryEffects.holyBook.regenBonus += 2;
-                    // Apply immediately
-                    player.maxHp += 25;
+                    // V1_265: recompute so the bonus persists (applyPassives now reads holyBook);
+                    // direct +=25/+=2 used to be wiped on the next recompute. Heal by the new HP.
+                    player.applyPassives();
                     player.hp = Math.min(player.hp + 25, player.maxHp);
-                    player.regenRate += 2;
                     break;
                 case 'stillness':
                     legendaryEffects.stillness.active = true;
@@ -22191,9 +22205,30 @@
                             ctx.stroke();
                         }
                     }
+
+                    // V1_265: wildflowers drawn over the grass for this cell
+                    const flowers = flowerGrid[r][c];
+                    for (let i = 0; i < flowers.length; i++) {
+                        const fl = flowers[i];
+                        if (isInTerrain(fl.x, fl.y, 12)) continue;
+                        const fsx = camera.screenX(fl.x);
+                        const fsy = camera.screenY(fl.y);
+                        const fs = fl.size * camera.zoom;
+                        ctx.fillStyle = fl.color;
+                        for (let p = 0; p < 5; p++) {
+                            const ang = (p / 5) * Math.PI * 2;
+                            ctx.beginPath();
+                            ctx.arc(fsx + Math.cos(ang) * fs, fsy + Math.sin(ang) * fs, fs * 0.7, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        ctx.fillStyle = '#ffe07a';
+                        ctx.beginPath();
+                        ctx.arc(fsx, fsy, fs * 0.62, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                 }
             }
-            
+
             // Grid background (scrolls with camera, scales with zoom)
             ctx.strokeStyle = 'rgba(50, 255, 100, 0.04)';
             ctx.lineWidth = 1;
