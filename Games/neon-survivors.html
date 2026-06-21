@@ -7425,10 +7425,12 @@
             const steps = Math.floor((t - 1860) / 15);            // 31 min+: x1.07 every 15s
             return 1.5 * Math.pow(1.07, steps);
         }
-        // Offsets the higher player DPS from the rarity-variant system so the player
-        // isn't over-powered. Ramps enemy HP 1.0 at min 5 -> ~1.30 by min 30, flat after.
+        // Difficulty HP ramp (V1_258): enemy HP grows multiplicatively to keep pace with the
+        // player's multiplicative DPS (rarity variants). Flat for the first 4 min, then
+        // ~+4%/min compounding, capped at 3x. Applied to every enemy AND boss HP.
         function powerOffsetHpMult(t) {
-            return 1 + Math.min(0.30, Math.max(0, (t - 300) / 1500) * 0.30);
+            if (t <= 240) return 1;                                  // first 4 min: baseline
+            return Math.min(3.0, Math.pow(1.04, (t - 240) / 60));    // +4%/min compounding, cap 3x
         }
 
         // ===== RARITY SYSTEM =====
@@ -8095,7 +8097,7 @@
                 // Base passives from level-up (updated values)
                 const baseSpeedMult = 1 + (this.passives.speed || 0) * 0.12;  // 12% per level
                 const shrineSpeedMult = 1 + this.shrineBonuses.speedBonus;
-                const tomeSpeedMult = 1 + this.tomeBonuses.speedBonus; // Tome speed bonus
+                const tomeSpeedMult = 1 + Math.min(1.2, this.tomeBonuses.speedBonus); // Tome speed bonus (V1_258: cap +120%)
                 const hatSpeedMult = playerHasCowboyHat ? 1.2 : 1; // 20% from cowboy hat
                 const dropSpeedMult = speedBoostMultiplier; // Speed boost from shoe drop
                 this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult * tomeSpeedMult * hatSpeedMult * dropSpeedMult;
@@ -8112,7 +8114,7 @@
                 this.pickupRange = 50 * (1 + (this.passives.pickupRange || 0) * 0.30 + (this.tomeBonuses.pickupBonus || 0) + (this.shrineBonuses.pickupBonus || 0));
                 
                 // Regen from base + passives + shrine + tome
-                this.regenRate = 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0);
+                this.regenRate = Math.min(15, 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0)); // V1_258: cap 15 HP/s
 
                 // Boost upgrades (V1_233) — granted via mini-boss/boss rewards (later phase).
                 this.boostMaxCharges = Math.min(BOOST_MAX_CHARGES_CAP, 1 + (this.passives.extraBoost || 0));
@@ -8122,11 +8124,11 @@
                 if (this.boostCharges > this.boostMaxCharges) this.boostCharges = this.boostMaxCharges;
                 
                 // Attack speed from shrine + tome
-                this.attackSpeedMultiplier = 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus;
+                this.attackSpeedMultiplier = Math.min(2.6, 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus); // V1_258: cap ~2.6x fire rate
                 
                 // Crit stats (base + shrine + tome)
-                this.critChance = 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance;
-                this.critMultiplier = 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0);
+                this.critChance = Math.min(0.75, 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance); // V1_258: cap 75%
+                this.critMultiplier = Math.min(5.0, 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0)); // V1_258: cap 5x
                 
                 // Luck from tome + shrine (affects various RNG) - 0.5 effectiveness rate for tomes
                 this.luck = (this.tomeBonuses.luck || 0) * 0.5 + (this.shrineBonuses.luck || 0);
@@ -8135,10 +8137,12 @@
                 this.xpBonusMult = 1 + (this.tomeBonuses.xpBonus || 0) + (this.shrineBonuses.xpBonus || 0);
                 
                 // Lifesteal from shrine + tome
-                this.lifesteal = this.shrineBonuses.lifesteal + (this.tomeBonuses.lifestealBonus || 0);
+                this.lifesteal = Math.min(0.5, this.shrineBonuses.lifesteal + (this.tomeBonuses.lifestealBonus || 0)); // V1_258: cap 50%
                 
-                // Armor from shrine + tome
-                this.armor = this.shrineBonuses.armor + (this.tomeBonuses.armorBonus || 0);
+                // Armor from shrine + tome — diminishing returns + 75% cap (V1_258). Was an
+                // uncapped (1-armor) that reached full immunity / heal-on-hit at high stacks.
+                const rawArmor = this.shrineBonuses.armor + (this.tomeBonuses.armorBonus || 0);
+                this.armor = Math.min(0.75, rawArmor / (rawArmor + 0.65));
             }
             
             addShrineBonus(stat, value) {
@@ -11462,7 +11466,7 @@
                         break;
                     case 'fast':
                         this.radius = 10;
-                        this.speed = 2.52 * speedScale;
+                        this.speed = 2.142 * speedScale;
                         this.maxHp = Math.floor(10 * hpScale);
                         this.baseDamage = 10;
                         this.color = COLORS.orange;
@@ -11478,7 +11482,7 @@
                         break;
                     case 'swarm':
                         this.radius = 8;
-                        this.speed = 1.80 * speedScale;
+                        this.speed = 1.53 * speedScale;
                         this.maxHp = Math.floor(6 * hpScale);
                         this.baseDamage = 6;
                         this.color = COLORS.neonGreen;
@@ -12076,7 +12080,7 @@
                 this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Time-based scaling for leprechaun
-                const timeScale = 1 + Math.floor(gameTime / 75) * 0.25; // +25% per 75s (slowed from /60)
+                const timeScale = 1 + Math.floor(gameTime / 75) * 0.28; // V1_258: steeper so the leprechaun stays a threat
                 
                 this.speed = 2.09 * (1 + Math.floor(gameTime / 110) * 0.05) * enemySpeedBonus;
                 this.maxHp = Math.floor(190 * timeScale * enemyHealthBonus * 1.08 * powerOffsetHpMult(gameTime)); // V1_253: +8% HP + rarity power-offset
@@ -12841,7 +12845,7 @@
                 this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Time-based scaling for mini boss
-                const timeScale = 1 + Math.floor(gameTime / 75) * 0.20; // +20% per 75s (slowed from /60)
+                const timeScale = 1 + Math.floor(gameTime / 75) * 0.24; // V1_258: steeper mini-boss HP scaling
                 const speedScale = 1 + Math.floor(gameTime / 150) * 0.08; // +8% speed per 2.5 min (slowed from /120)
                 
                 this.speed = 1.235 * speedScale * enemySpeedBonus;
@@ -13233,7 +13237,7 @@
                 this.incomingDamage = 0; // Track damage from projectiles in flight
                 
                 // Time-based scaling for major boss
-                const timeScale = 1 + Math.floor(gameTime / 75) * 0.25; // +25% per 75s (slowed from /60)
+                const timeScale = 1 + Math.floor(gameTime / 75) * 0.30; // V1_258: steeper boss HP scaling
                 const speedScale = 1 + Math.floor(gameTime / 180) * 0.10; // +10% speed per 3 min (slowed from /150)
                 
                 this.baseSpeedValue = 0.855 * speedScale * enemySpeedBonus;
@@ -19314,7 +19318,9 @@
                 timeScale = 60 * 0.75 + (gameTime - 60) * 0.45;
             }
             
-            let currentInterval = Math.max(700, spawnInterval - timeScale);
+            // V1_258: spawn floor tapers 700ms -> 480ms by ~min 10 so pressure keeps rising.
+            const spawnFloor = Math.max(480, 700 - Math.max(0, gameTime - 150) * 0.5);
+            let currentInterval = Math.max(spawnFloor, spawnInterval - timeScale);
             
             // SWARM EVENT: 1.5x spawn rate for 30 seconds before boss
             if (swarmActive) {
@@ -19357,7 +19363,7 @@
                 }
                 
                 // Spawn count increases over time: every 90s (slowed from 60s)
-                let count = 1 + Math.floor(gameTime / 90);
+                let count = 1 + Math.floor(gameTime / 70); // V1_258: faster count growth
                 
                 // SWARM EVENT: +50% enemies per wave
                 if (swarmActive) {
@@ -19372,7 +19378,8 @@
                 
                 for (let i = 0; i < count; i++) {
                     // Enforce enemy limit (raised for final horde)
-                    const maxEnemies = (gameTime >= finalSwarmTime) ? LIMITS.enemies + 50 : LIMITS.enemies;
+                    const baseCap = LIMITS.enemies + Math.min(20, Math.floor(Math.max(0, gameTime - 480) / 60) * 5); // V1_258: +5/min after min 8, up to +20
+                    const maxEnemies = (gameTime >= finalSwarmTime) ? baseCap + 50 : baseCap;
                     if (enemies.length >= maxEnemies) break;
                     
                     const type = types[Math.floor(Math.random() * types.length)];
