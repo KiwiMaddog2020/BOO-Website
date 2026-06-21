@@ -6176,15 +6176,17 @@
             background: rgba(0, 255, 255, 0.2);
             border-color: #0ff;
         }
-        /* Show only in fullscreen, fixed to the viewport top-LEFT (mirror of the close btn) */
-        .game-container:fullscreen .game-pane-controls,
-        .game-container:-webkit-full-screen .game-pane-controls {
+        /* Show only in fullscreen AND only once the active game has handshaked (.pane-ready),
+           so the 5 games without the bridge never show dead buttons. Fixed to the viewport
+           top-LEFT (mirror of the close btn top-right). */
+        .game-container.pane-ready:fullscreen .game-pane-controls,
+        .game-container.pane-ready:-webkit-full-screen .game-pane-controls {
             display: flex;
             position: fixed;
             top: 10px;
             left: 10px;
         }
-        .game-container.pseudo-fullscreen .game-pane-controls {
+        .game-container.pane-ready.pseudo-fullscreen .game-pane-controls {
             display: flex !important;
             position: fixed !important;
             top: 15px !important;
@@ -9096,7 +9098,7 @@
                  the viewport's top-LEFT pane (mirroring the close button top-right) so they clear
                  the playfield. They postMessage the active game iframe; the game's own in-iframe
                  buttons handle windowed mode and hide while fullscreen. -->
-            <div class="game-pane-controls" aria-hidden="true">
+            <div class="game-pane-controls">
                 <button class="game-pane-btn" id="panePauseBtn" type="button" aria-label="Pause game" title="Pause">⏸</button>
                 <button class="game-pane-btn" id="paneMuteBtn" type="button" aria-label="Toggle sound" title="Sound">🔊</button>
             </div>
@@ -11509,6 +11511,7 @@
                 setTimeout(() => {
                     arcadeFrame.src = gameSrc;
                     arcadeFrame.title = gameTitle;
+                    arcadeGameContainer.classList.remove('pane-ready'); // V1_276: new game must re-handshake before pane controls show
                     
                     // Recalculate size (desktop only)
                     enforceGameAspectRatio();
@@ -11996,7 +11999,11 @@
                     }, 150);
                 }
             } else if (e.data && e.data.type === 'boo-arcade-state') {
-                // V1_275: game reports pause/mute state -> sync the fullscreen pane buttons
+                // V1_275: game reports pause/mute state -> sync the fullscreen pane buttons.
+                // Receiving this is also our proof the active game ships the bridge, so the
+                // pane controls only ever appear for games that can use them (V1_276 fix).
+                const gc = document.querySelector('.game-container');
+                if (gc) gc.classList.add('pane-ready');
                 const pp = document.getElementById('panePauseBtn');
                 const pm = document.getElementById('paneMuteBtn');
                 if (pp) pp.classList.toggle('paused', !!e.data.paused);
