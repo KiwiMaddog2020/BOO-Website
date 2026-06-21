@@ -213,6 +213,10 @@
             background: rgba(0, 255, 255, 0.2);
             border-color: #0ff;
         }
+        /* V1_275: in fullscreen the parent page provides pause/mute in the left pane, so hide
+           this game's own corner buttons to free up the playfield. */
+        body.parent-fs #pauseBtn,
+        body.parent-fs #muteBtn { display: none !important; }
         
         /* Settings Button */
         .settings-btn {
@@ -24808,6 +24812,43 @@
         // Initialize
         updateUI();
         setTimeout(applyZoom, 100);
+    })();
+    </script>
+    <!-- V1_275: arcade fullscreen bridge — lets the parent page's left-pane pause/mute
+         controls drive this game while fullscreen, and reports state back so their icons
+         stay in sync. Hides this game's own corner buttons via body.parent-fs (see CSS). -->
+    <script>
+    (function () {
+        function postArcadeState() {
+            try {
+                var pb = document.getElementById('pauseBtn');
+                var mb = document.getElementById('muteBtn');
+                window.parent.postMessage({
+                    type: 'boo-arcade-state',
+                    paused: pb ? pb.classList.contains('paused') : false,
+                    muted: mb ? ((mb.textContent || '').indexOf('🔇') >= 0) : false
+                }, '*');
+            } catch (e) {}
+        }
+        window.addEventListener('message', function (e) {
+            var d = e.data;
+            if (!d || d.type !== 'boo-arcade') return;
+            if (d.cmd === 'toggle-pause') { var pb = document.getElementById('pauseBtn'); if (pb) pb.click(); postArcadeState(); }
+            else if (d.cmd === 'toggle-mute') { var mb = document.getElementById('muteBtn'); if (mb) mb.click(); postArcadeState(); }
+            else if (d.cmd === 'fs-enter') { document.body.classList.add('parent-fs'); postArcadeState(); }
+            else if (d.cmd === 'fs-exit') { document.body.classList.remove('parent-fs'); }
+            else if (d.cmd === 'request-state') { postArcadeState(); }
+        });
+        // Keep the pane pause icon synced however pause is toggled (button, key, overlay):
+        // observe the in-iframe pause button's class list for the .paused flag.
+        function attach() {
+            var pb = document.getElementById('pauseBtn');
+            if (pb && window.MutationObserver) {
+                new MutationObserver(postArcadeState).observe(pb, { attributes: true, attributeFilter: ['class'] });
+            }
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
+        else attach();
     })();
     </script>
 </body>

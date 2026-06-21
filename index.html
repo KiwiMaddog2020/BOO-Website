@@ -6129,7 +6129,69 @@
             right: 15px !important;
             z-index: 100000 !important;
         }
-        
+
+        /* ========== V1_275: FULLSCREEN PANE PAUSE/MUTE CONTROLS ========== */
+        /* Parent-rendered so they can sit in the left letterbox pane in fullscreen,
+           mirroring the close button (top-right). Hidden in windowed mode — each game's
+           own in-iframe pause/mute buttons handle that. Styled to match BOO Survivors. */
+        .game-pane-controls {
+            display: none;
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            gap: 6px;
+            z-index: 1000;
+        }
+        .game-pane-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid rgba(0, 255, 255, 0.55);
+            border-radius: 6px;
+            color: rgba(0, 255, 255, 0.9);
+            font-size: 18px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            cursor: pointer;
+            opacity: 0.7;
+            transition: all 0.15s;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        .game-pane-btn:hover,
+        .game-pane-btn:focus {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.9);
+            border-color: #0ff;
+            box-shadow: 0 0 12px rgba(0, 255, 255, 0.5);
+        }
+        .game-pane-btn:active { transform: scale(0.95); }
+        .game-pane-btn.paused {
+            opacity: 1;
+            background: rgba(0, 255, 255, 0.2);
+            border-color: #0ff;
+        }
+        /* Show only in fullscreen, fixed to the viewport top-LEFT (mirror of the close btn) */
+        .game-container:fullscreen .game-pane-controls,
+        .game-container:-webkit-full-screen .game-pane-controls {
+            display: flex;
+            position: fixed;
+            top: 10px;
+            left: 10px;
+        }
+        .game-container.pseudo-fullscreen .game-pane-controls {
+            display: flex !important;
+            position: fixed !important;
+            top: 15px !important;
+            left: 15px !important;
+            z-index: 100000 !important;
+        }
+
         /* Hide music player in pseudo-fullscreen (all devices) */
         body.pseudo-fullscreen-active .music-player,
         body.pseudo-fullscreen-active .music-toggle {
@@ -9030,6 +9092,14 @@
             <div class="game-touch-blocker game-touch-right"></div>
             <iframe id="arcadeFrame" src="Games/neon-brickbreaker.html" title="Neon Brickbreaker" loading="lazy" allowfullscreen></iframe>
             <button class="game-fullscreen-btn" aria-label="Toggle fullscreen">⛶</button>
+            <!-- V1_275: parent-rendered pause/mute controls. Shown ONLY in fullscreen, fixed to
+                 the viewport's top-LEFT pane (mirroring the close button top-right) so they clear
+                 the playfield. They postMessage the active game iframe; the game's own in-iframe
+                 buttons handle windowed mode and hide while fullscreen. -->
+            <div class="game-pane-controls" aria-hidden="true">
+                <button class="game-pane-btn" id="panePauseBtn" type="button" aria-label="Pause game" title="Pause">⏸</button>
+                <button class="game-pane-btn" id="paneMuteBtn" type="button" aria-label="Toggle sound" title="Sound">🔊</button>
+            </div>
         </div>
     </section>
 
@@ -11464,7 +11534,30 @@
         // Store iframe's natural size before fullscreen
         let iframeNaturalWidth = 640;
         let iframeNaturalHeight = 800;
-        
+
+        // ========== V1_275: FULLSCREEN PANE PAUSE/MUTE CONTROLS ==========
+        // Parent-rendered controls that mirror the close button into the left pane while
+        // fullscreen. They postMessage the active game iframe; the game clicks its own
+        // (now-hidden) in-iframe pause/mute and reports state back so these icons stay synced.
+        const panePauseBtn = document.getElementById('panePauseBtn');
+        const paneMuteBtn = document.getElementById('paneMuteBtn');
+        function sendToGame(cmd) {
+            try {
+                const f = document.getElementById('arcadeFrame');
+                if (f && f.contentWindow) f.contentWindow.postMessage({ type: 'boo-arcade', cmd: cmd }, '*');
+            } catch (e) {}
+        }
+        let _paneFsState = null;
+        function notifyGameFullscreen(on) {
+            on = !!on;
+            if (on === _paneFsState) return;   // only fire on actual transitions
+            _paneFsState = on;
+            sendToGame(on ? 'fs-enter' : 'fs-exit');
+            if (on) sendToGame('request-state');
+        }
+        if (panePauseBtn) panePauseBtn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); sendToGame('toggle-pause'); });
+        if (paneMuteBtn) paneMuteBtn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); sendToGame('toggle-mute'); });
+
         if (fullscreenBtn && arcadeGameContainerFS) {
             // Update button icon and scale game based on fullscreen state
             // V1_80: Compute iframe width/height so the active game's native aspect
@@ -11520,6 +11613,7 @@
                                     document.msFullscreenElement;
                 fullscreenBtn.textContent = isFullscreen ? '✕' : '⛶';
                 fullscreenBtn.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
+                notifyGameFullscreen(!!isFullscreen);   // V1_275: hand pause/mute to the left-pane controls + sync
                 
                 // Scale the iframe to fill more of the screen in fullscreen mode
                 if (arcadeFrameFS) {
@@ -11650,6 +11744,7 @@
                 
                 // Calculate sizing based on available viewport
                 resizePseudoFullscreen();
+                notifyGameFullscreen(true);   // V1_275: hand pause/mute to the left-pane controls
             }
             
             function resizePseudoFullscreen() {
@@ -11698,6 +11793,7 @@
                 arcadeFrameFS.style.border = '';
                 arcadeFrameFS.style.maxWidth = '';
                 arcadeFrameFS.style.maxHeight = '';
+                notifyGameFullscreen(false);   // V1_275: restore the game's in-iframe buttons
             }
             
             fullscreenBtn.addEventListener('click', function(e) {
@@ -11899,6 +11995,12 @@
                         }
                     }, 150);
                 }
+            } else if (e.data && e.data.type === 'boo-arcade-state') {
+                // V1_275: game reports pause/mute state -> sync the fullscreen pane buttons
+                const pp = document.getElementById('panePauseBtn');
+                const pm = document.getElementById('paneMuteBtn');
+                if (pp) pp.classList.toggle('paused', !!e.data.paused);
+                if (pm) pm.textContent = e.data.muted ? '🔇' : '🔊';
             }
         });
         
