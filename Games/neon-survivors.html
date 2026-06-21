@@ -9091,10 +9091,13 @@
                         target.knockbackVelX += Math.cos(ka) * 1.8;
                         target.knockbackVelY += Math.sin(ka) * 1.8;
                     }
-                    // VFX: blink streak (drawn from state) + a void burst at the target
+                    // VFX: a void burst behind the enemy (where the shadow dagger emerges); the
+                    // dagger thrust itself is drawn from state.phantomStrikes.
                     state.phantomStrikes.push({ x: target.x, y: target.y, time: now, slashAngle: Math.random() * Math.PI });
                     addRing(target.x, target.y, 14, def.color);
-                    spawnParticles(target.x, target.y, def.color, 4);
+                    const bnx = target.x - this.x, bny = target.y - this.y;
+                    const blen = Math.hypot(bnx, bny) || 1;
+                    spawnParticles(target.x + (bnx / blen) * 22, target.y + (bny / blen) * 22, def.color, 4);
                 }
                 // Cleanup old strike marks (matches the 240ms draw life)
                 state.phantomStrikes = state.phantomStrikes.filter(s => now - s.time < 240);
@@ -11288,8 +11291,8 @@
                         ctx.shadowBlur = 0;
                     }
 
-                    // Phantom Flurry blink-strikes (V1_268): fading streak from the player + a
-                    // slashed burst at each struck enemy.
+                    // Void Daggers blink-strikes (V1_269): a shadow dagger thrusts from BEHIND
+                    // each enemy (the far side from the player) and stabs back toward the player.
                     if (def.type === 'daggers' && state.phantomStrikes && state.phantomStrikes.length) {
                         const pnow = Date.now();
                         ctx.save();
@@ -11301,18 +11304,41 @@
                             const k = 1 - age / 240;
                             const tx = camera.screenX(st.x);
                             const ty = camera.screenY(st.y);
-                            // Blink streak from the player to the struck enemy
+                            // Player -> enemy direction (screen). "Behind" = enemy + n (far side).
+                            const dx = tx - sx, dy = ty - sy;
+                            const dlen = Math.hypot(dx, dy) || 1;
+                            const nx = dx / dlen, ny = dy / dlen;
+                            const perpX = -ny, perpY = nx;
+                            const thrust = Math.min(1, age / 60);          // quick thrust-in
+                            const slide = camera.scale(20) * (1 - thrust); // starts further back
+                            const bladeLen = camera.scale(15);
+                            const tipX = tx + nx * (slide - camera.scale(2));   // tip leads toward player
+                            const tipY = ty + ny * (slide - camera.scale(2));
+                            const baseX = tx + nx * (slide + bladeLen);         // handle behind the enemy
+                            const baseY = ty + ny * (slide + bladeLen);
+                            const halfW = camera.scale(4.2) * (0.5 + k * 0.5);
+                            // motion-blur streak trailing behind the blade
                             ctx.strokeStyle = def.color;
                             ctx.shadowBlur = 12;
-                            ctx.globalAlpha = k * 0.65;
-                            ctx.lineWidth = camera.scale(2.4) * k;
+                            ctx.globalAlpha = k * 0.5;
+                            ctx.lineWidth = camera.scale(2) * k;
                             ctx.beginPath();
-                            ctx.moveTo(sx, sy);
-                            ctx.lineTo(tx, ty);
+                            ctx.moveTo(baseX + nx * camera.scale(14), baseY + ny * camera.scale(14));
+                            ctx.lineTo(tipX, tipY);
                             ctx.stroke();
-                            // Slash "X" at the target
-                            const sl = camera.scale(11) * (0.55 + k * 0.6);
+                            // dagger blade (filled triangle, point leading toward the player)
+                            ctx.fillStyle = def.color;
                             ctx.globalAlpha = k;
+                            ctx.beginPath();
+                            ctx.moveTo(tipX, tipY);
+                            ctx.lineTo(baseX + perpX * halfW, baseY + perpY * halfW);
+                            ctx.lineTo(baseX - perpX * halfW, baseY - perpY * halfW);
+                            ctx.closePath();
+                            ctx.fill();
+                            // slash "X" burst at the strike point
+                            ctx.strokeStyle = def.color;
+                            const sl = camera.scale(10) * (0.55 + k * 0.6);
+                            ctx.lineWidth = camera.scale(2.2) * k;
                             for (let b2 = 0; b2 < 2; b2++) {
                                 const aa = (st.slashAngle || 0) + b2 * Math.PI / 2;
                                 ctx.beginPath();
