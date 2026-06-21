@@ -4421,7 +4421,7 @@
         .jump-btn .jump-btn-hint {
             display: none;
             position: absolute;
-            top: calc(100% + 3px);
+            top: calc(100% + 4px);
             left: 50%;
             transform: translateX(-50%);
             font-size: 9px;
@@ -13365,7 +13365,7 @@
                 ctx.textAlign = 'center';
                 ctx.shadowBlur = 10;
                 ctx.shadowColor = '#ff6600';
-                ctx.fillText('👻 MINI BOSS', sx, ghostY - s - 33);
+                ctx.fillText('MINI BOSS', sx, ghostY - s - 33);
                 
                 ctx.restore();
             }
@@ -13962,13 +13962,13 @@
                 ctx.lineWidth = 2;
                 ctx.strokeRect(sx - barWidth/2, ghostY - s - 33, barWidth, 10);
                 
-                // "INFERNO BOSS" label with ghost emoji
+                // "INFERNO GHOST" label
                 ctx.fillStyle = '#fff';
                 ctx.font = `bold ${camera.scale(14)}px Oxanium, monospace`;
                 ctx.textAlign = 'center';
                 ctx.shadowBlur = 15;
                 ctx.shadowColor = '#ff4400';
-                ctx.fillText('🔥 INFERNO GHOST 🔥', sx, ghostY - s - 41);
+                ctx.fillText('INFERNO GHOST', sx, ghostY - s - 41);
                 
                 ctx.restore();
             }
@@ -22405,17 +22405,58 @@
             } else {
                 const e = d.enemy;
                 if (!e || e.dead) return;
+                const baseR = camera.scale(e.radius);
                 const r = camera.scale(e.radius + 14);
                 ctx.save();
-                ctx.strokeStyle = d.color; ctx.lineWidth = 2;
-                ctx.shadowColor = d.color; ctx.shadowBlur = 12;
-                ctx.globalAlpha = 0.6 + Math.sin(t * 4) * 0.25;
-                ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
                 if (d.type === 'rift') {
-                    ctx.globalAlpha = 0.5;
-                    for (let i = 0; i < 3; i++) {
-                        const a = t * 2 + i * (Math.PI * 2 / 3);
-                        ctx.beginPath(); ctx.arc(sx, sy, r * 0.7, a, a + 1.2); ctx.stroke();
+                    // ===== VOID RIFT — a swirling portal that overrides the mob body =====
+                    // V1_283: drawn over the (purple tank) enemy so it never reads as a normal mob.
+                    // Dark void disc masks the body underneath.
+                    const discR = baseR * 1.15;
+                    const grad = ctx.createRadialGradient(sx, sy, discR * 0.08, sx, sy, discR);
+                    grad.addColorStop(0,   'rgba(10, 0, 20, 0.96)');
+                    grad.addColorStop(0.6, 'rgba(40, 5, 70, 0.92)');
+                    grad.addColorStop(1,   'rgba(80, 20, 130, 0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.arc(sx, sy, discR, 0, Math.PI * 2); ctx.fill();
+                    // Rotating spiral arms swirling inward.
+                    ctx.strokeStyle = d.color; ctx.shadowColor = d.color; ctx.shadowBlur = 14;
+                    ctx.lineWidth = camera.scale(2.5);
+                    for (let arm = 0; arm < 3; arm++) {
+                        const base = t * 1.6 + arm * (Math.PI * 2 / 3);
+                        ctx.globalAlpha = 0.85;
+                        ctx.beginPath();
+                        for (let s = 0; s <= 1.001; s += 0.1) {
+                            const rad = discR * (0.95 - s * 0.85);
+                            const ang = base + s * 3.2;
+                            const px = sx + Math.cos(ang) * rad, py = sy + Math.sin(ang) * rad;
+                            if (s === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                        }
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+                    // Bright pulsing core.
+                    ctx.fillStyle = '#e7c6ff'; ctx.shadowBlur = 18;
+                    ctx.beginPath(); ctx.arc(sx, sy, discR * (0.22 + Math.sin(t * 4) * 0.05), 0, Math.PI * 2); ctx.fill();
+                    // Glowing rim ring.
+                    ctx.strokeStyle = d.color; ctx.lineWidth = camera.scale(3); ctx.shadowBlur = 16;
+                    ctx.globalAlpha = 0.6 + Math.sin(t * 4) * 0.25;
+                    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+                } else {
+                    // ===== ELITE HUNT — danger double-ring + rotating crosshair ticks =====
+                    ctx.strokeStyle = d.color; ctx.shadowColor = d.color; ctx.shadowBlur = 12;
+                    ctx.globalAlpha = 0.6 + Math.sin(t * 4) * 0.25; ctx.lineWidth = camera.scale(2.5);
+                    ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.stroke();
+                    ctx.globalAlpha = 0.35; ctx.lineWidth = camera.scale(1.5);
+                    ctx.beginPath(); ctx.arc(sx, sy, r + camera.scale(6), 0, Math.PI * 2); ctx.stroke();
+                    ctx.globalAlpha = 0.9; ctx.lineWidth = camera.scale(2.5);
+                    const tickIn = r + camera.scale(2), tickOut = r + camera.scale(12), rot = t * 0.6;
+                    for (let k = 0; k < 4; k++) {
+                        const ang = rot + k * Math.PI / 2;
+                        ctx.beginPath();
+                        ctx.moveTo(sx + Math.cos(ang) * tickIn, sy + Math.sin(ang) * tickIn);
+                        ctx.lineTo(sx + Math.cos(ang) * tickOut, sy + Math.sin(ang) * tickOut);
+                        ctx.stroke();
                     }
                 }
                 ctx.shadowBlur = 0; ctx.globalAlpha = 1;
@@ -22466,10 +22507,24 @@
             ctx.shadowColor = d.color; ctx.shadowBlur = 10;
             ctx.fillStyle = d.color;
             if (onScreen) {
-                ctx.globalAlpha = 0.85;
-                ctx.beginPath();
-                ctx.moveTo(sx, sy - 9); ctx.lineTo(sx + 8, sy); ctx.lineTo(sx, sy + 9); ctx.lineTo(sx - 8, sy);
-                ctx.closePath(); ctx.fill();
+                // V1_283: unique marker shape per event (not just color) so they read apart instantly.
+                ctx.globalAlpha = 0.9; ctx.strokeStyle = d.color; ctx.lineWidth = 2.5;
+                if (d.type === 'vault') {            // diamond
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy - 9); ctx.lineTo(sx + 8, sy); ctx.lineTo(sx, sy + 9); ctx.lineTo(sx - 8, sy);
+                    ctx.closePath(); ctx.fill();
+                } else if (d.type === 'elite') {     // crosshair
+                    ctx.beginPath(); ctx.arc(sx, sy, 7, 0, Math.PI * 2); ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(sx - 11, sy); ctx.lineTo(sx - 3, sy);
+                    ctx.moveTo(sx + 3, sy); ctx.lineTo(sx + 11, sy);
+                    ctx.moveTo(sx, sy - 11); ctx.lineTo(sx, sy - 3);
+                    ctx.moveTo(sx, sy + 3); ctx.lineTo(sx, sy + 11);
+                    ctx.stroke();
+                } else {                              // rift — hollow ring + core dot
+                    ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2); ctx.fill();
+                }
             } else {
                 const cx = Math.max(margin, Math.min(gameWidth - margin, sx));
                 const cy = Math.max(margin, Math.min(gameHeight - margin, sy));
@@ -22502,10 +22557,25 @@
             const a = 0.6 + Math.sin(performance.now() / 300) * 0.4;   // pulse so it stands out
             minimapCtx.save();
             minimapCtx.fillStyle = d.color; minimapCtx.strokeStyle = d.color;
-            minimapCtx.globalAlpha = a;
-            minimapCtx.beginPath(); minimapCtx.arc(mx, my, 4, 0, Math.PI * 2); minimapCtx.fill();
-            minimapCtx.globalAlpha = 1; minimapCtx.lineWidth = 1;
-            minimapCtx.beginPath(); minimapCtx.arc(mx, my, 6, 0, Math.PI * 2); minimapCtx.stroke();
+            minimapCtx.globalAlpha = a; minimapCtx.lineWidth = 1.5;
+            // V1_283: per-event shape — diamond (vault) / crosshair (elite) / ring+dot (rift).
+            if (d.type === 'vault') {
+                minimapCtx.beginPath();
+                minimapCtx.moveTo(mx, my - 5); minimapCtx.lineTo(mx + 5, my);
+                minimapCtx.lineTo(mx, my + 5); minimapCtx.lineTo(mx - 5, my);
+                minimapCtx.closePath(); minimapCtx.fill();
+            } else if (d.type === 'elite') {
+                minimapCtx.beginPath();
+                minimapCtx.moveTo(mx - 6, my); minimapCtx.lineTo(mx + 6, my);
+                minimapCtx.moveTo(mx, my - 6); minimapCtx.lineTo(mx, my + 6);
+                minimapCtx.stroke();
+                minimapCtx.globalAlpha = 1;
+                minimapCtx.beginPath(); minimapCtx.arc(mx, my, 2, 0, Math.PI * 2); minimapCtx.fill();
+            } else { // rift
+                minimapCtx.beginPath(); minimapCtx.arc(mx, my, 5, 0, Math.PI * 2); minimapCtx.stroke();
+                minimapCtx.globalAlpha = 1;
+                minimapCtx.beginPath(); minimapCtx.arc(mx, my, 2, 0, Math.PI * 2); minimapCtx.fill();
+            }
             minimapCtx.restore();
         }
 
@@ -22648,26 +22718,9 @@
                         }
                     }
 
-                    // V1_265: wildflowers drawn over the grass for this cell
-                    const flowers = flowerGrid[r][c];
-                    for (let i = 0; i < flowers.length; i++) {
-                        const fl = flowers[i];
-                        if (isInTerrain(fl.x, fl.y, 12)) continue;
-                        const fsx = camera.screenX(fl.x);
-                        const fsy = camera.screenY(fl.y);
-                        const fs = fl.size * camera.zoom;
-                        ctx.fillStyle = fl.color;
-                        for (let p = 0; p < 5; p++) {
-                            const ang = (p / 5) * Math.PI * 2;
-                            ctx.beginPath();
-                            ctx.arc(fsx + Math.cos(ang) * fs, fsy + Math.sin(ang) * fs, fs * 0.7, 0, Math.PI * 2);
-                            ctx.fill();
-                        }
-                        ctx.fillStyle = '#ffe07a';
-                        ctx.beginPath();
-                        ctx.arc(fsx, fsy, fs * 0.62, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
+                    // V1_284: wildflowers no longer drawn — the gold-centered flecks read like
+                    // XP orbs the player should grab. Generation left inert (no draw) so the
+                    // seeded grass-tuft layout stays pixel-identical.
                 }
             }
 
@@ -23619,7 +23672,7 @@
                 // Custom boombox SVG icon
                 let iconContent = weapon.icon;
                 if (weaponId === 'boomBox') {
-                    iconContent = `<svg viewBox="0 0 48 36" width="88" height="66" style="filter: drop-shadow(0 0 4px ${weapon.color});">
+                    iconContent = `<svg viewBox="0 0 48 36" width="110" height="82" style="filter: drop-shadow(0 0 4px ${weapon.color});">
                         <!-- Handle -->
                         <path d="M12 8 Q24 2 36 8" stroke="#666" stroke-width="3" fill="none" stroke-linecap="round"/>
                         <!-- Body -->
