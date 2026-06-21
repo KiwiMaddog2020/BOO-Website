@@ -3715,7 +3715,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: linear-gradient(135deg, rgba(50, 205, 50, 0.5), rgba(255, 215, 0, 0.5));
+            background: linear-gradient(135deg, rgba(255, 140, 0, 0.45), rgba(255, 215, 0, 0.55));
             opacity: 0;
             pointer-events: none;
             will-change: opacity;
@@ -3726,6 +3726,30 @@
             animation: flashFadeOut 0.6s ease-out forwards;
         }
 
+        /* V1_266: slow rotating god-rays behind the cards to sell the rarity */
+        .legendary-overlay::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 220vmax;
+            height: 220vmax;
+            transform: translate(-50%, -50%);
+            background: repeating-conic-gradient(from 0deg, rgba(255, 200, 60, 0.05) 0deg 5deg, transparent 5deg 17deg);
+            opacity: 0;
+            z-index: -1;
+            pointer-events: none;
+            will-change: transform, opacity;
+        }
+        .legendary-overlay.active::after {
+            animation: legendaryRaysIn 0.8s ease-out 0.2s forwards, legendaryRaysSpin 28s linear infinite;
+        }
+        @keyframes legendaryRaysIn { to { opacity: 1; } }
+        @keyframes legendaryRaysSpin {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
         .legendary-overlay.active {
             display: flex;
             pointer-events: auto !important;
@@ -3734,12 +3758,12 @@
 
         /* Goldmine-parity header geometry; gold/green kept as the legendary accent */
         .legendary-title {
-            font-size: 27px;
+            font-size: 40px;
             font-weight: 800;
             color: #ffd700;
-            text-shadow: 0 0 40px #ffd700, 0 0 80px #32cd32;
+            text-shadow: 0 0 40px #ffd700, 0 0 80px #ff8c00, 0 0 120px #ffd700;
             margin-bottom: 13px;
-            letter-spacing: 6px;
+            letter-spacing: 8px;
             text-transform: uppercase;
             opacity: 0;
             transform: scale(0.5) translateY(-30px) translateZ(0);
@@ -3748,7 +3772,7 @@
         }
         
         .legendary-overlay.active .legendary-title {
-            animation: legendaryTitleEnter 0.7s ease-out 0.1s forwards;
+            animation: legendaryTitleEnter 0.7s ease-out 0.1s forwards, legendaryPulse 2.2s ease-in-out 0.85s infinite;
         }
         
         @keyframes legendaryTitleEnter {
@@ -3767,8 +3791,8 @@
         }
 
         @keyframes legendaryPulse {
-            0%, 100% { text-shadow: 0 0 30px #ffd700, 0 0 60px #32cd32; }
-            50% { text-shadow: 0 0 50px #ffd700, 0 0 100px #32cd32, 0 0 150px #ffd700; }
+            0%, 100% { text-shadow: 0 0 35px #ffd700, 0 0 70px #ff8c00; }
+            50% { text-shadow: 0 0 60px #ffd700, 0 0 120px #ff8c00, 0 0 180px #ffd700; }
         }
 
         .legendary-subtitle {
@@ -7001,8 +7025,8 @@
 
         // ===== WORLD & CAMERA =====
         const WORLD = {
-            width: 7776,
-            height: 7776
+            width: 8398,  // V1_266: +8% map (was 7776)
+            height: 8398
         };
 
         // ===== BOOST TUNING (V1_233) =====
@@ -7954,7 +7978,7 @@
                 this.x = WORLD.width / 2;
                 this.y = WORLD.height / 2;
                 this.radius = 21;
-                this.baseSpeed = 2.48; // V1_253: -5% pace pass (was 2.61)
+                this.baseSpeed = 2.232; // V1_266: -10% pace (was 2.48)
                 this.speed = this.baseSpeed;
                 this.maxHp = 120;      // Buffed from 100
                 this.hp = this.maxHp;
@@ -11474,7 +11498,7 @@
                 switch (type) {
                     case 'basic':
                         this.radius = 12;
-                        this.speed = 1.235 * speedScale;
+                        this.speed = 1.112 * speedScale;
                         this.maxHp = Math.floor(15 * hpScale);
                         this.baseDamage = 16;
                         this.color = COLORS.magenta;
@@ -11482,7 +11506,7 @@
                         break;
                     case 'fast':
                         this.radius = 10;
-                        this.speed = 2.142 * speedScale;
+                        this.speed = 1.928 * speedScale;
                         this.maxHp = Math.floor(10 * hpScale);
                         this.baseDamage = 10;
                         this.color = COLORS.orange;
@@ -11490,7 +11514,7 @@
                         break;
                     case 'tank':
                         this.radius = 21;
-                        this.speed = 0.76 * speedScale;
+                        this.speed = 0.684 * speedScale;
                         this.maxHp = Math.floor(50 * hpScale);
                         this.baseDamage = 24;
                         this.color = COLORS.purple;
@@ -11498,7 +11522,7 @@
                         break;
                     case 'swarm':
                         this.radius = 8;
-                        this.speed = 1.53 * speedScale;
+                        this.speed = 1.377 * speedScale;
                         this.maxHp = Math.floor(6 * hpScale);
                         this.baseDamage = 6;
                         this.color = COLORS.neonGreen;
@@ -13989,7 +14013,20 @@
                 // Hide card and buttons initially, show slot reel
                 DOM.modalCard.style.display = 'none';
                 DOM.modalTake.parentElement.style.display = 'none';
-                
+
+                // V1_266: legendary drops bypass the slot reel entirely. It used to spin and
+                // land on a single random legendary before the real (re-rolled) 3-choice — a
+                // confusing flash. Go straight to the epic 3-choice overlay.
+                if (this.contents.type === 'legendary') {
+                    legendaryCount++;
+                    lastLegendaryTime = gameTime;
+                    guaranteedLegendaryNext = false;
+                    this.dead = true;
+                    pendingChest = null;
+                    showLegendaryUpgrade();
+                    return;
+                }
+
                 // Set up slot reel with spinning state
                 const slotReel = DOM.chestSlotReel;
                 slotReel.classList.add('spinning');
@@ -17166,8 +17203,8 @@
             }
             
             overlay.innerHTML = `
-                <div class="legendary-title">🍀 LEGENDARY LOOT! 🍀</div>
-                <div class="legendary-subtitle">The leprechaun's treasure is yours!</div>
+                <div class="legendary-title">✦ LEGENDARY ✦</div>
+                <div class="legendary-subtitle">A power of legend — choose one</div>
                 <div class="legendary-options">
                     ${options.map(id => {
                         const upg = LEGENDARY_UPGRADES[id];
