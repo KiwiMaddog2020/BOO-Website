@@ -7424,6 +7424,8 @@
         // Cowboy hat pickup
         let cowboyHat = null;
         let playerHasCowboyHat = false;
+        let cowboyHatSpawned = false;                       // V1_285: hat now appears 2-2.5 min in, not at game start
+        let cowboyHatSpawnTime = 120 + Math.random() * 30;  // seconds (2:00 - 2:30)
         
         // Shield pickups (4 total, one per quadrant)
         let shieldPickups = [];
@@ -14913,35 +14915,38 @@
         // ===== COWBOY HAT PICKUP =====
         function spawnCowboyHat() {
             cowboyHat = null;
-            playerHasCowboyHat = false;
-            
+
+            // V1_285: place it FAR from the player in still-unexplored fog. We scan random
+            // valid spots and take the first that's both beyond minDistFromPlayer and unexplored;
+            // if none qualifies in the budget, fall back to the farthest valid spot we saw so the
+            // hat always appears somewhere sensible (away from terrain/objects).
             const minDistFromObstacles = 80;
-            let attempts = 0;
-            
-            while (attempts < 50) {
+            const minDistFromPlayer = 1400;
+            let best = null, bestDist = -1;
+
+            for (let attempts = 0; attempts < 80; attempts++) {
                 const x = 400 + Math.random() * (WORLD.width - 800);
                 const y = 400 + Math.random() * (WORLD.height - 800);
-                
-                // Check not too close to center spawn
-                if (Math.hypot(x - WORLD.width/2, y - WORLD.height/2) < 600) {
-                    attempts++;
-                    continue;
-                }
-                
+
                 // Check not in or near terrain/lakes
-                if (isInTerrain(x, y, minDistFromObstacles) || isInLake(x, y, minDistFromObstacles + 30)) {
-                    attempts++;
-                    continue;
-                }
-                
+                if (isInTerrain(x, y, minDistFromObstacles) || isInLake(x, y, minDistFromObstacles + 30)) continue;
+
                 // Check not too close to other objects
-                if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING, 'hat')) {
-                    attempts++;
-                    continue;
+                if (isTooCloseToObjects(x, y, MIN_OBJECT_SPACING, 'hat')) continue;
+
+                const pDist = player ? Math.hypot(x - player.x, y - player.y) : minDistFromPlayer + 1;
+                // Remember the farthest valid candidate as a guaranteed fallback.
+                if (pDist > bestDist) { bestDist = pDist; best = { x: x, y: y }; }
+
+                // Ideal: well away from the player AND somewhere they haven't uncovered yet.
+                if (pDist >= minDistFromPlayer && !isExplored(x, y)) {
+                    cowboyHat = { x: x, y: y, radius: 15, bobOffset: Math.random() * Math.PI * 2 };
+                    return;
                 }
-                
-                cowboyHat = { x: x, y: y, radius: 15, bobOffset: Math.random() * Math.PI * 2 };
-                break;
+            }
+
+            if (best) {
+                cowboyHat = { x: best.x, y: best.y, radius: 15, bobOffset: Math.random() * Math.PI * 2 };
             }
         }
         
@@ -15037,6 +15042,12 @@
         }
         
         function updateCowboyHat() {
+            // V1_285: delayed appearance — the hat materializes 2-2.5 min in, out in the fog
+            // far from the player, rather than existing on the map from the start.
+            if (!cowboyHatSpawned && !playerHasCowboyHat && gameTime >= cowboyHatSpawnTime) {
+                cowboyHatSpawned = true;
+                spawnCowboyHat();
+            }
             if (!cowboyHat || playerHasCowboyHat) return;
             
             const dist = Math.hypot(player.x - cowboyHat.x, player.y - cowboyHat.y);
@@ -24133,7 +24144,11 @@
             spawnShrines();
             spawnDecorations();
             spawnInitialChests();
-            spawnCowboyHat();
+            // V1_285: don't place the hat yet — schedule it for 2:00-2:30, spawned far away in fog.
+            cowboyHat = null;
+            playerHasCowboyHat = false;
+            cowboyHatSpawned = false;
+            cowboyHatSpawnTime = 120 + Math.random() * 30;
             spawnFairy();
             spawnMagnetPickups();
             spawnTombstones();
