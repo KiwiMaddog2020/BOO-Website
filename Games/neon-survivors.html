@@ -1410,13 +1410,17 @@
         .weapon-select-card .weapon-icon {
             font-size: 34px;
             height: 40px;
+            width: 100%;
+            overflow: hidden; /* V1_293: hard backstop so a preview can never spill the card */
             display: flex;
             align-items: center;
             justify-content: center;
         }
-        /* V1_287: live weapon-effect preview (replaces the emoji on supported weapons) */
+        /* V1_287/V1_293: live weapon-effect preview — fluid width so it never overflows a
+           narrower grid card (cards are 1fr, can render < the 96px design width) */
         .weapon-select-card .weapon-preview-canvas {
-            width: 96px;
+            width: 100%;
+            max-width: 96px;
             height: 40px;
             display: block;
             border-radius: 4px;
@@ -24105,10 +24109,15 @@
                 const id = cv.dataset.weapon;
                 const draw = WEAPON_PREVIEWS[id];
                 if (!draw) return;
-                cv.width = WEAPON_PREVIEW_W * dpr;
-                cv.height = WEAPON_PREVIEW_H * dpr;
+                // V1_293: fit the backing store to the canvas's ACTUAL rendered size (grid
+                // cards can be narrower than the 96px design) and scale the fixed 96x40
+                // design space onto it, so the canvas can never overflow / protrude the card.
+                const cw = cv.clientWidth || WEAPON_PREVIEW_W;
+                const ch = cv.clientHeight || WEAPON_PREVIEW_H;
+                cv.width = Math.round(cw * dpr);
+                cv.height = Math.round(ch * dpr);
                 const cx = cv.getContext('2d');
-                cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                cx.setTransform(cw / WEAPON_PREVIEW_W * dpr, 0, 0, ch / WEAPON_PREVIEW_H * dpr, 0, 0);
                 _wpItems.push({ cx, draw, color: (WEAPONS[id] && WEAPONS[id].color) || '#0ff', seed: Math.random() * 50 });
             });
         }
@@ -24123,11 +24132,11 @@
             for (const it of _wpItems) {
                 const c = it.cx;
                 c.clearRect(0, 0, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H);
-                // V1_290: hard inset clip — guarantees every effect (incl. its glow) keeps a
-                // ~3px margin from the canvas edge, so nothing can crowd the card border.
+                // V1_290/V1_293: hard inset clip — keeps every effect (incl. its glow) a
+                // comfortable margin in from the canvas edge (6px sides / 3px top-bottom).
                 c.save();
                 c.beginPath();
-                c.rect(3, 3, WEAPON_PREVIEW_W - 6, WEAPON_PREVIEW_H - 6);
+                c.rect(6, 3, WEAPON_PREVIEW_W - 12, WEAPON_PREVIEW_H - 6);
                 c.clip();
                 try { it.draw(c, t + it.seed, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H, it.color); } catch (e) {}
                 c.restore();
