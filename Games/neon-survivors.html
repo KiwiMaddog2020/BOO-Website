@@ -10915,9 +10915,9 @@
                         ctx.shadowBlur = 25;
                         ctx.shadowColor = '#ff4400';
                         const outerGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, flameRange);
-                        outerGrad.addColorStop(0, 'rgba(255, 100, 0, 0.8)');
-                        outerGrad.addColorStop(0.4, 'rgba(255, 60, 0, 0.5)');
-                        outerGrad.addColorStop(0.7, 'rgba(200, 30, 0, 0.3)');
+                        outerGrad.addColorStop(0, 'rgba(255, 100, 0, 0.55)');
+                        outerGrad.addColorStop(0.4, 'rgba(255, 60, 0, 0.34)');
+                        outerGrad.addColorStop(0.7, 'rgba(200, 30, 0, 0.18)');
                         outerGrad.addColorStop(1, 'rgba(100, 0, 0, 0)');
                         
                         ctx.fillStyle = outerGrad;
@@ -10955,8 +10955,8 @@
                         // Mid flame layer (orange/yellow) with wave effect
                         const midRange = flameRange * 0.85;
                         const midGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, midRange);
-                        midGrad.addColorStop(0, 'rgba(255, 180, 0, 0.9)');
-                        midGrad.addColorStop(0.5, 'rgba(255, 120, 0, 0.5)');
+                        midGrad.addColorStop(0, 'rgba(255, 180, 0, 0.5)');
+                        midGrad.addColorStop(0.5, 'rgba(255, 120, 0, 0.3)');
                         midGrad.addColorStop(1, 'rgba(255, 60, 0, 0)');
                         
                         ctx.fillStyle = midGrad;
@@ -10975,8 +10975,8 @@
                         // Inner bright core (white/yellow)
                         const innerRange = flameRange * 0.4;
                         const innerGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, innerRange);
-                        innerGrad.addColorStop(0, 'rgba(255, 255, 200, 0.95)');
-                        innerGrad.addColorStop(0.4, 'rgba(255, 230, 100, 0.7)');
+                        innerGrad.addColorStop(0, 'rgba(255, 255, 200, 0.4)');
+                        innerGrad.addColorStop(0.4, 'rgba(255, 230, 100, 0.25)');
                         innerGrad.addColorStop(1, 'rgba(255, 180, 0, 0)');
                         
                         ctx.fillStyle = innerGrad;
@@ -10986,8 +10986,58 @@
                         ctx.closePath();
                         ctx.fill();
                         
-                        // Nozzle glow at player
-                        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                        // ===== V1_294: animated flame jet — turbulent licking tongues, embers, hot core =====
+                        const fNow = Date.now();
+                        const fBurst = Math.max(0, 1 - Math.max(0, fNow - state.flameActive - 130) / 70);
+                        const fFlick = (0.82 + 0.18 * Math.sin(fNow * 0.035) + 0.08 * Math.sin(fNow * 0.081)) * fBurst;
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        // Flickering tongues lick outward & rise through the cone — soft glowing
+                        // licks (shadowBlur softens the falloff; counts kept modest for perf).
+                        ctx.shadowBlur = camera.scale(4);
+                        for (let i = 0; i < 13; i++) {
+                            const sp = 1.2 + _wpRand(i, 1) * 1.2;
+                            const life = (fNow * 0.0011 * sp + _wpRand(i, 2)) % 1;
+                            const wob = Math.sin(fNow * 0.008 + i * 1.7) * 0.30 * life;
+                            const a = angle + ((_wpRand(i, 3) - 0.5) * 1.4 + wob) * coneHalf;
+                            const dist = life * flameRange * (0.78 + _wpRand(i, 4) * 0.24);
+                            const px = sx + Math.cos(a) * dist, py = sy + Math.sin(a) * dist;
+                            const rad = flameRange * (0.028 + 0.05 * Math.sin(life * Math.PI)) * (0.7 + _wpRand(i, 5) * 0.6);
+                            let col;
+                            if (life < 0.20) col = '255,250,220';
+                            else if (life < 0.48) col = '255,190,70';
+                            else if (life < 0.78) col = '255,95,15';
+                            else col = '150,35,0';
+                            ctx.shadowColor = 'rgba(' + col + ',1)';
+                            ctx.fillStyle = 'rgba(' + col + ',1)';
+                            ctx.globalAlpha = (1 - life) * 0.55 * fFlick;
+                            ctx.beginPath(); ctx.arc(px, py, Math.max(0.6, rad), 0, Math.PI * 2); ctx.fill();
+                        }
+                        // Drifting embers/sparks ahead of the flame front
+                        ctx.shadowBlur = camera.scale(2); ctx.shadowColor = '#ff7a00';
+                        for (let i = 0; i < 5; i++) {
+                            const life = (fNow * 0.0009 + _wpRand(i, 8)) % 1;
+                            const a = angle + (_wpRand(i, 9) - 0.5) * 1.5 * coneHalf + Math.sin(fNow * 0.004 + i) * 0.05;
+                            const dist = (0.72 + life * 0.5) * flameRange;
+                            const er = camera.scale(1.1 + _wpRand(i, 10) * 1.5) * (1 - life);
+                            ctx.globalAlpha = (1 - life) * 0.9 * fFlick;
+                            ctx.fillStyle = 'rgba(255,' + (200 - (life * 150 | 0)) + ',60,1)';
+                            ctx.beginPath(); ctx.arc(sx + Math.cos(a) * dist, sy + Math.sin(a) * dist, Math.max(0.4, er), 0, Math.PI * 2); ctx.fill();
+                        }
+                        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                        // Pulsing white-hot core at the nozzle
+                        const fCoreR = Math.max(1, flameRange * (0.10 + 0.025 * Math.sin(fNow * 0.045)));
+                        const fnx = sx + Math.cos(angle) * camera.scale(6), fny = sy + Math.sin(angle) * camera.scale(6);
+                        const fCoreG = ctx.createRadialGradient(fnx, fny, 0, fnx, fny, fCoreR);
+                        fCoreG.addColorStop(0, 'rgba(255,255,245,' + (0.92 * fFlick) + ')');
+                        fCoreG.addColorStop(0.45, 'rgba(255,225,130,' + (0.55 * fFlick) + ')');
+                        fCoreG.addColorStop(1, 'rgba(255,150,0,0)');
+                        ctx.fillStyle = fCoreG;
+                        ctx.beginPath(); ctx.arc(fnx, fny, fCoreR, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+
+                        // Nozzle glow at player (subtle — V1_294 pulsing core is the main hot spot)
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
                         ctx.shadowBlur = 15;
                         ctx.shadowColor = '#ffff00';
                         ctx.beginPath();
@@ -23816,33 +23866,53 @@
                 ctx.save();
                 ctx.globalCompositeOperation = 'lighter';
                 // outer shell (red/orange) — jagged wavy edge
-                ctx.shadowBlur = 9; ctx.shadowColor = '#ff4400';
+                ctx.shadowBlur = 8; ctx.shadowColor = '#ff4400';
                 const og = ctx.createRadialGradient(ox, oy, 0, ox, oy, range);
-                og.addColorStop(0, 'rgba(255,150,0,0.7)'); og.addColorStop(0.45, 'rgba(255,70,0,0.45)');
-                og.addColorStop(0.75, 'rgba(200,30,0,0.22)'); og.addColorStop(1, 'rgba(120,0,0,0)');
+                og.addColorStop(0, 'rgba(255,150,0,0.55)'); og.addColorStop(0.45, 'rgba(255,70,0,0.32)');
+                og.addColorStop(0.75, 'rgba(200,30,0,0.16)'); og.addColorStop(1, 'rgba(120,0,0,0)');
                 ctx.fillStyle = og; ctx.beginPath(); ctx.moveTo(ox, oy);
                 for (let i = 0; i <= 7; i++) {
                     const a = -coneHalf + (2 * coneHalf) * i / 7, rr = range * (0.86 + Math.sin(time * 0.6 + i * 1.7) * 0.12);
                     ctx.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr);
                 }
                 ctx.closePath(); ctx.fill();
-                // mid layer (orange/yellow)
-                const mg = ctx.createRadialGradient(ox, oy, 0, ox, oy, range * 0.8);
-                mg.addColorStop(0, 'rgba(255,190,0,0.85)'); mg.addColorStop(0.5, 'rgba(255,120,0,0.45)'); mg.addColorStop(1, 'rgba(255,60,0,0)');
-                ctx.fillStyle = mg; ctx.beginPath(); ctx.moveTo(ox, oy);
-                for (let i = 0; i <= 7; i++) {
-                    const a = -coneHalf * 0.8 + (1.6 * coneHalf) * i / 7, rr = range * 0.8 * (0.82 + Math.sin(time + i * 2) * 0.1);
-                    ctx.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr);
+                // animated flame tongues — soft glowing licks (shadowBlur = soft falloff)
+                ctx.shadowBlur = 5;
+                for (let i = 0; i < 17; i++) {
+                    const sp = 1.2 + _wpRand(i, 1) * 1.2;
+                    const life = (t * 1.15 * sp + _wpRand(i, 2)) % 1;
+                    const wob = Math.sin(t * 8 + i * 1.7) * 0.30 * life;   // licks up/down, grows w/ distance
+                    const a = ((_wpRand(i, 3) - 0.5) * 1.4 + wob) * coneHalf;
+                    const dist = life * range * (0.78 + _wpRand(i, 4) * 0.24);
+                    const px = ox + Math.cos(a) * dist, py = oy + Math.sin(a) * dist;
+                    const rad = range * (0.028 + 0.05 * Math.sin(life * Math.PI)) * (0.7 + _wpRand(i, 5) * 0.6);
+                    let col;
+                    if (life < 0.20) col = '255,250,220';
+                    else if (life < 0.48) col = '255,190,70';
+                    else if (life < 0.78) col = '255,95,15';
+                    else col = '150,35,0';
+                    ctx.shadowColor = 'rgba(' + col + ',1)';
+                    ctx.fillStyle = 'rgba(' + col + ',1)';
+                    ctx.globalAlpha = (1 - life) * 0.55;
+                    ctx.beginPath(); ctx.arc(px, py, Math.max(0.5, rad), 0, TAU); ctx.fill();
                 }
-                ctx.closePath(); ctx.fill();
-                // inner hot core (white/yellow)
-                const ig = ctx.createRadialGradient(ox, oy, 0, ox, oy, range * 0.42);
-                ig.addColorStop(0, 'rgba(255,255,200,0.95)'); ig.addColorStop(0.4, 'rgba(255,230,100,0.6)'); ig.addColorStop(1, 'rgba(255,180,0,0)');
-                ctx.fillStyle = ig; ctx.beginPath(); ctx.moveTo(ox, oy);
-                ctx.arc(ox, oy, range * 0.42, -coneHalf * 0.5, coneHalf * 0.5); ctx.closePath(); ctx.fill();
-                // nozzle glow
-                ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.shadowBlur = 8; ctx.shadowColor = '#ffff00';
-                ctx.beginPath(); ctx.arc(ox + 3, oy, 2.4, 0, TAU); ctx.fill();
+                // drifting embers ahead of the flame front
+                ctx.shadowBlur = 3; ctx.shadowColor = '#ff7a00';
+                for (let i = 0; i < 5; i++) {
+                    const life = (t * 0.9 + _wpRand(i, 8)) % 1;
+                    const a = (_wpRand(i, 9) - 0.5) * 1.5 * coneHalf + Math.sin(t * 4 + i) * 0.05;
+                    const dist = (0.72 + life * 0.5) * range;
+                    const er = (0.6 + _wpRand(i, 10) * 0.8) * (1 - life);
+                    ctx.globalAlpha = (1 - life) * 0.9;
+                    ctx.fillStyle = 'rgba(255,' + (200 - (life * 150 | 0)) + ',60,1)';
+                    ctx.beginPath(); ctx.arc(ox + Math.cos(a) * dist, oy + Math.sin(a) * dist, Math.max(0.4, er), 0, TAU); ctx.fill();
+                }
+                ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                // pulsing white-hot core at the nozzle
+                const cr = Math.max(1, range * (0.10 + 0.025 * Math.sin(t * 9)));
+                const cg = ctx.createRadialGradient(ox + 2, oy, 0, ox + 2, oy, cr);
+                cg.addColorStop(0, 'rgba(255,255,245,0.95)'); cg.addColorStop(0.45, 'rgba(255,225,130,0.6)'); cg.addColorStop(1, 'rgba(255,150,0,0)');
+                ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(ox + 2, oy, cr, 0, TAU); ctx.fill();
                 ctx.restore();
                 _wpReset(ctx);
             },
