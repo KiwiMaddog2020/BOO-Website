@@ -1414,6 +1414,13 @@
             align-items: center;
             justify-content: center;
         }
+        /* V1_287: live weapon-effect preview (replaces the emoji on supported weapons) */
+        .weapon-select-card .weapon-preview-canvas {
+            width: 96px;
+            height: 40px;
+            display: block;
+            border-radius: 4px;
+        }
         
         .weapon-select-card .weapon-name {
             font-size: 10px;
@@ -23629,6 +23636,137 @@
         ];
         let selectedPlayerColor = PLAYER_COLORS[2]; // Default to Cyan
         
+        // ============================================================
+        // V1_287: WEAPON-SELECT LIVE PREVIEWS (phased build)
+        // Each supported card swaps its emoji for a tiny looping canvas of the
+        // weapon's real effect. ONE shared ~30fps loop drives every visible
+        // preview and only runs while the weapon-select overlay is open, so it
+        // costs nothing in-game. Phase 1 = framework + 4 exemplars; the rest
+        // still fall back to their emoji until the look is approved.
+        // ============================================================
+        const WEAPON_PREVIEW_W = 96, WEAPON_PREVIEW_H = 40;
+
+        // Stable per-index pseudo-random in [0,1) — same value every frame.
+        function _wpRand(i, s) { const v = Math.sin((i + 1) * 12.9898 + s * 78.233) * 43758.5453; return v - Math.floor(v); }
+
+        // Each fn paints ONE frame in logical (CSS-px) coords. The loop pre-scales
+        // for dpr and clears first; t = seconds, color = the weapon's real color.
+        const WEAPON_PREVIEWS = {
+            // Straight bolts streaking across with a glowing trail (auto-fire projectile).
+            energyBolt(ctx, t, w, h, color) {
+                const cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let b = 0; b < 2; b++) {
+                    const phase = (t * 0.9 + b * 0.5) % 1;
+                    const x = -10 + phase * (w + 20);
+                    for (let k = 7; k >= 1; k--) {
+                        ctx.globalAlpha = (1 - k / 8) * 0.45;
+                        ctx.fillStyle = color; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                        ctx.beginPath(); ctx.arc(x - k * 5, cy, 3 - k * 0.28, 0, Math.PI * 2); ctx.fill();
+                    }
+                    ctx.globalAlpha = 1; ctx.shadowBlur = 12; ctx.shadowColor = color;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath(); ctx.arc(x, cy, 3.2, 0, Math.PI * 2); ctx.fill();
+                }
+                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+            },
+            // A cone of fire particles fanning out from the left.
+            flameThrower(ctx, t, w, h, color) {
+                const ox = 8, oy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 18; i++) {
+                    const life = (t * (0.6 + _wpRand(i, 1) * 0.5) + _wpRand(i, 2)) % 1;
+                    const ang = (_wpRand(i, 3) - 0.5) * 0.95;
+                    const dist = life * (w - 14);
+                    const x = ox + Math.cos(ang) * dist;
+                    const y = oy + Math.sin(ang) * dist;
+                    ctx.globalAlpha = (1 - life) * 0.9;
+                    ctx.fillStyle = life < 0.5 ? color : '#ff3300';
+                    ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(x, y, (1 - life) * 5 + 1.5, 0, Math.PI * 2); ctx.fill();
+                }
+                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+            },
+            // A forking bolt that strikes from above on a timer, with a ground flash.
+            thunderStrike(ctx, t, w, h, color) {
+                const period = 1.1;
+                const cycle = Math.floor(t / period);
+                const ph = (t % period) / period;
+                const strike = ph < 0.35 ? (1 - ph / 0.35) : 0;
+                if (strike <= 0.02) return;
+                const cx = w / 2 + (_wpRand(cycle, 5) - 0.5) * 18;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = strike; ctx.strokeStyle = color;
+                ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(cx, 0);
+                for (let s = 1; s <= 6; s++) {
+                    ctx.lineTo(cx + (_wpRand(s, cycle) - 0.5) * 14, (s / 6) * h);
+                }
+                ctx.stroke();
+                ctx.globalAlpha = strike * 0.6; ctx.fillStyle = color;
+                ctx.beginPath(); ctx.ellipse(cx, h - 3, 12, 4, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+            },
+            // A breathing poison field with rising bubbles.
+            toxicAura(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
+                const r = 9 + pulse * 7;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = 0.16 + pulse * 0.12; ctx.fillStyle = color;
+                ctx.shadowBlur = 12; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 0.7; ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.shadowBlur = 8;
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+                ctx.shadowBlur = 6;
+                for (let i = 0; i < 5; i++) {
+                    const life = (t * 0.5 + _wpRand(i, 9)) % 1;
+                    ctx.globalAlpha = (1 - life) * 0.8; ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(cx + (_wpRand(i, 4) - 0.5) * 22, cy + 10 - life * 22, (1 - life) * 2.4 + 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+            }
+        };
+
+        let _wpItems = [];
+        let _wpRAF = 0;
+        let _wpLast = 0;
+
+        function setupWeaponPreviews() {
+            _wpItems = [];
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            DOM.weaponSelectGrid.querySelectorAll('.weapon-preview-canvas').forEach(cv => {
+                const id = cv.dataset.weapon;
+                const draw = WEAPON_PREVIEWS[id];
+                if (!draw) return;
+                cv.width = WEAPON_PREVIEW_W * dpr;
+                cv.height = WEAPON_PREVIEW_H * dpr;
+                const cx = cv.getContext('2d');
+                cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                _wpItems.push({ cx, draw, color: (WEAPONS[id] && WEAPONS[id].color) || '#0ff', seed: Math.random() * 50 });
+            });
+        }
+
+        function _wpFrame(now) {
+            // Self-stop when the overlay is no longer on screen.
+            if (!DOM.weaponSelectOverlay.classList.contains('active')) { _wpRAF = 0; return; }
+            _wpRAF = requestAnimationFrame(_wpFrame);
+            if (now - _wpLast < 33) return; // ~30fps cap
+            _wpLast = now;
+            const t = now / 1000;
+            for (const it of _wpItems) {
+                it.cx.clearRect(0, 0, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H);
+                try { it.draw(it.cx, t + it.seed, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H, it.color); } catch (e) {}
+            }
+        }
+
+        function startWeaponPreviews() {
+            setupWeaponPreviews();
+            if (!_wpRAF && _wpItems.length) _wpRAF = requestAnimationFrame(_wpFrame);
+        }
+
         function showWeaponSelect() {
             DOM.menuOverlay.classList.add('hidden');
             DOM.weaponSelectOverlay.classList.add('active');
@@ -23686,9 +23824,11 @@
                 card.dataset.weaponId = weaponId;
                 card.style.borderColor = weapon.color + '66';
                 
-                // Custom boombox SVG icon
+                // V1_287: live effect preview where available; else custom SVG; else emoji
                 let iconContent = weapon.icon;
-                if (weaponId === 'boomBox') {
+                if (WEAPON_PREVIEWS[weaponId]) {
+                    iconContent = `<canvas class="weapon-preview-canvas" data-weapon="${weaponId}" aria-hidden="true"></canvas>`;
+                } else if (weaponId === 'boomBox') {
                     iconContent = `<svg viewBox="0 0 48 36" width="110" height="82" style="filter: drop-shadow(0 0 4px ${weapon.color});">
                         <!-- Handle -->
                         <path d="M12 8 Q24 2 36 8" stroke="#666" stroke-width="3" fill="none" stroke-linecap="round"/>
@@ -23722,7 +23862,10 @@
                 
                 DOM.weaponSelectGrid.appendChild(card);
             }
-            
+
+            // V1_287: animate the live weapon-effect previews now that the cards exist
+            startWeaponPreviews();
+
             // Populate color selector
             DOM.colorSelectorGrid.innerHTML = '';
             
