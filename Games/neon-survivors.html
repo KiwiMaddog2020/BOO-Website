@@ -11013,7 +11013,18 @@
                                 ctx.lineTo(camera.screenX(seg.x2), camera.screenY(seg.y2));
                                 ctx.stroke();
                             }
-                            
+                            // V1_291: white-hot inner bolt — matches the crisp weapon-select preview
+                            ctx.save();
+                            ctx.strokeStyle = '#ffffff';
+                            ctx.lineWidth = 1.5;
+                            for (const seg of strike.segments) {
+                                ctx.beginPath();
+                                ctx.moveTo(camera.screenX(seg.x1), camera.screenY(seg.y1));
+                                ctx.lineTo(camera.screenX(seg.x2), camera.screenY(seg.y2));
+                                ctx.stroke();
+                            }
+                            ctx.restore();
+
                             // Impact flash
                             const impactRadius = Math.max(1, 30 - age/12);
                             ctx.fillStyle = 'rgba(255, 255, 100, ' + (0.6 - age/600) + ')';
@@ -23708,19 +23719,20 @@
         // Each fn paints ONE frame in logical (CSS-px) coords (96x40). The loop
         // pre-scales for dpr and clears first; t = seconds, color = real weapon color.
         const WEAPON_PREVIEWS = {
-            // ⚡ Energy Bolt — auto-fire bolts streaking across with a glow trail.
+            // ⚡ Energy Bolt — mirrors in-game: white-hot circle + glow + trailing line.
             energyBolt(ctx, t, w, h, color) {
                 const cy = h / 2;
                 ctx.globalCompositeOperation = 'lighter';
                 for (let b = 0; b < 2; b++) {
                     const x = 6 + ((t * 0.85 + b * 0.5) % 1) * (w - 12);
-                    const fade = _wpFadeX(x, w, 16);
-                    for (let k = 6; k >= 1; k--) {
-                        ctx.globalAlpha = (1 - k / 7) * 0.4 * fade; ctx.fillStyle = color; ctx.shadowBlur = 7; ctx.shadowColor = color;
-                        ctx.beginPath(); ctx.arc(x - k * 4.5, cy, 2.6 - k * 0.25, 0, TAU); ctx.fill();
-                    }
-                    ctx.globalAlpha = fade; ctx.shadowBlur = 11; ctx.shadowColor = color; ctx.fillStyle = '#ffffff';
-                    ctx.beginPath(); ctx.arc(x, cy, 3, 0, TAU); ctx.fill();
+                    const fade = _wpFadeX(x, w, 14);
+                    // trailing line (in-game draws a 0.5-alpha trail behind the projectile)
+                    ctx.globalAlpha = 0.5 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.moveTo(Math.max(4, x - 17), cy); ctx.lineTo(x, cy); ctx.stroke();
+                    // head: color glow disc + white-hot core (in-game = white circle w/ glow)
+                    ctx.globalAlpha = fade; ctx.shadowBlur = 11; ctx.shadowColor = color;
+                    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, cy, 3.4, 0, TAU); ctx.fill();
+                    ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 6; ctx.beginPath(); ctx.arc(x, cy, 1.9, 0, TAU); ctx.fill();
                 }
                 _wpReset(ctx);
             },
@@ -23792,18 +23804,42 @@
                 }
                 _wpReset(ctx);
             },
-            // 🔥 Flame Thrower — a contained horizontal fire plume.
+            // 🔥 Flame Thrower — mirrors in-game: layered radial-gradient cone
+            // (red/orange shell -> orange/yellow mid -> white-hot core) with jagged
+            // wavy edges and a bright nozzle, fired rightward and contained.
             flameThrower(ctx, t, w, h, color) {
-                const ox = 9, oy = h / 2;
+                const ox = 10, oy = h / 2, range = w - 26, coneHalf = 0.3, time = t * 5;
+                ctx.save();
                 ctx.globalCompositeOperation = 'lighter';
-                for (let i = 0; i < 16; i++) {
-                    const life = (t * (0.7 + _wpRand(i, 1) * 0.5) + _wpRand(i, 2)) % 1;
-                    const x = ox + life * (w - 22);
-                    const y = oy + (_wpRand(i, 3) - 0.5) * (5 + life * 13) + Math.sin(t * 4 + i) * 1.4;
-                    ctx.globalAlpha = (1 - life) * 0.85;
-                    ctx.fillStyle = life < 0.45 ? '#ffdd33' : (life < 0.72 ? color : '#ff2a00'); ctx.shadowBlur = 6; ctx.shadowColor = color;
-                    ctx.beginPath(); ctx.arc(x, Math.max(5, Math.min(h - 5, y)), (1 - life) * 4.5 + 1.4, 0, TAU); ctx.fill();
+                // outer shell (red/orange) — jagged wavy edge
+                ctx.shadowBlur = 9; ctx.shadowColor = '#ff4400';
+                const og = ctx.createRadialGradient(ox, oy, 0, ox, oy, range);
+                og.addColorStop(0, 'rgba(255,150,0,0.7)'); og.addColorStop(0.45, 'rgba(255,70,0,0.45)');
+                og.addColorStop(0.75, 'rgba(200,30,0,0.22)'); og.addColorStop(1, 'rgba(120,0,0,0)');
+                ctx.fillStyle = og; ctx.beginPath(); ctx.moveTo(ox, oy);
+                for (let i = 0; i <= 7; i++) {
+                    const a = -coneHalf + (2 * coneHalf) * i / 7, rr = range * (0.86 + Math.sin(time * 0.6 + i * 1.7) * 0.12);
+                    ctx.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr);
                 }
+                ctx.closePath(); ctx.fill();
+                // mid layer (orange/yellow)
+                const mg = ctx.createRadialGradient(ox, oy, 0, ox, oy, range * 0.8);
+                mg.addColorStop(0, 'rgba(255,190,0,0.85)'); mg.addColorStop(0.5, 'rgba(255,120,0,0.45)'); mg.addColorStop(1, 'rgba(255,60,0,0)');
+                ctx.fillStyle = mg; ctx.beginPath(); ctx.moveTo(ox, oy);
+                for (let i = 0; i <= 7; i++) {
+                    const a = -coneHalf * 0.8 + (1.6 * coneHalf) * i / 7, rr = range * 0.8 * (0.82 + Math.sin(time + i * 2) * 0.1);
+                    ctx.lineTo(ox + Math.cos(a) * rr, oy + Math.sin(a) * rr);
+                }
+                ctx.closePath(); ctx.fill();
+                // inner hot core (white/yellow)
+                const ig = ctx.createRadialGradient(ox, oy, 0, ox, oy, range * 0.42);
+                ig.addColorStop(0, 'rgba(255,255,200,0.95)'); ig.addColorStop(0.4, 'rgba(255,230,100,0.6)'); ig.addColorStop(1, 'rgba(255,180,0,0)');
+                ctx.fillStyle = ig; ctx.beginPath(); ctx.moveTo(ox, oy);
+                ctx.arc(ox, oy, range * 0.42, -coneHalf * 0.5, coneHalf * 0.5); ctx.closePath(); ctx.fill();
+                // nozzle glow
+                ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.shadowBlur = 8; ctx.shadowColor = '#ffff00';
+                ctx.beginPath(); ctx.arc(ox + 3, oy, 2.4, 0, TAU); ctx.fill();
+                ctx.restore();
                 _wpReset(ctx);
             },
             // 🐿️ Black Squirrel — a rabid green critter darting with claw slashes.
@@ -23831,37 +23867,51 @@
                 }
                 _wpReset(ctx);
             },
-            // 🌩️ Lightning Strike — a forking bolt strikes from above on a timer.
+            // 🌩️ Lightning Strike — mirrors in-game: jagged bolt + white-hot inner
+            // bolt, an expanding impact flash, and ground sparks radiating outward.
             thunderStrike(ctx, t, w, h, color) {
                 const period = 1.1, cycle = Math.floor(t / period);
-                const ph = (t % period) / period;
-                const strike = ph < 0.32 ? (1 - ph / 0.32) : 0;
-                if (strike <= 0.02) { _wpReset(ctx); return; }
-                const cx = w / 2 + (_wpRand(cycle, 5) - 0.5) * 16;
+                const age = (t % period) * 1000; // ms into the cycle (in-game strike lasts ~350ms)
+                if (age > 360) { _wpReset(ctx); return; }
+                const alpha = 1 - age / 360;
+                const cx = w / 2 + (_wpRand(cycle, 5) - 0.5) * 14, groundY = h - 7;
+                const jag = s => cx + (_wpRand(s, cycle) - 0.5) * 11;
+                const yOf = s => 4 + (s / 6) * (groundY - 4);
                 ctx.globalCompositeOperation = 'lighter';
-                ctx.globalAlpha = strike; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.moveTo(cx, 3);
-                for (let s = 1; s <= 6; s++) ctx.lineTo(cx + (_wpRand(s, cycle) - 0.5) * 12, 3 + (s / 6) * (h - 9));
-                ctx.stroke();
-                ctx.globalAlpha = strike * 0.6; ctx.fillStyle = color;
-                ctx.beginPath(); ctx.ellipse(cx, h - 5, 11, 3.5, 0, 0, TAU); ctx.fill();
+                // colored jagged bolt
+                ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 9; ctx.lineWidth = 2.2;
+                ctx.beginPath(); ctx.moveTo(cx, 4); for (let s = 1; s <= 6; s++) ctx.lineTo(jag(s), yOf(s)); ctx.stroke();
+                // white-hot inner bolt
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.globalAlpha = alpha * 0.9;
+                ctx.beginPath(); ctx.moveTo(cx, 4); for (let s = 1; s <= 6; s++) ctx.lineTo(jag(s), yOf(s)); ctx.stroke();
+                // impact flash (expanding + fading)
+                ctx.globalAlpha = Math.max(0, 0.6 - age / 700); ctx.fillStyle = '#ffff88'; ctx.shadowBlur = 8;
+                ctx.beginPath(); ctx.arc(cx, groundY, Math.max(1, 11 - age / 28), 0, TAU); ctx.fill();
+                // ground sparks radiating outward
+                ctx.globalAlpha = alpha;
+                for (let i = 0; i < 6; i++) {
+                    const a = (TAU / 6) * i + age * 0.01, d = 5 + age * 0.03;
+                    ctx.fillStyle = i % 2 ? '#ffffff' : color;
+                    ctx.beginPath(); ctx.arc(cx + Math.cos(a) * d, groundY + Math.sin(a) * d * 0.5, Math.max(0.5, 1.6 * (1 - age / 400)), 0, TAU); ctx.fill();
+                }
                 _wpReset(ctx);
             },
-            // ☠️ Toxic Aura — a breathing poison field with rising bubbles.
+            // ☠️ Toxic Aura — mirrors in-game: constant radial-gradient poison glow
+            // plus a single pulse ring that expands 0.3 -> 1.0 over the tick interval.
             toxicAura(ctx, t, w, h, color) {
-                const cx = w / 2, cy = h / 2;
-                const pulse = 0.5 + 0.5 * Math.sin(t * 2.2), r = 8 + pulse * 6;
+                const cx = w / 2, cy = h / 2, auraR = 15;
+                const pulseT = (t % 1.4) / 1.4; // in-game auraTickInterval ~1400ms
+                ctx.save();
                 ctx.globalCompositeOperation = 'lighter';
-                ctx.globalAlpha = 0.16 + pulse * 0.12; ctx.fillStyle = color; ctx.shadowBlur = 12; ctx.shadowColor = color;
-                ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
-                ctx.globalAlpha = 0.7; ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.shadowBlur = 8;
-                ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
-                ctx.shadowBlur = 6;
-                for (let i = 0; i < 5; i++) {
-                    const life = (t * 0.5 + _wpRand(i, 9)) % 1;
-                    ctx.globalAlpha = (1 - life) * 0.8; ctx.fillStyle = color;
-                    ctx.beginPath(); ctx.arc(cx + (_wpRand(i, 4) - 0.5) * 20, cy + 9 - life * 20, (1 - life) * 2.2 + 0.6, 0, TAU); ctx.fill();
-                }
+                ctx.shadowBlur = 12; ctx.shadowColor = color;
+                const g = ctx.createRadialGradient(cx, cy, auraR * 0.3, cx, cy, auraR);
+                g.addColorStop(0, 'rgba(50,205,50,0.30)'); g.addColorStop(1, 'rgba(50,205,50,0)');
+                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, auraR, 0, TAU); ctx.fill();
+                // expanding pulse ring (fades as it grows)
+                ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 8;
+                ctx.globalAlpha = Math.max(0, 0.6 - pulseT * 0.6);
+                ctx.beginPath(); ctx.arc(cx, cy, auraR * (0.3 + pulseT * 0.7), 0, TAU); ctx.stroke();
+                ctx.restore();
                 _wpReset(ctx);
             },
             // ❄️ Ice Shards — rotating frozen shards with frost trails.
