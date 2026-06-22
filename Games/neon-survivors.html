@@ -23637,102 +23637,383 @@
         let selectedPlayerColor = PLAYER_COLORS[2]; // Default to Cyan
         
         // ============================================================
-        // V1_287: WEAPON-SELECT LIVE PREVIEWS (phased build)
-        // Each supported card swaps its emoji for a tiny looping canvas of the
-        // weapon's real effect. ONE shared ~30fps loop drives every visible
-        // preview and only runs while the weapon-select overlay is open, so it
-        // costs nothing in-game. Phase 1 = framework + 4 exemplars; the rest
-        // still fall back to their emoji until the look is approved.
+        // V1_288: WEAPON-SELECT LIVE PREVIEWS — full set (all 20 weapons)
+        // Each card swaps its emoji/SVG for a tiny looping canvas of the weapon's
+        // real effect. ONE shared loop drives every visible preview and only runs
+        // while the weapon-select overlay is open, so it costs nothing in-game.
+        // CONTAINMENT: every effect is drawn INSET from the canvas edges (with soft
+        // edge-fades on travellers) so the neon glow never crowds the card border.
         // ============================================================
         const WEAPON_PREVIEW_W = 96, WEAPON_PREVIEW_H = 40;
+        const TAU = Math.PI * 2;
 
         // Stable per-index pseudo-random in [0,1) — same value every frame.
         function _wpRand(i, s) { const v = Math.sin((i + 1) * 12.9898 + s * 78.233) * 43758.5453; return v - Math.floor(v); }
+        // Restore shared canvas state after each weapon paints its frame.
+        function _wpReset(ctx) { ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.lineCap = 'butt'; }
+        // 0..1 alpha that fades within `m` px of either side edge (travellers fade in/out, never hard-clip).
+        function _wpFadeX(x, w, m) { return Math.max(0, Math.min(1, Math.min(x, w - x) / m)); }
+        // Filled 4-point sparkle at (x,y).
+        function _wpStar(ctx, x, y, r) {
+            ctx.beginPath();
+            ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.3, y - r * 0.3); ctx.lineTo(x + r, y); ctx.lineTo(x + r * 0.3, y + r * 0.3);
+            ctx.lineTo(x, y + r); ctx.lineTo(x - r * 0.3, y + r * 0.3); ctx.lineTo(x - r, y); ctx.lineTo(x - r * 0.3, y - r * 0.3);
+            ctx.closePath(); ctx.fill();
+        }
+        // Jagged lightning segment between two points (j = jitter, seed = stable shape per cycle).
+        function _wpBolt(ctx, x0, y0, x1, y1, j, seed) {
+            ctx.beginPath(); ctx.moveTo(x0, y0);
+            for (let s = 1; s < 4; s++) {
+                const f = s / 4;
+                ctx.lineTo(x0 + (x1 - x0) * f + (_wpRand(s, seed) - 0.5) * j, y0 + (y1 - y0) * f + (_wpRand(s, seed + 7) - 0.5) * j);
+            }
+            ctx.lineTo(x1, y1); ctx.stroke();
+        }
+        // Ping-pong position in [lo, lo+range] for bouncing movers.
+        function _wpBounce(tt, lo, range, speed) { const s = ((tt * speed) % (2 * range) + 2 * range) % (2 * range); return lo + (s < range ? s : 2 * range - s); }
 
-        // Each fn paints ONE frame in logical (CSS-px) coords. The loop pre-scales
-        // for dpr and clears first; t = seconds, color = the weapon's real color.
+        // Each fn paints ONE frame in logical (CSS-px) coords (96x40). The loop
+        // pre-scales for dpr and clears first; t = seconds, color = real weapon color.
         const WEAPON_PREVIEWS = {
-            // Straight bolts streaking across with a glowing trail (auto-fire projectile).
+            // ⚡ Energy Bolt — auto-fire bolts streaking across with a glow trail.
             energyBolt(ctx, t, w, h, color) {
                 const cy = h / 2;
                 ctx.globalCompositeOperation = 'lighter';
                 for (let b = 0; b < 2; b++) {
-                    const phase = (t * 0.9 + b * 0.5) % 1;
-                    const x = -10 + phase * (w + 20);
-                    for (let k = 7; k >= 1; k--) {
-                        ctx.globalAlpha = (1 - k / 8) * 0.45;
-                        ctx.fillStyle = color; ctx.shadowBlur = 8; ctx.shadowColor = color;
-                        ctx.beginPath(); ctx.arc(x - k * 5, cy, 3 - k * 0.28, 0, Math.PI * 2); ctx.fill();
+                    const x = 6 + ((t * 0.85 + b * 0.5) % 1) * (w - 12);
+                    const fade = _wpFadeX(x, w, 16);
+                    for (let k = 6; k >= 1; k--) {
+                        ctx.globalAlpha = (1 - k / 7) * 0.4 * fade; ctx.fillStyle = color; ctx.shadowBlur = 7; ctx.shadowColor = color;
+                        ctx.beginPath(); ctx.arc(x - k * 4.5, cy, 2.6 - k * 0.25, 0, TAU); ctx.fill();
                     }
-                    ctx.globalAlpha = 1; ctx.shadowBlur = 12; ctx.shadowColor = color;
-                    ctx.fillStyle = '#ffffff';
-                    ctx.beginPath(); ctx.arc(x, cy, 3.2, 0, Math.PI * 2); ctx.fill();
+                    ctx.globalAlpha = fade; ctx.shadowBlur = 11; ctx.shadowColor = color; ctx.fillStyle = '#ffffff';
+                    ctx.beginPath(); ctx.arc(x, cy, 3, 0, TAU); ctx.fill();
                 }
-                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                _wpReset(ctx);
             },
-            // A cone of fire particles fanning out from the left.
+            // 🛡️ Plasma Shield — orbs orbiting the player on a flat ellipse.
+            plasmaOrbit(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = 0.9; ctx.fillStyle = '#cfe0ff'; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(cx, cy, 3, 0, TAU); ctx.fill();
+                for (let i = 0; i < 3; i++) {
+                    const a = t * 1.6 + i * TAU / 3, front = (Math.sin(a) + 1) / 2;
+                    ctx.globalAlpha = 0.45 + front * 0.55; ctx.fillStyle = color; ctx.shadowBlur = 9; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 24, cy + Math.sin(a) * 13, 2.4 + front * 1.7, 0, TAU); ctx.fill();
+                }
+                _wpReset(ctx);
+            },
+            // 🎵 Boom Box — concentric sound-wave rings pulsing outward.
+            boomBox(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 3; i++) {
+                    const p = (t * 0.7 + i / 3) % 1;
+                    ctx.globalAlpha = (1 - p) * 0.8; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(cx, cy, p * 15 + 2, 0, TAU); ctx.stroke();
+                }
+                const pulse = 0.5 + 0.5 * Math.sin(t * 8);
+                ctx.globalAlpha = 0.85; ctx.fillStyle = color; ctx.shadowBlur = 10; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(cx, cy, 3 + pulse * 1.5, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // 📡 Beam — a ramping splash beam with a bright core and target flare.
+            beam(ctx, t, w, h, color) {
+                const cy = h / 2, x0 = 8, x1 = w - 10;
+                const ramp = Math.min(1, ((t * 0.6) % 1) / 0.7);
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+                ctx.globalAlpha = 0.25 + ramp * 0.4; ctx.strokeStyle = color; ctx.lineWidth = 5 + ramp * 5; ctx.shadowBlur = 10; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x1, cy); ctx.stroke();
+                ctx.globalAlpha = 0.7 + ramp * 0.3; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5 + ramp * 1.5; ctx.shadowBlur = 6;
+                ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x1, cy); ctx.stroke();
+                ctx.globalAlpha = 0.6 + ramp * 0.4; ctx.fillStyle = color; ctx.shadowBlur = 12;
+                ctx.beginPath(); ctx.arc(x1, cy, 3 + ramp * 4 + Math.sin(t * 12), 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // ⭐ Star Field — twinkling stars raining down.
+            starField(ctx, t, w, h, color) {
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 6; i++) {
+                    const sx = 10 + _wpRand(i, 1) * (w - 20);
+                    const fall = (t * (0.4 + _wpRand(i, 2) * 0.4) + _wpRand(i, 3)) % 1;
+                    const tw = 0.5 + 0.5 * Math.sin(t * 6 + i);
+                    ctx.globalAlpha = (1 - fall * 0.5) * (0.5 + tw * 0.5); ctx.fillStyle = color; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                    _wpStar(ctx, sx, 5 + fall * (h - 12), 1.6 + tw * 1.6);
+                }
+                _wpReset(ctx);
+            },
+            // 🗡️ Void Daggers — phantom blades blink-strike inward.
+            voidDaggers(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 3; i++) {
+                    const ph = (t * 1.2 + i / 3) % 1;
+                    const a = ph < 0.15 ? ph / 0.15 : (ph < 0.7 ? 1 - (ph - 0.15) / 0.55 : 0);
+                    if (a <= 0) continue;
+                    const ang = i * TAU / 3 + t * 0.3, dist = (1 - ph) * 24 + 6;
+                    ctx.save(); ctx.translate(cx + Math.cos(ang) * dist, cy + Math.sin(ang) * dist * 0.5); ctx.rotate(ang + Math.PI);
+                    ctx.globalAlpha = a; ctx.fillStyle = color; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(-1, 1.7); ctx.lineTo(-4, 0); ctx.lineTo(-1, -1.7); ctx.closePath(); ctx.fill();
+                    ctx.restore();
+                }
+                _wpReset(ctx);
+            },
+            // 🔥 Flame Thrower — a contained horizontal fire plume.
             flameThrower(ctx, t, w, h, color) {
-                const ox = 8, oy = h / 2;
+                const ox = 9, oy = h / 2;
                 ctx.globalCompositeOperation = 'lighter';
-                for (let i = 0; i < 18; i++) {
-                    const life = (t * (0.6 + _wpRand(i, 1) * 0.5) + _wpRand(i, 2)) % 1;
-                    const ang = (_wpRand(i, 3) - 0.5) * 0.95;
-                    const dist = life * (w - 14);
-                    const x = ox + Math.cos(ang) * dist;
-                    const y = oy + Math.sin(ang) * dist;
-                    ctx.globalAlpha = (1 - life) * 0.9;
-                    ctx.fillStyle = life < 0.5 ? color : '#ff3300';
-                    ctx.shadowBlur = 6; ctx.shadowColor = color;
-                    ctx.beginPath(); ctx.arc(x, y, (1 - life) * 5 + 1.5, 0, Math.PI * 2); ctx.fill();
+                for (let i = 0; i < 16; i++) {
+                    const life = (t * (0.7 + _wpRand(i, 1) * 0.5) + _wpRand(i, 2)) % 1;
+                    const x = ox + life * (w - 22);
+                    const y = oy + (_wpRand(i, 3) - 0.5) * (5 + life * 13) + Math.sin(t * 4 + i) * 1.4;
+                    ctx.globalAlpha = (1 - life) * 0.85;
+                    ctx.fillStyle = life < 0.45 ? '#ffdd33' : (life < 0.72 ? color : '#ff2a00'); ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(x, Math.max(5, Math.min(h - 5, y)), (1 - life) * 4.5 + 1.4, 0, TAU); ctx.fill();
                 }
-                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                _wpReset(ctx);
             },
-            // A forking bolt that strikes from above on a timer, with a ground flash.
-            thunderStrike(ctx, t, w, h, color) {
-                const period = 1.1;
-                const cycle = Math.floor(t / period);
-                const ph = (t % period) / period;
-                const strike = ph < 0.35 ? (1 - ph / 0.35) : 0;
-                if (strike <= 0.02) return;
-                const cx = w / 2 + (_wpRand(cycle, 5) - 0.5) * 18;
+            // 🐿️ Black Squirrel — a rabid green critter darting with claw slashes.
+            blackSquirrel(ctx, t, w, h, color) {
+                const cy = h / 2;
+                const x = w / 2 + Math.sin(t * 1.8) * 25, dir = Math.cos(t * 1.8) >= 0 ? 1 : -1, y = cy + Math.sin(t * 9) * 2;
                 ctx.globalCompositeOperation = 'lighter';
-                ctx.globalAlpha = strike; ctx.strokeStyle = color;
-                ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.moveTo(cx, 0);
-                for (let s = 1; s <= 6; s++) {
-                    ctx.lineTo(cx + (_wpRand(s, cycle) - 0.5) * 14, (s / 6) * h);
+                for (let k = 1; k <= 3; k++) {
+                    ctx.globalAlpha = 0.1 * (4 - k); ctx.fillStyle = color; ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(x - dir * k * 4, y, 4.5, 0, TAU); ctx.fill();
                 }
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.globalAlpha = 1; ctx.shadowBlur = 8; ctx.shadowColor = color; ctx.fillStyle = '#0a1a08'; ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+                ctx.beginPath(); ctx.arc(x, y, 5, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(x - dir * 6, y - 1, 4, -1, 2.2); ctx.stroke();
+                ctx.fillStyle = color; ctx.shadowBlur = 4;
+                ctx.beginPath(); ctx.arc(x + dir * 2, y - 1, 1, 0, TAU); ctx.fill();
+                const slash = (t * 3) % 1;
+                if (slash < 0.4) {
+                    ctx.globalCompositeOperation = 'lighter';
+                    ctx.globalAlpha = (1 - slash / 0.4) * 0.9; ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.shadowBlur = 8;
+                    const sx = x + dir * 7;
+                    ctx.beginPath(); ctx.moveTo(sx, y - 4); ctx.lineTo(sx + dir * 4, y - 1); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(sx, y + 1); ctx.lineTo(sx + dir * 4, y + 4); ctx.stroke();
+                }
+                _wpReset(ctx);
+            },
+            // 🌩️ Lightning Strike — a forking bolt strikes from above on a timer.
+            thunderStrike(ctx, t, w, h, color) {
+                const period = 1.1, cycle = Math.floor(t / period);
+                const ph = (t % period) / period;
+                const strike = ph < 0.32 ? (1 - ph / 0.32) : 0;
+                if (strike <= 0.02) { _wpReset(ctx); return; }
+                const cx = w / 2 + (_wpRand(cycle, 5) - 0.5) * 16;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = strike; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(cx, 3);
+                for (let s = 1; s <= 6; s++) ctx.lineTo(cx + (_wpRand(s, cycle) - 0.5) * 12, 3 + (s / 6) * (h - 9));
                 ctx.stroke();
                 ctx.globalAlpha = strike * 0.6; ctx.fillStyle = color;
-                ctx.beginPath(); ctx.ellipse(cx, h - 3, 12, 4, 0, 0, Math.PI * 2); ctx.fill();
-                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.ellipse(cx, h - 5, 11, 3.5, 0, 0, TAU); ctx.fill();
+                _wpReset(ctx);
             },
-            // A breathing poison field with rising bubbles.
+            // ☠️ Toxic Aura — a breathing poison field with rising bubbles.
             toxicAura(ctx, t, w, h, color) {
                 const cx = w / 2, cy = h / 2;
-                const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
-                const r = 9 + pulse * 7;
+                const pulse = 0.5 + 0.5 * Math.sin(t * 2.2), r = 8 + pulse * 6;
                 ctx.globalCompositeOperation = 'lighter';
-                ctx.globalAlpha = 0.16 + pulse * 0.12; ctx.fillStyle = color;
-                ctx.shadowBlur = 12; ctx.shadowColor = color;
-                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = 0.16 + pulse * 0.12; ctx.fillStyle = color; ctx.shadowBlur = 12; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill();
                 ctx.globalAlpha = 0.7; ctx.lineWidth = 2; ctx.strokeStyle = color; ctx.shadowBlur = 8;
-                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
                 ctx.shadowBlur = 6;
                 for (let i = 0; i < 5; i++) {
                     const life = (t * 0.5 + _wpRand(i, 9)) % 1;
                     ctx.globalAlpha = (1 - life) * 0.8; ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.arc(cx + (_wpRand(i, 4) - 0.5) * 22, cy + 10 - life * 22, (1 - life) * 2.4 + 0.6, 0, Math.PI * 2);
-                    ctx.fill();
+                    ctx.beginPath(); ctx.arc(cx + (_wpRand(i, 4) - 0.5) * 20, cy + 9 - life * 20, (1 - life) * 2.2 + 0.6, 0, TAU); ctx.fill();
                 }
-                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                _wpReset(ctx);
+            },
+            // ❄️ Ice Shards — rotating frozen shards with frost trails.
+            iceShard(ctx, t, w, h, color) {
+                const cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let b = 0; b < 2; b++) {
+                    const x = 6 + ((t * 0.7 + b * 0.5) % 1) * (w - 12), y = cy + (b === 0 ? -5 : 5), fade = _wpFadeX(x, w, 14);
+                    for (let k = 1; k <= 4; k++) {
+                        ctx.globalAlpha = 0.1 * (5 - k) * fade; ctx.fillStyle = color; ctx.shadowBlur = 5; ctx.shadowColor = color;
+                        ctx.beginPath(); ctx.arc(x - k * 4, y, 1.5, 0, TAU); ctx.fill();
+                    }
+                    ctx.save(); ctx.translate(x, y); ctx.rotate(t * 4 + b);
+                    ctx.globalAlpha = fade; ctx.fillStyle = '#eaffff'; ctx.shadowBlur = 9; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(2.4, 0); ctx.lineTo(0, 4); ctx.lineTo(-2.4, 0); ctx.closePath(); ctx.fill();
+                    ctx.restore();
+                }
+                _wpReset(ctx);
+            },
+            // ☄️ Meteor Strike — a meteor falls and bursts on the ground.
+            meteorStrike(ctx, t, w, h, color) {
+                const period = 1.6, p = (t % period) / period, cx = w * 0.6, groundY = h - 9;
+                ctx.globalCompositeOperation = 'lighter';
+                if (p < 0.55) {
+                    const f = p / 0.55, sx = cx - (1 - f) * 32, sy = 4 + f * (groundY - 4);
+                    for (let k = 1; k <= 6; k++) {
+                        ctx.globalAlpha = (1 - k / 7) * 0.5 * f; ctx.fillStyle = k < 3 ? '#ffcc33' : color; ctx.shadowBlur = 7; ctx.shadowColor = color;
+                        ctx.beginPath(); ctx.arc(sx - k * 3, sy - k * 2.4, Math.max(0.4, 2.6 - k * 0.3), 0, TAU); ctx.fill();
+                    }
+                    ctx.globalAlpha = 1; ctx.fillStyle = '#ffee99'; ctx.shadowBlur = 10; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(sx, sy, 3, 0, TAU); ctx.fill();
+                } else {
+                    const e = (p - 0.55) / 0.45, r = e * 13;
+                    ctx.globalAlpha = (1 - e) * 0.9; ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.shadowBlur = 10; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.ellipse(cx, groundY, r + 3, (r + 3) * 0.4, 0, 0, TAU); ctx.stroke();
+                    for (let i = 0; i < 6; i++) {
+                        const a = -Math.PI + i / 5 * Math.PI, sd = e * 13;
+                        ctx.globalAlpha = (1 - e) * 0.8; ctx.fillStyle = '#ffcc33'; ctx.shadowBlur = 6;
+                        ctx.beginPath(); ctx.arc(cx + Math.cos(a) * sd, groundY + Math.sin(a) * sd * 0.7, 1.6, 0, TAU); ctx.fill();
+                    }
+                }
+                _wpReset(ctx);
+            },
+            // 👁️ Ghost Orbs — homing spirit orbs weaving with spectral trails.
+            spiritOrbs(ctx, t, w, h, color) {
+                const cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let b = 0; b < 2; b++) {
+                    const phase = (t * 0.5 + b * 0.5) % 1, x = 6 + phase * (w - 12), fade = _wpFadeX(x, w, 16);
+                    for (let k = 1; k <= 6; k++) {
+                        const pp = phase - k * 0.03; if (pp < 0) continue;
+                        ctx.globalAlpha = (1 - k / 7) * 0.35 * fade; ctx.fillStyle = color; ctx.shadowBlur = 6; ctx.shadowColor = color;
+                        ctx.beginPath(); ctx.arc(6 + pp * (w - 12), cy + Math.sin(pp * Math.PI * 3 + b * 2) * 10, Math.max(0.4, 2.4 - k * 0.25), 0, TAU); ctx.fill();
+                    }
+                    ctx.globalAlpha = 0.85 * fade; ctx.fillStyle = '#f0e6ff'; ctx.shadowBlur = 10; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(x, cy + Math.sin(phase * Math.PI * 3 + b * 2) * 10, 3, 0, TAU); ctx.fill();
+                }
+                _wpReset(ctx);
+            },
+            // 🪃 Boomerang — a spinning boomerang arcs out and returns.
+            boomerang(ctx, t, w, h, color) {
+                const cy = h / 2, p = (t % 1.8) / 1.8, out = Math.sin(p * Math.PI);
+                const x = 14 + out * (w - 34), y = cy - out * 6 + Math.sin(p * Math.PI * 2) * 3;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = 0.3; ctx.fillStyle = color; ctx.shadowBlur = 7; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(x - 4, y, 2.5, 0, TAU); ctx.fill();
+                ctx.save(); ctx.translate(x, y); ctx.rotate(t * 14);
+                ctx.globalAlpha = 0.95; ctx.strokeStyle = '#fff8e0'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.moveTo(-5, 4); ctx.lineTo(0, -4); ctx.lineTo(5, 4); ctx.stroke();
+                ctx.restore();
+                _wpReset(ctx);
+            },
+            // ⛓️ Chain Lightning — a bolt arcs node to node.
+            chainLightning(ctx, t, w, h, color) {
+                const cy = h / 2;
+                const nodes = [[14, cy - 6], [40, cy + 7], [62, cy - 7], [84, cy + 5]];
+                const p = (t % 1.4) / 1.4;
+                const seg = Math.min(nodes.length - 2, Math.floor(p / 0.7 * (nodes.length - 1)));
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < nodes.length; i++) {
+                    ctx.globalAlpha = i <= seg + 1 ? 1 : 0.3; ctx.fillStyle = color; ctx.shadowBlur = 8; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(nodes[i][0], nodes[i][1], 2.4, 0, TAU); ctx.fill();
+                }
+                ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.shadowBlur = 9; ctx.shadowColor = color;
+                for (let s = 0; s <= seg; s++) {
+                    ctx.globalAlpha = (s === seg) ? (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(t * 30))) : 0.5;
+                    _wpBolt(ctx, nodes[s][0], nodes[s][1], nodes[s + 1][0], nodes[s + 1][1], 3, Math.floor(t / 1.4) + s);
+                }
+                _wpReset(ctx);
+            },
+            // 🏹 Spectral Arrows — rapid arrows leaving damage trails.
+            spectralArrows(ctx, t, w, h, color) {
+                const cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let b = 0; b < 3; b++) {
+                    const x = 4 + ((t * 1.1 + b * 0.33) % 1) * (w - 8), y = cy + (b - 1) * 7, fade = _wpFadeX(x, w, 12);
+                    ctx.globalAlpha = 0.3 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.moveTo(Math.max(2, x - 26), y); ctx.lineTo(x, y); ctx.stroke();
+                    ctx.globalAlpha = fade; ctx.fillStyle = '#e8fff4'; ctx.shadowBlur = 8;
+                    ctx.beginPath(); ctx.moveTo(x + 5, y); ctx.lineTo(x - 2, y - 3); ctx.lineTo(x, y); ctx.lineTo(x - 2, y + 3); ctx.closePath(); ctx.fill();
+                }
+                _wpReset(ctx);
+            },
+            // 🌀 Gravity Well — particles spiral into a dark core.
+            gravityWell(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 10; i++) {
+                    const life = (t * 0.5 + i / 10) % 1, rad = (1 - life) * 16 + 1, ang = i * 1.4 + t * 3 + (1 - life) * 6;
+                    ctx.globalAlpha = life * 0.8; ctx.fillStyle = i % 3 === 0 ? '#cc99ff' : color; ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(cx + Math.cos(ang) * rad * 1.5, cy + Math.sin(ang) * rad * 0.85, 1.4 + life * 1.2, 0, TAU); ctx.fill();
+                }
+                ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.fillStyle = '#0a0014';
+                ctx.beginPath(); ctx.arc(cx, cy, 4, 0, TAU); ctx.fill();
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.globalAlpha = 0.8; ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.shadowBlur = 9; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(cx, cy, 4.5 + Math.sin(t * 5) * 0.6, 0, TAU); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // 💿 Ricochet Disc — a spinning disc bounces around the box.
+            ricochetDisc(ctx, t, w, h, color) {
+                const x = _wpBounce(t, 9, w - 18, 46), y = _wpBounce(t, 9, h - 18, 32);
+                ctx.globalCompositeOperation = 'lighter';
+                for (let k = 1; k <= 4; k++) {
+                    ctx.globalAlpha = 0.09 * (5 - k); ctx.fillStyle = color; ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(_wpBounce(t - k * 0.035, 9, w - 18, 46), _wpBounce(t - k * 0.035, 9, h - 18, 32), 3.4, 0, TAU); ctx.fill();
+                }
+                ctx.save(); ctx.translate(x, y); ctx.rotate(t * 16);
+                ctx.globalAlpha = 1; ctx.strokeStyle = '#ffd6ea'; ctx.lineWidth = 1.6; ctx.shadowBlur = 9; ctx.shadowColor = color;
+                ctx.beginPath(); ctx.arc(0, 0, 4.2, 0, TAU); ctx.stroke();
+                ctx.fillStyle = color; ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.arc(0, 0, 1.6, 0, TAU); ctx.fill();
+                ctx.restore();
+                _wpReset(ctx);
+            },
+            // 💣 Pulse Mine — armed mine blinks, then detonates a shock ring.
+            pulseMine(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2, p = (t % 1.8) / 1.8;
+                ctx.globalCompositeOperation = 'lighter';
+                if (p < 0.72) {
+                    const blink = 0.5 + 0.5 * Math.sin(p * (8 + p * 40));
+                    ctx.globalAlpha = 0.4 + blink * 0.6; ctx.fillStyle = color; ctx.shadowBlur = 8 + blink * 8; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = 0.6 + blink * 0.4; ctx.strokeStyle = color; ctx.lineWidth = 1.4;
+                    for (let i = 0; i < 6; i++) {
+                        const a = i / 6 * TAU;
+                        ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * 4, cy + Math.sin(a) * 4); ctx.lineTo(cx + Math.cos(a) * 6.5, cy + Math.sin(a) * 6.5); ctx.stroke();
+                    }
+                } else {
+                    const e = (p - 0.72) / 0.28, r = e * 17;
+                    ctx.globalAlpha = (1 - e) * 0.9; ctx.strokeStyle = '#ffd0d0'; ctx.lineWidth = 2.5; ctx.shadowBlur = 12; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.stroke();
+                    ctx.globalAlpha = (1 - e) * 0.7; ctx.strokeStyle = color; ctx.lineWidth = 4;
+                    ctx.beginPath(); ctx.arc(cx, cy, r * 0.7, 0, TAU); ctx.stroke();
+                }
+                _wpReset(ctx);
+            },
+            // 🔫 Shotgun — muzzle flash with a fanning pellet spread.
+            shotgun(ctx, t, w, h, color) {
+                const ox = 10, oy = h / 2, p = (t % 1.2) / 1.2;
+                ctx.globalCompositeOperation = 'lighter';
+                if (p < 0.12) {
+                    const fa = 1 - p / 0.12;
+                    ctx.globalAlpha = fa * 0.9; ctx.fillStyle = '#ffe6b0'; ctx.shadowBlur = 12; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(ox, oy, 4 + fa * 4, 0, TAU); ctx.fill();
+                    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = fa;
+                    for (let i = 0; i < 5; i++) {
+                        const a = (i / 4 - 0.5) * 0.9;
+                        ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + Math.cos(a) * 12, oy + Math.sin(a) * 12); ctx.stroke();
+                    }
+                }
+                for (let i = 0; i < 6; i++) {
+                    const a = (_wpRand(i, 1) - 0.5) * 0.7, dist = p * (w - 20), x = ox + dist;
+                    const y = oy + Math.sin(a) * dist * 0.5, fade = _wpFadeX(x, w, 12);
+                    ctx.globalAlpha = (1 - p) * 0.9 * fade; ctx.fillStyle = i % 2 ? color : '#ffcc66'; ctx.shadowBlur = 5; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU); ctx.fill();
+                }
+                _wpReset(ctx);
             }
         };
 
         let _wpItems = [];
         let _wpRAF = 0;
         let _wpLast = 0;
+        // Gentler frame cap on small screens (GPU stability over flair, per mobile policy).
+        const _wpFrameCap = (window.innerWidth <= 760) ? 45 : 33;
 
         function setupWeaponPreviews() {
             _wpItems = [];
@@ -23753,7 +24034,7 @@
             // Self-stop when the overlay is no longer on screen.
             if (!DOM.weaponSelectOverlay.classList.contains('active')) { _wpRAF = 0; return; }
             _wpRAF = requestAnimationFrame(_wpFrame);
-            if (now - _wpLast < 33) return; // ~30fps cap
+            if (now - _wpLast < _wpFrameCap) return; // ~30fps desktop / ~22fps mobile
             _wpLast = now;
             const t = now / 1000;
             for (const it of _wpItems) {
