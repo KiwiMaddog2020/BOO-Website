@@ -7418,7 +7418,7 @@
         let difficultyLevel = 0; // Each activation adds +1
         let enemyDamageBonus = 1; // Multiplier for enemy damage
         let enemyHealthBonus = 1; // Multiplier for enemy HP
-        let enemySpeedBonus = 0.9; // Multiplier for enemy speed (includes -10% pace pass)
+        let enemySpeedBonus = 0.99; // Multiplier for enemy speed (V1_289: +10% base pace, was 0.9)
         let killRewardBonus = 1; // Multiplier for XP/gold from kills
         
         // Time slow effect multiplier (1 = normal, 0.4 = 60% slower)
@@ -14577,7 +14577,7 @@
             difficultyLevel++;
             enemyDamageBonus = 1 + (difficultyLevel * 0.10);
             enemyHealthBonus = 1 + (difficultyLevel * 0.10);
-            enemySpeedBonus = 0.9 * (1 + (difficultyLevel * 0.05)); // -10% pace pass
+            enemySpeedBonus = 0.99 * (1 + (difficultyLevel * 0.05)); // V1_289: +10% base pace (was 0.9)
             killRewardBonus = 1 + (difficultyLevel * 0.10);
             
             // Visual feedback
@@ -16500,6 +16500,7 @@
         // ===== TERRAIN OBSTACLES (Lakes & Mountains) =====
         let terrainObstacles = [];
         let lakeObstacles = []; // V1_260: cached lakes only — pushOutOfLake/isInLake run hot (per-frame per-enemy)
+        let solidObstacles = []; // V1_289: cached solids (tree/rock/bush) — pushOutOfSolids runs hot per-frame per-enemy
         let decorations = []; // Trees only
         
         // Map area: 4320 x 4320 = 18,662,400 sq units
@@ -16769,6 +16770,28 @@
                         const d = Math.sqrt(d2);
                         x = obs.x + (x - obs.x) / d;
                         y = obs.y + (y - obs.y) / d;
+                    }
+                }
+            }
+            return { x, y };
+        }
+
+        // V1_289: hard safety net — guarantee an entity is never lodged inside a solid
+        // obstacle (tree/rock/bush). Knockback (e.g. Plasma Shield), gravity-pull and
+        // spawns bypass the movement collision, so this nudges anything embedded back out
+        // to the nearest clear edge. Mirrors pushOutOfLake; iterates the cached solids only.
+        function pushOutOfSolids(x, y, objRadius = 0, margin = 2) {
+            for (const obs of solidObstacles) {
+                const minDist = obs.radius + objRadius + margin;
+                const dx = x - obs.x, dy = y - obs.y;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < minDist * minDist) {
+                    if (d2 < 1e-9) {
+                        x = obs.x + minDist; // exact-centre point: push out along +x
+                    } else {
+                        const d = Math.sqrt(d2);
+                        x = obs.x + (dx / d) * minDist;
+                        y = obs.y + (dy / d) * minDist;
                     }
                 }
             }
@@ -17160,6 +17183,7 @@
                 }
             }
             lakeObstacles = terrainObstacles.filter(o => o.type === 'lake'); // V1_260: cache lakes for hot paths
+            solidObstacles = terrainObstacles.filter(o => o.type === 'tree' || o.type === 'rock' || o.type === 'bush'); // V1_289: cache solids for un-stick
         }
 
         function spawnDecorations() {
@@ -21482,12 +21506,15 @@
                         enemy.update(effectiveDt);
                         // V1_259: knockback / gravity pull bypass the movement collision, so
                         // hard-guarantee no enemy ever sits on a lake by pushing it back out.
+                        // V1_289: same guarantee for solid obstacles (tree/rock/bush).
                         ({ x: enemy.x, y: enemy.y } = pushOutOfLake(enemy.x, enemy.y, enemy.radius));
+                        ({ x: enemy.x, y: enemy.y } = pushOutOfSolids(enemy.x, enemy.y, enemy.radius));
                     } else if (dist < skipDistance) {
                         // Reduced update rate for distant enemies (every other frame)
                         if (frameCount % 2 === 0) {
                             enemy.update(effectiveDt * 2);
                             ({ x: enemy.x, y: enemy.y } = pushOutOfLake(enemy.x, enemy.y, enemy.radius));
+                            ({ x: enemy.x, y: enemy.y } = pushOutOfSolids(enemy.x, enemy.y, enemy.radius));
                         }
                     }
                     // Very distant enemies don't update (will catch up when closer)
@@ -21524,7 +21551,13 @@
                     if (!statue.dead) statue.update(dt);
                 }
                 for (const boss of bosses) {
-                    if (!boss.dead) boss.update(effectiveDt);
+                    if (!boss.dead) {
+                        boss.update(effectiveDt);
+                        // V1_289: bosses bypass movement collision via knockback/pull too — never let
+                        // them sit inside a lake or solid obstacle (the reported Plasma-Shield-into-rock case).
+                        ({ x: boss.x, y: boss.y } = pushOutOfLake(boss.x, boss.y, boss.radius));
+                        ({ x: boss.x, y: boss.y } = pushOutOfSolids(boss.x, boss.y, boss.radius));
+                    }
                 }
                 updateChestSpawning(dt);
                 updateCowboyHat();
@@ -24564,7 +24597,7 @@
             difficultyLevel = 0;
             enemyDamageBonus = 1;
             enemyHealthBonus = 1;
-            enemySpeedBonus = 0.9; // -10% pace pass
+            enemySpeedBonus = 0.99; // V1_289: +10% base pace (was 0.9)
             killRewardBonus = 1;
             
             player = new Player();
