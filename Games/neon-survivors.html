@@ -15138,13 +15138,14 @@
             }
         }
 
-        // ===== TRAVELING MERCHANT (V1_299) =====
+        // ===== TRAVELING MERCHANT (V1_299; Hooded Mystic art V1_301) =====
         // A shopkeeper NPC that offers a choice of 3 random shrine-style upgrades.
-        // Each item is priced at HALF the chest cost at the MOMENT the merchant
-        // spawns (frozen — later chest inflation never touches it). The player buys
-        // exactly ONE, then the merchant leaves. Up to 2 may sit on the map at once;
-        // 6 total per run, one every 5 minutes with the first at game start. The
-        // merchant persists until something is purchased (LEAVE just steps away).
+        // Pricing (V1_301): the FIRST merchant (at game start) is a flat 100/item; every
+        // later merchant is HALF the chest cost at the MOMENT it spawns (frozen — later
+        // chest inflation never touches it). The player buys exactly ONE, then the merchant
+        // leaves. Up to 2 may sit on the map at once; 6 total per run, one every 5 minutes
+        // with the first at game start (that first one spawns silently — no arrival banner,
+        // V1_301). The merchant persists until something is purchased (LEAVE just steps away).
         const SHOPKEEPER_INTERVAL = 300;     // seconds between merchant spawns (5 min)
         const SHOPKEEPER_MAX_TOTAL = 6;      // hard cap of merchants per run
         const SHOPKEEPER_MAX_ACTIVE = 2;     // merchants allowed on the map at once
@@ -15160,8 +15161,12 @@
                 this.reactivateDistance = 75;
                 this.bobOffset = Math.random() * Math.PI * 2;
                 this.glowPulse = Math.random() * Math.PI * 2;
-                // Price locked at spawn: half a chest (min 1). Immune to chest inflation.
-                this.price = Math.max(1, Math.floor(nextChestCost / 2));
+                // Price locked at spawn. The FIRST merchant (at game start) is a flat 100/item
+                // (V1_301); every later merchant is half a chest (min 1), frozen at spawn so chest
+                // inflation never touches it.
+                this.price = (shopkeepersSpawned === 0)
+                    ? 100
+                    : Math.max(1, Math.floor(nextChestCost / 2));
                 this.items = this.rollItems(); // 3 distinct shrine powerups
             }
 
@@ -15203,96 +15208,220 @@
                 const t = Date.now();
                 const bob = Math.sin(t * 0.003 + this.bobOffset) * camera.scale(2);
                 const glow = 0.55 + Math.sin(t * 0.004 + this.glowPulse) * 0.3;
-                const S = (n) => camera.scale(n);
                 const sy = camera.screenY(this.y) + bob;
 
                 ctx.save();
                 if (this.needsPlayerToLeave) ctx.globalAlpha = 0.4;
 
-                // Ground glow
-                ctx.shadowBlur = 24 * glow;
-                ctx.shadowColor = '#ff33bb';
-                ctx.fillStyle = 'rgba(255, 51, 187, 0.12)';
+                // ===== HOODED MYSTIC (V1_301) =====
+                // Standing robed vendor — replaces the market stall. Detail pass: gradient
+                // robe with scalloped hem + fold lines + left-edge rim light, a glowing sash
+                // clasp, a hooded head with brim highlight + brow gem + glowing eyes, and a
+                // floating coin-orb with orbiting sparkles plus a few ambient embers. Footprint
+                // equals the collision radius (unchanged at 24); the whole figure rides `bob`.
+                const R = this.radius;
+                const F = (n) => camera.scale(n * (R / 22));   // figure units (footprint = R)
+                const gy = sy + F(30);                          // ground point — centers the body on the map position
+                const baseAlpha = this.needsPlayerToLeave ? 0.4 : 1;
+                const ox = sx + F(26), oy = gy - F(30);         // floating coin-orb centre
+
+                // Ground glow (purple)
+                ctx.shadowBlur = 22 * glow;
+                ctx.shadowColor = '#b833ff';
+                ctx.fillStyle = 'rgba(150, 60, 255, 0.16)';
                 ctx.beginPath();
-                ctx.ellipse(sx, sy + S(20), S(26), S(7), 0, 0, Math.PI * 2);
+                ctx.ellipse(sx, gy + F(4), F(28), F(7), 0, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.shadowBlur = 0;
 
-                // Support posts
-                ctx.fillStyle = '#3a2a14';
-                ctx.fillRect(sx - S(20), sy - S(16), S(3), S(34));
-                ctx.fillRect(sx + S(17), sy - S(16), S(3), S(34));
+                // Ambient embers (gentle rising motes)
+                ctx.save();
+                for (let i = 0; i < 3; i++) {
+                    const ph = (t * 0.0011 + this.bobOffset + i * 1.7) % 1;
+                    const ex = sx + Math.cos(t * 0.0013 + i * 2.1) * F(20);
+                    const ey = gy - F(8) - ph * F(34);
+                    ctx.globalAlpha = (1 - ph) * 0.55 * baseAlpha;
+                    ctx.fillStyle = (i % 2) ? '#00e6ff' : '#d27bff';
+                    ctx.beginPath();
+                    ctx.arc(ex, ey, F(1.2), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
 
-                // Merchant figure (behind the counter): robe, hood, head
-                const headY = sy - S(8);
-                const headR = S(6);
-                ctx.fillStyle = '#52287f';
-                ctx.strokeStyle = '#c466ff';
+                // ----- ROBE -----
+                const robeGrad = ctx.createLinearGradient(sx, gy - F(56), sx, gy + F(8));
+                robeGrad.addColorStop(0, '#8231c4');
+                robeGrad.addColorStop(0.55, '#5a1f93');
+                robeGrad.addColorStop(1, '#330d54');
+                ctx.fillStyle = robeGrad;
+                ctx.strokeStyle = '#d27bff';
                 ctx.lineWidth = 2;
+                ctx.shadowBlur = 14 * glow;
+                ctx.shadowColor = '#b144ff';
                 ctx.beginPath();
-                ctx.moveTo(sx - S(9), sy + S(8));
-                ctx.lineTo(sx - S(6), headY);
-                ctx.quadraticCurveTo(sx, headY - S(5), sx + S(6), headY);
-                ctx.lineTo(sx + S(9), sy + S(8));
+                ctx.moveTo(sx - F(9), gy - F(50));
+                ctx.lineTo(sx + F(9), gy - F(50));
+                ctx.lineTo(sx + F(22), gy + F(2));
+                // scalloped hem (three dips, right -> left)
+                ctx.quadraticCurveTo(sx + F(15), gy + F(11), sx + F(8), gy + F(4));
+                ctx.quadraticCurveTo(sx + F(2), gy + F(12), sx - F(4), gy + F(4));
+                ctx.quadraticCurveTo(sx - F(12), gy + F(12), sx - F(22), gy + F(2));
                 ctx.closePath();
                 ctx.fill();
                 ctx.stroke();
-                ctx.fillStyle = '#6a35a0'; // hood ring
-                ctx.beginPath();
-                ctx.arc(sx, headY - S(1), headR + S(2), 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = '#f6c98a'; // face
-                ctx.beginPath();
-                ctx.arc(sx, headY, headR, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Counter
-                ctx.fillStyle = '#1c1530';
-                ctx.strokeStyle = '#00e0ff';
-                ctx.lineWidth = 2;
-                ctx.shadowBlur = 10 * glow;
-                ctx.shadowColor = '#00e0ff';
-                ctx.fillRect(sx - S(20), sy + S(6), S(40), S(11));
-                ctx.strokeRect(sx - S(20), sy + S(6), S(40), S(11));
                 ctx.shadowBlur = 0;
-                // Coin stack on the counter
-                ctx.fillStyle = '#ffd700';
-                for (let i = 0; i < 3; i++) {
+
+                // hem highlight
+                ctx.strokeStyle = 'rgba(210, 140, 255, 0.7)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(sx + F(19), gy + F(1));
+                ctx.quadraticCurveTo(sx + F(14), gy + F(9), sx + F(8), gy + F(3));
+                ctx.quadraticCurveTo(sx + F(2), gy + F(10), sx - F(4), gy + F(3));
+                ctx.quadraticCurveTo(sx - F(11), gy + F(10), sx - F(19), gy + F(1));
+                ctx.stroke();
+
+                // fold lines (fabric depth)
+                ctx.strokeStyle = 'rgba(40, 12, 70, 0.5)';
+                ctx.lineWidth = 1.4;
+                [-9, 0, 9].forEach((dx) => {
                     ctx.beginPath();
-                    ctx.ellipse(sx + S(11), sy + S(13) - i * S(2.2), S(3.4), S(1.6), 0, 0, Math.PI * 2);
+                    ctx.moveTo(sx + F(dx * 0.5), gy - F(18));
+                    ctx.lineTo(sx + F(dx), gy + F(2));
+                    ctx.stroke();
+                });
+
+                // left-edge rim light (top-left key light)
+                ctx.strokeStyle = 'rgba(120, 230, 255, 0.5)';
+                ctx.lineWidth = 1.6;
+                ctx.beginPath();
+                ctx.moveTo(sx - F(8.5), gy - F(48));
+                ctx.lineTo(sx - F(21), gy + F(1));
+                ctx.stroke();
+
+                // ----- SASH + CLASP -----
+                ctx.fillStyle = '#23123b';
+                ctx.beginPath();
+                ctx.moveTo(sx - F(15), gy - F(16));
+                ctx.lineTo(sx + F(15), gy - F(16));
+                ctx.lineTo(sx + F(16), gy - F(10));
+                ctx.lineTo(sx - F(16), gy - F(10));
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#00e6ff'; // clasp gem
+                ctx.shadowBlur = 10 * glow;
+                ctx.shadowColor = '#00e6ff';
+                ctx.beginPath();
+                ctx.moveTo(sx, gy - F(16));
+                ctx.lineTo(sx + F(3), gy - F(13));
+                ctx.lineTo(sx, gy - F(10));
+                ctx.lineTo(sx - F(3), gy - F(13));
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                // ----- ARM + FLOATING COIN ORB -----
+                ctx.fillStyle = '#4a1878';
+                ctx.beginPath();
+                ctx.moveTo(sx + F(6), gy - F(40));
+                ctx.lineTo(ox - F(4), oy + F(4));
+                ctx.lineTo(ox + F(2), oy + F(12));
+                ctx.lineTo(sx + F(14), gy - F(30));
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = '#d27bff'; // sleeve cuff
+                ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                ctx.moveTo(ox - F(5), oy + F(5));
+                ctx.lineTo(ox + F(1), oy + F(13));
+                ctx.stroke();
+                const orbGrad = ctx.createRadialGradient(ox - F(2), oy - F(2), F(1), ox, oy, F(8));
+                orbGrad.addColorStop(0, '#fff4c2');
+                orbGrad.addColorStop(0.5, '#ffd700');
+                orbGrad.addColorStop(1, '#c8920b');
+                ctx.fillStyle = orbGrad;
+                ctx.shadowBlur = 16 * glow;
+                ctx.shadowColor = '#ffcc33';
+                ctx.beginPath();
+                ctx.arc(ox, oy, F(8), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#a8780a';
+                ctx.font = `bold ${F(9)}px Oxanium, sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('$', ox, oy + F(0.5));
+                ctx.textBaseline = 'alphabetic';
+                ctx.save(); // orbiting sparkles
+                for (let i = 0; i < 2; i++) {
+                    const sp = t * 0.004 + i * Math.PI;
+                    ctx.globalAlpha = (0.45 + 0.45 * Math.sin(sp * 2)) * baseAlpha;
+                    ctx.fillStyle = '#fff6c8';
+                    ctx.beginPath();
+                    ctx.arc(ox + Math.cos(sp) * F(11), oy + Math.sin(sp) * F(11), F(1.3), 0, Math.PI * 2);
                     ctx.fill();
                 }
+                ctx.restore();
 
-                // Striped awning (trapezoid)
-                const awY = sy - S(20);
-                const halfTop = S(22), halfBot = S(24), awH = S(9);
-                const stripes = 6;
-                for (let i = 0; i < stripes; i++) {
-                    ctx.fillStyle = (i % 2 === 0) ? '#ff1493' : '#ffd34d';
-                    const x0 = -halfTop + (2 * halfTop / stripes) * i;
-                    const x1 = -halfTop + (2 * halfTop / stripes) * (i + 1);
-                    const xb0 = -halfBot + (2 * halfBot / stripes) * i;
-                    const xb1 = -halfBot + (2 * halfBot / stripes) * (i + 1);
-                    ctx.beginPath();
-                    ctx.moveTo(sx + x0, awY);
-                    ctx.lineTo(sx + x1, awY);
-                    ctx.lineTo(sx + xb1, awY + awH);
-                    ctx.lineTo(sx + xb0, awY + awH);
-                    ctx.closePath();
-                    ctx.fill();
-                }
-                // Awning top beam
-                ctx.fillStyle = '#120a26';
-                ctx.fillRect(sx - halfTop - S(2), awY - S(3), 2 * halfTop + S(4), S(4));
+                // ----- HOOD + HEAD -----
+                ctx.fillStyle = '#6a25a8';
+                ctx.strokeStyle = '#c685ff';
+                ctx.lineWidth = 1.8;
+                ctx.shadowBlur = 12 * glow;
+                ctx.shadowColor = '#b144ff';
+                ctx.beginPath();
+                ctx.moveTo(sx - F(13), gy - F(49));
+                ctx.quadraticCurveTo(sx, gy - F(73), sx + F(13), gy - F(49));
+                ctx.quadraticCurveTo(sx + F(10), gy - F(43), sx, gy - F(45));
+                ctx.quadraticCurveTo(sx - F(10), gy - F(43), sx - F(13), gy - F(49));
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(190, 130, 255, 0.85)'; // brim highlight
+                ctx.lineWidth = 1.6;
+                ctx.beginPath();
+                ctx.moveTo(sx - F(12), gy - F(49));
+                ctx.quadraticCurveTo(sx, gy - F(69), sx + F(12), gy - F(49));
+                ctx.stroke();
+                ctx.fillStyle = '#ff3df0'; // brow gem
+                ctx.shadowBlur = 8 * glow;
+                ctx.shadowColor = '#ff3df0';
+                ctx.beginPath();
+                ctx.arc(sx, gy - F(60), F(2), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#180724'; // face void
+                ctx.beginPath();
+                ctx.ellipse(sx, gy - F(53), F(7), F(9), 0, 0, Math.PI * 2);
+                ctx.fill();
+                const faceGlow = ctx.createRadialGradient(sx, gy - F(53), F(1), sx, gy - F(53), F(8));
+                faceGlow.addColorStop(0, 'rgba(0, 230, 255, 0.18)');
+                faceGlow.addColorStop(1, 'rgba(0, 230, 255, 0)');
+                ctx.fillStyle = faceGlow;
+                ctx.beginPath();
+                ctx.ellipse(sx, gy - F(53), F(7), F(9), 0, 0, Math.PI * 2);
+                ctx.fill();
+                const eyeGlow = 0.6 + 0.4 * Math.sin(t * 0.006 + this.glowPulse);
+                ctx.fillStyle = '#00ffea'; // glowing eyes
+                ctx.shadowBlur = 9 * eyeGlow;
+                ctx.shadowColor = '#00ffea';
+                ctx.beginPath();
+                ctx.arc(sx - F(3), gy - F(54), F(1.7), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(sx + F(3), gy - F(54), F(1.7), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
 
-                // Floating price tag
+                // Floating price tag (above the hood)
                 const afford = playerGold >= this.price;
-                ctx.font = `bold ${S(15)}px Oxanium, monospace`;
+                ctx.font = `bold ${F(14)}px Oxanium, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.fillStyle = afford ? '#ffd700' : '#ff6a55';
                 ctx.shadowBlur = 8;
                 ctx.shadowColor = ctx.fillStyle;
-                ctx.fillText(`\u{1FA99} ${this.price}`, sx, awY - S(8));
+                ctx.fillText(`\u{1FA99} ${this.price}`, sx, gy - F(80));
 
                 ctx.restore();
             }
@@ -15313,7 +15442,9 @@
             }
             ({ x, y } = pushOutOfLake(x, y, 30));
             shopkeepers.push(new Shopkeeper(x, y));
-            showMerchantArrival();
+            // V1_301: no arrival banner for the FIRST (game-start) merchant — it collided with
+            // the run-start messaging and read as a mess. Later merchants still announce.
+            if (shopkeepersSpawned > 0) showMerchantArrival();
         }
 
         // Schedule: first at game start, then one every 5 minutes, capped at 6 total
