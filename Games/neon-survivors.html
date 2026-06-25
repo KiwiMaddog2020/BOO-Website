@@ -1421,7 +1421,11 @@
         .weapon-select-card .weapon-preview-canvas {
             width: 100%;
             max-width: 96px;
-            height: 40px;
+            /* V1_303: lock the 96x40 design aspect (2.4:1) so the backing-store scale stays
+               UNIFORM on fluid (<96px) grid cards. Fixed height:40px let scaleX != scaleY,
+               which stretched round effects (boom box / toxic aura / pulse mine) into ovals. */
+            aspect-ratio: 96 / 40;
+            height: auto;
             display: block;
             border-radius: 4px;
         }
@@ -7316,6 +7320,12 @@
         
         // Shared targeting range for weapons (60% of half-diagonal)
         const SHARED_TARGETING_RANGE = Math.hypot(TARGET_VISIBLE_WIDTH, TARGET_VISIBLE_HEIGHT) / 2 * 0.60;
+
+        // V1_303: hard ceiling on any weapon's reach so nothing strikes/executes
+        // off-screen — even at max upgrade level. Tied to the visible VERTICAL half
+        // (the smallest on-screen half-extent: 858/2 = 429) minus a small margin so a
+        // target/effect at the cap, plus its own radius, still lands inside the view.
+        const ONSCREEN_RANGE_CAP = TARGET_VISIBLE_HEIGHT / 2 - 20; // 409
         
         const camera = {
             x: WORLD.width / 2 - 600,
@@ -9004,7 +9014,7 @@
             }
 
             updateBeam(id, def, state, level, now, dt) {
-                const range = def.baseRange + level * 15;
+                const range = Math.min(def.baseRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: keep beam reach on-screen
                 const beamCount = def.baseBeams + Math.floor(level / 4); // +1 beam every 4 levels
                 
                 // Initialize beams array if needed
@@ -9229,7 +9239,7 @@
 
                 // Phantom Flurry (V1_268): daggers BLINK onto the nearest enemies and strike
                 // instantly — no projectile travel, no aiming. More strikes per volley as it levels.
-                const blinkRange = 440; // V1_284: trimmed a touch from 470
+                const blinkRange = Math.min(440, ONSCREEN_RANGE_CAP); // V1_284: trimmed from 470; V1_303: clamped on-screen (was striking just past the top/bottom edge)
                 const aliveEnemies = enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < blinkRange);
                 const aliveBosses = bosses.filter(b => !b.dead && Math.hypot(b.x - this.x, b.y - this.y) < blinkRange);
                 const aliveLeprechauns = leprechauns.filter(l => !l.dead && Math.hypot(l.x - this.x, l.y - this.y) < blinkRange);
@@ -9483,7 +9493,7 @@
                     const boom = new Projectile(this.x, this.y, angle, 3.5, baseDamage, def.color, 'boomerang', 999, sizeScale);
                     boom.startX = this.x;
                     boom.startY = this.y;
-                    boom.maxDist = 250 + level * 12;
+                    boom.maxDist = Math.min(250 + level * 12, ONSCREEN_RANGE_CAP); // V1_303: keep the boomerang's apex on-screen
                     boom.returning = false;
                     boom.spinAngle = 0;
                     projectiles.push(boom);
@@ -9495,7 +9505,7 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 // Range limit for lightning strikes
-                const strikeRange = def.baseRange + level * 10;
+                const strikeRange = Math.min(def.baseRange + level * 10, ONSCREEN_RANGE_CAP); // V1_303: keep strikes on-screen
                 
                 // Include bosses as potential targets within range
                 const aliveEnemies = enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < strikeRange);
@@ -9580,7 +9590,7 @@
                 
                 state.lastTick = now;
                 SFX.wStarField();
-                const radius = def.baseRadius + level * 15;
+                const radius = Math.min(def.baseRadius + level * 15, ONSCREEN_RANGE_CAP); // V1_303: keep the star field on-screen
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
 
                 // Initialize falling stars array
@@ -10245,7 +10255,7 @@
                 
                 // Find nearest enemy to aim at
                 let bestTarget = null;
-                let bestDist = def.maxRange + level * 15;
+                let bestDist = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: don't aim at off-screen targets
                 
                 for (const enemy of enemies) {
                     if (enemy.dead) continue;
@@ -10280,7 +10290,7 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05); // V1_298: gentler damage scaling (was 0.06)
                 const pelletCount = def.pelletCount + Math.floor(level / 3);
                 const spreadAngle = def.spreadAngle + level * 0.02;
-                const maxRange = def.maxRange + level * 15;
+                const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: pellets die at the screen edge
                 const knockback = def.knockback + level * 5;
                 
                 // Base angle toward target
@@ -10325,8 +10335,8 @@
             // Update shotgun pellets (called from main update)
             updateShotgunPellets(state, def, level, now, dt) {
                 if (!state.pellets) return;
-                
-                const maxRange = def.maxRange + level * 15;
+
+                const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: matches fire-time cap
                 
                 for (const pellet of state.pellets) {
                     if (pellet.hit) continue;
@@ -17287,7 +17297,9 @@
         const TERRAIN_TYPES = {
             lake: {
                 draw: function(ctx, sx, sy, scale, time, obstacle) {
-                    const pulse = 0.4 + Math.sin(time * 0.001 + obstacle.variant) * 0.15;
+                    // V1_303: raised floor + gentler swing so the water never breathes down to
+                    // near-invisible (was 0.4 +/- 0.15 -> 0.25 trough; body alpha bottomed at ~0.14).
+                    const pulse = 0.52 + Math.sin(time * 0.001 + obstacle.variant) * 0.1;
                     const colors = ['#00ffff', '#0088ff'];
                     const color = colors[obstacle.variant % colors.length];
                     const deep = ['#0a4a6e', '#06304e'][obstacle.variant % 2];
@@ -20389,8 +20401,8 @@
                     types.push('swarm', 'swarm', 'swarm', 'fast');
                 }
                 
-                // Spawn count increases over time: every 90s (slowed from 60s)
-                let count = 2 + Math.floor(gameTime / 90); // V1_300: slower wave-size growth (was /60) — thins the mid/late swarm; keeps the start-at-2 early pressure
+                // Spawn count increases over time: every 105s (slowed from 60s -> 90s -> 105s)
+                let count = 2 + Math.floor(gameTime / 105); // V1_303: ease wave-size growth (was /90) to offset the weapon-range caps — leaves the first ~8 min intact, trims ~10-15% off mid/late waves where shorter reach thins fewer distant enemies
                 
                 // SWARM EVENT: +50% enemies per wave
                 if (swarmActive) {
@@ -21100,9 +21112,9 @@
             // fireAOE (L8147): dmg .04, radius baseRadius+lvl*10, cd .985
             boomBox:       { dmgScale: 0.04, cdScale: 0.985, range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 10 } },
             // updateBeam (L8208): dmg .05, beams baseBeams+floor(lvl/4), range baseRange+lvl*15, acquire .97 (cd n/a, continuous)
-            beam:          { dmgScale: 0.05, cdScale: null,  count: { noun: 'Beam',   fn: (l, d) => d.baseBeams + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.baseRange + l * 15 } },
+            beam:          { dmgScale: 0.05, cdScale: null,  count: { noun: 'Beam',   fn: (l, d) => d.baseBeams + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => Math.min(d.baseRange + l * 15, ONSCREEN_RANGE_CAP) } },
             // updateStarfall (L8751): dmg .04, AoE radius baseRadius+lvl*15 (star count is visual only); tick rate fixed (cd n/a)
-            starField:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 15 } },
+            starField:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => Math.min(d.baseRadius + l * 15, ONSCREEN_RANGE_CAP) } },
             // fireDaggers (Phantom Flurry, V1_268): dmg .04, blink-strikes baseDaggers+floor(lvl/2), cd .985
             voidDaggers:   { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseDaggers + Math.floor(l / 2) } },
             // updateFlame (L8448): dmg .04, range baseRange+lvl*12, fire rate NOT level-scaled (cd null)
@@ -21110,7 +21122,7 @@
             // fireSquirrel (L8983): dmg .04, squirrels baseSquirrels+floor(lvl/2), cd .985
             blackSquirrel: { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Squirrel', fn: (l, d) => d.baseSquirrels + Math.floor(l / 2) } },
             // fireThunder (L8668): dmg .04, strikes baseStrikes+floor(lvl/4), range baseRange+lvl*10, cd .985
-            thunderStrike: { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseStrikes + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.baseRange + l * 10 } },
+            thunderStrike: { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseStrikes + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => Math.min(d.baseRange + l * 10, ONSCREEN_RANGE_CAP) } },
             // updateAura (L8710): dmg .04, radius baseRadius+lvl*10, tick rate fixed (cd n/a)
             toxicAura:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 10 } },
             // fireIceShards (L8826): dmg .04, shards baseProjectiles+floor(lvl/4), pierce 1+floor(lvl/4), cd .985
@@ -21120,7 +21132,7 @@
             // fireSpiritOrbs (L8953): dmg .04, orbs baseOrbs+floor(lvl/4), cd .985
             spiritOrbs:    { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Orb',    fn: (l, d) => d.baseOrbs + Math.floor(l / 4) } },
             // fireBoomerang (L8640): dmg .04, count baseCount+floor(lvl/6), range 250+lvl*12, cd .985
-            boomerang:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Boomerang', fn: (l, d) => d.baseCount + Math.floor(l / 6) }, range: { label: 'Range', fn: (l) => 250 + l * 12 } },
+            boomerang:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Boomerang', fn: (l, d) => d.baseCount + Math.floor(l / 6) }, range: { label: 'Range', fn: (l) => Math.min(250 + l * 12, ONSCREEN_RANGE_CAP) } },
             // fireChainLightning (L9130): dmg .04, chains baseChains+floor(lvl/4), range chainRange+lvl*10, cd .985
             chainLightning:{ dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Jump',   fn: (l, d) => d.baseChains + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.chainRange + l * 10 } },
             // fireArrows (L9207): dmg .04, arrows lvl>=3 ? 3+floor((lvl-3)/5)*2 : baseArrows; pierce pierce+floor(lvl/4); cd .985 (within burst)
@@ -21132,7 +21144,7 @@
             // dropMine (L9376): dmg .04, max mines maxMines+floor(lvl/5), blast blastRadius+lvl*5, cd .985
             pulseMine:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Mine',   fn: (l, d) => d.maxMines + Math.floor(l / 5) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + l * 5 } },
             // fireShotgun (L9416): dmg .06, pellets pelletCount+floor(lvl/3), range maxRange+lvl*15, cd .97
-            shotgun:       { dmgScale: 0.06, cdScale: 0.97,  count: { noun: 'Pellet', fn: (l, d) => d.pelletCount + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => d.maxRange + l * 15 } }
+            shotgun:       { dmgScale: 0.06, cdScale: 0.97,  count: { noun: 'Pellet', fn: (l, d) => d.pelletCount + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => Math.min(d.maxRange + l * 15, ONSCREEN_RANGE_CAP) } }
         };
 
         // Mirror of fire-time damage scaling: baseDamage * (1 + (level-1)*scale).
@@ -24671,10 +24683,31 @@
                 ctx.restore();
                 _wpReset(ctx);
             },
-            // 🐿️ Black Squirrel — a rabid green critter darting with claw slashes.
+            // 🐿️ Black Squirrel — the ACTUAL in-game sprite, darting with the in-game
+            // neon-green glow (attack frames on a short duty cycle, else breathing).
+            // Falls back to a lightweight critter until the sprite images decode.
             blackSquirrel(ctx, t, w, h, color) {
                 const cy = h / 2;
-                const x = w / 2 + Math.sin(t * 1.8) * 25, dir = Math.cos(t * 1.8) >= 0 ? 1 : -1, y = cy + Math.sin(t * 9) * 2;
+                const x = w / 2 + Math.sin(t * 1.8) * 20, dir = Math.cos(t * 1.8) >= 0 ? 1 : -1, y = cy + Math.sin(t * 9) * 1.5;
+                const slash = (t * 1.3) % 1;
+                let sprite = null;
+                if (squirrelSprites.loaded) {
+                    sprite = slash < 0.32 ? squirrelSprites.attack[Math.floor(t * 14) % 3]
+                                          : squirrelSprites.breathe[Math.floor(t * 4) % 2];
+                }
+                if (sprite) {
+                    const size = 28;
+                    ctx.save();
+                    ctx.translate(x, y);
+                    ctx.scale(dir, 1); // face travel direction (in-game flips the same way)
+                    ctx.shadowColor = '#39ff14';
+                    ctx.shadowBlur = slash < 0.32 ? 12 : 8;
+                    ctx.drawImage(sprite, -size / 2, -size / 2, size, size);
+                    ctx.restore();
+                    _wpReset(ctx);
+                    return;
+                }
+                // Fallback critter (sprites not decoded yet)
                 ctx.globalCompositeOperation = 'lighter';
                 for (let k = 1; k <= 3; k++) {
                     ctx.globalAlpha = 0.1 * (4 - k); ctx.fillStyle = color; ctx.shadowBlur = 6; ctx.shadowColor = color;
@@ -24686,14 +24719,6 @@
                 ctx.beginPath(); ctx.arc(x - dir * 6, y - 1, 4, -1, 2.2); ctx.stroke();
                 ctx.fillStyle = color; ctx.shadowBlur = 4;
                 ctx.beginPath(); ctx.arc(x + dir * 2, y - 1, 1, 0, TAU); ctx.fill();
-                const slash = (t * 3) % 1;
-                if (slash < 0.4) {
-                    ctx.globalCompositeOperation = 'lighter';
-                    ctx.globalAlpha = (1 - slash / 0.4) * 0.9; ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.shadowBlur = 8;
-                    const sx = x + dir * 7;
-                    ctx.beginPath(); ctx.moveTo(sx, y - 4); ctx.lineTo(sx + dir * 4, y - 1); ctx.stroke();
-                    ctx.beginPath(); ctx.moveTo(sx, y + 1); ctx.lineTo(sx + dir * 4, y + 4); ctx.stroke();
-                }
                 _wpReset(ctx);
             },
             // 🌩️ Lightning Strike — mirrors in-game: jagged bolt + white-hot inner
@@ -24743,9 +24768,10 @@
                 ctx.restore();
                 _wpReset(ctx);
             },
-            // ❄️ Ice Shards — rotating frozen shards with frost trails.
+            // ❄️ Ice Shards — mirrors the in-game projectile: a 6-spoke snowflake/crystal
+            // (radial spokes + frozen core) spinning along a frost trail.
             iceShard(ctx, t, w, h, color) {
-                const cy = h / 2;
+                const cy = h / 2, r = 4.5;
                 ctx.globalCompositeOperation = 'lighter';
                 for (let b = 0; b < 2; b++) {
                     const x = 6 + ((t * 0.7 + b * 0.5) % 1) * (w - 12), y = cy + (b === 0 ? -5 : 5), fade = _wpFadeX(x, w, 14);
@@ -24754,8 +24780,17 @@
                         ctx.beginPath(); ctx.arc(x - k * 4, y, 1.5, 0, TAU); ctx.fill();
                     }
                     ctx.save(); ctx.translate(x, y); ctx.rotate(t * 4 + b);
-                    ctx.globalAlpha = fade; ctx.fillStyle = '#eaffff'; ctx.shadowBlur = 9; ctx.shadowColor = color;
-                    ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(2.4, 0); ctx.lineTo(0, 4); ctx.lineTo(-2.4, 0); ctx.closePath(); ctx.fill();
+                    // 6 radial spokes (in-game draws lines out to r*1.2 then a filled core)
+                    ctx.globalAlpha = fade; ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.lineCap = 'round'; ctx.shadowBlur = 9; ctx.shadowColor = color;
+                    ctx.beginPath();
+                    for (let i = 0; i < 6; i++) {
+                        const a = (TAU / 6) * i;
+                        ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+                    }
+                    ctx.stroke();
+                    // frozen core
+                    ctx.fillStyle = '#eaffff'; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.arc(0, 0, r * 0.45, 0, TAU); ctx.fill();
                     ctx.restore();
                 }
                 _wpReset(ctx);
@@ -24897,7 +24932,8 @@
                 }
                 _wpReset(ctx);
             },
-            // 🔫 Shotgun — muzzle flash with a fanning pellet spread.
+            // 🔫 Shotgun — muzzle flash, then a fan of pellets that mirror the in-game
+            // render: each is a white-hot core trailing a colored motion-streak.
             shotgun(ctx, t, w, h, color) {
                 const ox = 10, oy = h / 2, p = (t % 1.2) / 1.2;
                 ctx.globalCompositeOperation = 'lighter';
@@ -24911,11 +24947,18 @@
                         ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + Math.cos(a) * 12, oy + Math.sin(a) * 12); ctx.stroke();
                     }
                 }
+                ctx.lineCap = 'round'; ctx.shadowColor = color;
                 for (let i = 0; i < 6; i++) {
                     const a = (_wpRand(i, 1) - 0.5) * 0.7, dist = p * (w - 20), x = ox + dist;
                     const y = oy + Math.sin(a) * dist * 0.5, fade = _wpFadeX(x, w, 12);
-                    ctx.globalAlpha = (1 - p) * 0.9 * fade; ctx.fillStyle = i % 2 ? color : '#ffcc66'; ctx.shadowBlur = 5; ctx.shadowColor = color;
-                    ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU); ctx.fill();
+                    if (dist < 1) continue;
+                    // colored trailing streak (points back toward the muzzle, like the in-game pellet trail)
+                    const dx = x - ox, dy = y - oy, dl = Math.hypot(dx, dy) || 1, tl = Math.min(9, dist);
+                    ctx.globalAlpha = (1 - p) * 0.8 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - dx / dl * tl, y - dy / dl * tl); ctx.stroke();
+                    // white-hot pellet core
+                    ctx.globalAlpha = (1 - p) * 0.95 * fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 5;
+                    ctx.beginPath(); ctx.arc(x, y, 1.7, 0, TAU); ctx.fill();
                 }
                 _wpReset(ctx);
             }
