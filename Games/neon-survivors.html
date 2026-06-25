@@ -2494,6 +2494,17 @@
         .upgrade-card .icon {
             font-size: 36px;
         }
+        /* V1_304: live animated upgrade-card icons. Locked to the 96x40 design
+           aspect so round effects stay round (same fix as the weapon-select cards). */
+        .upgrade-card .icon .weapon-preview-canvas,
+        .upgrade-card .icon .tome-preview-canvas {
+            width: 84px;
+            aspect-ratio: 96 / 40;
+            height: auto;
+            display: block;
+            margin: 2px auto 0;
+            border-radius: 4px;
+        }
 
         .upgrade-card .name {
             font-size: 14px;
@@ -5764,6 +5775,8 @@
             .upgrade-card .icon {
                 font-size: 28px;
             }
+            .upgrade-card .icon .weapon-preview-canvas,
+            .upgrade-card .icon .tome-preview-canvas { width: 76px; }
             .upgrade-card .name {
                 font-size: 11px;
             }
@@ -21263,25 +21276,18 @@
                 }
                 card.style.cursor = 'pointer';
 
-                // Custom boombox icon
-                let upgradeIcon = upgrade.icon;
-                if (upgrade.id === 'boomBox') {
-                    upgradeIcon = `<svg viewBox="0 0 48 36" width="36" height="27" style="filter: drop-shadow(0 0 3px ${upgrade.color});">
-                        <path d="M12 8 Q24 2 36 8" stroke="#666" stroke-width="3" fill="none" stroke-linecap="round"/>
-                        <rect x="4" y="8" width="40" height="24" rx="3" fill="#444" stroke="${upgrade.color}" stroke-width="1.5"/>
-                        <circle cx="14" cy="20" r="8" fill="#222" stroke="${upgrade.color}" stroke-width="1"/>
-                        <circle cx="14" cy="20" r="3" fill="${upgrade.color}" opacity="0.6"/>
-                        <circle cx="34" cy="20" r="8" fill="#222" stroke="${upgrade.color}" stroke-width="1"/>
-                        <circle cx="34" cy="20" r="3" fill="${upgrade.color}" opacity="0.6"/>
-                        <rect x="20" y="15" width="8" height="10" fill="#333" stroke="#555" stroke-width="0.5"/>
-                    </svg>`;
-                } else if (upgrade.id === 'shotgun') {
-                    upgradeIcon = `<img src="${SHOTGUN_ICON_SVG}" width="48" height="21" style="filter: drop-shadow(0 0 3px ${upgrade.color}); object-fit: contain;">`;
+                // V1_304: live animated icons — weapons reuse the weapon-select
+                // previews (WEAPON_PREVIEWS), tomes use their own TOME_PREVIEWS.
+                // Passives / anything without a preview keep their emoji. The shared
+                // upgrade-preview loop (startUpgradePreviews) animates these canvases.
+                let iconHtml;
+                if (upgrade.type === 'weapon' && WEAPON_PREVIEWS[upgrade.id]) {
+                    iconHtml = `<canvas class="weapon-preview-canvas" data-weapon="${upgrade.id}" aria-hidden="true"></canvas>`;
+                } else if (upgrade.type === 'tome' && TOME_PREVIEWS[upgrade.id]) {
+                    iconHtml = `<canvas class="tome-preview-canvas" data-tome="${upgrade.id}" aria-hidden="true"></canvas>`;
+                } else {
+                    iconHtml = upgrade.icon;
                 }
-                
-                const iconHtml = upgrade.type === 'tome' 
-                    ? `<span style="position:relative;display:inline-block;"><span style="font-size:1.2em;opacity:0.6;">📖</span><span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:0.6em;filter:drop-shadow(0 0 2px #000);">${upgrade.icon}</span></span>`
-                    : upgradeIcon;
                 
                 // V1_253: always show the rolled rarity badge; prepend a small NEW
                 // tag for first-time picks so brand-new weapons show rarity too.
@@ -21444,8 +21450,11 @@
                 
                 DOM.upgradeOverlay.appendChild(banishBtn);
             }
+
+            // V1_304: animate this fresh set of upgrade-card icons (weapons + tomes).
+            startUpgradePreviews();
         }
-        
+
         let banishMode = false;
         
         function toggleBanishMode() {
@@ -24964,6 +24973,178 @@
             }
         };
 
+        // ============================================================
+        // V1_304: TOME live previews — custom looping animations for the
+        // 12 stat tomes, drawn in the same 96x40 design space as the weapon
+        // previews (same helpers, same inset clip). Each fn paints ONE frame;
+        // t = seconds, color = the tome's own color. Vertical budget ~±16 from
+        // centre so nothing clips the 3px top/bottom inset.
+        // ============================================================
+        const TOME_PREVIEWS = {
+            // 🎯 Precision (crit) — bullseye rings + rotating reticle + lock-on flash.
+            critTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 3; i >= 1; i--) {
+                    ctx.globalAlpha = 0.55; ctx.strokeStyle = i === 2 ? '#fff' : color; ctx.lineWidth = 1.6; ctx.shadowBlur = 6; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.arc(cx, cy, i * 4.3, 0, TAU); ctx.stroke();
+                }
+                const rot = t * 1.2;
+                ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.85;
+                for (let k = 0; k < 4; k++) {
+                    const a = rot + k * Math.PI / 2;
+                    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * 13, cy + Math.sin(a) * 13); ctx.lineTo(cx + Math.cos(a) * 16, cy + Math.sin(a) * 16); ctx.stroke();
+                }
+                const hit = (t * 1.1) % 1;
+                if (hit < 0.25) { const k = 1 - hit / 0.25; ctx.globalAlpha = k; ctx.fillStyle = '#fff'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(cx, cy, 1.8 + (1 - k) * 2.4, 0, TAU); ctx.fill(); }
+                else { ctx.globalAlpha = 0.9; ctx.fillStyle = color; ctx.shadowBlur = 6; ctx.beginPath(); ctx.arc(cx, cy, 1.8, 0, TAU); ctx.fill(); }
+                _wpReset(ctx);
+            },
+            // 🧠 Wisdom (XP) — glowing XP gems drifting upward, twinkling.
+            xpTome(ctx, t, w, h, color) {
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 6; i++) {
+                    const sx = 12 + _wpRand(i, 1) * (w - 24);
+                    const rise = (t * (0.35 + _wpRand(i, 2) * 0.3) + _wpRand(i, 3)) % 1;
+                    const y = h - 4 - rise * (h - 9);
+                    const tw = 0.5 + 0.5 * Math.sin(t * 5 + i);
+                    const r = 1.6 + tw * 1.4;
+                    ctx.globalAlpha = (1 - rise * 0.4) * (0.5 + tw * 0.5); ctx.fillStyle = color; ctx.shadowBlur = 7; ctx.shadowColor = color;
+                    ctx.beginPath(); ctx.moveTo(sx, y - r); ctx.lineTo(sx + r * 0.8, y); ctx.lineTo(sx, y + r); ctx.lineTo(sx - r * 0.8, y); ctx.closePath(); ctx.fill();
+                }
+                _wpReset(ctx);
+            },
+            // 💨 Swiftness (speed) — fast horizontal whoosh streaks.
+            speedTome(ctx, t, w, h, color) {
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.shadowColor = color;
+                for (let i = 0; i < 5; i++) {
+                    const y = 9 + i * ((h - 18) / 4);
+                    const len = 14 + _wpRand(i, 1) * 16;
+                    const x = ((t * (0.9 + _wpRand(i, 2) * 0.6) + _wpRand(i, 3)) % 1) * (w + len) - len / 2;
+                    const fade = _wpFadeX(x + len / 2, w, 14);
+                    ctx.globalAlpha = 0.5 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+                }
+                _wpReset(ctx);
+            },
+            // ⚔️ Power (damage) — upward-pumping double chevron + impact spark.
+            powerTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2; ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                const p = (t * 1.3) % 1, lift = Math.sin(p * Math.PI) * 4;
+                ctx.strokeStyle = color; ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.shadowBlur = 8;
+                for (let c = 0; c < 2; c++) {
+                    ctx.globalAlpha = c === 0 ? 0.95 : 0.45; const oy = cy - lift + c * 7 + 2;
+                    ctx.beginPath(); ctx.moveTo(cx - 9, oy + 5); ctx.lineTo(cx, oy - 3); ctx.lineTo(cx + 9, oy + 5); ctx.stroke();
+                }
+                if (p < 0.2) { const k = 1 - p / 0.2; ctx.globalAlpha = k; ctx.fillStyle = '#fff'; ctx.shadowBlur = 10; ctx.beginPath(); ctx.arc(cx, cy - 8, 2 + (1 - k) * 3, 0, TAU); ctx.fill(); }
+                _wpReset(ctx);
+            },
+            // 🍀 Fortune (luck) — four-leaf clover with orbiting sparkles.
+            luckTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2; ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.shadowBlur = 8;
+                const sway = Math.sin(t * 1.5) * 0.15;
+                ctx.fillStyle = color; ctx.globalAlpha = 0.85;
+                for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + sway; ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 5, cy + Math.sin(a) * 5, 3.6, 0, TAU); ctx.fill(); }
+                ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, TAU); ctx.fill();
+                ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(cx, cy + 4); ctx.lineTo(cx - 2, cy + 11); ctx.stroke();
+                for (let i = 0; i < 3; i++) { const a = t * 2 + i * TAU / 3; ctx.globalAlpha = 0.45 + 0.45 * Math.sin(t * 6 + i); ctx.fillStyle = '#fff'; ctx.shadowBlur = 6; _wpStar(ctx, cx + Math.cos(a) * 15, cy + Math.sin(a) * 9, 1.6); }
+                _wpReset(ctx);
+            },
+            // ⚡ Haste (attack speed) — strobing bolt + rapid side ticks.
+            attackSpeedTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2; ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                const strobe = 0.5 + 0.5 * Math.sin(t * 22);
+                const bolt = (s) => { s.beginPath(); s.moveTo(cx + 3, cy - 13); s.lineTo(cx - 4, cy - 1); s.lineTo(cx + 2, cy - 1); s.lineTo(cx - 3, cy + 13); s.stroke(); };
+                ctx.strokeStyle = color; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.shadowBlur = 8; ctx.globalAlpha = 0.6 + strobe * 0.4; bolt(ctx);
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.globalAlpha = strobe; bolt(ctx);
+                ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.shadowBlur = 5;
+                for (let s = 0; s < 3; s++) { const xx = (t * 3 + s / 3) % 1, px = cx + 12 + xx * 8; ctx.globalAlpha = (1 - xx) * 0.6; ctx.beginPath(); ctx.moveTo(px, cy - 3); ctx.lineTo(px + 4, cy - 3); ctx.moveTo(px, cy + 3); ctx.lineTo(px + 4, cy + 3); ctx.stroke(); }
+                _wpReset(ctx);
+            },
+            // ❤️ Vitality (max HP) — a beating heart (double-thump rhythm).
+            vitalityTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2 + 1; ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.shadowBlur = 10;
+                const bt = (t * 1.1) % 1;
+                const beat = bt < 0.12 ? Math.sin(bt / 0.12 * Math.PI) : (bt < 0.30 ? Math.sin((bt - 0.18) / 0.12 * Math.PI) * 0.6 : 0);
+                const s = 1 + Math.max(0, beat) * 0.18;
+                ctx.save(); ctx.translate(cx, cy); ctx.scale(s, s);
+                ctx.fillStyle = color; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.moveTo(0, 9);
+                ctx.bezierCurveTo(-11, -1, -7, -11, 0, -4);
+                ctx.bezierCurveTo(7, -11, 11, -1, 0, 9);
+                ctx.closePath(); ctx.fill();
+                ctx.restore();
+                _wpReset(ctx);
+            },
+            // 💚 Recovery (regen) — rising healing plus-signs that fade in/out.
+            regenTome(ctx, t, w, h, color) {
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.lineCap = 'round';
+                for (let i = 0; i < 4; i++) {
+                    const sx = 14 + _wpRand(i, 1) * (w - 28);
+                    const rise = (t * (0.4 + _wpRand(i, 2) * 0.25) + _wpRand(i, 3)) % 1;
+                    const y = h - 4 - rise * (h - 10), a = Math.sin(rise * Math.PI), r = 2.4 + _wpRand(i, 4) * 1.2;
+                    ctx.globalAlpha = a * 0.85; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 7;
+                    ctx.beginPath(); ctx.moveTo(sx - r, y); ctx.lineTo(sx + r, y); ctx.moveTo(sx, y - r); ctx.lineTo(sx, y + r); ctx.stroke();
+                }
+                _wpReset(ctx);
+            },
+            // 🛡️ Iron (armor) — a shield with a sweeping highlight glint.
+            armorTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2; ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.shadowBlur = 8;
+                ctx.strokeStyle = color; ctx.fillStyle = 'rgba(136,153,170,0.20)'; ctx.lineWidth = 2; ctx.globalAlpha = 0.9; ctx.lineJoin = 'round';
+                ctx.beginPath();
+                ctx.moveTo(cx, cy - 13); ctx.lineTo(cx + 9, cy - 9); ctx.lineTo(cx + 9, cy + 2);
+                ctx.quadraticCurveTo(cx + 9, cy + 10, cx, cy + 14);
+                ctx.quadraticCurveTo(cx - 9, cy + 10, cx - 9, cy + 2); ctx.lineTo(cx - 9, cy - 9); ctx.closePath();
+                ctx.fill(); ctx.stroke();
+                ctx.globalAlpha = 0.5; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(cx, cy - 9); ctx.lineTo(cx, cy + 11); ctx.stroke();
+                const sw = (t * 0.6) % 1, sx = cx - 11 + sw * 22;
+                ctx.globalAlpha = (1 - Math.abs(sw - 0.5) * 2) * 0.4; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.5; ctx.shadowBlur = 4;
+                ctx.beginPath(); ctx.moveTo(sx, cy - 11); ctx.lineTo(sx - 5, cy + 11); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // 🩸 Vampirism (lifesteal) — falling blood droplets + splash ripple.
+            lifestealTome(ctx, t, w, h, color) {
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                for (let i = 0; i < 3; i++) {
+                    const sx = 16 + _wpRand(i, 1) * (w - 32);
+                    const fall = (t * (0.5 + _wpRand(i, 2) * 0.3) + _wpRand(i, 3)) % 1;
+                    const y = 5 + fall * (h - 13);
+                    ctx.globalAlpha = 0.88; ctx.fillStyle = color; ctx.shadowBlur = 7;
+                    ctx.beginPath(); ctx.arc(sx, y, 2.4, 0, TAU); ctx.moveTo(sx - 1.4, y - 1); ctx.lineTo(sx, y - 5); ctx.lineTo(sx + 1.4, y - 1); ctx.closePath(); ctx.fill();
+                    if (fall > 0.82) { const e = (fall - 0.82) / 0.18; ctx.globalAlpha = (1 - e) * 0.6; ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.ellipse(sx, h - 4, 2 + e * 6, 1 + e * 2, 0, 0, TAU); ctx.stroke(); }
+                }
+                _wpReset(ctx);
+            },
+            // 💀 Lethality (crit damage) — a skull with pulsing eye-glow.
+            critDamageTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2 - 1, pulse = 0.5 + 0.5 * Math.sin(t * 3);
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color; ctx.shadowBlur = 8; ctx.globalAlpha = 0.9; ctx.fillStyle = color;
+                ctx.beginPath(); ctx.arc(cx, cy, 8.5, 0, TAU); ctx.fill();
+                ctx.fillRect(cx - 4.5, cy + 6, 9, 4.5);
+                ctx.globalCompositeOperation = 'source-over'; ctx.shadowBlur = 0; ctx.fillStyle = '#10001f';
+                ctx.beginPath(); ctx.arc(cx - 3.6, cy - 1.5, 2.6, 0, TAU); ctx.arc(cx + 3.6, cy - 1.5, 2.6, 0, TAU); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(cx, cy + 1); ctx.lineTo(cx - 1.4, cy + 4); ctx.lineTo(cx + 1.4, cy + 4); ctx.closePath(); ctx.fill();
+                ctx.strokeStyle = '#10001f'; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(cx - 2.2, cy + 6); ctx.lineTo(cx - 2.2, cy + 10.5); ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + 10.5); ctx.moveTo(cx + 2.2, cy + 6); ctx.lineTo(cx + 2.2, cy + 10.5); ctx.stroke();
+                ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 9; ctx.globalAlpha = 0.5 + pulse * 0.5;
+                ctx.beginPath(); ctx.arc(cx - 3.6, cy - 1.5, 1.2, 0, TAU); ctx.arc(cx + 3.6, cy - 1.5, 1.2, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // 🧲 Attraction (pickup range) — orbs pulled inward to a pulsing core.
+            magnetTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2; ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                for (let i = 0; i < 6; i++) {
+                    const p = (t * 0.7 + i / 6) % 1, rad = (1 - p) * 21 + 3, a = i * 1.2 + t * 1.5 + (1 - p) * 3;
+                    ctx.globalAlpha = p * 0.85; ctx.fillStyle = i % 2 ? '#bfe6ff' : color; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.arc(cx + Math.cos(a) * rad * 1.4, cy + Math.sin(a) * rad * 0.68, 1.3 + p * 1.2, 0, TAU); ctx.fill();
+                }
+                ctx.globalAlpha = 0.9; ctx.fillStyle = '#fff'; ctx.shadowBlur = 9; ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, TAU); ctx.fill();
+                const pr = (t * 0.8) % 1; ctx.globalAlpha = (1 - pr) * 0.5; ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.ellipse(cx, cy, pr * 15 + 2, (pr * 15 + 2) * 0.6, 0, 0, TAU); ctx.stroke();
+                _wpReset(ctx);
+            }
+        };
+
         let _wpItems = [];
         let _wpRAF = 0;
         let _wpLast = 0;
@@ -25014,6 +25195,61 @@
         function startWeaponPreviews() {
             setupWeaponPreviews();
             if (!_wpRAF && _wpItems.length) _wpRAF = requestAnimationFrame(_wpFrame);
+        }
+
+        // ===== V1_304: UPGRADE-SCREEN LIVE PREVIEWS =====
+        // Same engine as the weapon-select previews, but it scans the in-game
+        // upgrade cards and drives BOTH weapon (WEAPON_PREVIEWS) and tome
+        // (TOME_PREVIEWS) canvases. Own RAF/state — the two screens never overlap.
+        let _upItems = [];
+        let _upRAF = 0;
+        let _upLast = 0;
+
+        function setupUpgradePreviews() {
+            _upItems = [];
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            DOM.upgradeOptions.querySelectorAll('.weapon-preview-canvas, .tome-preview-canvas').forEach(cv => {
+                const isTome = cv.classList.contains('tome-preview-canvas');
+                const id = isTome ? cv.dataset.tome : cv.dataset.weapon;
+                const draw = isTome ? TOME_PREVIEWS[id] : WEAPON_PREVIEWS[id];
+                if (!draw) return;
+                const cw = cv.clientWidth || WEAPON_PREVIEW_W;
+                const ch = cv.clientHeight || WEAPON_PREVIEW_H;
+                cv.width = Math.round(cw * dpr);
+                cv.height = Math.round(ch * dpr);
+                const cx = cv.getContext('2d');
+                cx.setTransform(cw / WEAPON_PREVIEW_W * dpr, 0, 0, ch / WEAPON_PREVIEW_H * dpr, 0, 0);
+                const def = isTome ? TOMES[id] : WEAPONS[id];
+                _upItems.push({ cx, draw, color: (def && def.color) || '#0ff', seed: Math.random() * 50 });
+            });
+        }
+
+        function _upgradeFrame(now) {
+            // Self-stop when the upgrade overlay leaves the screen.
+            if (!DOM.upgradeOverlay.classList.contains('active')) { _upRAF = 0; return; }
+            _upRAF = requestAnimationFrame(_upgradeFrame);
+            if (now - _upLast < _wpFrameCap) return;
+            _upLast = now;
+            const t = now / 1000;
+            for (const it of _upItems) {
+                const c = it.cx;
+                c.clearRect(0, 0, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H);
+                c.save();
+                c.beginPath();
+                c.rect(6, 3, WEAPON_PREVIEW_W - 12, WEAPON_PREVIEW_H - 6);
+                c.clip();
+                try { it.draw(c, t + it.seed, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H, it.color); } catch (e) {}
+                c.restore();
+            }
+        }
+
+        // Called at the end of showUpgradeCards() — cards are rebuilt on every
+        // level-up and reroll, so cancel any prior loop and re-scan the fresh canvases.
+        function startUpgradePreviews() {
+            if (_upRAF) cancelAnimationFrame(_upRAF);
+            _upRAF = 0;
+            setupUpgradePreviews();
+            if (_upItems.length) _upRAF = requestAnimationFrame(_upgradeFrame);
         }
 
         function showWeaponSelect() {
