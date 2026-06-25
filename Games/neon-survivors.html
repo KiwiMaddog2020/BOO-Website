@@ -707,6 +707,33 @@
             opacity: 1;
             visibility: visible;
         }
+
+        /* V1_305: desktop hover tooltips. The inline .item-tooltip above is clipped by the
+           trackpad's overflow:hidden and sits at the screen's bottom edge, so on desktop a
+           body-level copy is shown ABOVE the icon (escapes all clipping). When that JS path
+           is active we suppress the clipped inline one to avoid a half-shown ghost. */
+        body.js-hud-tooltips .weapon-icon:hover .item-tooltip,
+        body.js-hud-tooltips .tome-icon:hover .item-tooltip {
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
+        .hud-hover-tooltip {
+            position: fixed;
+            display: none;
+            background: rgba(0, 0, 0, 0.95);
+            border: 1px solid #0ff;
+            border-radius: 6px;
+            padding: 8px 12px;
+            min-width: 140px;
+            max-width: 200px;
+            z-index: 3000;
+            pointer-events: none;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.35);
+            opacity: 0;
+            transition: opacity 0.12s;
+            font-family: 'Oxanium', system-ui, sans-serif;
+        }
+        .hud-hover-tooltip.show { opacity: 1; }
         
         .item-tooltip-name {
             font-size: 12px;
@@ -7661,6 +7688,15 @@
             if (t <= 240) return 1;                                  // first 4 min: baseline
             return Math.min(3.0, Math.pow(1.04, (t - 240) / 60));    // +4%/min compounding, cap 3x
         }
+        // V1_305: early-game enemy-HP cushion. The opening minutes were a faceroll
+        // (high-base weapons one-shot trash). This scales EVERY regular enemy's HP by up
+        // to +45% at t=0, decaying linearly to 1.0x by t=210s and HARD-CLAMPED to 1.0 for
+        // t>=240s — the exact point powerOffsetHpMult engages — so it provably cannot touch
+        // mid/late balance. Bosses use their own HP formulas and are intentionally excluded.
+        function earlyHpMult(t) {
+            if (t >= 240) return 1;
+            return Math.max(1, Math.min(1.45, 1 + 0.45 * (1 - t / 210)));
+        }
 
         // ===== RARITY SYSTEM =====
         const RARITIES = {
@@ -7676,7 +7712,7 @@
         // the existing per-weapon level scaling (damage / projectile count /
         // radius / cooldown). bonusLevel is uncapped and separate from the
         // displayed level (which stays capped at 20).
-        const WEAPON_RARITY_BONUS = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 5 };
+        const WEAPON_RARITY_BONUS = { common: 0, uncommon: 1, rare: 1, epic: 2, legendary: 3 }; // V1_305: compressed (was rare2/epic3/legendary5) — the old spread instantly multiplied instance counts (epic squirrel = 3) into an early faceroll
 
         // Weapon rarities
         // V1_253: OBSOLETE for magnitude — rarity is now rolled per offer (see
@@ -7793,7 +7829,8 @@
                 icon: '⚡',
                 color: COLORS.white,
                 desc: 'Auto-fires at nearest enemy',
-                baseDamage: 7.2,
+                baseDamage: 8,
+                dmgScale: 0.07,
                 baseFireRate: 720,
                 baseProjectiles: 1,
                 type: 'projectile'
@@ -7818,6 +7855,7 @@
                 color: COLORS.teal,
                 desc: 'Blasts all nearby enemies',
                 baseDamage: 10,
+                dmgScale: 0.05,
                 baseRadius: 147,
                 baseFireRate: 1440,
                 type: 'aoe'
@@ -7828,7 +7866,7 @@
                 color: COLORS.pink,
                 desc: 'Splash beams that ramp up over time',
                 baseDamage: 8,
-                baseRange: 220,
+                baseRange: 187,
                 acquireTime: 600,
                 baseBeams: 1,
                 type: 'beam'
@@ -7839,7 +7877,7 @@
                 color: COLORS.yellow,
                 desc: 'Raining stars damage nearby enemies',
                 baseDamage: 3.2,
-                baseRadius: 240,
+                baseRadius: 204,
                 tickRate: 500,
                 type: 'starfall'
             },
@@ -7870,8 +7908,9 @@
                 icon: '🐿️',
                 color: '#39ff14',
                 desc: 'Rabid pet squirrel shreds enemies',
-                baseDamage: 22,
-                walkDamage: 7,
+                baseDamage: 13,
+                walkDamage: 5,
+                dmgScale: 0.104,
                 baseFireRate: 2100,
                 baseSquirrels: 1,
                 splashRadius: 45,
@@ -7882,10 +7921,11 @@
                 icon: '🌩️',
                 color: '#ffff00',
                 desc: 'Lightning from above',
-                baseDamage: 27,
+                baseDamage: 13,
+                dmgScale: 0.140,
                 baseFireRate: 1200,
                 baseStrikes: 1,
-                baseRange: 240,
+                baseRange: 204,
                 type: 'thunder'
             },
             toxicAura: {
@@ -7894,6 +7934,7 @@
                 color: '#32cd32',
                 desc: 'Poison nearby enemies',
                 baseDamage: 5.5,
+                dmgScale: 0.06,
                 baseRadius: 99,
                 tickRate: 1400,
                 type: 'aura'
@@ -7905,6 +7946,7 @@
                 color: '#88ddff',
                 desc: 'Freezing projectiles that slow',
                 baseDamage: 9,
+                dmgScale: 0.06,
                 baseFireRate: 840,
                 baseProjectiles: 2,
                 slowAmount: 0.4,
@@ -7916,7 +7958,8 @@
                 icon: '☄️',
                 color: '#ff4400',
                 desc: 'Explosive impacts from the sky',
-                baseDamage: 38,
+                baseDamage: 18,
+                dmgScale: 0.143,
                 baseFireRate: 2100,
                 blastRadius: 72,
                 type: 'meteor'
@@ -7926,7 +7969,8 @@
                 icon: '👁️',
                 color: '#aa88ff',
                 desc: 'Homing spirit projectiles',
-                baseDamage: 25,
+                baseDamage: 12,
+                dmgScale: 0.140,
                 baseFireRate: 1080,
                 baseOrbs: 1,
                 type: 'homing'
@@ -7936,7 +7980,8 @@
                 icon: '🪃',
                 color: '#f0ead6',
                 desc: 'Returns to you, hits twice',
-                baseDamage: 19,
+                baseDamage: 12,
+                dmgScale: 0.094,
                 baseFireRate: 1800,
                 baseCount: 1,
                 type: 'boomerang'
@@ -7946,7 +7991,8 @@
                 icon: '⛓️',
                 color: '#44ffff',
                 desc: 'Lightning jumps between enemies',
-                baseDamage: 13,
+                baseDamage: 10,
+                dmgScale: 0.068,
                 baseFireRate: 1320,
                 baseChains: 3,
                 chainRange: 101,
@@ -7987,7 +8033,8 @@
                 icon: '💿',
                 color: '#ff66aa',
                 desc: 'Disc bounces between enemies',
-                baseDamage: 12.6,
+                baseDamage: 10,
+                dmgScale: 0.064,
                 baseFireRate: 1600,
                 baseBounces: 4,
                 bounceRange: 150,
@@ -7998,7 +8045,8 @@
                 icon: '💣',
                 color: '#ff4444',
                 desc: 'Drops mines that explode on contact',
-                baseDamage: 35,
+                baseDamage: 16,
+                dmgScale: 0.150,
                 baseFireRate: 2000,
                 blastRadius: 160,
                 armTime: 800,
@@ -8058,9 +8106,9 @@
                 name: 'Tome of Wisdom', 
                 icon: '🧠', 
                 color: '#66ff66', 
-                desc: '+10% XP gain',
+                desc: '+12% XP gain',
                 stat: 'xpBonus',
-                value: 0.10
+                value: 0.12
             },
             speedTome: { 
                 name: 'Tome of Swiftness', 
@@ -8074,41 +8122,41 @@
                 name: 'Tome of Power', 
                 icon: '⚔️', 
                 color: '#ff9933', 
-                desc: '+8% damage',
+                desc: '+6% damage',
                 stat: 'damageBonus',
-                value: 0.08
+                value: 0.06
             },
             luckTome: { 
                 name: 'Tome of Fortune', 
                 icon: '🍀', 
                 color: '#ffcc00', 
-                desc: '+6% luck (better drops)',
+                desc: '+5% luck (better drops)',
                 stat: 'luck',
-                value: 0.06
+                value: 0.05
             },
             attackSpeedTome: { 
                 name: 'Tome of Haste', 
                 icon: '⚡', 
                 color: '#cc66ff', 
-                desc: '+7% attack speed',
+                desc: '+6% attack speed',
                 stat: 'attackSpeedBonus',
-                value: 0.07
+                value: 0.06
             },
             vitalityTome: { 
                 name: 'Tome of Vitality', 
                 icon: '❤️', 
                 color: '#ff6699', 
-                desc: '+15 max HP',
+                desc: '+18 max HP',
                 stat: 'maxHpBonus',
-                value: 15
+                value: 18
             },
             regenTome: { 
                 name: 'Tome of Recovery', 
                 icon: '💚', 
                 color: '#66ffcc', 
-                desc: '+0.8 HP/sec regen',
+                desc: '+1.0 HP/sec regen',
                 stat: 'regenBonus',
-                value: 0.8
+                value: 1.0
             },
             armorTome: { 
                 name: 'Tome of Iron', 
@@ -8138,9 +8186,9 @@
                 name: 'Tome of Attraction', 
                 icon: '🧲', 
                 color: '#44aaff', 
-                desc: '+15% pickup range',
+                desc: '+20% pickup range',
                 stat: 'pickupBonus',
-                value: 0.15
+                value: 0.20
             }
         };
         const MAX_UNIQUE_TOMES = 4;
@@ -8154,12 +8202,12 @@
             regen: { name: 'Vitality', icon: '💚', color: COLORS.teal, desc: '+0.5 HP/sec', stat: 'regenBonus', value: 0.5 },
             lifesteal: { name: 'Vampirism', icon: '🩸', color: COLORS.pink, desc: '+3% Lifesteal', stat: 'lifesteal', value: 0.03 },
             critChance: { name: 'Precision', icon: '🎯', color: COLORS.cyan, desc: '+4% Crit Chance', stat: 'critChance', value: 0.04 },
-            critMultiplier: { name: 'Lethality', icon: '💀', color: COLORS.purple, desc: '+10% Crit Damage', stat: 'critMultiplier', value: 0.10 },
+            critMultiplier: { name: 'Lethality', icon: '💀', color: COLORS.purple, desc: '+9% Crit Damage', stat: 'critMultiplier', value: 0.09 },
             armor: { name: 'Fortitude', icon: '🛡️', color: COLORS.blue, desc: '+5% Armor', stat: 'armor', value: 0.05 },
             maxHp: { name: 'Vigor', icon: '❤️', color: COLORS.pink, desc: '+15 Max HP', stat: 'maxHpBonus', value: 15 },
-            pickupRange: { name: 'Magnetism', icon: '🧲', color: COLORS.cyan, desc: '+20% Pickup Range', stat: 'pickupBonus', value: 0.20 },
+            pickupRange: { name: 'Magnetism', icon: '🧲', color: COLORS.cyan, desc: '+15% Pickup Range', stat: 'pickupBonus', value: 0.15 },
             xpBonus: { name: 'Wisdom', icon: '📚', color: COLORS.purple, desc: '+10% XP Gain', stat: 'xpBonus', value: 0.10 },
-            luck: { name: 'Fortune', icon: '🍀', color: COLORS.teal, desc: '+8% Luck', stat: 'luck', value: 0.08 }
+            luck: { name: 'Fortune', icon: '🍀', color: COLORS.teal, desc: '+3% Luck', stat: 'luck', value: 0.03 }
         };
 
         // ===== PLAYER CLASS =====
@@ -8421,8 +8469,8 @@
                 
                 // Holy Book radiation - damage nearby enemies when healing
                 if (legendaryEffects.holyBook.active && actualHeal > 0) {
-                    const radiusRange = 120;
-                    const radiationDamage = actualHeal * 0.5; // 50% of heal as damage
+                    const radiusRange = 90;                    // V1_305: 120 -> 90
+                    const radiationDamage = actualHeal * 0.30; // V1_305: 0.5 -> 0.30 (no-cooldown radiate-on-heal was a continuous free AoE)
                     
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
@@ -8432,14 +8480,8 @@
                         }
                     }
                     
-                    for (const boss of bosses) {
-                        if (boss.dead) continue;
-                        const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
-                        if (dist < radiusRange) {
-                            boss.takeDamage(radiationDamage, false);
-                        }
-                    }
-                    
+                    // V1_305: bosses are EXCLUDED from holy-book radiation — continuous free
+                    // chip damage on bosses (no cooldown) was trivializing late-game boss fights.
                     for (const lep of leprechauns) {
                         if (lep.dead) continue;
                         const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
@@ -8774,7 +8816,7 @@
                 const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
                 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const projectileCount = def.baseProjectiles + Math.floor(level / 4);
                 const totalDamage = baseDamage * projectileCount;
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
@@ -8799,7 +8841,7 @@
 
             updateOrbit(id, def, state, level, dt) {
                 const orbCount = def.baseOrbs + Math.floor(level / 4);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const radius = 70 + level * 5;
                 
                 // Initialize shield charges (one per orb)
@@ -8971,7 +9013,7 @@
                 state.lastFire = now;
                 SFX.wBoomBox();
                 const radius = def.baseRadius + level * 10;
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Visual wave
                 state.waveRadius = 0;
@@ -9223,7 +9265,7 @@
                 
                 state.lastFire = now;
                 const targetCount = def.baseTargets + Math.floor(level / 4);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 
                 // Efficient random sample instead of full shuffle
                 const targets = randomSample(allTargets, targetCount);
@@ -9263,7 +9305,7 @@
                 SFX.wVoidDaggers();
 
                 const strikeCount = def.baseDaggers + Math.floor(level / 3); // V1_298: slower dagger stacking (was /2)
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Nearest-first so the flurry focuses the closest threats; wrap to re-hit when
                 // there are fewer enemies than strikes (single targets still get the full burst).
@@ -9297,7 +9339,7 @@
                 const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier; // balance pass: add per-level cooldown scaling (was missing, unlike every other weapon)
                 if (now - state.lastFire < fireRate) return;
                 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const range = def.baseRange + level * 15; // balance pass: +reach scaling (was *12)
                 const coneAngle = def.baseAngle + level * 0.04;
                 
@@ -9495,7 +9537,7 @@
                 state.lastFire = now;
                 SFX.wBoomerang();
                 const count = def.baseCount + Math.floor(level / 6);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
                 
                 for (let i = 0; i < count; i++) {
@@ -9506,7 +9548,7 @@
                     const boom = new Projectile(this.x, this.y, angle, 3.5, baseDamage, def.color, 'boomerang', 999, sizeScale);
                     boom.startX = this.x;
                     boom.startY = this.y;
-                    boom.maxDist = Math.min(250 + level * 12, ONSCREEN_RANGE_CAP); // V1_303: keep the boomerang's apex on-screen
+                    boom.maxDist = Math.min(213 + level * 12, ONSCREEN_RANGE_CAP); // V1_303: keep the boomerang's apex on-screen; V1_305: -15% start reach (250->213) — also edited in the meta range.fn
                     boom.returning = false;
                     boom.spinAngle = 0;
                     projectiles.push(boom);
@@ -9530,7 +9572,7 @@
                 state.lastFire = now;
                 SFX.wThunder();
                 const strikeCount = def.baseStrikes + Math.floor(level / 4);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 
                 // Store strikes for rendering
                 if (!state.strikes) state.strikes = [];
@@ -9562,7 +9604,7 @@
                 state.lastTick = now;
                 SFX.wToxic();
                 const radius = def.baseRadius + level * 10;
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Store for rendering
                 state.auraRadius = radius;
@@ -9604,7 +9646,7 @@
                 state.lastTick = now;
                 SFX.wStarField();
                 const radius = Math.min(def.baseRadius + level * 15, ONSCREEN_RANGE_CAP); // V1_303: keep the star field on-screen
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Initialize falling stars array
                 if (!state.fallingStars) state.fallingStars = [];
@@ -9677,7 +9719,7 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 const shardCount = def.baseProjectiles + Math.floor(level / 4);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
                 
                 const target = findNearestEnemy(this.x, this.y);
@@ -9725,7 +9767,7 @@
                 
                 state.lastFire = now;
                 SFX.wMeteor();
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const blastRadius = def.blastRadius + level * 5;
                 const meteorCount = 1 + Math.floor(level / 4); // balance pass: 2nd meteor at Lv4 (was Lv5)
                 
@@ -9812,7 +9854,7 @@
                 state.lastFire = now;
                 SFX.wGhost();
                 const orbCount = def.baseOrbs + Math.floor(level / 4);
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
 
                 // Random base angle so orbs don't always exit from same direction
@@ -9832,8 +9874,8 @@
             fireSquirrel(id, def, state, level, now) {
                 // +1 squirrel at levels 2, 4, 6, 8...
                 const squirrelCount = def.baseSquirrels + Math.floor(level / 2);
-                const pounceDamage = def.baseDamage * (1 + (level - 1) * 0.04);
-                const walkDamage = def.walkDamage * (1 + (level - 1) * 0.04);
+                const pounceDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
+                const walkDamage = def.walkDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = 1 + (level - 1) * 0.025;
                 const pounceCooldown = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
                 
@@ -9985,7 +10027,7 @@
                 
                 state.lastFire = now;
                 SFX.wChain();
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const chainCount = def.baseChains + Math.floor(level / 4);
                 const chainRange = def.chainRange + level * 10;
                 
@@ -10081,7 +10123,7 @@
                 SFX.wArrow();
                 state.burstShots++;
                 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const arrowCount = level >= 3 ? 3 + Math.floor((level - 3) / 5) * 2 : def.baseArrows; // 1 -> 3 at L3, then 5, 7...
                 const pierce = def.pierce + Math.floor(level / 4);
                 
@@ -10205,7 +10247,7 @@
                 state.lastFire = now;
                 SFX.wRicochet();
 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const bounces = def.baseBounces + Math.floor(level / 3);
                 const bounceRange = def.bounceRange + level * 10;
                 
@@ -10241,7 +10283,7 @@
                 state.lastFire = now;
                 SFX.wMineDrop();
 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * 0.04);
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const blastRadius = def.blastRadius + level * 5;
 
                 // Drop behind player based on movement
@@ -11886,7 +11928,7 @@
                 
                 // Apply damage scaling with difficulty bonus
                 this.damage = Math.floor(this.baseDamage * dmgScale * enemyDamageBonus * lateGameDamageMult(gameTime));
-                this.hp = Math.floor(this.maxHp * enemyHealthBonus * powerOffsetHpMult(gameTime));
+                this.hp = Math.floor(this.maxHp * enemyHealthBonus * powerOffsetHpMult(gameTime) * earlyHpMult(gameTime)); // V1_305: fading early-game HP cushion (1.0x by 4 min)
                 this.maxHp = this.hp;
                 this.speed = this.speed * enemySpeedBonus;
                 this.baseSpeed = this.speed; // Store for freeze effect
@@ -11923,7 +11965,7 @@
             }
             
             applyShock(damage) {
-                this.shockTimer = 3000; // 3 seconds
+                this.shockTimer = 1500; // V1_305: 1.5s (was 3s) — long stun + cheap proc made crowds permanently frozen
                 this.takeDamage(damage, false);
                 spawnParticles(this.x, this.y, COLORS.shock, 10);
             }
@@ -13230,6 +13272,35 @@
             }
         }
 
+        // V1_305: robust chase-movement with obstacle avoidance for bosses/minibosses.
+        // The bosses previously tried only ONE perpendicular when blocked and froze on
+        // rocks/trees the moment that side was also blocked. This mirrors the enemy
+        // avoidance (preferred perp -> alternate perp -> two forward diagonals) and adds
+        // a short "unstick" pass + a push directly away from the obstacle, so a wedged
+        // boss always finds a path around instead of locking in place.
+        function moveWithAvoidance(self, dirX, dirY, frameSpeed) {
+            let nx = self.x + dirX * frameSpeed, ny = self.y + dirY * frameSpeed;
+            const t0 = isInTerrain(nx, ny, self.radius);
+            if (!t0) { self.x = nx; self.y = ny; return; }
+            const perpL = { x: -dirY, y: dirX }, perpR = { x: dirY, y: -dirX };
+            const cross = dirX * (t0.y - self.y) - dirY * (t0.x - self.x);
+            const pref = cross > 0 ? perpR : perpL, alt = cross > 0 ? perpL : perpR;
+            const cands = [
+                [pref.x, pref.y, 1], [alt.x, alt.y, 1],
+                [(dirX + pref.x) * 0.7, (dirY + pref.y) * 0.7, 1],
+                [(dirX + alt.x) * 0.7, (dirY + alt.y) * 0.7, 1],
+                [pref.x, pref.y, 0.5], [alt.x, alt.y, 0.5],
+            ];
+            for (const [vx, vy, m] of cands) {
+                nx = self.x + vx * frameSpeed * m; ny = self.y + vy * frameSpeed * m;
+                if (!isInTerrain(nx, ny, self.radius)) { self.x = nx; self.y = ny; return; }
+            }
+            // Fully wedged: nudge directly away from the obstacle centre so we never lock up.
+            const awx = self.x - t0.x, awy = self.y - t0.y, al = Math.hypot(awx, awy) || 1;
+            nx = self.x + (awx / al) * frameSpeed * 0.5; ny = self.y + (awy / al) * frameSpeed * 0.5;
+            if (!isInTerrain(nx, ny, self.radius)) { self.x = nx; self.y = ny; }
+        }
+
         // ===== MINI BOSS CLASS =====
         class MiniBoss {
             constructor(x, y) {
@@ -13243,7 +13314,7 @@
                 const speedScale = 1 + Math.floor(gameTime / 150) * 0.08; // +8% speed per 2.5 min (slowed from /120)
                 
                 this.speed = 1.235 * speedScale * enemySpeedBonus;
-                this.maxHp = Math.floor((440 + bossCount * 110) * timeScale * enemyHealthBonus * 1.1664 * powerOffsetHpMult(gameTime)); // V1_253: +8% stacked (1.08*1.08) + rarity power-offset
+                this.maxHp = Math.floor((380 + bossCount * 110) * timeScale * enemyHealthBonus * 1.10 * powerOffsetHpMult(gameTime)); // V1_305: proportional mini-boss trim (base 440->380, +16.6%->+10%) — per-bossCount term + 0.24 timeScale step kept (~-14%)
                 this.hp = this.maxHp;
                 this.damage = Math.floor(25 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.color = '#ff6600';
@@ -13308,33 +13379,8 @@
                 const dist = Math.hypot(dx, dy);
                 
                 if (dist > 0) {
-                    const dirX = dx / dist;
-                    const dirY = dy / dist;
-                    let newX = this.x + dirX * frameSpeed;
-                    let newY = this.y + dirY * frameSpeed;
-                    
-                    // Check terrain collision
-                    const terrain = isInTerrain(newX, newY, this.radius);
-                    if (!terrain) {
-                        this.x = newX;
-                        this.y = newY;
-                    } else {
-                        // Navigate around obstacle
-                        const perpLeft = { x: -dirY, y: dirX };
-                        const perpRight = { x: dirY, y: -dirX };
-                        const toObsX = terrain.x - this.x;
-                        const toObsY = terrain.y - this.y;
-                        const crossProduct = dirX * toObsY - dirY * toObsX;
-                        const preferredPerp = crossProduct > 0 ? perpRight : perpLeft;
-                        
-                        const slideX = this.x + preferredPerp.x * frameSpeed;
-                        const slideY = this.y + preferredPerp.y * frameSpeed;
-                        
-                        if (!isInTerrain(slideX, slideY, this.radius)) {
-                            this.x = slideX;
-                            this.y = slideY;
-                        }
-                    }
+                    // V1_305: robust avoidance (was a single-perpendicular slide that stuck on rocks/trees).
+                    moveWithAvoidance(this, dx / dist, dy / dist, frameSpeed);
                 }
                 
                 // Apply knockback velocity (smooth knockback)
@@ -13636,7 +13682,7 @@
                 
                 this.baseSpeedValue = 0.855 * speedScale * enemySpeedBonus;
                 this.speed = this.baseSpeedValue;
-                this.maxHp = Math.floor((805 + bossCount * 161) * timeScale * enemyHealthBonus * 1.1664 * powerOffsetHpMult(gameTime)); // V1_253: +8% stacked (1.08*1.08) + rarity power-offset
+                this.maxHp = Math.floor((560 + bossCount * 161) * timeScale * enemyHealthBonus * 1.0 * powerOffsetHpMult(gameTime)); // V1_305: trim the 10-min Major slog (base 805->560, dropped the +16.6% V1_253 double-stack) — per-bossCount term + 0.30 timeScale step kept so 20-min bosses stay dominant (~-29% @10min, ~-24% @20min)
                 this.hp = this.maxHp;
                 this.damage = Math.floor(40 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.color = '#ff6600';
@@ -13753,33 +13799,8 @@
                     const frameSpeed = this.speed * dtScale;
                     
                     if (dist > 0) {
-                        const dirX = dx / dist;
-                        const dirY = dy / dist;
-                        let newX = this.x + dirX * frameSpeed;
-                        let newY = this.y + dirY * frameSpeed;
-                        
-                        // Check terrain collision
-                        const terrain = isInTerrain(newX, newY, this.radius);
-                        if (!terrain) {
-                            this.x = newX;
-                            this.y = newY;
-                        } else {
-                            // Navigate around obstacle
-                            const perpLeft = { x: -dirY, y: dirX };
-                            const perpRight = { x: dirY, y: -dirX };
-                            const toObsX = terrain.x - this.x;
-                            const toObsY = terrain.y - this.y;
-                            const crossProduct = dirX * toObsY - dirY * toObsX;
-                            const preferredPerp = crossProduct > 0 ? perpRight : perpLeft;
-                            
-                            const slideX = this.x + preferredPerp.x * frameSpeed;
-                            const slideY = this.y + preferredPerp.y * frameSpeed;
-                            
-                            if (!isInTerrain(slideX, slideY, this.radius)) {
-                                this.x = slideX;
-                                this.y = slideY;
-                            }
-                        }
+                        // V1_305: robust avoidance (was a single-perpendicular slide that stuck on rocks/trees).
+                        moveWithAvoidance(this, dx / dist, dy / dist, frameSpeed);
                     }
                 }
                 
@@ -15553,19 +15574,41 @@
 
         // Spawn a merchant a short walk from the player (avoiding terrain/water).
         function spawnShopkeeper() {
-            let x = player.x, y = player.y, ok = false, attempts = 0;
-            while (!ok && attempts < 25) {
+            // V1_305: merchants no longer pop right next to the player (was a 280-440px ring).
+            // Sample random points well out on the map, discard any on terrain/water or near
+            // another merchant, and keep the FARTHEST clear candidate — biased away from the
+            // player. The FIRST (game-start) merchant gets the largest minimum so it's a
+            // deliberate trek, not a freebie at spawn.
+            const minDist = (shopkeepersSpawned === 0) ? 1100 : 750;
+            let best = null, bestDist = -1;
+            for (let i = 0; i < 40; i++) {
                 const angle = Math.random() * Math.PI * 2;
-                const dist = 280 + Math.random() * 160; // 280-440px from player
-                x = player.x + Math.cos(angle) * dist;
-                y = player.y + Math.sin(angle) * dist;
-                x = Math.max(60, Math.min(WORLD.width - 60, x));
-                y = Math.max(60, Math.min(WORLD.height - 60, y));
-                ok = !isInTerrain(x, y, 30) && !isInLake(x, y, 40);
-                attempts++;
+                const dist = minDist + Math.random() * 900;
+                const x = Math.max(140, Math.min(WORLD.width - 140, player.x + Math.cos(angle) * dist));
+                const y = Math.max(140, Math.min(WORLD.height - 140, player.y + Math.sin(angle) * dist));
+                if (isInTerrain(x, y, 70) || isInLake(x, y, 90)) continue;     // clear of objects/water
+                let nearShop = false;
+                for (const s of shopkeepers) { if (!s.dead && Math.hypot(s.x - x, s.y - y) < 320) { nearShop = true; break; } }
+                if (nearShop) continue;
+                const d = Math.hypot(x - player.x, y - player.y);
+                if (d > bestDist) { bestDist = d; best = { x, y }; }
             }
-            ({ x, y } = pushOutOfLake(x, y, 30));
-            shopkeepers.push(new Shopkeeper(x, y));
+            if (!best) {
+                // No clear point in the preferred band — relax clearance but still spawn a
+                // good walk away, never on top of the player.
+                let x = player.x, y = player.y, ok = false, attempts = 0;
+                while (!ok && attempts < 30) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 600 + Math.random() * 700;
+                    x = Math.max(80, Math.min(WORLD.width - 80, player.x + Math.cos(angle) * dist));
+                    y = Math.max(80, Math.min(WORLD.height - 80, player.y + Math.sin(angle) * dist));
+                    ok = !isInTerrain(x, y, 30) && !isInLake(x, y, 40);
+                    attempts++;
+                }
+                best = { x, y };
+            }
+            ({ x: best.x, y: best.y } = pushOutOfLake(best.x, best.y, 30));
+            shopkeepers.push(new Shopkeeper(best.x, best.y));
             // V1_301: no arrival banner for the FIRST (game-start) merchant — it collided with
             // the run-start messaging and read as a mess. Later merchants still announce.
             if (shopkeepersSpawned > 0) showMerchantArrival();
@@ -18104,7 +18147,7 @@
                 name: 'Inferno Touch',
                 icon: '🔥',
                 color: COLORS.burn,
-                desc: 'Attacks have 15% chance to burn enemies',
+                desc: 'Attacks have 12% chance to burn enemies',
                 effect: 'Burn: Initial damage + 3 ticks over 2s'
             },
             freeze: {
@@ -18118,8 +18161,8 @@
                 name: 'Overcharged',
                 icon: '⚡',
                 color: COLORS.shock,
-                desc: 'Attacks have 10% chance to shock enemies',
-                effect: 'Shock: Stuns for 3s, moderate damage'
+                desc: 'Attacks have 6% chance to shock enemies',
+                effect: 'Shock: Stuns for 1.5s, moderate damage'
             },
             timeSlow: {
                 name: 'Temporal Shield',
@@ -18139,8 +18182,8 @@
                 name: 'Inner Peace',
                 icon: '🧘',
                 color: '#88ffaa',
-                desc: 'Heal 5 HP/s while standing still',
-                effect: '+20% Lifesteal on all attacks'
+                desc: 'Heal 3 HP/s while standing still',
+                effect: '+10% Lifesteal on all attacks'
             },
             xpMagnet: {
                 name: 'Soul Harvest',
@@ -18228,16 +18271,16 @@
             // Apply the upgrade
             switch(upgradeId) {
                 case 'burn':
-                    legendaryEffects.burn.chance += 0.15;
-                    legendaryEffects.burn.damage = 8 + player.level * 2;
+                    legendaryEffects.burn.chance += 0.12; // V1_305: 0.15 -> 0.12 (per-hit proc stacked too fast on multi-hit weapons)
+                    legendaryEffects.burn.damage = Math.min(60, 6 + player.level * 1.5); // V1_305: softer + hard cap (was uncapped 8+lvl*2)
                     break;
                 case 'freeze':
                     legendaryEffects.freeze.chance += 0.12;
                     legendaryEffects.freeze.slowAmount = 0.5;
                     break;
                 case 'shock':
-                    legendaryEffects.shock.chance += 0.10;
-                    legendaryEffects.shock.damage = 15 + player.level * 3;
+                    legendaryEffects.shock.chance += 0.06; // V1_305: 0.10 -> 0.06 (per-hit 10% + 3s stun perma-locked crowds)
+                    legendaryEffects.shock.damage = 10 + player.level * 2; // V1_305: was 15+lvl*3
                     break;
                 case 'timeSlow':
                     legendaryEffects.timeSlow.active = true;
@@ -18253,7 +18296,7 @@
                     break;
                 case 'stillness':
                     legendaryEffects.stillness.active = true;
-                    legendaryEffects.stillness.lifestealBonus = 0.20;
+                    legendaryEffects.stillness.lifestealBonus = 0.10; // V1_305: 0.20 -> 0.10 (flat +20% lifesteal = ~7 tomes at once; self-sustain engine with holyBook)
                     break;
                 case 'xpMagnet':
                     legendaryEffects.xpMagnet.active = true;
@@ -20415,7 +20458,12 @@
                 }
                 
                 // Spawn count increases over time: every 105s (slowed from 60s -> 90s -> 105s)
-                let count = 2 + Math.floor(gameTime / 105); // V1_303: ease wave-size growth (was /90) to offset the weapon-range caps — leaves the first ~8 min intact, trims ~10-15% off mid/late waves where shorter reach thins fewer distant enemies
+                // V1_303: ease wave-size growth (was /90). V1_305: past 10 min the curve slows
+                // further (/120) — the sanctioned late-only difficulty valve so the boss-HP cuts
+                // don't make 10min+ feel too easy. BYTE-IDENTICAL for the first 10 min.
+                let count = (gameTime < 600)
+                    ? 2 + Math.floor(gameTime / 105)
+                    : 2 + Math.floor(600 / 105) + Math.floor((gameTime - 600) / 120);
                 
                 // SWARM EVENT: +50% enemies per wave
                 if (swarmActive) {
@@ -21145,7 +21193,7 @@
             // fireSpiritOrbs (L8953): dmg .04, orbs baseOrbs+floor(lvl/4), cd .985
             spiritOrbs:    { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Orb',    fn: (l, d) => d.baseOrbs + Math.floor(l / 4) } },
             // fireBoomerang (L8640): dmg .04, count baseCount+floor(lvl/6), range 250+lvl*12, cd .985
-            boomerang:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Boomerang', fn: (l, d) => d.baseCount + Math.floor(l / 6) }, range: { label: 'Range', fn: (l) => Math.min(250 + l * 12, ONSCREEN_RANGE_CAP) } },
+            boomerang:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Boomerang', fn: (l, d) => d.baseCount + Math.floor(l / 6) }, range: { label: 'Range', fn: (l) => Math.min(213 + l * 12, ONSCREEN_RANGE_CAP) } },
             // fireChainLightning (L9130): dmg .04, chains baseChains+floor(lvl/4), range chainRange+lvl*10, cd .985
             chainLightning:{ dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Jump',   fn: (l, d) => d.baseChains + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => d.chainRange + l * 10 } },
             // fireArrows (L9207): dmg .04, arrows lvl>=3 ? 3+floor((lvl-3)/5)*2 : baseArrows; pierce pierce+floor(lvl/4); cd .985 (within burst)
@@ -21161,8 +21209,11 @@
         };
 
         // Mirror of fire-time damage scaling: baseDamage * (1 + (level-1)*scale).
+        // V1_305: per-weapon dmgScale now lives on the weapon def (data-driven), so the
+        // fire functions and this display helper read the same source. Falls back to the
+        // meta value, then 0.04, for weapons that don't override it.
         function weaponDamageAt(def, meta, level) {
-            return def.baseDamage * (1 + (level - 1) * (meta.dmgScale || 0.04));
+            return def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? meta.dmgScale ?? 0.04));
         }
         // Trim trailing ".0" so "18.0" reads as "18" but "18.7" stays "18.7".
         function fmtStat(n) {
@@ -21645,6 +21696,54 @@
                 DOM.tomesDisplay.appendChild(div);
             }
         }
+
+        // ===== V1_305: DESKTOP HUD HOVER TOOLTIPS =====
+        // The weapon/tome icons beside the minimap already carry .item-tooltip markup, but
+        // it's clipped by the trackpad's overflow:hidden and pinned to the screen's bottom
+        // edge. On desktop (fine pointer + hover) we mirror that content into ONE body-level
+        // tooltip positioned ABOVE the hovered icon — escaping all clipping. Delegated on
+        // document so it survives the HUD rebuilds (updateWeapons/TomesDisplay). No-op on touch.
+        function setupHudTooltips() {
+            if (!window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+            document.body.classList.add('js-hud-tooltips');
+            const tip = document.createElement('div');
+            tip.className = 'hud-hover-tooltip';
+            tip.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(tip);
+            let current = null;
+            function show(icon) {
+                const src = icon.querySelector('.item-tooltip');
+                if (!src) return;
+                tip.innerHTML = src.innerHTML;
+                tip.style.display = 'block';
+                tip.style.visibility = 'hidden';
+                const r = icon.getBoundingClientRect();
+                const tw = tip.offsetWidth, th = tip.offsetHeight;
+                let left = r.left + r.width / 2 - tw / 2;
+                left = Math.max(6, Math.min(window.innerWidth - tw - 6, left));
+                let top = r.top - th - 10;
+                if (top < 6) top = r.bottom + 10; // flip below if there's no room above
+                tip.style.left = Math.round(left) + 'px';
+                tip.style.top = Math.round(top) + 'px';
+                tip.style.visibility = 'visible';
+                tip.classList.add('show');
+                current = icon;
+            }
+            function hide() { tip.classList.remove('show'); tip.style.display = 'none'; current = null; }
+            document.addEventListener('mouseover', (e) => {
+                const icon = e.target.closest && e.target.closest('.weapon-icon, .tome-icon');
+                if (icon && icon !== current) show(icon);
+            });
+            document.addEventListener('mouseout', (e) => {
+                if (!current) return;
+                const icon = e.target.closest && e.target.closest('.weapon-icon, .tome-icon');
+                if (icon === current && !(e.relatedTarget && current.contains(e.relatedTarget))) hide();
+            });
+            window.addEventListener('scroll', () => { if (current) show(current); }, true);
+            window.addEventListener('resize', () => { if (current) hide(); });
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupHudTooltips);
+        else setupHudTooltips();
 
         // ===== INPUT HANDLING =====
         const input = {
@@ -22290,8 +22389,8 @@
                     const isMoving = input.left || input.right || input.up || input.down || 
                                      Math.abs(input.joystickX) > 0.1 || Math.abs(input.joystickY) > 0.1;
                     if (!isMoving) {
-                        // Standing still - heal 5 HP/s
-                        const healAmount = 5 * (dt / 1000);
+                        // Standing still - heal 3 HP/s (V1_305: was 5)
+                        const healAmount = 3 * (dt / 1000);
                         player.heal(healAmount);
                         // Occasional visual
                         if (Math.random() < 0.05) {
