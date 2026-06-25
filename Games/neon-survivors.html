@@ -7840,10 +7840,10 @@
                 icon: '🛡️',
                 color: '#6688ee',
                 desc: 'Orbiting shield blocks & damages',
-                baseDamage: 10,
-                baseOrbs: 3,
-                baseCharges: 3,
-                chargeRegenTime: 8000,
+                baseDamage: 12,
+                baseOrbs: 2,
+                baseCharges: 2,
+                chargeRegenTime: 9500,
                 knockbackForce: 80,
                 burstDamage: 20,
                 burstRadius: 50,
@@ -8845,7 +8845,9 @@
                 const radius = 70 + level * 5;
                 
                 // Initialize shield charges (one per orb)
-                const maxCharges = def.baseCharges ? def.baseCharges + Math.floor(level / 3) : orbCount;
+                // V1_308: the free-block utility was the OP part, so charges are capped hard
+                // (max 5, was up to 9 at L20) and scale slower (/4, was /3). Starts at 2.
+                const maxCharges = def.baseCharges ? Math.min(5, def.baseCharges + Math.floor(level / 4)) : orbCount;
                 if (state.shieldCharges === undefined) {
                     state.shieldCharges = maxCharges;
                     state.maxShieldCharges = maxCharges;
@@ -18742,7 +18744,7 @@
                             // Too far - return to player quickly
                             targetX = player.x;
                             targetY = player.y;
-                            walkSpeed = 3.5;
+                            walkSpeed = Math.max(4.2, player.speed * 1.35); // V1_308: +20% (3.5->4.2 floor) & scales with player speed so the pet always catches up
                         } else if (nearestEnemy && distToPlayer < leashDist * 1.5) {
                             // Enemy nearby and within leash - chase it
                             targetX = nearestEnemy.x;
@@ -19001,49 +19003,63 @@
                             }
                         }
                         
-                        // End pounce when we reach target position OR hit max distance (safety)
-                        if (distToTarget < 20 || distFromStart >= this.maxDist) {
-                            // Look for next enemy to pounce
-                            const seekDist = 218;
-                            let nextEnemy = null;
-                            let closestDist = seekDist;
-                            
-                            for (const enemy of enemies) {
-                                if (enemy.dead) continue;
-                                const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
-                                if (dist < closestDist) {
-                                    closestDist = dist;
-                                    nextEnemy = enemy;
-                                }
-                            }
-                            // Check leprechauns (high priority)
-                            for (const lep of leprechauns) {
-                                if (lep.dead) continue;
-                                const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
-                                if (dist < closestDist * 0.7) { // Prefer leprechauns
-                                    closestDist = dist;
-                                    nextEnemy = lep;
-                                }
-                            }
-                            // Check bosses (high priority)
-                            for (const boss of bosses) {
-                                if (boss.dead) continue;
-                                const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
-                                if (dist < closestDist * 0.8) { // Prefer bosses
-                                    closestDist = dist;
-                                    nextEnemy = boss;
-                                }
-                            }
-                            
-                            if (nextEnemy && (now - this.lastPounce > this.pounceCooldown * 0.3)) {
-                                // Pause briefly before chain pounce
-                                this.squirrelState = 'resting';
-                                this.restStart = now;
-                                this.restDuration = 250; // 250ms pause
-                                this.nextPounceTarget = nextEnemy;
-                            } else {
-                                // No enemy - return to leash position
+                        // V1_308: leash. A pounce (maxDist up to ~990 at high level) plus chain
+                        // pounces could drag the pet clean off-screen, stranding the player. If it
+                        // has strayed past ONSCREEN_RANGE_CAP (~the visible edge) from the PLAYER,
+                        // stop and leash home; otherwise it may only chain to enemies that are
+                        // themselves near the player, so a chain can never walk it off-screen.
+                        const distToPlayerNow = Math.hypot(player.x - this.x, player.y - this.y);
+                        // End pounce when we reach target position, hit max distance, OR hit the leash.
+                        if (distToTarget < 20 || distFromStart >= this.maxDist || distToPlayerNow > ONSCREEN_RANGE_CAP) {
+                            if (distToPlayerNow > ONSCREEN_RANGE_CAP) {
+                                // Strayed to the screen edge — abandon the chain and return.
                                 this.squirrelState = 'returning';
+                            } else {
+                                // Look for next enemy to pounce — only ones still on-screen (near the player).
+                                const seekDist = 218;
+                                let nextEnemy = null;
+                                let closestDist = seekDist;
+
+                                for (const enemy of enemies) {
+                                    if (enemy.dead) continue;
+                                    if (Math.hypot(enemy.x - player.x, enemy.y - player.y) > ONSCREEN_RANGE_CAP) continue;
+                                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                                    if (dist < closestDist) {
+                                        closestDist = dist;
+                                        nextEnemy = enemy;
+                                    }
+                                }
+                                // Check leprechauns (high priority)
+                                for (const lep of leprechauns) {
+                                    if (lep.dead) continue;
+                                    if (Math.hypot(lep.x - player.x, lep.y - player.y) > ONSCREEN_RANGE_CAP) continue;
+                                    const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                                    if (dist < closestDist * 0.7) { // Prefer leprechauns
+                                        closestDist = dist;
+                                        nextEnemy = lep;
+                                    }
+                                }
+                                // Check bosses (high priority)
+                                for (const boss of bosses) {
+                                    if (boss.dead) continue;
+                                    if (Math.hypot(boss.x - player.x, boss.y - player.y) > ONSCREEN_RANGE_CAP) continue;
+                                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                                    if (dist < closestDist * 0.8) { // Prefer bosses
+                                        closestDist = dist;
+                                        nextEnemy = boss;
+                                    }
+                                }
+
+                                if (nextEnemy && (now - this.lastPounce > this.pounceCooldown * 0.3)) {
+                                    // Pause briefly before chain pounce
+                                    this.squirrelState = 'resting';
+                                    this.restStart = now;
+                                    this.restDuration = 250; // 250ms pause
+                                    this.nextPounceTarget = nextEnemy;
+                                } else {
+                                    // No enemy - return to leash position
+                                    this.squirrelState = 'returning';
+                                }
                             }
                         }
                     }
@@ -19100,7 +19116,7 @@
                         }
                         
                         const toTarget = Math.atan2(targetY - this.y, targetX - this.x);
-                        const returnSpeed = 4.0;
+                        const returnSpeed = Math.max(4.8, player.speed * 1.35); // V1_308: +20% (4.0->4.8 floor) & scales with player speed
                         this.vx = Math.cos(toTarget) * returnSpeed;
                         this.vy = Math.sin(toTarget) * returnSpeed;
                         
