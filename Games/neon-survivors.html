@@ -13272,33 +13272,35 @@
             }
         }
 
-        // V1_305: robust chase-movement with obstacle avoidance for bosses/minibosses.
-        // The bosses previously tried only ONE perpendicular when blocked and froze on
-        // rocks/trees the moment that side was also blocked. This mirrors the enemy
-        // avoidance (preferred perp -> alternate perp -> two forward diagonals) and adds
-        // a short "unstick" pass + a push directly away from the obstacle, so a wedged
-        // boss always finds a path around instead of locking in place.
+        // V1_305/V1_307: robust chase-movement with obstacle avoidance for bosses/minibosses.
+        // V1_307 rewrite: instead of a fixed perp/diagonal set (which could still wedge between
+        // two objects), this fans angles outward from the goal heading — nearest-open-angle
+        // first, both sides, full then half step — so it scans the WHOLE arc (up to straight
+        // back) and always finds an opening if one exists, including through a gap between two
+        // obstacles. A short steering memory (self._steer) commits the boss to one side so it
+        // follows a wall out of a pocket instead of oscillating at the pinch point.
         function moveWithAvoidance(self, dirX, dirY, frameSpeed) {
             let nx = self.x + dirX * frameSpeed, ny = self.y + dirY * frameSpeed;
-            const t0 = isInTerrain(nx, ny, self.radius);
-            if (!t0) { self.x = nx; self.y = ny; return; }
-            const perpL = { x: -dirY, y: dirX }, perpR = { x: dirY, y: -dirX };
-            const cross = dirX * (t0.y - self.y) - dirY * (t0.x - self.x);
-            const pref = cross > 0 ? perpR : perpL, alt = cross > 0 ? perpL : perpR;
-            const cands = [
-                [pref.x, pref.y, 1], [alt.x, alt.y, 1],
-                [(dirX + pref.x) * 0.7, (dirY + pref.y) * 0.7, 1],
-                [(dirX + alt.x) * 0.7, (dirY + alt.y) * 0.7, 1],
-                [pref.x, pref.y, 0.5], [alt.x, alt.y, 0.5],
-            ];
-            for (const [vx, vy, m] of cands) {
-                nx = self.x + vx * frameSpeed * m; ny = self.y + vy * frameSpeed * m;
-                if (!isInTerrain(nx, ny, self.radius)) { self.x = nx; self.y = ny; return; }
+            if (!isInTerrain(nx, ny, self.radius)) { self.x = nx; self.y = ny; self._steer = 0; return; }
+            const base = Math.atan2(dirY, dirX);
+            const side = self._steer || 1; // prefer the side we were already turning toward
+            const mags = [0.45, 0.8, 1.15, 1.5, 1.9, 2.3, 2.7, Math.PI];
+            for (const m of mags) {
+                for (const s of [side, -side]) {
+                    const a = base + s * m, vx = Math.cos(a), vy = Math.sin(a);
+                    for (const step of [1, 0.55]) { // half step slips through tight gaps
+                        nx = self.x + vx * frameSpeed * step;
+                        ny = self.y + vy * frameSpeed * step;
+                        if (!isInTerrain(nx, ny, self.radius)) {
+                            self.x = nx; self.y = ny;
+                            if (m < Math.PI) self._steer = s; // remember which way we went around
+                            return;
+                        }
+                    }
+                }
             }
-            // Fully wedged: nudge directly away from the obstacle centre so we never lock up.
-            const awx = self.x - t0.x, awy = self.y - t0.y, al = Math.hypot(awx, awy) || 1;
-            nx = self.x + (awx / al) * frameSpeed * 0.5; ny = self.y + (awy / al) * frameSpeed * 0.5;
-            if (!isInTerrain(nx, ny, self.radius)) { self.x = nx; self.y = ny; }
+            // Boxed in on every heading this frame (rare): hold; next frame the player has
+            // moved and an opening reappears. No lock-up — we simply skip this step.
         }
 
         // ===== MINI BOSS CLASS =====
@@ -13314,7 +13316,7 @@
                 const speedScale = 1 + Math.floor(gameTime / 150) * 0.08; // +8% speed per 2.5 min (slowed from /120)
                 
                 this.speed = 1.235 * speedScale * enemySpeedBonus;
-                this.maxHp = Math.floor((380 + bossCount * 110) * timeScale * enemyHealthBonus * 1.10 * powerOffsetHpMult(gameTime)); // V1_305: proportional mini-boss trim (base 440->380, +16.6%->+10%) — per-bossCount term + 0.24 timeScale step kept (~-14%)
+                this.maxHp = Math.floor((380 + bossCount * 110) * timeScale * enemyHealthBonus * 0.95 * powerOffsetHpMult(gameTime)); // V1_305 trim; V1_307: HP-only -13% (1.10->0.95), damage scaling untouched
                 this.hp = this.maxHp;
                 this.damage = Math.floor(25 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.color = '#ff6600';
@@ -13682,7 +13684,7 @@
                 
                 this.baseSpeedValue = 0.855 * speedScale * enemySpeedBonus;
                 this.speed = this.baseSpeedValue;
-                this.maxHp = Math.floor((560 + bossCount * 161) * timeScale * enemyHealthBonus * 1.0 * powerOffsetHpMult(gameTime)); // V1_305: trim the 10-min Major slog (base 805->560, dropped the +16.6% V1_253 double-stack) — per-bossCount term + 0.30 timeScale step kept so 20-min bosses stay dominant (~-29% @10min, ~-24% @20min)
+                this.maxHp = Math.floor((560 + bossCount * 161) * timeScale * enemyHealthBonus * 0.87 * powerOffsetHpMult(gameTime)); // V1_305 trim; V1_307: HP-only -13% (1.0->0.87), damage scaling untouched
                 this.hp = this.maxHp;
                 this.damage = Math.floor(40 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.color = '#ff6600';
@@ -17356,7 +17358,7 @@
                     // V1_303: raised floor + gentler swing so the water never breathes down to
                     // near-invisible (was 0.4 +/- 0.15 -> 0.25 trough; body alpha bottomed at ~0.14).
                     const pulse = 0.52 + Math.sin(time * 0.001 + obstacle.variant) * 0.1;
-                    const colors = ['#00c8d8', '#0066cc']; // V1_306: darker, deeper-water blue (was #00ffff / #0088ff)
+                    const colors = ['#0088ff', '#0088ff']; // V1_307: all lake variants use the original blue (no cyan variant; reverted the V1_306 darkening)
                     const color = colors[obstacle.variant % colors.length];
                     const deep = ['#0a4a6e', '#06304e'][obstacle.variant % 2];
                     const radiusX = scale(obstacle.radiusX);
