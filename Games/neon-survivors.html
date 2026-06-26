@@ -1974,36 +1974,24 @@
            Lives in the same #weaponSelectDesc slot, normal flow, above the sticky buttons. */
         .weapon-detail-card {
             display: flex;
-            align-items: center;
-            gap: 12px;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
             width: 92%;
             max-width: 420px;
-            height: 118px;
+            min-height: 84px; /* V1_313: content-fitting (was fixed 118px) so nothing clips */
             box-sizing: border-box;
             margin-top: 8px;
-            padding: 10px 14px;
-            overflow: hidden;
-            border: 1px solid var(--wsd-accent, #0ff);
+            padding: 10px 16px;
+            border: 1px solid var(--wsd-accent, #ffffff); /* V1_313: white in the default/empty state */
             border-radius: 14px;
             background: linear-gradient(160deg, rgba(20, 22, 34, 0.92), rgba(8, 9, 16, 0.96));
-            box-shadow: 0 0 14px var(--wsd-glow, rgba(0, 255, 255, 0.27)),
+            box-shadow: 0 0 12px var(--wsd-glow, rgba(255, 255, 255, 0.12)),
                         inset 0 1px 0 rgba(255, 255, 255, 0.06);
             font-family: 'Oxanium', sans-serif;
             text-align: left;
         }
-        .weapon-detail-card .wsd-preview { flex: 0 0 auto; }
-        /* same 96/40 aspect lock as the grid previews so round effects don't oval (V1_303) */
-        .weapon-detail-card .wsd-preview-canvas {
-            width: 120px;
-            max-width: 120px;
-            aspect-ratio: 96 / 40;
-            height: auto;
-            display: block;
-            border-radius: 6px;
-        }
-        .weapon-detail-card.no-preview .wsd-preview { display: none; }
         .weapon-detail-card .wsd-body {
-            flex: 1 1 auto;
             min-width: 0;
             display: flex;
             flex-direction: column;
@@ -2055,25 +2043,23 @@
             text-align: center;
             color: rgba(255, 255, 255, 0.6);
         }
-        .weapon-detail-card.message-mode { justify-content: center; }
-        .weapon-detail-card.message-mode .wsd-preview,
+        .weapon-detail-card.message-mode { align-items: center; min-height: 56px; }
         .weapon-detail-card.message-mode .wsd-body { display: none; }
         .weapon-detail-card.message-mode .wsd-message { display: block; }
         @media (max-width: 480px) {
             .weapon-detail-card {
-                height: 104px;
-                padding: 8px 10px;
-                gap: 8px;
+                min-height: 76px;
+                padding: 8px 12px;
+                gap: 4px;
                 width: 94%;
                 box-shadow: none; /* strip glow on mobile per GPU policy; flat border stays */
             }
-            .weapon-detail-card .wsd-preview-canvas { width: 92px; }
             .weapon-detail-card .wsd-name { font-size: 12px; }
             .weapon-detail-card .wsd-desc { font-size: 11px; }
             .weapon-detail-card .wsd-chip { font-size: 10px; padding: 1px 6px; }
         }
         @media (max-height: 550px) {
-            .weapon-detail-card { height: 88px; }
+            .weapon-detail-card { min-height: 64px; }
             .weapon-detail-card .wsd-desc { -webkit-line-clamp: 1; }
         }
         
@@ -6334,7 +6320,6 @@
             <!-- V1_312: weapon "dossier" detail card (keeps id=weaponSelectDesc so all
                  existing writes resolve; messages route to .wsd-message via setWsdMessage) -->
             <div class="weapon-detail-card message-mode" id="weaponSelectDesc" data-empty="1">
-                <div class="wsd-preview"><canvas class="wsd-preview-canvas" aria-hidden="true"></canvas></div>
                 <div class="wsd-body">
                     <div class="wsd-head"><span class="wsd-name"></span><span class="wsd-emoji"></span></div>
                     <div class="wsd-desc"></div>
@@ -25454,8 +25439,6 @@
             if (now - _wpLast < _wpSelectCap) return;
             _wpLast = now;
             const t = now / 1000;
-            // V1_312: the weapon dossier's single preview canvas rides this same loop.
-            if (_wsdItem && _wsdItem.draw) _renderPreviewItem(_wsdItem, t);
             const n = _wpItems.length;
             if (!n) return;
             // Temporal interleave: repaint only a slice of the canvases each tick (round-
@@ -25566,7 +25549,6 @@
         // Drives the #weaponSelectDesc card: hovered/selected weapon's live preview,
         // name, desc, stat chips (DMG/rate/count/range) + desc-derived effect tags.
         // ONE extra preview canvas rides the existing _wpFrame loop (no new RAF).
-        let _wsdItem = null;           // the dossier preview-canvas item
         let _wsdGridLeaveWired = false; // grid mouseleave attached once (grid node persists)
 
         // Desc-keyword -> behavioral effect tag (max 2 per weapon, purely cosmetic).
@@ -25592,22 +25574,6 @@
             return out;
         }
 
-        // Size (or re-size) the single dossier preview canvas — same dpr/setTransform
-        // pattern as setupWeaponPreviews. Called once per showWeaponSelect.
-        function setupWeaponDossierCanvas() {
-            const card = DOM.weaponSelectDesc;
-            const cv = card && card.querySelector('.wsd-preview-canvas');
-            if (!cv) { _wsdItem = null; return; }
-            const dpr = Math.min(2, window.devicePixelRatio || 1);
-            const cw = cv.clientWidth || 120;   // fallback to the CSS width while hidden
-            const ch = cv.clientHeight || 50;   // 120 * 40/96 = 50
-            cv.width = Math.round(cw * dpr);
-            cv.height = Math.round(ch * dpr);
-            const cx = cv.getContext('2d');
-            cx.setTransform(cw / WEAPON_PREVIEW_W * dpr, 0, 0, ch / WEAPON_PREVIEW_H * dpr, 0, 0);
-            _wsdItem = { cx, draw: null, color: '#0ff', seed: Math.random() * 50 };
-        }
-
         function setWsdMessage(text, color) {
             const card = DOM.weaponSelectDesc;
             if (!card) return;
@@ -25615,7 +25581,9 @@
             if (msg) { msg.textContent = text; msg.style.color = color || 'rgba(255,255,255,0.8)'; }
             card.classList.add('message-mode');
             card.dataset.empty = '1';
-            if (_wsdItem) _wsdItem.draw = null; // stop painting a stale preview behind the message
+            // V1_313: neutral white border in the default/empty state (clear the per-weapon theme).
+            card.style.removeProperty('--wsd-accent');
+            card.style.removeProperty('--wsd-glow');
         }
         function showWsdEmpty() {
             const canHover = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
@@ -25639,7 +25607,6 @@
             card.style.setProperty('--wsd-glow', /^#[0-9a-f]{6}$/i.test(h6) ? h6 + '44' : 'rgba(0,255,255,0.27)');
             card.classList.remove('message-mode');
             card.dataset.empty = '0';
-            card.classList.toggle('no-preview', !WEAPON_PREVIEWS[weaponId]);
 
             const nameEl = card.querySelector('.wsd-name');
             const emojiEl = card.querySelector('.wsd-emoji');
@@ -25670,12 +25637,6 @@
                 html += `<span class="wsd-chip wsd-tag">${t.icon} ${t.label}</span>`;
             }
             if (statsEl) statsEl.innerHTML = html;
-
-            // ---- bind the live preview (rides _wpFrame); hidden for no-preview weapons ----
-            if (_wsdItem) {
-                _wsdItem.draw = WEAPON_PREVIEWS[weaponId] || null;
-                _wsdItem.color = accent;
-            }
         }
 
         function showWeaponSelect() {
@@ -25691,7 +25652,6 @@
             // Reset selection state
             pendingWeaponSelect = null;
             weaponEditMode = false;
-            _wsdItem = null; // V1_312: dossier preview rebound after the grid + canvas are set up below
             DOM.weaponConfirmBtn.classList.add('disabled');
             
             // Remove edit mode class
@@ -25799,9 +25759,7 @@
                     else showWsdEmpty();
                 });
             }
-            // Set up the dossier preview canvas (one extra item on the weapon-select RAF)
-            // and show the initial empty state.
-            setupWeaponDossierCanvas();
+            // Show the dossier's initial empty (default) state.
             showWsdEmpty();
 
             // Populate color selector
