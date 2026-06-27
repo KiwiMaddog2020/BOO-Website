@@ -437,6 +437,8 @@
             font-family: 'Oxanium', sans-serif;
             flex-shrink: 0;
         }
+        /* V1_332: the offense/defense panel sits below the buttons; trim its spacing. */
+        .pl-stats-bottom { margin-top: 4px; margin-bottom: 10px; max-height: none; }
         /* Stats: two borderless columns, each under a thin underlined header. */
         .pl-stats-row { display: flex; gap: 30px; }
         .pl-statcol { flex: 1 1 0; min-width: 0; }
@@ -470,7 +472,9 @@
             background: rgba(255, 255, 255, 0.06);
             cursor: pointer; user-select: none; -webkit-user-select: none;
         }
-        .pl-item .pl-ic { font-size: 16px; line-height: 1; }
+        .pl-item .pl-ic { font-size: 16px; line-height: 1; display: inline-flex; align-items: center; }
+        /* V1_331: live weapon/tome animation in the pill (keeps the 96:40 preview aspect). */
+        .pl-item .pl-preview-canvas { width: 48px; height: 20px; display: block; }
         .pl-item .pl-lv { color: rgba(255, 255, 255, 0.5); font-size: 10px; font-weight: 600; }
         .pl-items:empty::after { content: 'None yet'; color: rgba(255, 255, 255, 0.3); font-size: 11px; }
         @media (max-width: 560px) {
@@ -6437,7 +6441,7 @@
         <div class="pause-title">Paused</div>
         <!-- V1_314: live build snapshot — offense/defense stats + current weapons & tomes -->
         <div class="pause-loadout" id="pauseLoadout">
-            <!-- V1_330: weapons/tomes first, offense/defense tables moved to the bottom -->
+            <!-- V1_332: weapons/tomes here; offense/defense tables live below the buttons -->
             <div class="pl-loadout-row">
                 <div class="pl-group">
                     <div class="pl-group-title">WEAPONS</div>
@@ -6448,6 +6452,14 @@
                     <div class="pl-items" id="plTomes"></div>
                 </div>
             </div>
+        </div>
+        <div class="pause-menu-buttons">
+            <div class="pause-menu-btn btn-resume" id="resumeBtn">Resume</div>
+            <div class="pause-menu-btn btn-leaderboard" id="pauseLeaderboardBtn">Leaderboard</div>
+            <div class="pause-menu-btn btn-exit" id="exitGameBtn">Exit Game</div>
+        </div>
+        <!-- V1_332: offense/defense tables at the very bottom, beneath the buttons -->
+        <div class="pause-loadout pl-stats-bottom">
             <div class="pl-stats-row">
                 <div class="pl-statcol pl-offense">
                     <div class="pl-col-title">⚔️ OFFENSE</div>
@@ -6468,11 +6480,6 @@
                     <div class="pl-stat"><span>Move Speed</span><b id="plSpeed">—</b></div>
                 </div>
             </div>
-        </div>
-        <div class="pause-menu-buttons">
-            <div class="pause-menu-btn btn-resume" id="resumeBtn">Resume</div>
-            <div class="pause-menu-btn btn-leaderboard" id="pauseLeaderboardBtn">Leaderboard</div>
-            <div class="pause-menu-btn btn-exit" id="exitGameBtn">Exit Game</div>
         </div>
     </div>
     
@@ -25902,6 +25909,37 @@
             }
             iconEl.innerHTML = emojiFallback != null ? emojiFallback : '';
         }
+
+        // ===== V1_331: PAUSE LOADOUT PILL PREVIEWS =====
+        // The pause weapons/tomes pills play the same live weapon/tome animation as
+        // the upgrade/reward cards (emoji fallback when no preview). One RAF that
+        // self-stops when the pause overlay closes. Mounted after the overlay is shown
+        // so the canvases have a measurable size.
+        let _plPreviewItems = [];
+        let _plRAF = 0;
+        let _plLast = 0;
+        function _plFrame(now) {
+            if (!DOM.pauseOverlay.classList.contains('active') || !_plPreviewItems.length) { _plRAF = 0; return; }
+            _plRAF = requestAnimationFrame(_plFrame);
+            if (now - _plLast < _wpFrameCap) return;
+            _plLast = now;
+            const t = now / 1000;
+            for (const it of _plPreviewItems) _renderPreviewItem(it, t);
+        }
+        function mountPauseLoadoutPreviews() {
+            _plPreviewItems = [];
+            if (_plRAF) { cancelAnimationFrame(_plRAF); _plRAF = 0; }
+            document.querySelectorAll('#pauseLoadout .pl-item canvas.pl-preview-canvas').forEach(cv => {
+                const pill = cv.closest('.pl-item');
+                if (!pill) return;
+                const prev = resolveRewardPreview(pill.dataset.type, pill.dataset.id);
+                if (!prev) return;
+                const it = makePreviewItem(cv, prev.draw, prev.color);
+                if (it) _plPreviewItems.push(it);
+            });
+            _primePreviews(_plPreviewItems);
+            if (_plPreviewItems.length) _plRAF = requestAnimationFrame(_plFrame);
+        }
         let _modalPreviewItems = [];
         let _modalRAF = 0;
         let _modalLast = 0;
@@ -26969,11 +27007,17 @@
             set('plArmor', Math.round(player.armor * 100) + '%');
             set('plShield', Math.round(player.maxShieldHp));
             set('plSpeed', Math.round((player.speed / player.baseSpeed) * 100) + '%');
-            const item = (def, lvl) => `<div class="pl-item" data-name="${def.name}" data-level="${lvl}" data-color="${def.color || '#0ff'}"><span class="pl-ic">${def.icon}</span><span class="pl-lv">${lvl}</span></div>`;
+            // V1_331: pills show the live weapon/tome animation when one exists (emoji fallback).
+            const item = (type, id, def, lvl) => {
+                const ic = resolveRewardPreview(type, id)
+                    ? `<canvas class="pl-preview-canvas" aria-hidden="true"></canvas>`
+                    : def.icon;
+                return `<div class="pl-item" data-name="${def.name}" data-level="${lvl}" data-color="${def.color || '#0ff'}" data-type="${type}" data-id="${id}"><span class="pl-ic">${ic}</span><span class="pl-lv">${lvl}</span></div>`;
+            };
             const wEl = document.getElementById('plWeapons');
-            if (wEl) wEl.innerHTML = Object.entries(player.weapons).map(([id, st]) => { const d = WEAPONS[id]; return d ? item(d, st.level) : ''; }).join('');
+            if (wEl) wEl.innerHTML = Object.entries(player.weapons).map(([id, st]) => { const d = WEAPONS[id]; return d ? item('weapon', id, d, st.level) : ''; }).join('');
             const tEl = document.getElementById('plTomes');
-            if (tEl) tEl.innerHTML = Object.entries(player.tomes).map(([id, td]) => { const d = TOMES[id]; return d ? item(d, td.level) : ''; }).join('');
+            if (tEl) tEl.innerHTML = Object.entries(player.tomes).map(([id, td]) => { const d = TOMES[id]; return d ? item('tome', id, d, td.level) : ''; }).join('');
         }
 
         function togglePause() {
@@ -26990,6 +27034,7 @@
             if (gamePaused) {
                 renderPauseLoadout(); // V1_314: refresh the loadout snapshot each pause
                 DOM.pauseOverlay.classList.add('active');
+                mountPauseLoadoutPreviews(); // V1_331: animate pills (after overlay is visible/sized)
             } else {
                 DOM.pauseOverlay.classList.remove('active');
                 DOM.confirmOverlay.classList.remove('active');
