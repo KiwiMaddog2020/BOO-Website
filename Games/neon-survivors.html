@@ -3170,7 +3170,18 @@
             font-size: 36px;
             margin-top: 5px;
         }
-        
+        /* V1_318: animated live preview inside chest/shop reward cards (matches the
+           weapon-select / upgrade / shrine animations). Locked to the 96x40 design aspect. */
+        .modal-preview-canvas {
+            aspect-ratio: 96 / 40;
+            height: auto;
+            display: block;
+            margin: 2px auto 0;
+            border-radius: 6px;
+        }
+        #chestModal .modal-preview-canvas { width: 120px; }
+        #shopModal .modal-preview-canvas { width: 86px; }
+
         #chestModal .modal-card .card-type {
             font-size: 10px;
             text-transform: uppercase;
@@ -13282,7 +13293,7 @@
             DOM.modalType.textContent = 'BLESSING';
             DOM.modalType.style.color = '#22cc22';
             
-            DOM.modalIcon.textContent = reward.icon;
+            setChestRewardIcon(reward.type, reward.id, reward.icon);
             DOM.modalName.textContent = reward.name;
             DOM.modalDesc.textContent = reward.desc;
             
@@ -14664,7 +14675,7 @@
                         DOM.modalType.textContent = typeBadge;
                         DOM.modalType.style.color = typeColor;
                         
-                        DOM.modalIcon.textContent = contents.icon;
+                        setChestRewardIcon(contents.type, contents.id, contents.icon);
                         DOM.modalName.textContent = contents.name;
                         DOM.modalDesc.textContent = contents.desc;
                         
@@ -15321,6 +15332,7 @@
         
         function closeChestModal() {
             DOM.chestModal.classList.remove('visible');
+            _modalPreviewItems = []; // V1_318: stop the reward-preview RAF
             DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
             DOM.modalLeave.style.display = ''; // Restore leave button
             // Reset slot reel for next chest
@@ -15832,10 +15844,12 @@
             if (cardsEl) {
                 cardsEl.innerHTML = sk.items.map((it, i) => {
                     const can = playerGold >= sk.price;
+                    const _prevAvail = !!resolveRewardPreview(it.type, it.id);
+                    const _iconHtml = _prevAvail ? `<canvas class="modal-preview-canvas" data-shopidx="${i}" aria-hidden="true"></canvas>` : it.icon;
                     return `<div class="shop-card${can ? '' : ' unaffordable'}" style="border-color:${it.color}; box-shadow:0 8px 28px rgba(0,0,0,0.45), 0 0 22px ${it.color}55;" `
                         + `onclick="window.shopBuy(${i});" ontouchstart="event.stopPropagation();" ontouchend="event.preventDefault();event.stopPropagation();window.shopBuy(${i});">`
                         + `<div class="card-type" style="color:${it.color};">SHOP</div>`
-                        + `<div class="card-icon">${it.icon}</div>`
+                        + `<div class="card-icon">${_iconHtml}</div>`
                         + `<div class="card-name">${it.name}</div>`
                         + `<div class="card-desc">${it.desc}</div>`
                         + `<div class="shop-price" style="color:${can ? '#ffd700' : '#ff6644'};">\u{1FA99} ${sk.price}</div>`
@@ -15847,6 +15861,18 @@
             if (sub) sub.innerHTML = `Pick one &middot; you have <span style="color:#ffd700;">\u{1FA99} ${playerGold}</span>`;
             const modal = document.getElementById('shopModal');
             if (modal) modal.classList.add('visible');
+            // V1_318: animate each shop card's live preview (after the modal is visible so the
+            // canvases have a layout size).
+            if (cardsEl) {
+                const shopItems = [];
+                cardsEl.querySelectorAll('.modal-preview-canvas').forEach(cv => {
+                    const it = sk.items[+cv.dataset.shopidx];
+                    const prev = it && resolveRewardPreview(it.type, it.id);
+                    const item = prev && makePreviewItem(cv, prev.draw, prev.color);
+                    if (item) shopItems.push(item);
+                });
+                startModalPreviews(shopItems);
+            }
         }
 
         function shopBuy(index) {
@@ -15872,6 +15898,7 @@
         function closeShopModal() {
             const modal = document.getElementById('shopModal');
             if (modal) modal.classList.remove('visible');
+            _modalPreviewItems = []; // V1_318: stop the reward-preview RAF
             gamePaused = false;
         }
 
@@ -25624,6 +25651,65 @@
         function startWeaponPreviews() {
             setupWeaponPreviews();
             if (!_wpRAF && _wpItems.length) _wpRAF = requestAnimationFrame(_wpFrame);
+        }
+
+        // ===== V1_318: MODAL REWARD PREVIEWS (treasure chest + merchant shop) =====
+        // Those cards showed a static emoji; now they animate the matching live preview
+        // (weapon / tome / shrine-blessing) like every other reward UI. Reuses
+        // _renderPreviewItem + PREVIEW_DPR; one shared RAF that self-stops when no modal is open.
+        function resolveRewardPreview(type, id) {
+            if (!id) return null;
+            if (type === 'weapon') { const d = WEAPON_PREVIEWS[id]; return d ? { draw: d, color: (WEAPONS[id] && WEAPONS[id].color) || '#0ff' } : null; }
+            if (type === 'tome')   { const d = TOME_PREVIEWS[id];   return d ? { draw: d, color: (TOMES[id] && TOMES[id].color) || '#0ff' } : null; }
+            const p = SHRINE_POWERUPS[id]; // shrine blessing / generic item
+            if (p && p.preview && TOME_PREVIEWS[p.preview]) return { draw: TOME_PREVIEWS[p.preview], color: p.color || '#0ff' };
+            return null;
+        }
+        function makePreviewItem(cv, draw, color) {
+            if (!cv || !draw) return null;
+            const dpr = PREVIEW_DPR;
+            const cw = cv.clientWidth || 110;
+            const ch = cv.clientHeight || Math.round(110 * WEAPON_PREVIEW_H / WEAPON_PREVIEW_W);
+            cv.width = Math.round(cw * dpr);
+            cv.height = Math.round(ch * dpr);
+            const cx = cv.getContext('2d');
+            cx.setTransform(cw / WEAPON_PREVIEW_W * dpr, 0, 0, ch / WEAPON_PREVIEW_H * dpr, 0, 0);
+            return { cx, draw, color: color || '#0ff', seed: Math.random() * 50 };
+        }
+        let _modalPreviewItems = [];
+        let _modalRAF = 0;
+        let _modalLast = 0;
+        let _shopModalEl = null;
+        function _anyRewardModalVisible() {
+            if (DOM.chestModal && DOM.chestModal.classList.contains('visible')) return true;
+            if (!_shopModalEl) _shopModalEl = document.getElementById('shopModal');
+            return !!(_shopModalEl && _shopModalEl.classList.contains('visible'));
+        }
+        function _modalFrame(now) {
+            if (!_anyRewardModalVisible() || !_modalPreviewItems.length) { _modalRAF = 0; return; }
+            _modalRAF = requestAnimationFrame(_modalFrame);
+            if (now - _modalLast < _wpFrameCap) return;
+            _modalLast = now;
+            const t = now / 1000;
+            for (const it of _modalPreviewItems) _renderPreviewItem(it, t);
+        }
+        function startModalPreviews(items) {
+            _modalPreviewItems = (items || []).filter(Boolean);
+            _primePreviews(_modalPreviewItems);
+            if (!_modalRAF && _modalPreviewItems.length) _modalRAF = requestAnimationFrame(_modalFrame);
+        }
+        // Chest single-card icon: animate when a preview exists, else fall back to the emoji.
+        function setChestRewardIcon(type, id, emoji) {
+            const host = DOM.modalIcon;
+            if (!host) return;
+            const prev = resolveRewardPreview(type, id);
+            if (prev) {
+                host.innerHTML = '<canvas class="modal-preview-canvas" aria-hidden="true"></canvas>';
+                const item = makePreviewItem(host.querySelector('canvas'), prev.draw, prev.color);
+                if (item) { startModalPreviews([item]); return; }
+            }
+            startModalPreviews([]);
+            host.textContent = emoji || '';
         }
 
         // ===== V1_304: UPGRADE-SCREEN LIVE PREVIEWS =====
