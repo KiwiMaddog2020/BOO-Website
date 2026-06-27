@@ -7891,6 +7891,15 @@
             if (t >= 240) return 1;
             return Math.max(1, Math.min(1.35, 1 + 0.35 * (1 - t / 210))); // V1_306: eased the early cushion a touch (was 0.45/+45% -> 0.35/+35%)
         }
+        // V1_319: leveling-relief HP discount. XP was cut -25% AND spawns -25% (≈-44% net
+        // leveling), leaving the player under-levelled most in the MID game. This shaves
+        // enemy HP on a gentle hump — 0% at t=0 (so the early faceroll-guard above is
+        // untouched), peaking ~-20% near the 5-min mark, back to 0% by 10 min (so late
+        // balance is provably unchanged). Single-line tunable (the 0.20 amplitude).
+        function levelingReliefHpMult(t) {
+            if (t <= 0 || t >= 600) return 1;
+            return 1 - 0.20 * Math.sin(Math.PI * t / 600);
+        }
 
         // ===== RARITY SYSTEM =====
         const RARITIES = {
@@ -8695,8 +8704,11 @@
             }
 
             gainXP(amount) {
+                // V1_319: global -25% XP gain (slower leveling). Spawns were cut an equal
+                // amount and mid-game enemy HP eased (levelingReliefHpMult) to compensate.
+                const XP_GAIN_MULT = 0.75;
                 // Apply XP bonus from tomes
-                const bonusedAmount = amount * (this.xpBonusMult || 1);
+                const bonusedAmount = amount * (this.xpBonusMult || 1) * XP_GAIN_MULT;
                 this.xp += bonusedAmount;
                 while (this.xp >= this.xpToNext) {
                     this.xp -= this.xpToNext;
@@ -12127,7 +12139,7 @@
                 
                 // Apply damage scaling with difficulty bonus
                 this.damage = Math.floor(this.baseDamage * dmgScale * enemyDamageBonus * lateGameDamageMult(gameTime));
-                this.hp = Math.floor(this.maxHp * enemyHealthBonus * powerOffsetHpMult(gameTime) * earlyHpMult(gameTime)); // V1_305: fading early-game HP cushion (1.0x by 4 min)
+                this.hp = Math.floor(this.maxHp * enemyHealthBonus * powerOffsetHpMult(gameTime) * earlyHpMult(gameTime) * levelingReliefHpMult(gameTime)); // V1_305 early cushion + V1_319 mid-game leveling relief
                 this.maxHp = this.hp;
                 this.speed = this.speed * enemySpeedBonus;
                 this.baseSpeed = this.speed; // Store for freeze effect
@@ -20676,7 +20688,12 @@
                     showFinalSwarmWarning();
                 }
             }
-            
+
+            // V1_319: global -25% spawn throughput (interval x1.333) to balance the -25% XP
+            // cut — slower leveling shouldn't be paired with the same enemy pressure. Applied
+            // last so it scales every phase (normal / swarm / final horde) uniformly.
+            currentInterval *= 1.333;
+
             if (spawnTimer >= currentInterval) {
                 spawnTimer = 0;
                 
