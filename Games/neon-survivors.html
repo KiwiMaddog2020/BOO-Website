@@ -25564,22 +25564,21 @@
         let _wpItems = [];
         let _wpRAF = 0;
         let _wpLast = 0;
-        let _wpCursor = 0;
-        // Gentler frame cap on small screens (GPU stability over flair, per mobile policy).
-        const _wpFrameCap = (window.innerWidth <= 760) ? 45 : 33;
-        // V1_311: the weapon-select grid shows ~20 previews at once, so it gets its own
-        // gentler cap AND temporal interleaving (below) — far lighter than the 3-card
-        // upgrade/shrine screens, which keep the snappier _wpFrameCap.
-        const _wpSelectCap = (window.innerWidth <= 760) ? 56 : 40;
-        // Spread one full repaint of all previews across this many ticks. 2 ⇒ each canvas
-        // repaints every other tick (~half the per-frame work, ~half the effective fps),
-        // so 20 canvases cost about the same as 10.
-        const _WP_SPREAD = 2;
+        let _wpObserver = null;
+        // V1_317: steady cadence, NO interleaving. V1_311's round-robin interleave dropped
+        // each card to ~12fps and read as choppy. With PREVIEW_DPR below a full 20-card pass
+        // costs ~1ms, so we can afford a smooth 60fps on desktop / 30fps on small screens.
+        const _wpFrameCap = (window.innerWidth <= 760) ? 33 : 16;
+        // V1_317: the single biggest perf lever — previews are tiny (96×40) glow effects,
+        // so render their backing store at DPR 1 instead of the display's 2×. That's ~4× less
+        // fill + shadow-blur work across the 20-card grid on retina, for an imperceptible
+        // softness change at this size.
+        const PREVIEW_DPR = 1;
 
         function setupWeaponPreviews() {
             _wpItems = [];
-            _wpCursor = 0;
-            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            if (_wpObserver) { _wpObserver.disconnect(); _wpObserver = null; }
+            const dpr = PREVIEW_DPR;
             DOM.weaponSelectGrid.querySelectorAll('.weapon-preview-canvas').forEach(cv => {
                 const id = cv.dataset.weapon;
                 const draw = WEAPON_PREVIEWS[id];
@@ -25593,26 +25592,32 @@
                 cv.height = Math.round(ch * dpr);
                 const cx = cv.getContext('2d');
                 cx.setTransform(cw / WEAPON_PREVIEW_W * dpr, 0, 0, ch / WEAPON_PREVIEW_H * dpr, 0, 0);
-                _wpItems.push({ cx, draw, color: (WEAPONS[id] && WEAPONS[id].color) || '#0ff', seed: Math.random() * 50 });
+                _wpItems.push({ cx, draw, color: (WEAPONS[id] && WEAPONS[id].color) || '#0ff', seed: Math.random() * 50, visible: true, el: cv });
             });
             _primePreviews(_wpItems);
+            // V1_317: only animate previews actually on screen (the grid scrolls on short
+            // viewports) — an IntersectionObserver flips each item's visible flag.
+            if ('IntersectionObserver' in window && _wpItems.length) {
+                _wpObserver = new IntersectionObserver((entries) => {
+                    for (const e of entries) {
+                        const it = _wpItems.find(i => i.el === e.target);
+                        if (it) it.visible = e.isIntersecting;
+                    }
+                }, { threshold: 0 });
+                for (const it of _wpItems) _wpObserver.observe(it.el);
+            }
         }
 
         function _wpFrame(now) {
             // Self-stop when the overlay is no longer on screen.
             if (!DOM.weaponSelectOverlay.classList.contains('active')) { _wpRAF = 0; return; }
             _wpRAF = requestAnimationFrame(_wpFrame);
-            if (now - _wpLast < _wpSelectCap) return;
+            if (now - _wpLast < _wpFrameCap) return;
             _wpLast = now;
             const t = now / 1000;
-            const n = _wpItems.length;
-            if (!n) return;
-            // Temporal interleave: repaint only a slice of the canvases each tick (round-
-            // robin) so the per-frame cost stays flat no matter how many are on screen.
-            const batch = Math.max(1, Math.ceil(n / _WP_SPREAD));
-            for (let k = 0; k < batch; k++) {
-                _renderPreviewItem(_wpItems[_wpCursor % n], t);
-                _wpCursor++;
+            for (const it of _wpItems) {
+                if (it.visible === false) continue;
+                _renderPreviewItem(it, t);
             }
         }
 
