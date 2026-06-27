@@ -447,9 +447,11 @@
         }
         .pl-offense .pl-col-title { color: #ff8c7a; }
         .pl-defense .pl-col-title { color: #7ec8ff; }
-        .pl-stat { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12.5px; padding: 2.5px 0; }
-        .pl-stat span { color: rgba(255, 255, 255, 0.5); }
-        .pl-stat b { font-weight: 600; color: rgba(255, 255, 255, 0.92); }
+        /* V1_325: narrow + center each row so label and value sit close together
+           (header underline still spans the full column). */
+        .pl-stat { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12.5px; padding: 2.5px 0; max-width: 160px; margin: 0 auto; }
+        .pl-stat span { color: rgba(255, 255, 255, 0.5); white-space: nowrap; }
+        .pl-stat b { font-weight: 600; color: rgba(255, 255, 255, 0.92); white-space: nowrap; }
         /* Loadout: one row per group — a quiet label, then quiet pills (emoji carries identity). */
         .pl-loadout-row { display: flex; flex-direction: column; gap: 10px; }
         .pl-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -458,14 +460,16 @@
             color: rgba(255, 255, 255, 0.4); width: 62px; flex-shrink: 0; text-align: right;
         }
         .pl-items { display: flex; flex-wrap: wrap; gap: 7px; flex: 1; min-width: 0; }
+        /* V1_325: icon-only pills (emoji carries identity, name lives in a hover/tap
+           tooltip) so weapons + tomes each fit on one line. */
         .pl-item {
-            display: inline-flex; align-items: center; gap: 5px;
-            border-radius: 6px; padding: 3px 9px; font-size: 12px;
+            display: inline-flex; align-items: center; gap: 3px;
+            border-radius: 6px; padding: 4px 7px;
             background: rgba(255, 255, 255, 0.06);
+            cursor: pointer; user-select: none; -webkit-user-select: none;
         }
-        .pl-item .pl-ic { font-size: 13px; }
-        .pl-item .pl-nm { color: rgba(255, 255, 255, 0.9); }
-        .pl-item .pl-lv { color: rgba(255, 255, 255, 0.42); font-size: 10px; }
+        .pl-item .pl-ic { font-size: 16px; line-height: 1; }
+        .pl-item .pl-lv { color: rgba(255, 255, 255, 0.5); font-size: 10px; font-weight: 600; }
         .pl-items:empty::after { content: 'None yet'; color: rgba(255, 255, 255, 0.3); font-size: 11px; }
         @media (max-width: 560px) {
             .pl-stats-row { gap: 18px; }
@@ -7783,8 +7787,14 @@
             holyBook: { active: false, maxHpBonus: 0, regenBonus: 0 },
             stillness: { active: false, lifestealBonus: 0 },
             xpMagnet: { active: false, lastPulse: 0, interval: 30000 },
-            ghostStrike: { active: false }
+            ghostStrike: { active: false },
+            // V1_325 — new gameplay-altering legendaries
+            berserker: { active: false },    // up to +60% damage as HP drops
+            executioner: { active: false },  // instakill non-boss enemies below 12% HP
+            combustion: { active: false },   // slain enemies explode (AoE)
+            deadeye: { active: false }       // +crit chance / +crit damage
         };
+        let combustionChaining = false; // V1_325: re-entrancy guard so one kill = one blast (no runaway cascade)
         
         // Ghost entities for Vengeful Spirits
         let ghosts = [];
@@ -8612,9 +8622,9 @@
                 // Attack speed from shrine + tome
                 this.attackSpeedMultiplier = Math.min(2.6, 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus); // V1_258: cap ~2.6x fire rate
                 
-                // Crit stats (base + shrine + tome)
-                this.critChance = Math.min(0.75, 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance); // V1_258: cap 75%
-                this.critMultiplier = Math.min(5.0, 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0)); // V1_258: cap 5x
+                // Crit stats (base + shrine + tome + V1_325 Deadeye legendary)
+                this.critChance = Math.min(0.75, 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance + (legendaryEffects.deadeye.active ? 0.20 : 0)); // V1_258: cap 75%
+                this.critMultiplier = Math.min(5.0, 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0) + (legendaryEffects.deadeye.active ? 0.75 : 0)); // V1_258: cap 5x
                 
                 // Luck from tome + shrine (affects various RNG) - 0.5 effectiveness rate for tomes
                 this.luck = (this.tomeBonuses.luck || 0) * 0.5 + (this.shrineBonuses.luck || 0);
@@ -8643,12 +8653,17 @@
             calcDamage(baseDamage) {
                 let damage = baseDamage * this.damageMultiplier;
                 let isCrit = false;
-                
+
                 if (Math.random() < this.critChance) {
                     damage *= this.critMultiplier;
                     isCrit = true;
                 }
-                
+
+                // V1_325 Bloodlust: up to +60% damage scaling with missing HP
+                if (legendaryEffects.berserker.active && this.maxHp > 0) {
+                    damage *= 1 + 0.60 * (1 - Math.max(0, this.hp) / this.maxHp);
+                }
+
                 return { damage, isCrit };
             }
             
@@ -12418,7 +12433,24 @@
                 if (legendaryEffects.ghostStrike.active) {
                     ghosts.push(new Ghost(this.x, this.y));
                 }
-                
+
+                // V1_325 Combustion: slain enemies erupt, dealing AoE damage to nearby foes.
+                // Guarded so one real kill = one blast (deaths it causes don't chain-explode).
+                if (legendaryEffects.combustion.active && !combustionChaining) {
+                    combustionChaining = true;
+                    const blastRadius = 95;
+                    const blastDamage = Math.min(200, 25 + (player ? player.level : 1) * 4);
+                    addRing(this.x, this.y, blastRadius, COLORS.burn);
+                    spawnParticles(this.x, this.y, COLORS.burn, 10);
+                    for (const e of enemies) {
+                        if (e === this || e.dead) continue;
+                        if (Math.hypot(e.x - this.x, e.y - this.y) < blastRadius) {
+                            e.takeDamage(blastDamage, false);
+                        }
+                    }
+                    combustionChaining = false;
+                }
+
                 // Power drop chance with diminishing returns
                 trySpawnPowerDrop(this.x, this.y);
             }
@@ -14720,7 +14752,13 @@
                 if (legendaryCount >= MAX_LEGENDARIES) {
                     legendaryChance = 0;
                 }
-                
+
+                // V1_325: no legendary drops in the first 2 minutes — early game stays
+                // weapon/tome-focused (gameTime is in seconds). Overrides luck protection.
+                if (gameTime < 120) {
+                    legendaryChance = 0;
+                }
+
                 if (Math.random() < legendaryChance) {
                     // Pick a random legendary for preview
                     const legendaryKeys = Object.keys(LEGENDARY_UPGRADES);
@@ -18430,6 +18468,34 @@
                 color: '#aaccff',
                 desc: 'Killing enemies spawns a ghost',
                 effect: 'Ghost kamikazes nearest enemy'
+            },
+            berserker: {
+                name: 'Bloodlust',
+                icon: '🩸',
+                color: '#ff3344',
+                desc: 'Deal up to +60% damage as your HP drops',
+                effect: 'Scales with missing health — deadliest near death'
+            },
+            executioner: {
+                name: 'Executioner',
+                icon: '🗡️',
+                color: '#ff4466',
+                desc: 'Strikes instantly kill enemies below 12% HP',
+                effect: 'Culls the wounded — bosses immune'
+            },
+            combustion: {
+                name: 'Combustion',
+                icon: '💥',
+                color: '#ff8800',
+                desc: 'Slain enemies erupt in a fiery blast',
+                effect: 'AoE damage to all nearby foes on kill'
+            },
+            deadeye: {
+                name: 'Deadeye',
+                icon: '🎯',
+                color: '#ff4da6',
+                desc: '+20% Crit Chance, +0.75× Crit Damage',
+                effect: 'Precision strikes hit far harder'
             }
         };
 
@@ -18537,8 +18603,21 @@
                 case 'ghostStrike':
                     legendaryEffects.ghostStrike.active = true;
                     break;
+                case 'berserker':
+                    legendaryEffects.berserker.active = true;
+                    break;
+                case 'executioner':
+                    legendaryEffects.executioner.active = true;
+                    break;
+                case 'combustion':
+                    legendaryEffects.combustion.active = true;
+                    break;
+                case 'deadeye':
+                    legendaryEffects.deadeye.active = true;
+                    player.applyPassives(); // V1_325: bake crit bonus in so it shows in stats + persists
+                    break;
             }
-            
+
             gamePaused = false;
         }
 
@@ -18717,6 +18796,13 @@
             // Try shock
             if (legendaryEffects.shock.chance > 0 && Math.random() < legendaryEffects.shock.chance) {
                 enemy.applyShock(legendaryEffects.shock.damage);
+            }
+            // V1_325 Executioner: cull regular enemies left below 12% HP after a hit (bosses/rifts/elites immune)
+            if (legendaryEffects.executioner.active && !enemy.dead
+                && !enemy.isBoss && !enemy.isDirectiveTarget && !enemy.isRift
+                && enemy.maxHp > 0 && enemy.hp > 0 && enemy.hp / enemy.maxHp <= 0.12) {
+                enemy.hp = 0;
+                enemy.die();
             }
         }
 
@@ -22083,6 +22169,67 @@
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupCanvasHudTooltips);
         else setupCanvasHudTooltips();
+
+        // ===== V1_325: PAUSE LOADOUT PILL TOOLTIPS (icon-only weapons/tomes) =====
+        // Pause pills show just the emoji + level; the name lives in a floating tooltip
+        // on hover (desktop) or tap (mobile). Delegated on document so it survives the
+        // re-render that happens each time the game is paused.
+        function setupPauseLoadoutTips() {
+            const tip = document.createElement('div');
+            tip.className = 'hud-hover-tooltip';
+            tip.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(tip);
+            let current = null, hideTimer = null;
+            function show(pill) {
+                const name = pill.getAttribute('data-name') || '';
+                const lvl = pill.getAttribute('data-level') || '';
+                const color = pill.getAttribute('data-color') || '#0ff';
+                tip.innerHTML = `<div class="item-tooltip-name" style="color:${color};">${name}</div>`
+                              + (lvl ? `<div class="item-tooltip-level">Level ${lvl}</div>` : '');
+                tip.style.display = 'block';
+                tip.style.visibility = 'hidden';
+                const r = pill.getBoundingClientRect();
+                const tw = tip.offsetWidth, th = tip.offsetHeight;
+                let left = r.left + r.width / 2 - tw / 2;
+                left = Math.max(6, Math.min(window.innerWidth - tw - 6, left));
+                let top = r.top - th - 8;
+                if (top < 6) top = r.bottom + 8; // flip below if there's no room above
+                tip.style.left = Math.round(left) + 'px';
+                tip.style.top = Math.round(top) + 'px';
+                tip.style.visibility = 'visible';
+                tip.classList.add('show');
+                current = pill;
+            }
+            function hide() {
+                tip.classList.remove('show'); tip.style.display = 'none'; current = null;
+                if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+            }
+            document.addEventListener('mouseover', (e) => {
+                const pill = e.target.closest && e.target.closest('.pl-item');
+                if (pill && pill !== current) show(pill);
+            });
+            document.addEventListener('mouseout', (e) => {
+                if (!current) return;
+                const pill = e.target.closest && e.target.closest('.pl-item');
+                if (pill === current && !(e.relatedTarget && current.contains(e.relatedTarget))) hide();
+            });
+            // Mobile: tap a pill to flash its name (auto-hide); tap it again or elsewhere to dismiss.
+            document.addEventListener('touchend', (e) => {
+                const pill = e.target.closest && e.target.closest('.pl-item');
+                if (pill) {
+                    e.preventDefault();
+                    if (current === pill) { hide(); return; }
+                    show(pill);
+                    if (hideTimer) clearTimeout(hideTimer);
+                    hideTimer = setTimeout(hide, 2200);
+                } else if (current) {
+                    hide();
+                }
+            }, { passive: false });
+            window.addEventListener('resize', () => { if (current) hide(); });
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupPauseLoadoutTips);
+        else setupPauseLoadoutTips();
 
         // ===== INPUT HANDLING =====
         const input = {
@@ -26471,8 +26618,13 @@
                 holyBook: { active: false, maxHpBonus: 0, regenBonus: 0 },
                 stillness: { active: false, lifestealBonus: 0 },
                 xpMagnet: { active: false, lastPulse: 0, interval: 30000 },
-                ghostStrike: { active: false }
+                ghostStrike: { active: false },
+                berserker: { active: false },
+                executioner: { active: false },
+                combustion: { active: false },
+                deadeye: { active: false }
             };
+            combustionChaining = false;
             
             // Reset skull statue difficulty system
             skullStatues = [];
@@ -26812,7 +26964,7 @@
             set('plArmor', Math.round(player.armor * 100) + '%');
             set('plShield', Math.round(player.maxShieldHp));
             set('plSpeed', Math.round((player.speed / player.baseSpeed) * 100) + '%');
-            const item = (def, lvl) => `<div class="pl-item"><span class="pl-ic">${def.icon}</span><span class="pl-nm">${def.name}</span><span class="pl-lv">Lv ${lvl}</span></div>`;
+            const item = (def, lvl) => `<div class="pl-item" data-name="${def.name}" data-level="${lvl}" data-color="${def.color || '#0ff'}"><span class="pl-ic">${def.icon}</span><span class="pl-lv">${lvl}</span></div>`;
             const wEl = document.getElementById('plWeapons');
             if (wEl) wEl.innerHTML = Object.entries(player.weapons).map(([id, st]) => { const d = WEAPONS[id]; return d ? item(d, st.level) : ''; }).join('');
             const tEl = document.getElementById('plTomes');
