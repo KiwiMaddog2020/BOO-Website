@@ -7494,8 +7494,8 @@
 
         // ===== WORLD & CAMERA =====
         const WORLD = {
-            width: 8398,  // V1_266: +8% map (was 7776)
-            height: 8398
+            width: 9200,  // V1_266: +8% (7776->8398); V1_346: +20% area (8398->9200, ~+9.5%/side)
+            height: 9200
         };
 
         // ===== BOOST TUNING (V1_233) =====
@@ -23890,16 +23890,20 @@
         // An off-screen world position a given distance from the player, avoiding
         // terrain/lakes — mirrors the boss-spawn placement logic.
         function directiveSpawnPos(dist) {
-            let x = player.x, y = player.y;
-            for (let attempt = 0; attempt < 14; attempt++) {
+            // V1_346: like treasure chests — keep the target in a reachable band. The desired
+            // distance is the cap; a min floor guarantees an edge-clamp can't drop it in the
+            // player's lap (never too close, never beyond the requested reach).
+            const minDist = Math.min(600, dist * 0.75);
+            let best = { x: Math.max(140, Math.min(WORLD.width - 140, player.x + dist)), y: player.y };
+            for (let attempt = 0; attempt < 20; attempt++) {
                 const ang = Math.random() * Math.PI * 2;
-                x = player.x + Math.cos(ang) * dist;
-                y = player.y + Math.sin(ang) * dist;
-                x = Math.max(140, Math.min(WORLD.width - 140, x));
-                y = Math.max(140, Math.min(WORLD.height - 140, y));
+                let x = Math.max(140, Math.min(WORLD.width - 140, player.x + Math.cos(ang) * dist));
+                let y = Math.max(140, Math.min(WORLD.height - 140, player.y + Math.sin(ang) * dist));
+                if (Math.hypot(x - player.x, y - player.y) < minDist) continue; // edge-clamp pulled it too close
+                best = { x, y };
                 if (!isInTerrain(x, y, 40) && !isInLake(x, y, 60)) break;
             }
-            const fixed = pushOutOfLake(x, y, 60);
+            const fixed = pushOutOfLake(best.x, best.y, 60);
             return { x: fixed.x, y: fixed.y };
         }
 
@@ -23922,7 +23926,7 @@
             directiveLastType = type;
 
             if (type === 'elite' || type === 'rift') {
-                const pos = directiveSpawnPos(700 + Math.random() * 250);
+                const pos = directiveSpawnPos(850 + Math.random() * 450); // V1_346: further out (850-1300), still reachable
                 const e = new Enemy('tank', pos.x, pos.y);
                 e.isDirectiveTarget = true;
                 e.xpValue = 0;   // reward is the directive (gold + Legendary); no XP gem that
