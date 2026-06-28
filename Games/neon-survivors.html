@@ -6509,6 +6509,11 @@
                     <div class="pl-group-title">TOMES</div>
                     <div class="pl-items" id="plTomes"></div>
                 </div>
+                <!-- V1_350: acquired legendaries as mini pills (hidden until you have one) -->
+                <div class="pl-group" id="plLegendariesGroup" style="display:none;">
+                    <div class="pl-group-title">LEGENDARIES</div>
+                    <div class="pl-items" id="plLegendaries"></div>
+                </div>
             </div>
         </div>
         <div class="pause-menu-buttons">
@@ -22372,8 +22377,10 @@
                 const name = pill.getAttribute('data-name') || '';
                 const lvl = pill.getAttribute('data-level') || '';
                 const color = pill.getAttribute('data-color') || '#0ff';
+                const desc = pill.getAttribute('data-desc') || ''; // V1_350: legendaries show their effect
                 tip.innerHTML = `<div class="item-tooltip-name" style="color:${color};">${name}</div>`
-                              + (lvl ? `<div class="item-tooltip-level">Level ${lvl}</div>` : '');
+                              + (lvl ? `<div class="item-tooltip-level">Level ${lvl}</div>` : '')
+                              + (desc ? `<div class="item-tooltip-desc">${desc}</div>` : '');
                 tip.style.display = 'block';
                 tip.style.visibility = 'hidden';
                 const r = pill.getBoundingClientRect();
@@ -27262,6 +27269,24 @@
             if (wEl) wEl.innerHTML = Object.entries(player.weapons).map(([id, st]) => { const d = WEAPONS[id]; return d ? item('weapon', id, d, st.level) : ''; }).join('');
             const tEl = document.getElementById('plTomes');
             if (tEl) tEl.innerHTML = Object.entries(player.tomes).map(([id, td]) => { const d = TOMES[id]; return d ? item('tome', id, d, td.level) : ''; }).join('');
+            // V1_350: acquired legendaries as mini pills (icon + name/effect tooltip).
+            const ownedLeg = Object.keys(LEGENDARY_UPGRADES).filter(playerHasLegendary);
+            const lEl = document.getElementById('plLegendaries');
+            const lGroup = document.getElementById('plLegendariesGroup');
+            if (lGroup) lGroup.style.display = ownedLeg.length ? '' : 'none';
+            if (lEl) lEl.innerHTML = ownedLeg.map(id => {
+                const d = LEGENDARY_UPGRADES[id];
+                return `<div class="pl-item" data-name="${d.name}" data-color="${d.color || '#0ff'}" data-desc="${d.desc}"><span class="pl-ic">${d.icon}</span></div>`;
+            }).join('');
+        }
+
+        // V1_350: does the player currently own this legendary? (chance-based or active flag)
+        function playerHasLegendary(id) {
+            const eff = legendaryEffects[id];
+            if (!eff) return false;
+            if (eff.chance !== undefined) return eff.chance > 0;
+            if (eff.active !== undefined) return eff.active;
+            return false;
         }
 
         function togglePause() {
@@ -27359,9 +27384,12 @@
             hideExitConfirm();
         });
         
-        // P key to pause
+        // P / Escape to pause (V1_350: Escape opens the pause menu, incl. fullscreen)
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'p' || e.key === 'P') {
+            if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+                const t = e.target;
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return; // don't pause while typing
+                if (e.key === 'Escape') e.preventDefault();
                 togglePause();
             }
         });
