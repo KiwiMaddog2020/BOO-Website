@@ -7838,6 +7838,7 @@
         
         // Leprechaun system
         let leprechauns = [];
+        let leprechaunThrows = []; // V1_341: gold coins the leprechaun lobs at the player
         let rainbows = [];
         let leprechaunSpawnTimer = 0;
         let leprechaunSpawnInterval = 90000; // First spawn at 90s, then every 2 minutes
@@ -12848,7 +12849,8 @@
                 this.knockbackCooldown = 0;
                 this.knockbackRange = 80;
                 this.aggroRange = 150; // Distance at which leprechaun reacts
-                
+                this.throwCooldown = 2000 + Math.random() * 1500; // V1_341: first ranged throw after a short delay
+
                 // Status effects
                 this.poisonDamage = 0;
                 this.poisonTicks = 0;
@@ -12997,7 +12999,23 @@
                 if (distToPlayer < this.radius + player.radius) {
                     player.takeDamage(potClaimed ? 20 : 15);
                 }
-                
+
+                // V1_341: occasional ranged throw — lob a spinning gold coin at the player.
+                this.throwCooldown -= dt;
+                if (this.throwCooldown <= 0 && distToPlayer > 130 && distToPlayer < 620) {
+                    const enraged = potClaimed;
+                    const ang = Math.atan2(dyToPlayer, dxToPlayer);
+                    const spd = 5.2;
+                    leprechaunThrows.push({
+                        x: this.x, y: this.y,
+                        vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
+                        damage: enraged ? 18 : 12, radius: 9, life: 4000,
+                        spin: Math.random() * Math.PI, dead: false
+                    });
+                    spawnParticles(this.x, this.y, COLORS.gold, 6);
+                    this.throwCooldown = (enraged ? 1800 : 2600) + Math.random() * 1400;
+                }
+
                 if (this.knockbackCooldown > 0) this.knockbackCooldown -= dt;
                 if (this.orbHitCooldown > 0) this.orbHitCooldown -= dt;
             }
@@ -16752,6 +16770,46 @@
             }
         }
         
+        // V1_341: leprechaun thrown gold coins — move, hit the player, expire on terrain/life.
+        function updateLeprechaunThrows(dt) {
+            if (!leprechaunThrows.length) return;
+            const dtScale = dt / 16;
+            let anyDead = false;
+            for (const t of leprechaunThrows) {
+                if (t.dead) { anyDead = true; continue; }
+                t.x += t.vx * dtScale;
+                t.y += t.vy * dtScale;
+                t.spin += dt * 0.02;
+                t.life -= dt;
+                if (player && Math.hypot(player.x - t.x, player.y - t.y) < player.radius + t.radius) {
+                    player.takeDamage(t.damage);
+                    spawnParticles(t.x, t.y, COLORS.gold, 8);
+                    t.dead = true; anyDead = true; continue;
+                }
+                if (t.life <= 0 || t.x < 0 || t.y < 0 || t.x > WORLD.width || t.y > WORLD.height || isInTerrain(t.x, t.y, t.radius)) {
+                    spawnParticles(t.x, t.y, COLORS.gold, 5);
+                    t.dead = true; anyDead = true;
+                }
+            }
+            if (anyDead) leprechaunThrows = leprechaunThrows.filter(t => !t.dead);
+        }
+
+        function drawLeprechaunThrows() {
+            for (const t of leprechaunThrows) {
+                if (t.dead || !camera.isVisible(t.x, t.y, 30)) continue;
+                const sx = camera.screenX(t.x), sy = camera.screenY(t.y);
+                const r = camera.scale(t.radius);
+                const w = Math.max(0.12, Math.abs(Math.cos(t.spin))); // squash to fake a spinning coin
+                ctx.save();
+                ctx.shadowBlur = 12; ctx.shadowColor = COLORS.gold;
+                ctx.fillStyle = '#ffd700';
+                ctx.beginPath(); ctx.ellipse(sx, sy, r * w, r, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.shadowBlur = 0; ctx.lineWidth = Math.max(1, r * 0.18); ctx.strokeStyle = '#b8860b';
+                ctx.beginPath(); ctx.ellipse(sx, sy, r * w, r, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.restore();
+            }
+        }
+
         function drawFairy() {
             if (!fairy) return;
             if (!camera.isVisible(fairy.x, fairy.y, 60)) return;
@@ -16763,92 +16821,77 @@
             const wingFlap = Math.sin(time * 0.02 + fairy.wingPhase);
             const s = camera.scale.bind(camera);
             
+            // V1_341: redrawn as a Navi-style fairy (Ocarina of Time) — a bright blue-white
+            // glowing core orb with four translucent dragonfly wings + a soft blue aura,
+            // instead of the old winged-humanoid sprite.
+            const cx = sx, cy = sy + bob;
             ctx.save();
-            
-            // Magical aura glow
-            const auraPulse = 0.5 + Math.sin(time * 0.003) * 0.3;
-            ctx.globalAlpha = auraPulse * 0.4;
-            ctx.shadowBlur = 30;
-            ctx.shadowColor = '#ff88ff';
-            ctx.fillStyle = '#ff88ff';
+
+            // Soft blue aura (pulsing)
+            const auraPulse = 0.55 + Math.sin(time * 0.004) * 0.25;
+            ctx.globalAlpha = auraPulse * 0.5;
+            ctx.shadowBlur = 34;
+            ctx.shadowColor = '#5ec8ff';
+            ctx.fillStyle = '#bfe9ff';
             ctx.beginPath();
-            ctx.arc(sx, sy + bob, s(25), 0, Math.PI * 2);
+            ctx.arc(cx, cy, s(20), 0, Math.PI * 2);
             ctx.fill();
-            
             ctx.globalAlpha = 1;
-            
-            // Sparkle trail
-            for (let i = 0; i < 5; i++) {
-                const sparkleTime = time * 0.002 + i * 1.2;
-                const sparkleX = sx + Math.sin(sparkleTime) * s(15);
-                const sparkleY = sy + bob + s(10) + Math.cos(sparkleTime * 0.7) * s(8);
-                const sparkleAlpha = 0.3 + Math.sin(time * 0.01 + i) * 0.3;
-                ctx.globalAlpha = sparkleAlpha;
-                ctx.fillStyle = '#ffff88';
+
+            // Four translucent dragonfly wings (two pairs), flapping
+            ctx.shadowBlur = 14;
+            ctx.shadowColor = '#bfefff';
+            ctx.fillStyle = 'rgba(210, 245, 255, 0.55)';
+            const wing = (dxSign, up) => {
+                const spread = 0.42 + wingFlap * 0.18;
+                const ang = dxSign * (up ? spread : spread + 0.55);
+                const len = up ? s(15) : s(11);
+                const wid = up ? s(7) : s(5.5);
+                ctx.save();
+                ctx.translate(cx + dxSign * s(3), cy - s(1));
+                ctx.rotate(ang);
                 ctx.beginPath();
-                ctx.arc(sparkleX, sparkleY, s(2), 0, Math.PI * 2);
+                ctx.ellipse(dxSign * len * 0.55, 0, len, wid, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            };
+            wing(-1, true); wing(1, true); wing(-1, false); wing(1, false);
+
+            // Glowing core orb: white-hot center -> bright blue edge
+            const orbR = s(7 + Math.sin(time * 0.006) * 0.8);
+            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, orbR);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.45, '#cdf3ff');
+            grad.addColorStop(1, '#33b6ff');
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#33b6ff';
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(cx, cy, orbR, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Bright pinpoint highlight
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha = 0.9;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(cx - s(1.5), cy - s(1.5), s(1.8), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // Sparkle dust trail (white / pale-blue twinkles)
+            for (let i = 0; i < 5; i++) {
+                const st = time * 0.002 + i * 1.25;
+                const px = cx + Math.sin(st) * s(14);
+                const py = cy + s(8) + Math.cos(st * 0.7) * s(7);
+                ctx.globalAlpha = 0.25 + Math.sin(time * 0.01 + i) * 0.25;
+                ctx.fillStyle = i % 2 ? '#ffffff' : '#9fe2ff';
+                ctx.beginPath();
+                ctx.arc(px, py, s(1.6), 0, Math.PI * 2);
                 ctx.fill();
             }
-            
             ctx.globalAlpha = 1;
-            
-            // Wings (translucent, flapping)
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = '#88ffff';
-            
-            // Left wing
-            ctx.fillStyle = 'rgba(200, 255, 255, 0.6)';
-            ctx.beginPath();
-            ctx.ellipse(sx - s(12), sy + bob - s(2), s(10 + wingFlap * 3), s(14), -0.4 + wingFlap * 0.2, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Right wing
-            ctx.beginPath();
-            ctx.ellipse(sx + s(12), sy + bob - s(2), s(10 + wingFlap * 3), s(14), 0.4 - wingFlap * 0.2, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Body
-            ctx.shadowColor = '#ff88ff';
-            ctx.fillStyle = '#ffccff';
-            ctx.beginPath();
-            ctx.ellipse(sx, sy + bob, s(6), s(10), 0, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Head
-            ctx.fillStyle = '#ffe4e1';
-            ctx.beginPath();
-            ctx.arc(sx, sy + bob - s(12), s(6), 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Hair
-            ctx.fillStyle = '#ffdd44';
-            ctx.beginPath();
-            ctx.arc(sx, sy + bob - s(14), s(5), Math.PI, Math.PI * 2);
-            ctx.fill();
-            
-            // Eyes
-            ctx.fillStyle = '#4488ff';
-            ctx.beginPath();
-            ctx.arc(sx - s(2), sy + bob - s(12), s(1.5), 0, Math.PI * 2);
-            ctx.arc(sx + s(2), sy + bob - s(12), s(1.5), 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Wand with star
-            ctx.strokeStyle = '#dda0dd';
-            ctx.lineWidth = s(2);
-            ctx.beginPath();
-            ctx.moveTo(sx + s(8), sy + bob);
-            ctx.lineTo(sx + s(16), sy + bob - s(12));
-            ctx.stroke();
-            
-            // Star on wand
-            ctx.fillStyle = '#ffff00';
-            ctx.shadowColor = '#ffff00';
-            ctx.shadowBlur = 10;
-            ctx.font = `${s(10)}px Oxanium, monospace`;
-            ctx.textAlign = 'center';
-            ctx.fillText('✦', sx + s(17), sy + bob - s(14));
-            
+
             ctx.restore();
         }
         
@@ -23073,6 +23116,7 @@
                 for (const lep of leprechauns) {
                     if (!lep.dead) lep.update(effectiveDt);
                 }
+                updateLeprechaunThrows(effectiveDt); // V1_341
                 for (const rainbow of rainbows) rainbow.update();
                 for (const ghost of ghosts) {
                     if (!ghost.dead) ghost.update(dt);
@@ -24518,6 +24562,7 @@
             for (const lep of leprechauns) {
                 if (!lep.dead) lep.draw();
             }
+            drawLeprechaunThrows(); // V1_341
             for (const ghost of ghosts) {
                 if (!ghost.dead) ghost.draw();
             }
@@ -26729,6 +26774,7 @@
             shrines = [];
             shrinesActivatedTotal = 0; // V1_263
             leprechauns = [];
+            leprechaunThrows = []; // V1_341
             resetDirectives(); // V1_276
             rainbows = [];
             ghosts = [];
