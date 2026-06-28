@@ -4830,9 +4830,9 @@
             width: 64px;
             height: 64px;
             border-radius: 50%;
-            border: 2px solid #ff1493;
+            border: 2px solid #9b30ff;       /* V1_344: match the void rift's own colour */
             background: rgba(0, 0, 0, 0.4);
-            color: #ff1493;
+            color: #9b30ff;
             font-family: 'Oxanium', monospace;
             line-height: 1;
             display: none;
@@ -4840,8 +4840,8 @@
             align-items: center;
             justify-content: center;
             gap: 1px;
-            box-shadow: 0 0 15px rgba(255, 20, 147, 0.45), inset 0 0 8px rgba(255, 20, 147, 0.18);
-            text-shadow: 0 0 8px #ff1493;
+            box-shadow: 0 0 15px rgba(155, 48, 255, 0.45), inset 0 0 8px rgba(155, 48, 255, 0.18);
+            text-shadow: 0 0 8px #9b30ff;
             z-index: 320;
             pointer-events: none;
             -webkit-user-select: none;
@@ -4850,7 +4850,7 @@
         .rift-timer.visible { display: flex; }
         .rift-timer .rift-timer-ring {
             position: absolute; inset: 0; border-radius: 50%; pointer-events: none; z-index: 0;
-            background: conic-gradient(rgba(255, 20, 147, 0.30) calc(var(--rt, 1) * 360deg), rgba(0, 0, 0, 0.55) 0);
+            background: conic-gradient(rgba(155, 48, 255, 0.32) calc(var(--rt, 1) * 360deg), rgba(0, 0, 0, 0.55) 0);
         }
         .rift-timer .rift-timer-secs,
         .rift-timer .rift-timer-label { position: relative; z-index: 1; }
@@ -15629,36 +15629,31 @@
             if (chestRespawnTimer >= CHEST_RESPAWN_INTERVAL) {
                 chestRespawnTimer = 0;
                 
-                // Spawn new chest away from player, avoiding terrain and other chests
+                // V1_344: spawn new chests in a distance BAND around the player — far enough
+                // that they're never right on top of you, but inside a reasonably reachable
+                // radius so they don't appear across the (4x) map. Still off-screen + clear of
+                // terrain/water/other chests.
                 const minChestSpacing = 800;
+                const MIN_CHEST_DIST = 550, MAX_CHEST_DIST = 1400;
                 let attempts = 0;
-                
-                while (attempts < 20) {
-                    const pos = getValidSpawnPosition(200, WORLD.width - 200, 200, WORLD.height - 200, 50, 0);
-                    
-                    // Check distance to player
-                    if (Math.hypot(pos.x - player.x, pos.y - player.y) < 300) {
-                        attempts++;
-                        continue;
-                    }
-                    
-                    // Don't spawn in player's visible view
-                    if (isInPlayerView(pos.x, pos.y, 100)) {
-                        attempts++;
-                        continue;
-                    }
-                    
-                    // Check distance to other chests
+
+                while (attempts < 25) {
+                    const ang = Math.random() * Math.PI * 2;
+                    const d = MIN_CHEST_DIST + Math.random() * (MAX_CHEST_DIST - MIN_CHEST_DIST);
+                    let px = Math.max(200, Math.min(WORLD.width - 200, player.x + Math.cos(ang) * d));
+                    let py = Math.max(200, Math.min(WORLD.height - 200, player.y + Math.sin(ang) * d));
+
+                    // Re-check distance after the world-clamp (clamping can pull it closer).
+                    if (Math.hypot(px - player.x, py - player.y) < MIN_CHEST_DIST) { attempts++; continue; }
+                    if (isInTerrain(px, py, 50) || isInLake(px, py, 70)) { attempts++; continue; }
+                    if (isInPlayerView(px, py, 100)) { attempts++; continue; }
+
                     let tooClose = false;
                     for (const chest of chests) {
-                        if (Math.hypot(pos.x - chest.x, pos.y - chest.y) < minChestSpacing) {
-                            tooClose = true;
-                            break;
-                        }
+                        if (Math.hypot(px - chest.x, py - chest.y) < minChestSpacing) { tooClose = true; break; }
                     }
-                    
                     if (!tooClose) {
-                        chests.push(new TreasureChest(pos.x, pos.y));
+                        chests.push(new TreasureChest(px, py));
                         break;
                     }
                     attempts++;
@@ -24196,7 +24191,7 @@
                     // V1_340: 10% larger + a pink outer ring so the void rift reads instantly.
                     ctx.beginPath(); ctx.arc(sx, sy, 8.8, 0, Math.PI * 2); ctx.stroke();
                     ctx.beginPath(); ctx.arc(sx, sy, 2.75, 0, Math.PI * 2); ctx.fill();
-                    ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 2;
+                    ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 1.2; // V1_344: slimmer pink outline
                     ctx.beginPath(); ctx.arc(sx, sy, 11.5, 0, Math.PI * 2); ctx.stroke();
                 }
             } else {
@@ -24208,7 +24203,7 @@
                 ctx.beginPath();
                 ctx.moveTo(12 * arrowSc, 0); ctx.lineTo(-8 * arrowSc, -8 * arrowSc); ctx.lineTo(-3 * arrowSc, 0); ctx.lineTo(-8 * arrowSc, 8 * arrowSc);
                 ctx.closePath(); ctx.fill();
-                if (d.type === 'rift') { ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 2; ctx.stroke(); } // V1_340: pink outline
+                if (d.type === 'rift') { ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 1.2; ctx.stroke(); } // V1_340 pink outline; V1_344 slimmer
                 ctx.rotate(-ang);
                 ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
                 ctx.font = 'bold 10px Oxanium, monospace';
