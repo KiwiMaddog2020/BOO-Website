@@ -4821,6 +4821,51 @@
             }
         }
 
+        /* V1_340: Void-rift despawn timer — mirrors the BOOST button, pinned bottom-LEFT,
+           pink-themed to match the rift's compass outline. Informational only (no input). */
+        .rift-timer {
+            position: absolute;
+            left: calc(18px + env(safe-area-inset-left, 0px));
+            bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: 2px solid #ff1493;
+            background: rgba(0, 0, 0, 0.4);
+            color: #ff1493;
+            font-family: 'Oxanium', monospace;
+            line-height: 1;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1px;
+            box-shadow: 0 0 15px rgba(255, 20, 147, 0.45), inset 0 0 8px rgba(255, 20, 147, 0.18);
+            text-shadow: 0 0 8px #ff1493;
+            z-index: 320;
+            pointer-events: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .rift-timer.visible { display: flex; }
+        .rift-timer .rift-timer-ring {
+            position: absolute; inset: 0; border-radius: 50%; pointer-events: none; z-index: 0;
+            background: conic-gradient(rgba(255, 20, 147, 0.30) calc(var(--rt, 1) * 360deg), rgba(0, 0, 0, 0.55) 0);
+        }
+        .rift-timer .rift-timer-secs,
+        .rift-timer .rift-timer-label { position: relative; z-index: 1; }
+        .rift-timer .rift-timer-secs { font-size: 22px; font-weight: 700; height: 26px; line-height: 26px; }
+        .rift-timer .rift-timer-label { font-size: 9px; letter-spacing: 1px; opacity: 0.85; }
+        .rift-timer.urgent { border-color: #ff5566; color: #ff5566; text-shadow: 0 0 8px #ff5566; animation: riftPulse 0.6s ease-in-out infinite; }
+        @keyframes riftPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+        @media (max-width: 480px) {
+            .rift-timer {
+                width: 58px; height: 58px;
+                left: calc(14px + env(safe-area-inset-left, 0px));
+                bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+            }
+        }
+
         /* Timer display - part of bottom bar now */
         .timer {
             font-size: 16px;
@@ -6254,6 +6299,8 @@
              "hide all children" rule can't hide it, and so its touches never reach
              the trackpad's spawn-joystick handler. -->
         <button class="jump-btn" id="jumpBtn" type="button" aria-label="Boost"><span class="jump-btn-cd" aria-hidden="true"></span><span class="jump-btn-icon">💨</span><span class="jump-btn-timer" aria-hidden="true"></span><span class="jump-btn-label">BOOST</span><span class="jump-btn-hint" aria-hidden="true">[Spacebar]</span></button>
+        <!-- V1_340: Void-rift despawn timer (bottom-left), mirrors the BOOST button -->
+        <div class="rift-timer" id="riftTimer" aria-hidden="true"><span class="rift-timer-ring" aria-hidden="true"></span><span class="rift-timer-secs">0</span><span class="rift-timer-label">RIFT</span></div>
     </div>
     
     <!-- Upgrade Selection - OUTSIDE game-container for touch events -->
@@ -7312,6 +7359,12 @@
                 const tpRect = tpEl ? tpEl.getBoundingClientRect() : null;
                 const aboveTrackpad = tpRect ? (contRect.bottom - tpRect.top) : (canvRect.width <= 480 ? 16 : 20);
                 jumpBtnEl.style.bottom = (aboveTrackpad + 18) + 'px'; // V1_255: nudged up ~8px
+                // V1_340: mirror the rift despawn timer to the playfield's bottom-LEFT, same height.
+                const riftEl = document.getElementById('riftTimer');
+                if (riftEl) {
+                    riftEl.style.left = (Math.max(0, canvRect.left - contRect.left) + insetX) + 'px';
+                    riftEl.style.bottom = (aboveTrackpad + 18) + 'px';
+                }
             }
 
             ctx.imageSmoothingEnabled = true;
@@ -23770,7 +23823,7 @@
         const DIRECTIVE_COOLDOWN      = 50;   // seconds between a finished directive and the next
         const DIRECTIVE_MISS_COOLDOWN = 25;   // shorter breather after an expiry/miss
         const DIRECTIVE_ELITE_HP_MULT = 5;    // tuning knobs — feel-tune after playtest
-        const DIRECTIVE_RIFT_HP_MULT  = 6.3; // V1_324: -10% Void Rift HP (7 -> 6.3)
+        const DIRECTIVE_RIFT_HP_MULT  = 3.78; // V1_324: -10% (7->6.3); V1_340: -40% more (6.3->3.78)
         const DIRECTIVE_TYPES = ['elite', 'rift', 'vault'];
 
         let directiveActive = null;                  // the current directive object, or null
@@ -23783,6 +23836,7 @@
             directiveNextAt = DIRECTIVE_START_TIME;
             directiveLastType = null;
             directiveBanner = null;
+            const rt = document.getElementById('riftTimer'); if (rt) rt.classList.remove('visible', 'urgent'); // V1_340
         }
 
         // An off-screen world position a given distance from the player, avoiding
@@ -24022,7 +24076,29 @@
             }
         }
 
+        // V1_340: drive the bottom-left void-rift despawn timer (DOM element that mirrors
+        // the BOOST button). Shows the countdown + a depleting pink ring while a rift is live.
+        let _riftTimerEl = null;
+        function updateRiftTimerUI() {
+            if (!_riftTimerEl) _riftTimerEl = document.getElementById('riftTimer');
+            const el = _riftTimerEl;
+            if (!el) return;
+            const d = directiveActive;
+            if (d && d.type === 'rift' && gameRunning) {
+                const left = d.expiresAt - gameTime;
+                const remain = Math.max(0, Math.ceil(left));
+                el.classList.add('visible');
+                el.classList.toggle('urgent', remain <= 10);
+                const secsEl = el.querySelector('.rift-timer-secs');
+                if (secsEl) secsEl.textContent = remain;
+                el.style.setProperty('--rt', Math.max(0, Math.min(1, left / 100)).toFixed(3));
+            } else {
+                el.classList.remove('visible', 'urgent');
+            }
+        }
+
         function drawDirectivesHUD() {
+            updateRiftTimerUI();
             let bannerShown = false;
             if (directiveBanner && gameTime < directiveBanner.until) {
                 bannerShown = true;
@@ -24070,17 +24146,22 @@
                     ctx.moveTo(sx, sy + 3); ctx.lineTo(sx, sy + 11);
                     ctx.stroke();
                 } else {                              // rift — hollow ring + core dot
-                    ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2); ctx.stroke();
-                    ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2); ctx.fill();
+                    // V1_340: 10% larger + a pink outer ring so the void rift reads instantly.
+                    ctx.beginPath(); ctx.arc(sx, sy, 8.8, 0, Math.PI * 2); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(sx, sy, 2.75, 0, Math.PI * 2); ctx.fill();
+                    ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.arc(sx, sy, 11.5, 0, Math.PI * 2); ctx.stroke();
                 }
             } else {
                 const cx = Math.max(margin, Math.min(gameWidth - margin, sx));
                 const cy = Math.max(margin, Math.min(gameHeight - margin, sy));
                 const ang = Math.atan2(sy - cy, sx - cx);
                 ctx.translate(cx, cy); ctx.rotate(ang);
+                const arrowSc = d.type === 'rift' ? 1.1 : 1; // V1_340: void-rift arrow 10% larger
                 ctx.beginPath();
-                ctx.moveTo(12, 0); ctx.lineTo(-8, -8); ctx.lineTo(-3, 0); ctx.lineTo(-8, 8);
+                ctx.moveTo(12 * arrowSc, 0); ctx.lineTo(-8 * arrowSc, -8 * arrowSc); ctx.lineTo(-3 * arrowSc, 0); ctx.lineTo(-8 * arrowSc, 8 * arrowSc);
                 ctx.closePath(); ctx.fill();
+                if (d.type === 'rift') { ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 2; ctx.stroke(); } // V1_340: pink outline
                 ctx.rotate(-ang);
                 ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
                 ctx.font = 'bold 10px Oxanium, monospace';
