@@ -13546,28 +13546,65 @@
         // back) and always finds an opening if one exists, including through a gap between two
         // obstacles. A short steering memory (self._steer) commits the boss to one side so it
         // follows a wall out of a pocket instead of oscillating at the pinch point.
-        function moveWithAvoidance(self, dirX, dirY, frameSpeed) {
+        function moveWithAvoidance(self, dirX, dirY, frameSpeed, dt = 16) {
+            // V1_339: while phasing (stuck-escape), ONLY water blocks — the boss slips through
+            // trees/rocks/bushes/mountains for a few seconds to unwedge, but never water.
+            const phasing = self._phaseT > 0;
+            const blocked = phasing
+                ? (x, y) => isInLake(x, y, self.radius)
+                : (x, y) => !!isInTerrain(x, y, self.radius);
+
             let nx = self.x + dirX * frameSpeed, ny = self.y + dirY * frameSpeed;
-            if (!isInTerrain(nx, ny, self.radius)) { self.x = nx; self.y = ny; self._steer = 0; return; }
-            const base = Math.atan2(dirY, dirX);
-            const side = self._steer || 1; // prefer the side we were already turning toward
-            const mags = [0.45, 0.8, 1.15, 1.5, 1.9, 2.3, 2.7, Math.PI];
-            for (const m of mags) {
-                for (const s of [side, -side]) {
-                    const a = base + s * m, vx = Math.cos(a), vy = Math.sin(a);
-                    for (const step of [1, 0.55]) { // half step slips through tight gaps
-                        nx = self.x + vx * frameSpeed * step;
-                        ny = self.y + vy * frameSpeed * step;
-                        if (!isInTerrain(nx, ny, self.radius)) {
-                            self.x = nx; self.y = ny;
-                            if (m < Math.PI) self._steer = s; // remember which way we went around
-                            return;
+            if (!blocked(nx, ny)) {
+                self.x = nx; self.y = ny; self._steer = 0;
+            } else {
+                const base = Math.atan2(dirY, dirX);
+                const side = self._steer || 1; // prefer the side we were already turning toward
+                const mags = [0.45, 0.8, 1.15, 1.5, 1.9, 2.3, 2.7, Math.PI];
+                let done = false;
+                for (const m of mags) {
+                    for (const s of [side, -side]) {
+                        const a = base + s * m, vx = Math.cos(a), vy = Math.sin(a);
+                        for (const step of [1, 0.55]) { // half step slips through tight gaps
+                            nx = self.x + vx * frameSpeed * step;
+                            ny = self.y + vy * frameSpeed * step;
+                            if (!blocked(nx, ny)) {
+                                self.x = nx; self.y = ny;
+                                if (m < Math.PI) self._steer = s; // remember which way we went around
+                                done = true; break;
+                            }
                         }
+                        if (done) break;
                     }
+                    if (done) break;
+                }
+                // Boxed in on every heading this frame: hold. The stuck timer below grants a
+                // phase before long, so the boss can never lock up against terrain for good.
+            }
+
+            // V1_339: stuck detection (windowed net-displacement). A chasing boss that makes
+            // almost no real progress for a few seconds earns a 4s phase to walk free.
+            if (self._phaseT > 0) {
+                self._phaseT -= dt;
+                if (self._phaseT <= 0) { self._phaseT = 0; self._stuckAccum = 0; self._stuckSampleT = 0; self._lastSampleX = self.x; self._lastSampleY = self.y; }
+            } else {
+                if (self._lastSampleX == null) { self._lastSampleX = self.x; self._lastSampleY = self.y; self._stuckSampleT = 0; }
+                self._stuckSampleT = (self._stuckSampleT || 0) + dt;
+                if (self._stuckSampleT >= 400) {
+                    const net = Math.hypot(self.x - self._lastSampleX, self.y - self._lastSampleY);
+                    const expected = self.speed * (self._stuckSampleT / 16);
+                    const distToPlayer = (typeof player !== 'undefined' && player) ? Math.hypot(player.x - self.x, player.y - self.y) : 9999;
+                    // Only when genuinely trying to traverse ground (well away from the player).
+                    if (frameSpeed > 0.01 && distToPlayer > self.radius + 90 && net < expected * 0.25) {
+                        self._stuckAccum = (self._stuckAccum || 0) + self._stuckSampleT;
+                        if (self._stuckAccum >= 2800) { self._phaseT = 4000; self._stuckAccum = 0; } // stuck >~3s -> phase 4s
+                    } else {
+                        self._stuckAccum = 0;
+                    }
+                    self._lastSampleX = self.x; self._lastSampleY = self.y;
+                    self._stuckSampleT = 0;
                 }
             }
-            // Boxed in on every heading this frame (rare): hold; next frame the player has
-            // moved and an opening reappears. No lock-up — we simply skip this step.
         }
 
         // ===== MINI BOSS CLASS =====
@@ -13581,9 +13618,11 @@
                 // Time-based scaling for mini boss
                 const timeScale = 1 + Math.floor(gameTime / 75) * 0.24; // V1_258: steeper mini-boss HP scaling
                 const speedScale = 1 + Math.floor(gameTime / 150) * 0.08; // +8% speed per 2.5 min (slowed from /120)
-                
+                // V1_339: soft-cap ONLY the HP scaling past ~13 min so 20min+ bosses aren't HP sponges (damage untouched)
+                let hpTimeScale = timeScale; if (hpTimeScale > 3.5) hpTimeScale = 3.5 + (hpTimeScale - 3.5) * 0.55;
+
                 this.speed = 1.235 * speedScale * enemySpeedBonus;
-                this.maxHp = Math.floor((380 + bossCount * 110) * timeScale * enemyHealthBonus * 0.855 * powerOffsetHpMult(gameTime)); // V1_305/V1_307 trims; V1_324: further -10% HP (0.95->0.855)
+                this.maxHp = Math.floor((380 + bossCount * 110) * hpTimeScale * enemyHealthBonus * 0.855 * powerOffsetHpMult(gameTime)); // V1_305/V1_307 trims; V1_324: -10% HP; V1_339: late-scale soft cap
                 this.hp = this.maxHp;
                 this.damage = Math.floor(25 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.color = '#ff6600';
@@ -13947,11 +13986,13 @@
                 
                 // Time-based scaling for major boss
                 const timeScale = 1 + Math.floor(gameTime / 75) * 0.30; // V1_258: steeper boss HP scaling
+                // V1_339: soft-cap ONLY the HP scaling past ~11 min so 20min+ bosses aren't HP sponges (damage untouched)
+                const hpTimeScale = timeScale > 3.5 ? 3.5 + (timeScale - 3.5) * 0.55 : timeScale;
                 const speedScale = 1 + Math.floor(gameTime / 180) * 0.10; // +10% speed per 3 min (slowed from /150)
                 
                 this.baseSpeedValue = 0.855 * speedScale * enemySpeedBonus;
                 this.speed = this.baseSpeedValue;
-                this.maxHp = Math.floor((560 + bossCount * 161) * timeScale * enemyHealthBonus * 0.783 * powerOffsetHpMult(gameTime)); // V1_305/V1_307 trims; V1_324: further -10% HP (0.87->0.783)
+                this.maxHp = Math.floor((560 + bossCount * 161) * hpTimeScale * enemyHealthBonus * 0.783 * powerOffsetHpMult(gameTime)); // V1_305/V1_307 trims; V1_324: -10% HP; V1_339: late-scale soft cap
                 this.hp = this.maxHp;
                 this.damage = Math.floor(40 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.color = '#ff6600';
@@ -14069,7 +14110,7 @@
                     
                     if (dist > 0) {
                         // V1_305: robust avoidance (was a single-perpendicular slide that stuck on rocks/trees).
-                        moveWithAvoidance(this, dx / dist, dy / dist, frameSpeed);
+                        moveWithAvoidance(this, dx / dist, dy / dist, frameSpeed, dt);
                     }
                 }
                 
