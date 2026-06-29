@@ -24919,70 +24919,46 @@
                 const def = WEAPONS.shotgun;
                 const now = Date.now();
                 
-                // Draw muzzle flash — V1_358: punchy buckshot BLAST. A short-lived fire cone
-                // erupts from the muzzle (orange -> yellow -> white-hot) with a recoil pop and a
-                // few ejected sparks, then a faint smoke puff lingers and drifts.
+                // Draw scatter-burst — V1_360: no gun to flash from, so the blast now reads as an
+                // ENERGY burst out of the player ball: a bright radial pop at the player plus a
+                // directional shockwave arc sweeping outward through the spread. The slugs (below)
+                // fan out from the same origin. No muzzle, no smoke — matches every other weapon's
+                // abstract neon emanation.
                 if (state.muzzleFlash) {
                     const flash = state.muzzleFlash;
                     const age = now - flash.startTime;
-                    const sx = camera.screenX(flash.x);
+                    const sx = camera.screenX(flash.x); // player position = burst origin
                     const sy = camera.screenY(flash.y);
-                    const ca = Math.cos(flash.angle), sa = Math.sin(flash.angle);
-                    const mx = sx + ca * camera.scale(18); // muzzle tip
-                    const my = sy + sa * camera.scale(18);
+                    const half = 0.55; // shockwave spread half-angle
 
-                    // --- Smoke puff (lingers ~280ms, drifts forward + up a touch) ---
-                    if (age < 280) {
-                        const sp = age / 280;
-                        ctx.save();
-                        ctx.fillStyle = '#9a8a7a';
-                        const puffR = camera.scale(6 + sp * 20);
-                        const px = mx + ca * camera.scale(6 + sp * 12);
-                        const py = my + sa * camera.scale(6 + sp * 12) - camera.scale(sp * 6);
-                        ctx.globalAlpha = (1 - sp) * 0.26;
-                        ctx.beginPath(); ctx.arc(px, py, puffR, 0, Math.PI * 2); ctx.fill();
-                        ctx.globalAlpha = (1 - sp) * 0.16;
-                        ctx.beginPath(); ctx.arc(px - ca * camera.scale(9), py, puffR * 0.7, 0, Math.PI * 2); ctx.fill();
-                        ctx.restore();
-                    }
-
-                    // --- Fire cone + recoil pop + sparks (~90ms) ---
-                    if (age < 90) {
-                        const p = age / 90;
+                    // --- Directional energy sweep through the spread (~220ms) ---
+                    if (age < 220) {
+                        const p = age / 220;
                         const fa = 1 - p;
-                        const len = camera.scale(34 + p * 18);
-                        const half = 0.42;
+                        const r = camera.scale(18 + p * 56);
                         ctx.save();
                         ctx.globalCompositeOperation = 'lighter';
                         ctx.lineCap = 'round';
-                        ctx.shadowBlur = 18; ctx.shadowColor = def.color;
-                        // layered fire wedge: outer color, mid amber, white-hot inner
-                        const cone = (length, spread, col, alpha) => {
-                            ctx.globalAlpha = alpha; ctx.fillStyle = col;
-                            ctx.beginPath();
-                            ctx.moveTo(mx, my);
-                            ctx.lineTo(mx + Math.cos(flash.angle - spread) * length, my + Math.sin(flash.angle - spread) * length);
-                            ctx.lineTo(mx + ca * length * 1.12, my + sa * length * 1.12);
-                            ctx.lineTo(mx + Math.cos(flash.angle + spread) * length, my + Math.sin(flash.angle + spread) * length);
-                            ctx.closePath(); ctx.fill();
-                        };
-                        cone(len, half, def.color, fa * 0.9);
-                        cone(len * 0.7, half * 0.7, '#ffd27a', fa * 0.95);
-                        cone(len * 0.42, half * 0.5, '#fff6d8', fa);
-                        // recoil pop disc at the muzzle
-                        ctx.shadowBlur = 26;
-                        ctx.globalAlpha = fa * 0.9; ctx.fillStyle = def.color;
-                        ctx.beginPath(); ctx.arc(mx, my, camera.scale(7 + p * 6), 0, Math.PI * 2); ctx.fill();
-                        ctx.globalAlpha = fa; ctx.fillStyle = '#ffffff';
-                        ctx.beginPath(); ctx.arc(mx, my, camera.scale(3.5 + p * 2), 0, Math.PI * 2); ctx.fill();
-                        // a few ejected sparks raking across the cone (deterministic lengths = no flicker)
-                        ctx.strokeStyle = '#ffcc66'; ctx.lineWidth = camera.scale(1.6); ctx.shadowBlur = 8;
-                        for (let i = 0; i < 6; i++) {
-                            const a = flash.angle + (i / 5 - 0.5) * half * 2;
-                            const l = len * (0.8 + ((i * 37) % 10) / 10 * 0.5);
-                            ctx.globalAlpha = fa * 0.7;
-                            ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx + Math.cos(a) * l, my + Math.sin(a) * l); ctx.stroke();
-                        }
+                        ctx.shadowBlur = 14; ctx.shadowColor = def.color;
+                        ctx.globalAlpha = fa * 0.85; ctx.strokeStyle = def.color; ctx.lineWidth = camera.scale(5 * fa + 1.5);
+                        ctx.beginPath(); ctx.arc(sx, sy, r, flash.angle - half, flash.angle + half); ctx.stroke();
+                        ctx.globalAlpha = fa; ctx.strokeStyle = '#ffe6b0'; ctx.lineWidth = camera.scale(2.5 * fa + 1);
+                        ctx.beginPath(); ctx.arc(sx, sy, r * 0.8, flash.angle - half * 0.8, flash.angle + half * 0.8); ctx.stroke();
+                        ctx.restore();
+                    }
+
+                    // --- Bright burst ring around the player edge (clearly emanates from the ball) ~110ms ---
+                    if (age < 110) {
+                        const p = age / 110;
+                        const fa = 1 - p;
+                        const rr = camera.scale(16 + p * 20);
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.shadowBlur = 20; ctx.shadowColor = def.color;
+                        ctx.globalAlpha = fa * 0.9; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = camera.scale(2.5 * fa + 1);
+                        ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI * 2); ctx.stroke();
+                        ctx.globalAlpha = fa * 0.7; ctx.strokeStyle = def.color; ctx.lineWidth = camera.scale(4 * fa + 1);
+                        ctx.beginPath(); ctx.arc(sx, sy, rr * 1.3, 0, Math.PI * 2); ctx.stroke();
                         ctx.restore();
                     }
                 }
@@ -25947,38 +25923,37 @@
             },
             // 🔫 Shotgun — muzzle flash, then a fan of pellets that mirror the in-game
             // render: each is a white-hot core trailing a colored motion-streak.
-            // 🔫 Shotgun — V1_358: punchy buckshot blast mirrored from in-game. A layered fire
-            // cone + recoil pop erupts at the muzzle, then a cone of glowing buckshot (white-hot
-            // cores + two-tone ember trails) sprays right across the card.
+            // 🔫 Shotgun — V1_360: energy scatter-burst mirrored from in-game. A bright pop at the
+            // origin + a directional shockwave arc, then a wide fan of glowing slugs (white-hot
+            // cores + two-tone trails). No muzzle/gun — the blast emanates like every other weapon.
             shotgun(ctx, t, w, h, color) {
-                const ox = 12, oy = h / 2, p = (t % 1.2) / 1.2;
+                const ox = 14, oy = h / 2, p = (t % 1.2) / 1.2;
                 ctx.globalCompositeOperation = 'lighter';
                 ctx.lineCap = 'round'; ctx.shadowColor = color;
-                // muzzle fire cone + recoil pop (orange -> amber -> white-hot)
+                const half = 0.62;
+                // expanding directional shockwave arc
+                if (p < 0.34) {
+                    const ap = p / 0.34, fa = 1 - ap, r = 8 + ap * 26;
+                    ctx.globalAlpha = fa * 0.7; ctx.strokeStyle = color; ctx.lineWidth = 2.5 * fa + 0.8; ctx.shadowBlur = 8;
+                    ctx.beginPath(); ctx.arc(ox, oy, r, -half, half); ctx.stroke();
+                    ctx.globalAlpha = fa * 0.9; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 1.6 * fa + 0.6;
+                    ctx.beginPath(); ctx.arc(ox, oy, r * 0.8, -half * 0.85, half * 0.85); ctx.stroke();
+                }
+                // origin energy pop
                 if (p < 0.16) {
                     const fp = p / 0.16, fa = 1 - fp;
-                    const len = 16 + fp * 10, half = 0.5;
-                    const cone = (L, hh, col, al) => {
-                        ctx.globalAlpha = al; ctx.fillStyle = col; ctx.shadowBlur = 8;
-                        ctx.beginPath(); ctx.moveTo(ox, oy);
-                        ctx.lineTo(ox + Math.cos(-hh) * L, oy + Math.sin(-hh) * L);
-                        ctx.lineTo(ox + L * 1.1, oy);
-                        ctx.lineTo(ox + Math.cos(hh) * L, oy + Math.sin(hh) * L);
-                        ctx.closePath(); ctx.fill();
-                    };
-                    cone(len, half, color, fa * 0.9);
-                    cone(len * 0.66, half * 0.7, '#ffd27a', fa * 0.95);
-                    cone(len * 0.4, half * 0.5, '#fff6d8', fa);
-                    ctx.globalAlpha = fa * 0.95; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 10;
-                    ctx.beginPath(); ctx.arc(ox, oy, 2.6 + fp * 2, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = fa * 0.85; ctx.fillStyle = color; ctx.shadowBlur = 10;
+                    ctx.beginPath(); ctx.arc(ox, oy, 4 + fp * 3, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = fa; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.arc(ox, oy, 2.2 + fp * 1.5, 0, TAU); ctx.fill();
                 }
-                // buckshot cone
+                // scatter slugs (wide fan)
                 for (let i = 0; i < 6; i++) {
-                    const a = (_wpRand(i, 1) - 0.5) * 0.85, dist = p * (w - 22);
+                    const a = (_wpRand(i, 1) - 0.5) * 1.05, dist = p * (w - 22);
                     if (dist < 2) continue;
                     const x = ox + Math.cos(a) * dist, y = oy + Math.sin(a) * dist, fade = _wpFadeX(x, w, 12);
                     const dx = x - ox, dy = y - oy, dl = Math.hypot(dx, dy) || 1, tl = Math.min(10, dist);
-                    // outer ember + inner amber streak (point back toward the muzzle)
+                    // outer + inner trail (point back toward the origin)
                     ctx.globalAlpha = (1 - p) * 0.55 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6;
                     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - dx / dl * tl, y - dy / dl * tl); ctx.stroke();
                     ctx.globalAlpha = (1 - p) * 0.8 * fade; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2.4;
