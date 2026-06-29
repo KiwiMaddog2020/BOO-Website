@@ -10079,41 +10079,75 @@
                 // Fixed targeting range based on target visible area (consistent across all devices)
                 const maxRange = Math.hypot(TARGET_VISIBLE_WIDTH, TARGET_VISIBLE_HEIGHT) / 2 * 0.45;
                 
-                // Find targets (enemies, bosses, leprechauns)
-                let targetX, targetY;
-                const nearbyTargets = [
-                    ...enemies.filter(e => !e.dead && Math.hypot(e.x - this.x, e.y - this.y) < maxRange),
-                    ...bosses.filter(b => !b.dead && Math.hypot(b.x - this.x, b.y - this.y) < maxRange),
-                    ...leprechauns.filter(l => !l.dead && Math.hypot(l.x - this.x, l.y - this.y) < maxRange)
-                ];
-                
-                if (nearbyTargets.length > 0) {
-                    const target = nearbyTargets[Math.floor(Math.random() * nearbyTargets.length)];
-                    targetX = target.x;
-                    targetY = target.y;
-                } else {
-                    return; // No targets
-                }
-                
+                // V1_356: smart targeting — lead moving enemies to where they'll be at impact,
+                // aim each meteor at the DENSEST cluster (closest breaks ties), and spread
+                // multiple meteors across separate clusters for coverage (still stacking on one
+                // pack when that pack is the bigger payoff).
+                const impactDelay = 500;             // ms until the first meteor lands
+                const leadFrames = impactDelay / 16; // enemy moves are per-16ms frame
+                const px = player ? player.x : this.x, py = player ? player.y : this.y;
+
+                // Candidates within range, each carrying a movement-led aim point (enemies chase
+                // the player, so predict along that heading, damped, never overshooting them).
+                const cand = [];
+                const addCands = (arr) => {
+                    for (const e of arr) {
+                        if (e.dead) continue;
+                        if (Math.hypot(e.x - this.x, e.y - this.y) >= maxRange) continue;
+                        let lx = e.x, ly = e.y;
+                        const pdx = px - e.x, pdy = py - e.y, pd = Math.hypot(pdx, pdy);
+                        const spd = e.speed || 0;
+                        if (pd > 1 && spd > 0) {
+                            const travel = Math.min(spd * leadFrames * 0.6, pd);
+                            lx = e.x + (pdx / pd) * travel; ly = e.y + (pdy / pd) * travel;
+                        }
+                        cand.push({ e, lx, ly });
+                    }
+                };
+                addCands(enemies); addCands(bosses); addCands(leprechauns);
+                if (cand.length === 0) return; // No targets
+
                 state.lastFire = now;
                 SFX.wMeteor();
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const blastRadius = def.blastRadius + level * 5;
-                const meteorCount = 1 + Math.floor(level / 4); // balance pass: 2nd meteor at Lv4 (was Lv5)
-                
-                // Initialize meteors array
+                const meteorCount = 1 + Math.floor(level / 4); // 2nd meteor at Lv4
+                const r2 = blastRadius * blastRadius;
                 if (!state.meteors) state.meteors = [];
-                
+
+                // Cost guard on huge swarms: score only the nearest ~100 candidates.
+                if (cand.length > 100) {
+                    cand.sort((a, b) => Math.hypot(a.lx - this.x, a.ly - this.y) - Math.hypot(b.lx - this.x, b.ly - this.y));
+                    cand.length = 100;
+                }
+
+                const covered = new Set();
                 for (let i = 0; i < meteorCount; i++) {
-                    const offsetX = (Math.random() - 0.5) * 100;
-                    const offsetY = (Math.random() - 0.5) * 100;
+                    // Best aim point = most targets within blast (already-covered ones de-weighted
+                    // so later meteors prefer FRESH clusters); tiny closeness tiebreak.
+                    let best = null, bestScore = -Infinity;
+                    for (const c of cand) {
+                        let score = 0;
+                        for (const o of cand) {
+                            const dx = o.lx - c.lx, dy = o.ly - c.ly;
+                            if (dx * dx + dy * dy < r2) score += covered.has(o.e) ? 0.15 : 1;
+                        }
+                        score -= Math.hypot(c.lx - this.x, c.ly - this.y) / 100000;
+                        if (score > bestScore) { bestScore = score; best = c; }
+                    }
+                    if (!best) break;
+                    for (const o of cand) {
+                        const dx = o.lx - best.lx, dy = o.ly - best.ly;
+                        if (dx * dx + dy * dy < r2) covered.add(o.e);
+                    }
+                    const jx = (Math.random() - 0.5) * 20, jy = (Math.random() - 0.5) * 20; // avoid perfect overlap on stacks
                     state.meteors.push({
-                        x: targetX + offsetX,
-                        y: targetY + offsetY,
+                        x: best.lx + jx,
+                        y: best.ly + jy,
                         startTime: now + i * 150,
                         damage: baseDamage,
                         radius: blastRadius,
-                        impactTime: now + 500 + i * 150
+                        impactTime: now + impactDelay + i * 150
                     });
                 }
             }
