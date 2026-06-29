@@ -9156,9 +9156,10 @@
                 SFX.wEnergyBolt();
                 const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
 
-                const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                const aim = predictAim(this.x, this.y, target, 4.4); // V1_357: lead moving targets
+                const angle = Math.atan2(aim.y - this.y, aim.x - this.x);
                 const spread = 0.2;
-                
+
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
                     projectiles.push(new Projectile(
@@ -9870,10 +9871,12 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
                 
+                const boomAim = predictAim(this.x, this.y, target, 3.5); // V1_357: lead moving targets
+                const boomBaseAngle = Math.atan2(boomAim.y - this.y, boomAim.x - this.x);
                 for (let i = 0; i < count; i++) {
                     const angleOffset = count > 1 ? (i - (count - 1) / 2) * 0.4 : 0;
-                    const angle = Math.atan2(target.y - this.y, target.x - this.x) + angleOffset;
-                    
+                    const angle = boomBaseAngle + angleOffset;
+
                     // Create boomerang projectile (slower speed)
                     const boom = new Projectile(this.x, this.y, angle, 3.5, baseDamage, def.color, 'boomerang', 999, sizeScale);
                     boom.startX = this.x;
@@ -10491,9 +10494,10 @@
                 const arrowCount = level >= 3 ? 3 + Math.floor((level - 3) / 5) * 2 : def.baseArrows; // 1 -> 3 at L3, then 5, 7...
                 const pierce = def.pierce + Math.floor(level / 4);
                 
-                const baseAngle = Math.atan2(target.y - this.y, target.x - this.x);
+                const arrowAim = predictAim(this.x, this.y, target, 7); // V1_357: lead moving targets
+                const baseAngle = Math.atan2(arrowAim.y - this.y, arrowAim.x - this.x);
                 const spread = 0.15;
-                
+
                 for (let i = 0; i < arrowCount; i++) {
                     const angle = baseAngle + (i - (arrowCount - 1) / 2) * spread;
                     const proj = new Projectile(
@@ -10615,7 +10619,8 @@
                 const bounces = def.baseBounces + Math.floor(level / 3);
                 const bounceRange = def.bounceRange + level * 10;
                 
-                const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                const discAim = predictAim(this.x, this.y, target, 5.5); // V1_357: lead moving targets
+                const angle = Math.atan2(discAim.y - this.y, discAim.x - this.x);
                 const proj = new Projectile(
                     this.x, this.y, angle, 5.5, baseDamage, def.color, 'disc', 1, 1.2
                 );
@@ -10712,8 +10717,9 @@
                 const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: pellets die at the screen edge
                 const knockback = def.knockback + level * 2.5;
                 
-                // Base angle toward target
-                const baseAngle = Math.atan2(bestTarget.y - this.y, bestTarget.x - this.x);
+                // Base angle toward target (V1_357: lead moving targets — pellets are fast so the nudge is small but lands the cone on where they're going)
+                const shotAim = predictAim(this.x, this.y, bestTarget, 13.5);
+                const baseAngle = Math.atan2(shotAim.y - this.y, shotAim.x - this.x);
                 
                 // Initialize pellets array for rendering
                 if (!state.pellets) state.pellets = [];
@@ -20928,10 +20934,39 @@
                     nearest = boss;
                 }
             }
-            
+
             return nearest;
         }
-        
+
+        // V1_357: smooth per-frame velocity estimate for targets, fed from the main update
+        // loop. Captures the TRUE displacement (incl. the curve-follow while the player kites,
+        // knockback, slows) so projectile leading actually predicts where a target is going —
+        // a pure "head toward player" model would be angularly useless for pursuit enemies.
+        function trackAimVel(ent, px, py, dtUsed) {
+            const inv = dtUsed > 0 ? 16 / dtUsed : 0; // normalize displacement to per-16ms frame
+            const nvx = (ent.x - px) * inv, nvy = (ent.y - py) * inv;
+            ent.aimVX = (ent.aimVX || 0) * 0.6 + nvx * 0.4; // light smoothing kills jitter
+            ent.aimVY = (ent.aimVY || 0) * 0.6 + nvy * 0.4;
+        }
+
+        // V1_357: lead a moving target — return the aim point a projectile of `projSpeed`
+        // (px/frame) should fire at so it intercepts. Iterative solve against the tracked
+        // velocity; falls back to the current position when the target is still / untracked.
+        function predictAim(sx, sy, target, projSpeed) {
+            if (!target) return { x: sx, y: sy };
+            const vx = target.aimVX || 0, vy = target.aimVY || 0;
+            if ((vx || vy) && projSpeed > 0) {
+                let t = Math.hypot(target.x - sx, target.y - sy) / projSpeed; // frames to current pos
+                for (let i = 0; i < 2; i++) {
+                    const fx = target.x + vx * t, fy = target.y + vy * t;
+                    t = Math.hypot(fx - sx, fy - sy) / projSpeed;
+                }
+                t = Math.min(t, 60); // cap ~1s of lead so far/fast targets don't over-lead
+                return { x: target.x + vx * t, y: target.y + vy * t };
+            }
+            return { x: target.x, y: target.y };
+        }
+
         // Efficient in-place array cleanup (swap-and-pop)
         function cleanupArray(arr, shouldRemove) {
             for (let i = arr.length - 1; i >= 0; i--) {
@@ -23176,18 +23211,22 @@
                     if (enemy.dead) continue;
                     const dist = Math.hypot(enemy.x - player.x, enemy.y - player.y);
                     if (dist < cullDistance) {
+                        const _avx = enemy.x, _avy = enemy.y; // V1_357: pre-move pos for velocity track
                         enemy.update(effectiveDt);
                         // V1_259: knockback / gravity pull bypass the movement collision, so
                         // hard-guarantee no enemy ever sits on a lake by pushing it back out.
                         // V1_289: same guarantee for solid obstacles (tree/rock/bush).
                         ({ x: enemy.x, y: enemy.y } = pushOutOfLake(enemy.x, enemy.y, enemy.radius));
                         ({ x: enemy.x, y: enemy.y } = pushOutOfSolids(enemy.x, enemy.y, enemy.radius));
+                        trackAimVel(enemy, _avx, _avy, effectiveDt); // V1_357: feed projectile leading
                     } else if (dist < skipDistance) {
                         // Reduced update rate for distant enemies (every other frame)
                         if (frameCount % 2 === 0) {
+                            const _avx = enemy.x, _avy = enemy.y;
                             enemy.update(effectiveDt * 2);
                             ({ x: enemy.x, y: enemy.y } = pushOutOfLake(enemy.x, enemy.y, enemy.radius));
                             ({ x: enemy.x, y: enemy.y } = pushOutOfSolids(enemy.x, enemy.y, enemy.radius));
+                            trackAimVel(enemy, _avx, _avy, effectiveDt * 2);
                         }
                     }
                     // Very distant enemies don't update (will catch up when closer)
@@ -23211,7 +23250,11 @@
                 
                 for (const shrine of shrines) shrine.update(dt);
                 for (const lep of leprechauns) {
-                    if (!lep.dead) lep.update(effectiveDt);
+                    if (!lep.dead) {
+                        const _avx = lep.x, _avy = lep.y;
+                        lep.update(effectiveDt);
+                        trackAimVel(lep, _avx, _avy, effectiveDt); // V1_357
+                    }
                 }
                 updateLeprechaunThrows(effectiveDt); // V1_341
                 for (const rainbow of rainbows) rainbow.update();
@@ -23229,11 +23272,13 @@
                 }
                 for (const boss of bosses) {
                     if (!boss.dead) {
+                        const _avx = boss.x, _avy = boss.y; // V1_357
                         boss.update(effectiveDt);
                         // V1_289: bosses bypass movement collision via knockback/pull too — never let
                         // them sit inside a lake or solid obstacle (the reported Plasma-Shield-into-rock case).
                         ({ x: boss.x, y: boss.y } = pushOutOfLake(boss.x, boss.y, boss.radius));
                         ({ x: boss.x, y: boss.y } = pushOutOfSolids(boss.x, boss.y, boss.radius));
+                        trackAimVel(boss, _avx, _avy, effectiveDt); // V1_357
                     }
                 }
                 updateChestSpawning(dt);
