@@ -24902,101 +24902,109 @@
                 const def = WEAPONS.shotgun;
                 const now = Date.now();
                 
-                // Draw muzzle flash
+                // Draw muzzle flash — V1_358: punchy buckshot BLAST. A short-lived fire cone
+                // erupts from the muzzle (orange -> yellow -> white-hot) with a recoil pop and a
+                // few ejected sparks, then a faint smoke puff lingers and drifts.
                 if (state.muzzleFlash) {
                     const flash = state.muzzleFlash;
                     const age = now - flash.startTime;
-                    if (age < 100) {
-                        const progress = age / 100;
-                        const flashAlpha = 1 - progress;
-                        const flashSize = camera.scale(25 + progress * 30);
-                        
-                        const sx = camera.screenX(flash.x);
-                        const sy = camera.screenY(flash.y);
-                        const flashX = sx + Math.cos(flash.angle) * camera.scale(20);
-                        const flashY = sy + Math.sin(flash.angle) * camera.scale(20);
-                        
+                    const sx = camera.screenX(flash.x);
+                    const sy = camera.screenY(flash.y);
+                    const ca = Math.cos(flash.angle), sa = Math.sin(flash.angle);
+                    const mx = sx + ca * camera.scale(18); // muzzle tip
+                    const my = sy + sa * camera.scale(18);
+
+                    // --- Smoke puff (lingers ~280ms, drifts forward + up a touch) ---
+                    if (age < 280) {
+                        const sp = age / 280;
                         ctx.save();
-                        ctx.globalAlpha = flashAlpha;
-                        
-                        // Outer orange glow
-                        ctx.shadowBlur = 40;
-                        ctx.shadowColor = def.color;
-                        ctx.fillStyle = def.color;
-                        ctx.beginPath();
-                        ctx.arc(flashX, flashY, flashSize * 0.8, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        // Inner white-yellow flash
-                        ctx.fillStyle = '#ffff88';
-                        ctx.beginPath();
-                        ctx.arc(flashX, flashY, flashSize * 0.5, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        // Core white
-                        ctx.fillStyle = '#ffffff';
-                        ctx.beginPath();
-                        ctx.arc(flashX, flashY, flashSize * 0.25, 0, Math.PI * 2);
-                        ctx.fill();
-                        
-                        // Spread lines (shotgun blast effect)
-                        ctx.strokeStyle = '#ffcc44';
-                        ctx.lineWidth = 2;
-                        for (let i = 0; i < 8; i++) {
-                            const lineAngle = flash.angle + (i - 3.5) * 0.15;
-                            const lineLength = flashSize * (1.5 + Math.random() * 0.5) * (1 - progress * 0.5);
-                            ctx.globalAlpha = flashAlpha * 0.8;
+                        ctx.fillStyle = '#9a8a7a';
+                        const puffR = camera.scale(6 + sp * 20);
+                        const px = mx + ca * camera.scale(6 + sp * 12);
+                        const py = my + sa * camera.scale(6 + sp * 12) - camera.scale(sp * 6);
+                        ctx.globalAlpha = (1 - sp) * 0.26;
+                        ctx.beginPath(); ctx.arc(px, py, puffR, 0, Math.PI * 2); ctx.fill();
+                        ctx.globalAlpha = (1 - sp) * 0.16;
+                        ctx.beginPath(); ctx.arc(px - ca * camera.scale(9), py, puffR * 0.7, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                    }
+
+                    // --- Fire cone + recoil pop + sparks (~90ms) ---
+                    if (age < 90) {
+                        const p = age / 90;
+                        const fa = 1 - p;
+                        const len = camera.scale(34 + p * 18);
+                        const half = 0.42;
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.lineCap = 'round';
+                        ctx.shadowBlur = 18; ctx.shadowColor = def.color;
+                        // layered fire wedge: outer color, mid amber, white-hot inner
+                        const cone = (length, spread, col, alpha) => {
+                            ctx.globalAlpha = alpha; ctx.fillStyle = col;
                             ctx.beginPath();
-                            ctx.moveTo(flashX, flashY);
-                            ctx.lineTo(
-                                flashX + Math.cos(lineAngle) * lineLength,
-                                flashY + Math.sin(lineAngle) * lineLength
-                            );
-                            ctx.stroke();
+                            ctx.moveTo(mx, my);
+                            ctx.lineTo(mx + Math.cos(flash.angle - spread) * length, my + Math.sin(flash.angle - spread) * length);
+                            ctx.lineTo(mx + ca * length * 1.12, my + sa * length * 1.12);
+                            ctx.lineTo(mx + Math.cos(flash.angle + spread) * length, my + Math.sin(flash.angle + spread) * length);
+                            ctx.closePath(); ctx.fill();
+                        };
+                        cone(len, half, def.color, fa * 0.9);
+                        cone(len * 0.7, half * 0.7, '#ffd27a', fa * 0.95);
+                        cone(len * 0.42, half * 0.5, '#fff6d8', fa);
+                        // recoil pop disc at the muzzle
+                        ctx.shadowBlur = 26;
+                        ctx.globalAlpha = fa * 0.9; ctx.fillStyle = def.color;
+                        ctx.beginPath(); ctx.arc(mx, my, camera.scale(7 + p * 6), 0, Math.PI * 2); ctx.fill();
+                        ctx.globalAlpha = fa; ctx.fillStyle = '#ffffff';
+                        ctx.beginPath(); ctx.arc(mx, my, camera.scale(3.5 + p * 2), 0, Math.PI * 2); ctx.fill();
+                        // a few ejected sparks raking across the cone (deterministic lengths = no flicker)
+                        ctx.strokeStyle = '#ffcc66'; ctx.lineWidth = camera.scale(1.6); ctx.shadowBlur = 8;
+                        for (let i = 0; i < 6; i++) {
+                            const a = flash.angle + (i / 5 - 0.5) * half * 2;
+                            const l = len * (0.8 + ((i * 37) % 10) / 10 * 0.5);
+                            ctx.globalAlpha = fa * 0.7;
+                            ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx + Math.cos(a) * l, my + Math.sin(a) * l); ctx.stroke();
                         }
-                        
                         ctx.restore();
                     }
                 }
                 
-                // Draw pellets
+                // Draw pellets — V1_358: glowing buckshot, each a hot white core wrapped in an
+                // orange glow with a two-tone ember trail (outer color, inner amber) raking back.
                 if (state.pellets) {
                     for (const pellet of state.pellets) {
                         if (pellet.hit) continue;
-                        if (!camera.isVisible(pellet.x, pellet.y, 10)) continue;
-                        
+                        if (!camera.isVisible(pellet.x, pellet.y, 12)) continue;
+
                         const sx = camera.screenX(pellet.x);
                         const sy = camera.screenY(pellet.y);
                         const age = now - pellet.startTime;
-                        const fadeAlpha = Math.max(0, 1 - age / 400);
-                        
-                        ctx.save();
-                        ctx.globalAlpha = fadeAlpha;
-                        
-                        // Pellet glow
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = def.color;
-                        
-                        // Trail
-                        const trailLength = camera.scale(12);
+                        const fadeAlpha = Math.max(0, 1 - age / 420);
                         const angle = Math.atan2(pellet.vy, pellet.vx);
-                        ctx.strokeStyle = def.color;
-                        ctx.lineWidth = camera.scale(3);
+                        const ca = Math.cos(angle), sa = Math.sin(angle);
+
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
                         ctx.lineCap = 'round';
-                        ctx.beginPath();
-                        ctx.moveTo(sx, sy);
-                        ctx.lineTo(
-                            sx - Math.cos(angle) * trailLength,
-                            sy - Math.sin(angle) * trailLength
-                        );
-                        ctx.stroke();
-                        
-                        // Pellet core
-                        ctx.fillStyle = '#ffffff';
-                        ctx.beginPath();
-                        ctx.arc(sx, sy, camera.scale(3), 0, Math.PI * 2);
-                        ctx.fill();
-                        
+                        ctx.shadowColor = def.color;
+
+                        // outer ember streak
+                        const t1 = camera.scale(16);
+                        ctx.shadowBlur = 8;
+                        ctx.globalAlpha = fadeAlpha * 0.5; ctx.strokeStyle = def.color; ctx.lineWidth = camera.scale(2);
+                        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - ca * t1, sy - sa * t1); ctx.stroke();
+                        // inner amber streak
+                        const t2 = camera.scale(9);
+                        ctx.globalAlpha = fadeAlpha * 0.85; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = camera.scale(2.6);
+                        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - ca * t2, sy - sa * t2); ctx.stroke();
+
+                        // glow + hot white core
+                        ctx.globalAlpha = fadeAlpha; ctx.shadowBlur = 10; ctx.fillStyle = def.color;
+                        ctx.beginPath(); ctx.arc(sx, sy, camera.scale(3.4), 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 5;
+                        ctx.beginPath(); ctx.arc(sx, sy, camera.scale(1.8), 0, Math.PI * 2); ctx.fill();
+
                         ctx.restore();
                     }
                 }
@@ -25922,31 +25930,47 @@
             },
             // 🔫 Shotgun — muzzle flash, then a fan of pellets that mirror the in-game
             // render: each is a white-hot core trailing a colored motion-streak.
+            // 🔫 Shotgun — V1_358: punchy buckshot blast mirrored from in-game. A layered fire
+            // cone + recoil pop erupts at the muzzle, then a cone of glowing buckshot (white-hot
+            // cores + two-tone ember trails) sprays right across the card.
             shotgun(ctx, t, w, h, color) {
-                const ox = 10, oy = h / 2, p = (t % 1.2) / 1.2;
+                const ox = 12, oy = h / 2, p = (t % 1.2) / 1.2;
                 ctx.globalCompositeOperation = 'lighter';
-                if (p < 0.12) {
-                    const fa = 1 - p / 0.12;
-                    ctx.globalAlpha = fa * 0.9; ctx.fillStyle = '#ffe6b0'; ctx.shadowBlur = 12; ctx.shadowColor = color;
-                    ctx.beginPath(); ctx.arc(ox, oy, 4 + fa * 4, 0, TAU); ctx.fill();
-                    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = fa;
-                    for (let i = 0; i < 5; i++) {
-                        const a = (i / 4 - 0.5) * 0.9;
-                        ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + Math.cos(a) * 12, oy + Math.sin(a) * 12); ctx.stroke();
-                    }
-                }
                 ctx.lineCap = 'round'; ctx.shadowColor = color;
+                // muzzle fire cone + recoil pop (orange -> amber -> white-hot)
+                if (p < 0.16) {
+                    const fp = p / 0.16, fa = 1 - fp;
+                    const len = 16 + fp * 10, half = 0.5;
+                    const cone = (L, hh, col, al) => {
+                        ctx.globalAlpha = al; ctx.fillStyle = col; ctx.shadowBlur = 8;
+                        ctx.beginPath(); ctx.moveTo(ox, oy);
+                        ctx.lineTo(ox + Math.cos(-hh) * L, oy + Math.sin(-hh) * L);
+                        ctx.lineTo(ox + L * 1.1, oy);
+                        ctx.lineTo(ox + Math.cos(hh) * L, oy + Math.sin(hh) * L);
+                        ctx.closePath(); ctx.fill();
+                    };
+                    cone(len, half, color, fa * 0.9);
+                    cone(len * 0.66, half * 0.7, '#ffd27a', fa * 0.95);
+                    cone(len * 0.4, half * 0.5, '#fff6d8', fa);
+                    ctx.globalAlpha = fa * 0.95; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 10;
+                    ctx.beginPath(); ctx.arc(ox, oy, 2.6 + fp * 2, 0, TAU); ctx.fill();
+                }
+                // buckshot cone
                 for (let i = 0; i < 6; i++) {
-                    const a = (_wpRand(i, 1) - 0.5) * 0.7, dist = p * (w - 20), x = ox + dist;
-                    const y = oy + Math.sin(a) * dist * 0.5, fade = _wpFadeX(x, w, 12);
-                    if (dist < 1) continue;
-                    // colored trailing streak (points back toward the muzzle, like the in-game pellet trail)
-                    const dx = x - ox, dy = y - oy, dl = Math.hypot(dx, dy) || 1, tl = Math.min(9, dist);
-                    ctx.globalAlpha = (1 - p) * 0.8 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6;
+                    const a = (_wpRand(i, 1) - 0.5) * 0.85, dist = p * (w - 22);
+                    if (dist < 2) continue;
+                    const x = ox + Math.cos(a) * dist, y = oy + Math.sin(a) * dist, fade = _wpFadeX(x, w, 12);
+                    const dx = x - ox, dy = y - oy, dl = Math.hypot(dx, dy) || 1, tl = Math.min(10, dist);
+                    // outer ember + inner amber streak (point back toward the muzzle)
+                    ctx.globalAlpha = (1 - p) * 0.55 * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6;
                     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - dx / dl * tl, y - dy / dl * tl); ctx.stroke();
-                    // white-hot pellet core
-                    ctx.globalAlpha = (1 - p) * 0.95 * fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 5;
-                    ctx.beginPath(); ctx.arc(x, y, 1.7, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = (1 - p) * 0.8 * fade; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 2.4;
+                    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - dx / dl * (tl * 0.6), y - dy / dl * (tl * 0.6)); ctx.stroke();
+                    // glow + white-hot core
+                    ctx.globalAlpha = (1 - p) * 0.9 * fade; ctx.fillStyle = color; ctx.shadowBlur = 7;
+                    ctx.beginPath(); ctx.arc(x, y, 2.3, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = (1 - p) * 0.95 * fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 4;
+                    ctx.beginPath(); ctx.arc(x, y, 1.3, 0, TAU); ctx.fill();
                 }
                 _wpReset(ctx);
             }
