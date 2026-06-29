@@ -7886,7 +7886,8 @@
             berserker: { active: false },    // up to +60% damage as HP drops
             executioner: { active: false },  // instakill non-boss enemies below 12% HP
             combustion: { active: false },   // slain enemies explode (AoE)
-            deadeye: { active: false }       // +crit chance / +crit damage
+            deadeye: { active: false },      // +crit chance / +crit damage
+            windRunner: { active: false }    // V1_359: +2 dash charges, +move speed, faster dash recharge
         };
         let combustionChaining = false; // V1_325: re-entrancy guard so one kill = one blast (no runaway cascade)
         
@@ -8695,7 +8696,8 @@
                 const tomeSpeedMult = 1 + Math.min(1.2, this.tomeBonuses.speedBonus); // Tome speed bonus (V1_258: cap +120%)
                 const hatSpeedMult = playerHasCowboyHat ? 1.2 : 1; // 20% from cowboy hat
                 const dropSpeedMult = speedBoostMultiplier; // Speed boost from shoe drop
-                this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult * tomeSpeedMult * hatSpeedMult * dropSpeedMult;
+                const windSpeedMult = legendaryEffects.windRunner.active ? 1.10 : 1; // V1_359: Windrunner +10% move speed
+                this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult * tomeSpeedMult * hatSpeedMult * dropSpeedMult * windSpeedMult;
                 
                 // Max HP from base + passives + tomes + shrines
                 this.maxHp = 120 + (this.passives.maxHp || 0) * 25 + (this.tomeBonuses.maxHpBonus || 0) + (this.shrineBonuses.maxHpBonus || 0) + (legendaryEffects.holyBook.maxHpBonus || 0); // V1_265: holyBook persists
@@ -8712,10 +8714,13 @@
                 this.regenRate = Math.min(15, 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0) + (legendaryEffects.holyBook.regenBonus || 0)); // V1_258: cap 15 HP/s; V1_265: + holyBook
 
                 // Boost upgrades (V1_233) — granted via mini-boss/boss rewards (later phase).
-                this.boostMaxCharges = Math.min(BOOST_MAX_CHARGES_CAP, 1 + (this.passives.extraBoost || 0));
+                // V1_359: Windrunner legendary adds +2 dash charges (raises the cap so they aren't
+                // swallowed by it) and a 25% faster recharge so the extra charges actually refill.
+                const windBoost = legendaryEffects.windRunner.active ? 2 : 0;
+                this.boostMaxCharges = Math.min(BOOST_MAX_CHARGES_CAP + windBoost, 1 + (this.passives.extraBoost || 0) + windBoost);
                 this.boostSpeedMult = 1 + (this.passives.tailwind || 0) * 0.20;
                 this.boostDurationMult = 1 + (this.passives.slipstream || 0) * 0.18;
-                this.boostCooldownMult = Math.max(0.625, 1 - (this.passives.quickRecovery || 0) * 0.125); // 8s -> floor 5s
+                this.boostCooldownMult = Math.max(0.625, 1 - (this.passives.quickRecovery || 0) * 0.125) * (legendaryEffects.windRunner.active ? 0.75 : 1); // 8s -> floor 5s; Windrunner -25%
                 if (this.boostCharges > this.boostMaxCharges) this.boostCharges = this.boostMaxCharges;
                 
                 // Attack speed from shrine + tome
@@ -18740,6 +18745,13 @@
                 color: '#ff4da6',
                 desc: '+20% Crit Chance, +0.75× Crit Damage',
                 effect: 'Precision strikes hit far harder'
+            },
+            windRunner: {
+                name: 'Windrunner',
+                icon: '💨',
+                color: '#66e0ff',
+                desc: '+2 Dash Charges, +10% Move Speed',
+                effect: 'Dashes recharge 25% faster'
             }
         };
 
@@ -18863,6 +18875,11 @@
                 case 'deadeye':
                     legendaryEffects.deadeye.active = true;
                     player.applyPassives(); // V1_325: bake crit bonus in so it shows in stats + persists
+                    break;
+                case 'windRunner':
+                    legendaryEffects.windRunner.active = true;
+                    player.applyPassives(); // V1_359: bake +speed / +dash cap / faster recharge into stats
+                    player.boostCharges = player.boostMaxCharges; // hand over the new charges right away
                     break;
             }
 
@@ -27107,7 +27124,8 @@
                 berserker: { active: false },
                 executioner: { active: false },
                 combustion: { active: false },
-                deadeye: { active: false }
+                deadeye: { active: false },
+                windRunner: { active: false } // V1_359
             };
             combustionChaining = false;
             
