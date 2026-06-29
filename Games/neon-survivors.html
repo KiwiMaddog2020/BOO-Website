@@ -1491,6 +1491,7 @@
             align-items: center;
             gap: 5px;
             user-select: none;
+            position: relative; /* V1_355: anchor the edit-mode toggle to the card */
         }
         
         .weapon-select-card:hover {
@@ -1562,41 +1563,44 @@
             box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
         }
         
+        /* V1_355: edit-mode toggle revamped — larger, high-contrast, and forced above the
+           animated preview (z-index) so it's never hidden behind the card art. */
         .weapon-select-card .weapon-toggle {
             position: absolute;
-            top: 5px;
-            right: 5px;
-            width: 20px;
-            height: 20px;
+            top: 6px;
+            right: 6px;
+            width: 26px;
+            height: 26px;
             border-radius: 50%;
             background: #22cc22;
             border: 2px solid #fff;
             display: none;
-            font-size: 12px;
-            line-height: 16px;
-            text-align: center;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            line-height: 1;
+            z-index: 6;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.75);
         }
-        
+
         .weapon-select-card .weapon-toggle::after {
             content: '✓';
             color: #fff;
         }
-        
+
         .weapon-select-card.disabled-weapon .weapon-toggle {
             background: #cc2222;
         }
-        
+
         .weapon-select-card.disabled-weapon .weapon-toggle::after {
             content: '✕';
         }
-        
-        .edit-mode .weapon-select-card {
-            position: relative;
-        }
-        
+
         .edit-mode .weapon-select-card .weapon-toggle {
-            display: block;
+            display: flex;
         }
+        /* V1_355: dim the live preview in edit mode so the enable/disable state reads clearly. */
+        .edit-mode .weapon-select-card .weapon-icon { opacity: 0.5; }
         
         .edit-pool-btn {
             padding: 6px 12px;
@@ -1795,34 +1799,48 @@
             box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
         }
         
+        /* V1_355: match the weapon-editor toggle revamp (larger, above the animated preview). */
         .tome-select-card .tome-toggle {
             position: absolute;
-            top: 5px;
-            right: 5px;
-            width: 20px;
-            height: 20px;
+            top: 6px;
+            right: 6px;
+            width: 26px;
+            height: 26px;
             border-radius: 50%;
             background: #22cc22;
             border: 2px solid #fff;
-            font-size: 12px;
-            line-height: 16px;
-            text-align: center;
+            font-size: 14px;
+            line-height: 1;
+            align-items: center;
+            justify-content: center;
+            z-index: 6;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.75);
             display: none;
         }
-        
+
         .tome-editor-grid.edit-mode .tome-select-card .tome-toggle {
-            display: block;
+            display: flex;
         }
-        
+        /* V1_355: live tome preview in the editor; dim it in edit mode so state reads clearly. */
+        .tome-select-card .tome-preview-canvas {
+            width: 100%;
+            max-width: 96px;
+            aspect-ratio: 96 / 40;
+            height: auto;
+            display: block;
+            border-radius: 4px;
+        }
+        .tome-editor-grid.edit-mode .tome-select-card .tome-icon-wrapper { opacity: 0.5; }
+
         .tome-select-card .tome-toggle::after {
             content: '✓';
             color: #fff;
         }
-        
+
         .tome-select-card.disabled-tome .tome-toggle {
             background: #cc2222;
         }
-        
+
         .tome-select-card.disabled-tome .tome-toggle::after {
             content: '✕';
         }
@@ -8836,6 +8854,7 @@
                 if (this.invincible > 0) return;
                 if (this.boostActiveTimer > 0) return;  // invincible during boost dash
                 if (timeStopActive) return;             // V1_351: frozen enemies can't hurt the player
+                amount *= 0.95;                          // V1_355: ~5% global enemy-damage trim
 
                 // Check plasma shield charges first
                 if (this.weapons.plasmaOrbit) {
@@ -26659,12 +26678,13 @@
                 card.dataset.tomeId = tomeId;
                 card.style.borderColor = tome.color + '66';
                 
+                // V1_355: live tome animation when available, else the 📖 + emoji fallback.
+                const tomeIconHtml = TOME_PREVIEWS[tomeId]
+                    ? `<canvas class="tome-preview-canvas" data-tome="${tomeId}" aria-hidden="true"></canvas>`
+                    : `<span style="opacity: 0.6;">📖</span><span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.5em;">${tome.icon}</span>`;
                 card.innerHTML = `
                     <div class="tome-toggle"></div>
-                    <div class="tome-icon-wrapper">
-                        <span style="opacity: 0.6;">📖</span>
-                        <span style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 0.5em;">${tome.icon}</span>
-                    </div>
+                    <div class="tome-icon-wrapper">${tomeIconHtml}</div>
                     <div class="tome-name" style="color: ${tome.color};">${tome.name.replace('Tome of ', '')}</div>
                     <div class="tome-desc">${tome.desc}</div>
                 `;
@@ -26680,9 +26700,47 @@
             
             // Set up mode button handler
             DOM.tomeModeBtn.onclick = () => toggleTomeEditorMode();
-            
+
             // Update count display
             updateTomeDisabledCount();
+
+            // V1_355: animate the tome previews in the editor (matches the upgrade/weapon screens)
+            startTomeEditorPreviews();
+        }
+
+        // V1_355: tome-editor live previews — own RAF/state, self-stops when the overlay closes.
+        let _teItems = [], _teRAF = 0, _teLast = 0;
+        function setupTomeEditorPreviews() {
+            _teItems = [];
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            DOM.tomeEditorGrid.querySelectorAll('.tome-preview-canvas').forEach(cv => {
+                const id = cv.dataset.tome;
+                const draw = TOME_PREVIEWS[id];
+                if (!draw) return;
+                const cw = cv.clientWidth || WEAPON_PREVIEW_W;
+                const ch = cv.clientHeight || WEAPON_PREVIEW_H;
+                cv.width = Math.round(cw * dpr);
+                cv.height = Math.round(ch * dpr);
+                const cx = cv.getContext('2d');
+                cx.setTransform(cw / WEAPON_PREVIEW_W * dpr, 0, 0, ch / WEAPON_PREVIEW_H * dpr, 0, 0);
+                const def = TOMES[id];
+                _teItems.push({ cx, draw, color: (def && def.color) || '#0ff', seed: Math.random() * 50 });
+            });
+            _primePreviews(_teItems);
+        }
+        function _teFrame(now) {
+            if (!DOM.tomeEditorOverlay.classList.contains('active')) { _teRAF = 0; return; }
+            _teRAF = requestAnimationFrame(_teFrame);
+            if (now - _teLast < _wpFrameCap) return;
+            _teLast = now;
+            const t = now / 1000;
+            for (const it of _teItems) _renderPreviewItem(it, t);
+        }
+        function startTomeEditorPreviews() {
+            if (_teRAF) cancelAnimationFrame(_teRAF);
+            _teRAF = 0;
+            setupTomeEditorPreviews();
+            if (_teItems.length) _teRAF = requestAnimationFrame(_teFrame);
         }
         
         function toggleTomeEditorMode() {
