@@ -12590,7 +12590,9 @@
 
                 // V1_325 Combustion: slain enemies erupt, dealing AoE damage to nearby foes.
                 // Guarded so one real kill = one blast (deaths it causes don't chain-explode).
-                if (legendaryEffects.combustion.active && !combustionChaining) {
+                // V1_361: now a 35% chance per kill (was every kill) so the blast VFX doesn't
+                // carpet the screen on dense waves — still frequent enough to feel impactful.
+                if (legendaryEffects.combustion.active && !combustionChaining && Math.random() < 0.35) {
                     combustionChaining = true;
                     const blastRadius = 70; // V1_345: smaller (was 95)
                     const blastDamage = Math.min(200, 25 + (player ? player.level : 1) * 4);
@@ -13156,98 +13158,121 @@
 
             draw() {
                 if (!camera.isVisible(this.x, this.y)) return;
-                
+
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
                 const bob = Math.sin(Date.now() * 0.005 + this.bobOffset) * camera.scale(2);
-                
+                const cy = sy + bob;
+                const sc = (v) => camera.scale(v);
+                const ready = this.knockbackCooldown <= 0; // charged -> angry + red eyes + orange glow
+
                 ctx.save();
-                
-                // Knockback charge indicator
-                if (this.knockbackCooldown <= 0) {
-                    ctx.shadowBlur = 25;
-                    ctx.shadowColor = '#ff6600';
-                } else {
-                    ctx.shadowBlur = 15;
-                    ctx.shadowColor = COLORS.green;
-                }
-                
-                // Body (green circle)
-                ctx.fillStyle = COLORS.green;
-                ctx.beginPath();
-                ctx.arc(sx, sy + bob, r, 0, Math.PI * 2);
-                ctx.fill();
+
+                // V1_361: sprite overhaul — lit radial-gradient body + white rim (matches the
+                // enemy/player 3D pass), shaded trapezoid hat with gold buckle, layered orange
+                // beard, and an expressive face (angry brows + red eyes when the knockback is charged).
+
+                // ===== BODY (lit gradient sphere) =====
+                ctx.shadowBlur = ready ? 22 : 14;
+                ctx.shadowColor = ready ? '#ff6600' : COLORS.green;
+                const bodyGrad = ctx.createRadialGradient(sx - r * 0.35, cy - r * 0.4, r * 0.1, sx, cy + r * 0.1, r * 1.4);
+                bodyGrad.addColorStop(0, shadeHex(COLORS.green, 1.6));
+                bodyGrad.addColorStop(0.55, COLORS.green);
+                bodyGrad.addColorStop(1, shadeHex(COLORS.green, 0.5));
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath(); ctx.arc(sx, cy, r, 0, Math.PI * 2); ctx.fill();
 
                 // Combat-feel hit-flash: re-fill body white
                 if (this.hitFlash > 0) {
                     const prevAlpha = ctx.globalAlpha;
-                    ctx.globalAlpha = this.hitFlash * 0.8;
-                    ctx.fillStyle = '#ffffff';
-                    ctx.shadowBlur = 0;
-                    ctx.fill();
+                    ctx.globalAlpha = this.hitFlash * 0.85;
+                    ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 0;
+                    ctx.beginPath(); ctx.arc(sx, cy, r, 0, Math.PI * 2); ctx.fill();
                     ctx.globalAlpha = prevAlpha;
                 }
 
-                // Traditional Leprechaun Hat - tall green with buckle
-                const hatWidth = camera.scale(18);
-                const hatHeight = camera.scale(16);
-                const brimWidth = camera.scale(26);
-                const brimHeight = camera.scale(4);
-                const buckleSize = camera.scale(6);
-                
-                // Hat brim (wide, dark green)
-                ctx.fillStyle = '#1a5c1a';
-                ctx.shadowColor = COLORS.green;
-                ctx.fillRect(sx - brimWidth/2, sy + bob - r - brimHeight, brimWidth, brimHeight);
-                
-                // Hat body (tall rectangle, green)
-                ctx.fillStyle = '#228B22';
-                ctx.fillRect(sx - hatWidth/2, sy + bob - r - hatHeight - brimHeight + 2, hatWidth, hatHeight);
-                
-                // Hat band (black stripe)
-                ctx.fillStyle = '#000';
-                ctx.fillRect(sx - hatWidth/2, sy + bob - r - brimHeight - camera.scale(5), hatWidth, camera.scale(5));
-                
-                // Buckle (gold square with hole)
-                ctx.fillStyle = COLORS.gold;
-                ctx.shadowColor = COLORS.gold;
-                ctx.fillRect(sx - buckleSize/2, sy + bob - r - brimHeight - camera.scale(6), buckleSize, buckleSize);
-                // Buckle hole
-                ctx.fillStyle = '#000';
-                ctx.fillRect(sx - buckleSize/4, sy + bob - r - brimHeight - camera.scale(5), buckleSize/2, buckleSize/2);
-                
-                // Angry eyes (white with red pupils when ready to knockback)
+                // white rim light for definition
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = sc(1.5);
+                ctx.beginPath(); ctx.arc(sx, cy, r, 0, Math.PI * 2); ctx.stroke();
+
+                // ===== BEARD (layered orange, drawn under the face) =====
+                const beardTop = cy + sc(2.5);
+                ctx.fillStyle = '#c85a00'; // dark under-layer
+                ctx.beginPath();
+                ctx.moveTo(sx - sc(9), beardTop);
+                ctx.quadraticCurveTo(sx, cy + sc(21), sx + sc(9), beardTop);
+                ctx.quadraticCurveTo(sx, cy + sc(12), sx - sc(9), beardTop);
+                ctx.fill();
+                ctx.fillStyle = '#ff9c1a'; // light top-layer
+                ctx.beginPath();
+                ctx.moveTo(sx - sc(8), beardTop);
+                ctx.quadraticCurveTo(sx, cy + sc(16.5), sx + sc(8), beardTop);
+                ctx.quadraticCurveTo(sx, cy + sc(10.5), sx - sc(8), beardTop);
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(120,50,0,0.5)'; ctx.lineWidth = sc(1);
+                for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(sx + i * sc(3), beardTop + sc(1)); ctx.lineTo(sx + i * sc(2.2), cy + sc(13)); ctx.stroke(); }
+
+                // ===== FACE =====
+                // rosy cheeks
+                ctx.fillStyle = 'rgba(255,120,120,0.35)';
+                ctx.beginPath(); ctx.arc(sx - sc(6), cy + sc(1.5), sc(2.4), 0, Math.PI * 2); ctx.arc(sx + sc(6), cy + sc(1.5), sc(2.4), 0, Math.PI * 2); ctx.fill();
+                // eye whites
                 ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(sx - sc(4.5), cy - sc(3), sc(3), 0, Math.PI * 2); ctx.arc(sx + sc(4.5), cy - sc(3), sc(3), 0, Math.PI * 2); ctx.fill();
+                // pupils (red + glowing when charged)
+                if (ready) { ctx.shadowBlur = 6; ctx.shadowColor = '#ff3020'; }
+                ctx.fillStyle = ready ? '#ff2020' : '#123018';
+                ctx.beginPath(); ctx.arc(sx - sc(4.5), cy - sc(2.4), sc(1.5), 0, Math.PI * 2); ctx.arc(sx + sc(4.5), cy - sc(2.4), sc(1.5), 0, Math.PI * 2); ctx.fill();
                 ctx.shadowBlur = 0;
+                // eyebrows — angry V when charged, relaxed otherwise
+                ctx.strokeStyle = '#8a3b00'; ctx.lineWidth = sc(1.7); ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.arc(sx - camera.scale(5), sy + bob - camera.scale(2), camera.scale(3), 0, Math.PI * 2);
-                ctx.arc(sx + camera.scale(5), sy + bob - camera.scale(2), camera.scale(3), 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Pupils
-                ctx.fillStyle = this.knockbackCooldown <= 0 ? '#ff0000' : '#000';
-                ctx.beginPath();
-                ctx.arc(sx - camera.scale(5), sy + bob - camera.scale(2), camera.scale(1.5), 0, Math.PI * 2);
-                ctx.arc(sx + camera.scale(5), sy + bob - camera.scale(2), camera.scale(1.5), 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Frown
-                ctx.strokeStyle = '#000';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.arc(sx, sy + bob + camera.scale(5), camera.scale(4), 0.2 * Math.PI, 0.8 * Math.PI);
+                if (ready) {
+                    ctx.moveTo(sx - sc(7.5), cy - sc(6.8)); ctx.lineTo(sx - sc(2), cy - sc(5));
+                    ctx.moveTo(sx + sc(7.5), cy - sc(6.8)); ctx.lineTo(sx + sc(2), cy - sc(5));
+                } else {
+                    ctx.moveTo(sx - sc(7), cy - sc(6)); ctx.lineTo(sx - sc(2.5), cy - sc(6.6));
+                    ctx.moveTo(sx + sc(7), cy - sc(6)); ctx.lineTo(sx + sc(2.5), cy - sc(6.6));
+                }
                 ctx.stroke();
-                
-                // Orange beard
-                ctx.fillStyle = '#ff8c00';
-                ctx.shadowBlur = 0;
+
+                // ===== HAT (shaded trapezoid crown + brim + gold buckle) =====
+                const brimY = cy - r + sc(2);
+                const brimW = sc(28), brimH = sc(4);
+                const crownW = sc(19), crownH = sc(17);
+                const crownBottom = brimY - brimH;
+                const crownTop = crownBottom - crownH;
+                ctx.shadowBlur = ready ? 12 : 8; ctx.shadowColor = COLORS.green;
+                // brim
+                ctx.fillStyle = '#166b16';
+                ctx.fillRect(sx - brimW / 2, brimY - brimH, brimW, brimH);
+                // crown (slightly tapered), horizontal gradient for a rounded read
+                const crownGrad = ctx.createLinearGradient(sx - crownW / 2, 0, sx + crownW / 2, 0);
+                crownGrad.addColorStop(0, '#186018'); crownGrad.addColorStop(0.45, '#2ea62e'); crownGrad.addColorStop(1, '#145214');
+                ctx.fillStyle = crownGrad;
                 ctx.beginPath();
-                ctx.moveTo(sx - camera.scale(8), sy + bob + camera.scale(6));
-                ctx.quadraticCurveTo(sx, sy + bob + camera.scale(16), sx + camera.scale(8), sy + bob + camera.scale(6));
-                ctx.quadraticCurveTo(sx, sy + bob + camera.scale(10), sx - camera.scale(8), sy + bob + camera.scale(6));
-                ctx.fill();
-                
+                ctx.moveTo(sx - crownW / 2, crownBottom);
+                ctx.lineTo(sx - crownW / 2 + sc(1.5), crownTop);
+                ctx.lineTo(sx + crownW / 2 - sc(1.5), crownTop);
+                ctx.lineTo(sx + crownW / 2, crownBottom);
+                ctx.closePath(); ctx.fill();
+                ctx.shadowBlur = 0;
+                // black band
+                ctx.fillStyle = '#0a0a0a';
+                ctx.fillRect(sx - crownW / 2, crownBottom - sc(6), crownW, sc(6));
+                // gold buckle + hole
+                const bs = sc(6);
+                ctx.fillStyle = COLORS.gold; ctx.shadowColor = COLORS.gold; ctx.shadowBlur = 6;
+                ctx.fillRect(sx - bs / 2, crownBottom - sc(6.3), bs, bs);
+                ctx.shadowBlur = 0; ctx.fillStyle = '#0a0a0a';
+                ctx.fillRect(sx - bs / 4, crownBottom - sc(5.3), bs / 2, bs / 2);
+                // vertical hat shine
+                ctx.globalAlpha = 0.22; ctx.fillStyle = '#ffffff';
+                ctx.fillRect(sx - crownW / 2 + sc(2.5), crownTop + sc(2), sc(2), crownH * 0.6);
+                ctx.globalAlpha = 1;
+
                 // Poison effect - green tint and bubbles
                 if (this.poisonTicks > 0) {
                     const time = Date.now();
@@ -24027,7 +24052,10 @@
         const DIRECTIVE_MISS_COOLDOWN = 25;   // shorter breather after an expiry/miss
         const DIRECTIVE_ELITE_HP_MULT = 5;    // tuning knobs — feel-tune after playtest
         const DIRECTIVE_RIFT_HP_MULT  = 3.78; // V1_324: -10% (7->6.3); V1_340: -40% more (6.3->3.78)
-        const DIRECTIVE_TYPES = ['elite', 'rift', 'vault'];
+        // V1_361: dropped 'elite' — it read too much like a boss fight. The pool is now rift +
+        // vault (treasure hunts), so the elite's share becomes more treasure vaults. The no-repeat
+        // filter makes these alternate rift/vault after the first.
+        const DIRECTIVE_TYPES = ['rift', 'vault'];
 
         let directiveActive = null;                  // the current directive object, or null
         let directiveNextAt = DIRECTIVE_START_TIME;  // gameTime (s) when the next may spawn
