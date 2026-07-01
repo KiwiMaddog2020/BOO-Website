@@ -21736,11 +21736,8 @@
                 DOM.upgradeSlotMachine.appendChild(reel);
             }
             
-            // Animate slot machine reveal.
-            // V1_362: all reels spin together and reveal SIMULTANEOUSLY (was staggered
-            // 400 + i*500ms). The stagger meant reels 0/1 sat revealed while later reels were
-            // still spinning — a window where a real card showed mid-spin and read as an "early
-            // wrong card." One synchronized snap removes that window entirely.
+            // Animate slot machine reveal — staggered one-at-a-time (V1_363: restored after
+            // the V1_362 simultaneous-snap experiment; Kevin prefers the sequential ker-chunk).
             upgradeSlotResults.forEach((upgrade, i) => {
                 setTimeout(() => {
                     if (gen !== slotGeneration) return; // V1_257: superseded by a newer spin
@@ -21802,11 +21799,11 @@
                     // V1_322: reveal the custom animated preview in the reel (no emoji flash).
                     mountSlotPreview(content.querySelector('.slot-icon'), upgrade.type, upgrade.id, iconHtml);
                     
-                    // Show clickable cards after the (synchronized) reveal
+                    // Show clickable cards after last reel
                     if (i === upgradeSlotResults.length - 1) {
-                        setTimeout(() => { if (gen === slotGeneration) showUpgradeCards(); }, 450);
+                        setTimeout(() => { if (gen === slotGeneration) showUpgradeCards(); }, 300);
                     }
-                }, 700); // all reels reveal together (V1_362)
+                }, 400 + i * 500);
             });
         }
         
@@ -26208,8 +26205,14 @@
         // so a freshly-shown card never flashes its emoji / a blank canvas before the RAF
         // loop's first tick (kills the "old image" pop-in). t=0 ⇒ each item draws at its
         // own seed phase, matching what the loop will continue from.
+        // V1_363: also force a 1px readback per canvas — it makes the GPU finish
+        // rasterizing the primed frame BEFORE the next composite, so a freshly-(re)allocated
+        // buffer can never hit the screen holding recycled texture data (wrong-card flash).
         function _primePreviews(items) {
-            for (const it of items) _renderPreviewItem(it, 0);
+            for (const it of items) {
+                _renderPreviewItem(it, 0);
+                try { it.cx.getImageData(0, 0, 1, 1); } catch (e) {}
+            }
         }
 
         let _wpItems = [];
@@ -26289,11 +26292,13 @@
             if (p && p.preview && TOME_PREVIEWS[p.preview]) return { draw: TOME_PREVIEWS[p.preview], color: p.color || '#0ff' };
             return null;
         }
-        function makePreviewItem(cv, draw, color) {
+        function makePreviewItem(cv, draw, color, cssW, cssH) {
             if (!cv || !draw) return null;
             const dpr = PREVIEW_DPR;
-            const cw = cv.clientWidth || 110;
-            const ch = cv.clientHeight || Math.round(110 * WEAPON_PREVIEW_H / WEAPON_PREVIEW_W);
+            // V1_363: optional explicit dims so DETACHED canvases (built before DOM attach,
+            // when clientWidth is 0) can size their buffer to the known CSS display size.
+            const cw = cssW || cv.clientWidth || 110;
+            const ch = cssH || cv.clientHeight || Math.round(cw * WEAPON_PREVIEW_H / WEAPON_PREVIEW_W);
             cv.width = Math.round(cw * dpr);
             cv.height = Math.round(ch * dpr);
             const cx = cv.getContext('2d');
@@ -26319,14 +26324,25 @@
         }
         // Swap a slot reel's emoji .slot-icon for the matching live preview canvas (no emoji
         // flash); falls back to the emoji string when no preview exists.
+        // V1_363: the canvas is now built DETACHED, painted, GPU-flushed, and only THEN
+        // attached. Attaching an empty canvas and sizing/drawing it afterwards left a
+        // compositor window where a freshly-allocated GPU buffer could flash recycled
+        // texture memory — i.e. a DIFFERENT card's animation — for a frame (the reported
+        // "wrong weapon/tome mid-spin" on real GPUs; DOM traces were always clean).
         function mountSlotPreview(iconEl, type, id, emojiFallback) {
             if (!iconEl) return;
             const prev = resolveRewardPreview(type, id);
             if (prev) {
-                iconEl.innerHTML = '<canvas class="slot-preview-canvas" aria-hidden="true"></canvas>';
-                const item = makePreviewItem(iconEl.querySelector('canvas'), prev.draw, prev.color);
+                const cv = document.createElement('canvas');
+                cv.className = 'slot-preview-canvas';
+                cv.setAttribute('aria-hidden', 'true');
+                // CSS displays this at 78px wide (aspect 96/40) — size the buffer to match.
+                const item = makePreviewItem(cv, prev.draw, prev.color, 78, 33);
                 if (item) {
-                    _renderPreviewItem(item, 0); // prime so the first frame is the effect, never blank
+                    _renderPreviewItem(item, 0);                        // paint frame 0 while detached
+                    try { item.cx.getImageData(0, 0, 1, 1); } catch (e) {} // force rasterization to finish
+                    iconEl.textContent = '';
+                    iconEl.appendChild(cv);                              // attach an ALREADY-painted buffer
                     _slotPreviewItems.push(item);
                     if (!_slotRAF) _slotRAF = requestAnimationFrame(_slotFrame);
                     return;
@@ -26388,14 +26404,24 @@
             if (!_modalRAF && _modalPreviewItems.length) _modalRAF = requestAnimationFrame(_modalFrame);
         }
         // Chest single-card icon: animate when a preview exists, else fall back to the emoji.
+        // V1_363: detached-paint-then-attach (same GPU stale-texture hardening as mountSlotPreview).
         function setChestRewardIcon(type, id, emoji) {
             const host = DOM.modalIcon;
             if (!host) return;
             const prev = resolveRewardPreview(type, id);
             if (prev) {
-                host.innerHTML = '<canvas class="modal-preview-canvas" aria-hidden="true"></canvas>';
-                const item = makePreviewItem(host.querySelector('canvas'), prev.draw, prev.color);
-                if (item) { startModalPreviews([item]); return; }
+                const cv = document.createElement('canvas');
+                cv.className = 'modal-preview-canvas';
+                cv.setAttribute('aria-hidden', 'true');
+                const item = makePreviewItem(cv, prev.draw, prev.color, 120, 50); // chest modal CSS width 120px
+                if (item) {
+                    _renderPreviewItem(item, 0);
+                    try { item.cx.getImageData(0, 0, 1, 1); } catch (e) {}
+                    host.textContent = '';
+                    host.appendChild(cv);
+                    startModalPreviews([item]);
+                    return;
+                }
             }
             startModalPreviews([]);
             host.textContent = emoji || '';
