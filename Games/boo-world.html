@@ -123,10 +123,12 @@ const input = { l:0, r:0, d:0, u:0, run:0, jump:0, spin:0, pause:0, drop:0,
 const KEYMAP = {
   ArrowLeft:'l', a:'l', A:'l', ArrowRight:'r', d:'r', D:'r',
   ArrowDown:'d', s:'d', S:'d', ArrowUp:'u', w:'u', W:'u',
-  z:'run', Z:'run', Shift:'run',
+  // run / fire / carry: E is the primary (WASD-friendly); Z + Shift kept for arrows hands
+  e:'run', E:'run', z:'run', Z:'run', Shift:'run',
   x:'jump', X:'jump', ' ':'jump',
-  c:'spin', C:'spin',
-  v:'drop', V:'drop',
+  c:'spin', C:'spin', f:'spin', F:'spin',
+  // reserve-item drop: Q primary, V kept
+  q:'drop', Q:'drop', v:'drop', V:'drop',
   p:'pause', P:'pause', Enter:'pause'
 };
 const _prev = {};
@@ -230,7 +232,7 @@ const AU = (() => {
   // ---- SFX ----
   const sfx = {
     jump(){ tone(240,0.14,'square',0.16,260); },
-    spin(){ tone(300,0.08,'square',0.13,120); tone(380,0.08,'square',0.11,140,0,0.05); },
+    spin(){ tone(300,0.08,'square',0.13,120); tone(380,0.08,'square',0.11,140,0.05); },
     stomp(){ const ch = (typeof stompChain!=='undefined') ? Math.min(stompChain,7) : 0;
              noise(0.08,0.22,0,300); tone(160*Math.pow(1.1,ch),0.08,'square',0.14,-70); },
     land(){ tone(85,0.05,'sine',0.10,-25); },
@@ -973,7 +975,7 @@ LEVELS['fort'] = (()=>{ const W=120,H=16,r=blank(W,H);
   rect(r,54,14,10,2,'~');                      // bigger lava
   rect(r,55,10,2,1,'-'); rect(r,59,8,2,1,'-'); rect(r,62,10,2,1,'-');
   ground(r,64,20,13); put(r,66,12,'A');        // midway before gauntlet
-  rect(r,71,12,2,1,'^'); put(r,76,12,'h');     // 2-wide: clearable from a midway respawn walk-up
+  rect(r,71,12,2,1,'^'); put(r,81,12,'h');     // spike landing gets breathing room BEFORE the thrower (was col 76)
   rect(r,78,9,4,1,'=');
   ground(r,84,36,13);                          // boss approach + arena
   put(r,88,12,'E');                            // boss trigger (camera locks the arena)
@@ -1644,7 +1646,7 @@ function spawnEnt(kind, tx, ty, opts){
     case 'wing':    e.w=24; e.h=26; e.y=ty*T+T-26; e.vx=-0.8; e.bounceT=0; break;
     case 'zapfly':  e.w=24; e.h=18; e.y=ty*T+2; e.state='sleep'; e.homeY=ty*T+2; break;
     case 'spikord': e.w=26; e.h=22; e.y=ty*T+T-22; e.vx=-0.5; break;
-    case 'bro':     e.w=24; e.h=32; e.y=ty*T+T-32; e.throwT=rnd(60,120); e.stepT=0; break;
+    case 'bro':     e.w=24; e.h=32; e.y=ty*T+T-32; e.throwT=rnd(150,230); e.stepT=0; break; // grace period before the first bolt
     case 'maw':     e.w=26; e.h=30; e.cycle=rnd(0,120); break;
     case 'key':     e.w=30; e.h=20; e.carryable=true; break;
     case 'keyhole': e.w=32; e.h=40; e.y=ty*T+T-40; break;
@@ -1879,7 +1881,7 @@ function updateEnt(e){
       if (e.stepT>90){ e.vx = e.vx===0 ? (srand()>0.5?0.4:-0.4) : 0; e.stepT=0; }
       e.throwT--;
       if (e.throwT<=0){
-        e.throwT = rnd(80,150);
+        e.throwT = rnd(130,210); // slower cadence — pressure, not a turret (early-game tuning)
         const dir = player.x < e.x ? -1 : 1;
         const b = spawnEnt('bolt', 0,0);
         b.x = e.x+e.w/2-6; b.y = e.y+4; b.vx = dir*rnd(1.6,2.6); b.vy = -6.5;
@@ -2671,7 +2673,7 @@ function drawLevel(){
     cx.textAlign='center'; cx.font='800 13px Oxanium';
     if (!save.runUsed){
       cx.fillStyle = COL.gold; cx.globalAlpha = 0.95;
-      cx.fillText('HOLD '+(touch?'RUN':'Z')+' ➜ ➜', 14*T-cam.x, 10*T-cam.y+bob2);
+      cx.fillText('HOLD '+(touch?'RUN':'E')+' ➜ ➜', 14*T-cam.x, 10*T-cam.y+bob2);
     }
     cx.fillStyle = 'rgba(57,255,20,0.85)'; cx.globalAlpha = 0.9;
     cx.fillText('▼ PIPE', 35*T-cam.x, 9.4*T-cam.y+bob2);
@@ -2705,11 +2707,11 @@ function drawLevel(){
     cx.strokeStyle='rgba(0,255,255,0.55)'; cx.lineWidth=1.5; cx.strokeRect(px2,py2,pw2,ph2);
     cx.textAlign='center';
     cx.font='600 14px Oxanium'; cx.fillStyle='#cfeeff';
-    cx.fillText(touch ? '◀ ▶  MOVE        JUMP  ·  SPIN' : '← →  MOVE        X  JUMP        C  SPIN', LW/2, py2+24);
+    cx.fillText(touch ? '◀ ▶  MOVE        JUMP  ·  SPIN' : 'WASD / ← →  MOVE      SPACE / X  JUMP      F / C  SPIN', LW/2, py2+24);
     cx.font='800 16px Oxanium'; cx.fillStyle=COL.gold;
-    cx.fillText(touch ? '★  HOLD RUN — SPEED + LONGER JUMPS!  ★' : '★  HOLD Z TO RUN — LONGER JUMPS!  ★', LW/2, py2+52);
+    cx.fillText(touch ? '★  HOLD RUN — SPEED + LONGER JUMPS!  ★' : '★  HOLD E TO RUN — LONGER JUMPS!  ★', LW/2, py2+52);
     cx.font='600 12px Oxanium'; cx.fillStyle='#9fd8e8';
-    cx.fillText(touch ? '▼ ON A PIPE TO ENTER   ·   DOUBLE-TAP = PAUSE' : '▼ ON A PIPE TO ENTER   ·   Z GRABS SHELLS', LW/2, py2+76);
+    cx.fillText(touch ? '▼ ON A PIPE TO ENTER   ·   DOUBLE-TAP = PAUSE' : 'E FIRES + GRABS SHELLS   ·   Q DROPS YOUR ITEM   ·   ▼ ENTERS PIPES', LW/2, py2+76);
     cx.globalAlpha = 1;
   }
   // level name banner
@@ -2925,7 +2927,7 @@ function drawTitle(){
     cx.shadowBlur = 0;
   }
   cx.font='600 12px Oxanium'; cx.fillStyle='#6f92a8';
-  cx.fillText('ARROWS MOVE   Z RUN/FIRE/CARRY   X JUMP   C SPIN   V ITEM   P PAUSE   M MUTE', LW/2, 356);
+  cx.fillText('WASD/ARROWS MOVE   E/Z RUN·FIRE·CARRY   SPACE/X JUMP   F/C SPIN   Q ITEM   P PAUSE   M MUTE', LW/2, 356);
   cx.fillText(resetArm>0 ? 'PRESS R AGAIN TO ERASE SAVE' : 'R — ERASE SAVE', LW/2, 380);
   cx.fillStyle='rgba(0,255,255,0.5)';
   cx.fillText('BUNCH OF OTHERS ARCADE', LW/2, LH-18);
