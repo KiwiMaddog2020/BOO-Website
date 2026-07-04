@@ -24,6 +24,8 @@
     letter-spacing:1px; text-align:center;
     text-shadow:0 0 6px #0ff; box-shadow:0 0 12px rgba(0,255,255,0.25), inset 0 0 10px rgba(0,255,255,0.1); }
   .tc-btn.press { background:rgba(0,255,255,0.28); }
+  .tc-btn.pulse { animation:btnPulse 0.8s ease-in-out infinite; }
+  @keyframes btnPulse { 50% { transform:scale(1.14); box-shadow:0 0 24px rgba(0,255,255,0.65); } }
   #btnJump { width:76px; height:76px; border-color:rgba(255,20,147,0.8); color:#ff1493; text-shadow:0 0 6px #ff1493;
     box-shadow:0 0 12px rgba(255,20,147,0.3), inset 0 0 10px rgba(255,20,147,0.12); }
   #btnJump.press { background:rgba(255,20,147,0.28); }
@@ -110,7 +112,7 @@ function loadSave(){
     if (s && s.ver === 1) return s;
   } catch(e){}
   return { ver:1, lives:5, coins:0, score:0, item:null, node:'1-1',
-           cleared:{}, secret:{}, switchOn:false, boo:{} };
+           cleared:{}, secret:{}, switchOn:false, boo:{}, runUsed:false };
 }
 function writeSave(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch(e){} }
 let save = loadSave();
@@ -961,8 +963,8 @@ LEVELS['shrine'] = (()=>{ const W=30,H=16,r=blank(W,H);
 LEVELS['fort'] = (()=>{ const W=120,H=16,r=blank(W,H);
   rect(r,0,0,120,1,'#');
   ground(r,0,26,13); put(r,3,12,'@');
-  rect(r,10,12,4,1,'^');                       // spikes on ground
-  put(r,17,9,'?'); put(r,20,12,'h');           // bolt bro intro
+  rect(r,14,12,1,1,'^');                       // opener spike: 1-wide = clearable even at walk speed (later strips demand run)
+  put(r,18,9,'?'); put(r,21,12,'h');           // bolt bro intro
   rect(r,26,14,8,2,'~');                       // lava pit
   rect(r,27,10,2,1,'-'); rect(r,31,8,2,1,'-'); // crumble crossing
   ground(r,34,20,13);
@@ -971,7 +973,7 @@ LEVELS['fort'] = (()=>{ const W=120,H=16,r=blank(W,H);
   rect(r,54,14,10,2,'~');                      // bigger lava
   rect(r,55,10,2,1,'-'); rect(r,59,8,2,1,'-'); rect(r,62,10,2,1,'-');
   ground(r,64,20,13); put(r,66,12,'A');        // midway before gauntlet
-  rect(r,70,12,3,1,'^'); put(r,75,12,'h');
+  rect(r,71,12,2,1,'^'); put(r,76,12,'h');     // 2-wide: clearable from a midway respawn walk-up
   rect(r,78,9,4,1,'=');
   ground(r,84,36,13);                          // boss approach + arena
   put(r,88,12,'E');                            // boss trigger (camera locks the arena)
@@ -1102,13 +1104,13 @@ LEVELS['2-4'] = (()=>{ const W=150,H=16,r=blank(W,H);
 LEVELS['castle'] = (()=>{ const W=130,H=16,r=blank(W,H);
   rect(r,0,0,130,1,'#'); rect(r,0,1,130,1,'%');
   ground(r,0,24,13); put(r,3,12,'@');
-  rect(r,8,12,3,1,'^');
-  put(r,14,9,'?'); put(r,18,12,'s');
+  rect(r,12,12,2,1,'^');                       // 2-wide with runway (was 3-wide at col 8)
+  put(r,16,9,'?'); put(r,19,12,'s');
   rect(r,24,14,10,2,'~');                      // lava crossing 1
   rect(r,25,10,2,1,'-'); rect(r,29,8,2,1,'-'); rect(r,32,10,2,1,'-');
   ground(r,34,22,13);
   put(r,38,12,'h'); put(r,42,9,'M'); put(r,46,12,'z'); put(r,44,7,'b');
-  rect(r,50,12,4,1,'^');
+  rect(r,50,12,3,1,'^');                       // trimmed from 4-wide
   rect(r,56,14,12,2,'~');                      // lava crossing 2 (moving platform)
   ground(r,68,18,13); put(r,70,12,'A');        // midway
   put(r,74,12,'s'); put(r,78,12,'h');
@@ -2352,8 +2354,11 @@ function startLevel(id){
   const def = LEVELS[id];
   G = { id, frame:0, timer: def.meta.time, booTotal:0, booMask: save.boo[id]||0,
         midway:false, paused:false, ending:false, bossActive:false, boss:null,
-        bossBanner:0, switchDone:0, hurry:false, nameBanner:100, flash:0 };
+        bossBanner:0, switchDone:0, hurry:false, nameBanner:100, flash:0,
+        // onboarding: controls card on 1-1, and everywhere until the player has RUN
+        ctrlHint: (id==='1-1' || !save.runUsed) ? 360 : 0 };
   hitPause = 0;
+  if (G.ctrlHint>0){ const b=document.getElementById('btnRun'); if (b) b.classList.add('pulse'); }
   enterRoom(id, null, null, false);
   scene = 'level';
   irisOpen();
@@ -2561,6 +2566,15 @@ function updateLevel(){
   if (hitPause > 0){ hitPause--; return; } // hit-stop: world frozen, render continues
   G.frame++;
   if (G.nameBanner>0) G.nameBanner--;
+  // onboarding lifecycle: fade the card; learn that the player knows RUN
+  if (G.ctrlHint>0){
+    G.ctrlHint--;
+    if (G.ctrlHint===0){ const b=document.getElementById('btnRun'); if (b) b.classList.remove('pulse'); }
+  }
+  if (!save.runUsed && input.run && Math.abs(player.vx) > 2.6){
+    G.runCnt = (G.runCnt||0)+1;
+    if (G.runCnt > 45){ save.runUsed = true; writeSave(); }
+  }
   if (G.bossBanner>0) G.bossBanner--;
   // timer
   if (G.timer != null && !G.ending && !player.dead){
@@ -2650,6 +2664,19 @@ function drawLevel(){
     const c = player.carry;
     cx.drawImage(SPR.key, c.x-cam.x, c.y-cam.y);
   }
+  // in-world signposts (1-1 only, world-anchored, gentle bob)
+  if (G.id==='1-1'){
+    const bob2 = Math.sin(Date.now()*0.003)*3;
+    const touch = document.body.classList.contains('touchy');
+    cx.textAlign='center'; cx.font='800 13px Oxanium';
+    if (!save.runUsed){
+      cx.fillStyle = COL.gold; cx.globalAlpha = 0.95;
+      cx.fillText('HOLD '+(touch?'RUN':'Z')+' ➜ ➜', 14*T-cam.x, 10*T-cam.y+bob2);
+    }
+    cx.fillStyle = 'rgba(57,255,20,0.85)'; cx.globalAlpha = 0.9;
+    cx.fillText('▼ PIPE', 35*T-cam.x, 9.4*T-cam.y+bob2);
+    cx.globalAlpha = 1;
+  }
   player.draw();
   drawParts(); drawPops();
   cx.restore();
@@ -2668,6 +2695,23 @@ function drawLevel(){
     cx.fillStyle = grad; cx.fillRect(0,0,LW,LH);
   }
   drawHUD(G);
+  // onboarding controls card (fades out; the RUN lesson is the gold headline)
+  if (G.ctrlHint>0 && !G.paused){
+    const a = Math.min(1, G.ctrlHint/50);
+    const touch = document.body.classList.contains('touchy');
+    const pw2=430, ph2=92, px2=LW/2-pw2/2, py2=LH-140;
+    cx.globalAlpha = a*0.94;
+    cx.fillStyle='rgba(4,10,20,0.88)'; cx.fillRect(px2,py2,pw2,ph2);
+    cx.strokeStyle='rgba(0,255,255,0.55)'; cx.lineWidth=1.5; cx.strokeRect(px2,py2,pw2,ph2);
+    cx.textAlign='center';
+    cx.font='600 14px Oxanium'; cx.fillStyle='#cfeeff';
+    cx.fillText(touch ? '◀ ▶  MOVE        JUMP  ·  SPIN' : '← →  MOVE        X  JUMP        C  SPIN', LW/2, py2+24);
+    cx.font='800 16px Oxanium'; cx.fillStyle=COL.gold;
+    cx.fillText(touch ? '★  HOLD RUN — SPEED + LONGER JUMPS!  ★' : '★  HOLD Z TO RUN — LONGER JUMPS!  ★', LW/2, py2+52);
+    cx.font='600 12px Oxanium'; cx.fillStyle='#9fd8e8';
+    cx.fillText(touch ? '▼ ON A PIPE TO ENTER   ·   DOUBLE-TAP = PAUSE' : '▼ ON A PIPE TO ENTER   ·   Z GRABS SHELLS', LW/2, py2+76);
+    cx.globalAlpha = 1;
+  }
   // level name banner
   if (G.nameBanner>0){
     cx.globalAlpha = Math.min(1, G.nameBanner/30);
