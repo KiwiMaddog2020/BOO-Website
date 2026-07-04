@@ -6550,6 +6550,8 @@
                     <div class="pl-stat"><span>Crit Damage</span><b id="plCritMult">—</b></div>
                     <div class="pl-stat"><span>Pickup Range</span><b id="plPickup">—</b></div>
                     <div class="pl-stat"><span>Luck</span><b id="plLuck">—</b></div>
+                    <div class="pl-stat"><span>Weapon Size</span><b id="plSize">—</b></div>
+                    <div class="pl-stat"><span>Effect Duration</span><b id="plDuration">—</b></div>
                 </div>
                 <div class="pl-statcol pl-defense">
                     <div class="pl-col-title">DEFENSE 🛡️</div>
@@ -7646,6 +7648,49 @@
             }
         })();
 
+        // ===== AMBIENT MOTES (WP6: atmosphere, render-only) =====
+        // ~14 slow-drifting soft dots behind terrain/entities, parallax 0.5x camera so
+        // they read as a background depth layer (not tied to world coords/gameplay).
+        // Each mote is a baked glow-dot sprite (built once, cached per color) blitted
+        // with a constant low alpha — no per-frame gradient allocation, no shadowBlur.
+        const MOTE_COLORS = [COLORS.cyan, COLORS.pink, COLORS.purple, COLORS.gold];
+        const moteSprites = []; // one baked offscreen canvas per MOTE_COLORS entry
+        (function buildMoteSprites() {
+            for (const col of MOTE_COLORS) {
+                const D = 24; // sprite pixel size (covers the largest mote radius * 2 + falloff)
+                const oc = document.createElement('canvas');
+                oc.width = D;
+                oc.height = D;
+                const octx = oc.getContext('2d');
+                const r = D / 2;
+                const g = octx.createRadialGradient(r, r, 0, r, r, r);
+                g.addColorStop(0, col);
+                g.addColorStop(1, 'rgba(0,0,0,0)');
+                octx.fillStyle = g;
+                octx.beginPath();
+                octx.arc(r, r, r, 0, Math.PI * 2);
+                octx.fill();
+                moteSprites.push(oc);
+            }
+        })();
+        const AMBIENT_MOTE_COUNT = 14;
+        const AMBIENT_MOTE_SEED_SPREAD = 1400; // fix round 2 (was AMBIENT_MOTE_WRAP, misleadingly): only
+        // seeds each mote's initial baseX/baseY spread — the actual draw-time wrap tile is
+        // gameWidth/gameHeight+200 (computed per-frame in the render loop), not this constant.
+        const ambientMotes = [];
+        (function initAmbientMotes() {
+            for (let i = 0; i < AMBIENT_MOTE_COUNT; i++) {
+                ambientMotes.push({
+                    baseX: Math.random() * AMBIENT_MOTE_SEED_SPREAD,
+                    baseY: Math.random() * AMBIENT_MOTE_SEED_SPREAD,
+                    driftX: (Math.random() - 0.5) * 10, // px/sec, slow
+                    driftY: -4 - Math.random() * 6,     // gentle upward drift, px/sec
+                    radius: 3 + Math.random() * 3,       // 3-6px
+                    spriteIdx: i % moteSprites.length
+                });
+            }
+        })();
+
         // Target visible world area - consistent across all devices
         // Desktop baseline: 800x600 canvas at 0.665 zoom shows ~1203x903 world units
         const TARGET_VISIBLE_WIDTH = 1144;  // 10% more zoomed out
@@ -7893,6 +7938,9 @@
         
         // Ghost entities for Vengeful Spirits
         let ghosts = [];
+
+        // WP3: Storm Sentry turrets (deployed weapon entities, not per-weapon state)
+        let sentries = [];
         
         // Treasure chests
         let chests = [];
@@ -7969,7 +8017,8 @@
         const LIMITS = {
             particles: 100,
             damageNumbers: 40,
-            projectiles: 100,
+            projectiles: 300, // fix round 2: was 100 (dead — never read); repointed to match the
+            // actual enforced backstop below so there's one cap story instead of two.
             enemies: 120,
             xpGems: 300 // Limit XP gems to prevent late-game lag
         };
@@ -8050,9 +8099,11 @@
             gravityWell: 'epic',
             ricochetDisc: 'rare',
             pulseMine: 'rare',
-            shotgun: 'epic'
+            shotgun: 'epic',
+            prismLance: 'rare',
+            stormSentry: 'rare'
         };
-        
+
         // Tome rarity multipliers (tomes roll for rarity dynamically)
         const TOME_RARITY_MULTIPLIERS = {
             common:    1.0,
@@ -8261,7 +8312,7 @@
                 icon: '❄️',
                 color: '#88ddff',
                 desc: 'Freezing projectiles that slow',
-                baseDamage: 9,
+                baseDamage: 8, // WP4 balance: -11% (was 9) — its count+pierce both scale with level on top of damage, so DPS compounds faster than peers; a modest trim keeps it out of the top outlier band without touching its identity
                 dmgScale: 0.06,
                 baseFireRate: 840,
                 baseProjectiles: 2,
@@ -8361,7 +8412,7 @@
                 icon: '💣',
                 color: '#ff4444',
                 desc: 'Drops mines that explode on contact',
-                baseDamage: 16,
+                baseDamage: 18, // WP4 balance: +12.5% (was 16) — modeled per-detonation DPS trails the pack at every level; small nudge (its standing-minefield value isn't fully captured by a single-detonation model, so kept conservative)
                 dmgScale: 0.150,
                 baseFireRate: 2000,
                 blastRadius: 160,
@@ -8382,6 +8433,31 @@
                 maxRange: 153,
                 knockback: 30,
                 type: 'shotgun'
+            },
+            // WP3: new weapons
+            prismLance: {
+                name: 'Prism Lance',
+                icon: '🔱',
+                color: '#ff88ff',
+                desc: 'Refracting light lance',
+                baseDamage: 14,
+                baseFireRate: 950,
+                baseRange: 420,
+                dmgScale: 0.05,
+                type: 'prismLance'
+            },
+            stormSentry: {
+                name: 'Storm Sentry',
+                icon: '🗼',
+                color: '#66e0ff',
+                desc: 'Deploys a zapping sentry',
+                baseDamage: 9,
+                baseFireRate: 5200,
+                sentryLife: 9000,
+                zapRate: 520,
+                zapRange: 300,
+                dmgScale: 0.05,
+                type: 'stormSentry'
             }
         };
 
@@ -8498,13 +8574,21 @@
                 stat: 'critMultiplierBonus',
                 value: 0.09
             },
-            magnetTome: { 
-                name: 'Tome of Attraction', 
-                icon: '🧲', 
-                color: '#44aaff', 
-                desc: '+20% pickup range',
-                stat: 'pickupBonus',
-                value: 0.20
+            sizeTome: {
+                name: 'Tome of Magnitude',
+                icon: '🔮',
+                color: '#ff66ff',
+                desc: '+8% weapon size',
+                stat: 'sizeBonus',
+                value: 0.08
+            },
+            persistTome: {
+                name: 'Tome of Persistence',
+                icon: '⏳',
+                color: '#7fffd4',
+                desc: '+10% effect duration',
+                stat: 'durationBonus',
+                value: 0.10
             }
         };
         const MAX_UNIQUE_TOMES = 4;
@@ -8524,7 +8608,7 @@
             critMultiplier: { name: 'Lethality', icon: '💀', color: COLORS.purple, desc: '+9% Crit Damage', stat: 'critMultiplier', value: 0.09, preview: 'critDamageTome' },
             armor: { name: 'Fortitude', icon: '🛡️', color: COLORS.blue, desc: '+5% Armor', stat: 'armor', value: 0.05, preview: 'armorTome' },
             maxHp: { name: 'Vigor', icon: '❤️', color: COLORS.pink, desc: '+15 Max HP', stat: 'maxHpBonus', value: 15, preview: 'vitalityTome' },
-            pickupRange: { name: 'Magnetism', icon: '🧲', color: COLORS.cyan, desc: '+15% Pickup Range', stat: 'pickupBonus', value: 0.15, preview: 'magnetTome' },
+            pickupRange: { name: 'Magnetism', icon: '🧲', color: COLORS.cyan, desc: '+20% Pickup Range', stat: 'pickupBonus', value: 0.20, preview: 'magnetTome' },
             xpBonus: { name: 'Wisdom', icon: '📚', color: COLORS.purple, desc: '+10% XP Gain', stat: 'xpBonus', value: 0.10, preview: 'xpTome' },
             luck: { name: 'Fortune', icon: '🍀', color: COLORS.teal, desc: '+3% Luck', stat: 'luck', value: 0.03, preview: 'luckTome' }
         };
@@ -8547,6 +8631,8 @@
                 this.tomes = {};       // Track tomes (like weapons, max 4 unique)
                 this.pickupRange = 50;
                 this.damageMultiplier = 1;
+                this.sizeMultiplier = 1; // Tome of Magnitude weapon-size bonus (V1_249)
+                this.durationMultiplier = 1; // Tome of Persistence duration bonus (WP3) — must exist before first applyPassives()
                 this.regenRate = 1.5; // Baseline regen (tripled from 0.5)
                 this.invincible = 0;
                 this.invincibilityDuration = 600; // Buffed from 500ms
@@ -8583,9 +8669,11 @@
                     armorBonus: 0,
                     lifestealBonus: 0,
                     critMultiplierBonus: 0,
-                    pickupBonus: 0
+                    pickupBonus: 0,
+                    sizeBonus: 0,
+                    durationBonus: 0
                 };
-                
+
                 // Shrine bonuses (stacking)
                 this.shrineBonuses = {
                     damageBonus: 0,
@@ -8727,7 +8815,9 @@
                 this.attackSpeedMultiplier = Math.min(2.6, 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus); // V1_258: cap ~2.6x fire rate
                 
                 // Crit stats (base + shrine + tome + V1_325 Deadeye legendary)
-                this.critChance = Math.min(0.75, 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance + (legendaryEffects.deadeye.active ? 0.20 : 0)); // V1_258: cap 75%
+                // WP7: crit chance is uncapped — past 100% it now buys guaranteed overcrit
+                // tiers instead of doing nothing (see calcDamage). critMultiplier keeps its cap.
+                this.critChance = 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance + (legendaryEffects.deadeye.active ? 0.20 : 0);
                 this.critMultiplier = Math.min(5.0, 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0) + (legendaryEffects.deadeye.active ? 0.75 : 0)); // V1_258: cap 5x
                 
                 // Luck from tome + shrine (affects various RNG) - 0.5 effectiveness rate for tomes
@@ -8741,9 +8831,16 @@
                 
                 // Armor — geometric diminishing returns (V1_261): every +1.00 armor halves
                 // incoming damage (take 0.5^armor). Smooth, no dead-zone, asymptotes to but
-                // never reaches 100%; floored at 90% reduction as a degenerate-stack guard.
+                // never reaches 100% on its own — WP7: removed the 0.90 hard clamp since the
+                // asymptote already is the safety net (rawArmor=4 -> ~93.75%, never >= 100%).
                 const rawArmor = this.shrineBonuses.armor + (this.tomeBonuses.armorBonus || 0);
-                this.armor = Math.min(0.90, 1 - Math.pow(0.5, rawArmor));
+                this.armor = 1 - Math.pow(0.5, rawArmor);
+
+                // Weapon size from Tome of Magnitude (V1_369: WP2 pickup-tome swap)
+                this.sizeMultiplier = 1 + Math.min(0.8, this.tomeBonuses.sizeBonus || 0);
+
+                // Effect duration from Tome of Persistence (WP3): scales status/hazard durations
+                this.durationMultiplier = 1 + Math.min(1.0, this.tomeBonuses.durationBonus || 0);
             }
             
             addShrineBonus(stat, value) {
@@ -8754,13 +8851,21 @@
             }
             
             // Calculate damage with crit
+            // WP7: tiered overcrit. critChance is uncapped (see applyPassives), so every whole
+            // point above 1.0 is now a GUARANTEED extra crit tier, and the fractional remainder
+            // is one more coin-flip tier — e.g. critChance 1.3 always crits, and ~30% of those
+            // hits roll tier 2. isCrit carries the TIER (0 = no crit) instead of a boolean; it
+            // stays truthy for every existing `if (isCrit)` consumer, so callers don't change.
             calcDamage(baseDamage) {
                 let damage = baseDamage * this.damageMultiplier;
-                let isCrit = false;
+                let isCrit = 0;
 
-                if (Math.random() < this.critChance) {
-                    damage *= this.critMultiplier;
-                    isCrit = true;
+                let tier = Math.floor(this.critChance);
+                if (Math.random() < this.critChance - tier) tier++;
+                if (tier > 4) tier = 4; // hard cap so runaway crit stacking can't multiply forever
+                if (tier > 0) {
+                    damage *= 1 + (this.critMultiplier - 1) * tier;
+                    isCrit = tier;
                 }
 
                 // V1_325 Bloodlust: up to +60% damage scaling with missing HP
@@ -8846,11 +8951,12 @@
 
                     SFX.levelup();
                     // Render-only: one-shot world pop tying the DOM level-up
-                    // overlay to the player in-world. Cyan ground ring + a small
-                    // upward puff. Reacts to the level-up; does not alter XP/level
-                    // logic. Reuses the capped fxRings + particle pools.
-                    addRing(this.x, this.y, this.radius * 2, COLORS.cyan);
-                    spawnParticles(this.x, this.y - this.radius, COLORS.cyan, 10);
+                    // overlay to the player in-world. Gold ring + 10 gold sparks (WP6),
+                    // fired before the upgrade overlay opens. Reacts to the level-up;
+                    // does not alter XP/level logic. Reuses the capped fxRings +
+                    // particle pools.
+                    addRing(this.x, this.y, this.radius * 2, COLORS.gold);
+                    spawnParticles(this.x, this.y - this.radius, COLORS.gold, 10);
                     showUpgradeSelection();
                 }
             }
@@ -9141,6 +9247,12 @@
                             this.fireShotgun(weaponId, weaponDef, weaponState, level, now);
                             this.updateShotgunPellets(weaponState, weaponDef, level, now, dt);
                             break;
+                        case 'prismLance':
+                            this.firePrismLance(weaponId, weaponDef, weaponState, level, now);
+                            break;
+                        case 'stormSentry':
+                            this.fireStormSentry(weaponId, weaponDef, weaponState, level, now);
+                            break;
                     }
                 }
             }
@@ -9152,18 +9264,18 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const projectileCount = def.baseProjectiles + Math.floor(level / 4);
                 const totalDamage = baseDamage * projectileCount;
-                const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
-                
+                const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
+
                 const target = findNearestEnemy(this.x, this.y);
                 if (!target) return;
-                
+
                 state.lastFire = now;
                 SFX.wEnergyBolt();
                 const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
 
                 const aim = predictAim(this.x, this.y, target, 4.4); // V1_357: lead moving targets
                 const angle = Math.atan2(aim.y - this.y, aim.x - this.x);
-                const spread = 0.2;
+                const spread = countTargetsInRange(this.x, this.y, SHARED_TARGETING_RANGE) < 2 ? 0.2 * 0.35 : 0.2; // WP4: converge volley on a lone target
 
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
@@ -9176,7 +9288,7 @@
             updateOrbit(id, def, state, level, dt) {
                 const orbCount = def.baseOrbs + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const radius = 70 + level * 5;
+                const radius = (70 + level * 5) * (1 + (this.sizeMultiplier - 1) * 0.5);
                 
                 // Initialize shield charges (one per orb)
                 // V1_309: start at 2 (baseCharges), +1 every 3 levels, capped at 8
@@ -9348,7 +9460,7 @@
                 
                 state.lastFire = now;
                 SFX.wBoomBox();
-                const radius = def.baseRadius + level * 10;
+                const radius = (def.baseRadius + level * 10) * this.sizeMultiplier; // WP7 fix: Tome of Magnitude was missing from the wave radius
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Visual wave
@@ -9506,7 +9618,7 @@
                 // Process each beam
                 const acquireTime = def.acquireTime * Math.pow(0.97, level - 1) / this.attackSpeedMultiplier;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
-                const splashRadius = 45 + level * 3; // AOE radius around target
+                const splashRadius = (45 + level * 3) * this.sizeMultiplier; // AOE radius around target // WP7 fix: Tome of Magnitude was missing here
                 const splashDamageMult = 0.35; // 35% damage to nearby enemies
                 
                 for (const beam of state.beams) {
@@ -9676,8 +9788,8 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const range = def.baseRange + level * 15; // balance pass: +reach scaling (was *12)
-                const coneAngle = def.baseAngle + level * 0.04;
+                const range = (def.baseRange + level * 15) * (1 + (this.sizeMultiplier - 1) * 0.6); // balance pass: +reach scaling (was *12)
+                const coneAngle = (def.baseAngle + level * 0.04) * (1 + (this.sizeMultiplier - 1) * 0.4);
                 
                 // Check if any enemies are within activation range (1.5x flame range)
                 const activationRange = range * 1.5;
@@ -9698,7 +9810,7 @@
                 }
                 
                 // Linger for 2 seconds after enemies die/leave
-                const lingerDuration = 2000;
+                const lingerDuration = 2000 * this.durationMultiplier; // WP3: Tome of Persistence
                 const timeSinceEnemy = now - (state.lastEnemySeen || 0);
                 
                 // Turn off flame if no enemies nearby AND linger time expired
@@ -9874,7 +9986,7 @@
                 SFX.wBoomerang();
                 const count = def.baseCount + Math.floor(level / 6);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
+                const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
                 
                 const boomAim = predictAim(this.x, this.y, target, 3.5); // V1_357: lead moving targets
                 const boomBaseAngle = Math.atan2(boomAim.y - this.y, boomAim.x - this.x);
@@ -9941,7 +10053,7 @@
                 
                 state.lastTick = now;
                 SFX.wToxic();
-                const radius = def.baseRadius + level * 10;
+                const radius = (def.baseRadius + level * 10) * this.sizeMultiplier;
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Store for rendering
@@ -9983,7 +10095,7 @@
                 
                 state.lastTick = now;
                 SFX.wStarField();
-                const radius = Math.min(def.baseRadius + level * 15, ONSCREEN_RANGE_CAP); // V1_303: keep the star field on-screen
+                const radius = Math.min((def.baseRadius + level * 15) * this.sizeMultiplier, ONSCREEN_RANGE_CAP); // V1_303: keep the star field on-screen (fix round 2: sizeMultiplier moved inside the clamp so Tome of Magnitude can't push it off-screen)
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Initialize falling stars array
@@ -10058,23 +10170,23 @@
                 
                 const shardCount = def.baseProjectiles + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
-                
+                const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
+
                 const target = findNearestEnemy(this.x, this.y);
                 if (!target) return;
-                
+
                 state.lastFire = now;
                 SFX.wIce();
                 const pierce = 1 + Math.floor(level / 4); // +1 pierce per 4 levels
 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
-                const spread = 0.25;
-                
+                const spread = countTargetsInRange(this.x, this.y, SHARED_TARGETING_RANGE) < 2 ? 0.25 * 0.35 : 0.25; // WP4: converge volley on a lone target
+
                 for (let i = 0; i < shardCount; i++) {
                     const a = angle + (i - (shardCount - 1) / 2) * spread;
                     const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce, sizeScale);
                     proj.slowAmount = def.slowAmount;
-                    proj.slowDuration = def.slowDuration;
+                    proj.slowDuration = def.slowDuration * this.durationMultiplier; // WP3: Tome of Persistence
                     proj.iceTarget = target; // Store initial target for homing
                     projectiles.push(proj);
                 }
@@ -10118,7 +10230,7 @@
                 state.lastFire = now;
                 SFX.wMeteor();
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const blastRadius = def.blastRadius + level * 5;
+                const blastRadius = (def.blastRadius + level * 5) * this.sizeMultiplier;
                 const meteorCount = 1 + Math.floor(level / 4); // 2nd meteor at Lv4
                 const r2 = blastRadius * blastRadius;
                 if (!state.meteors) state.meteors = [];
@@ -10227,7 +10339,7 @@
                 SFX.wGhost();
                 const orbCount = def.baseOrbs + Math.floor(level / 4);
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const sizeScale = 1 + (level - 1) * 0.03; // +3% size per level
+                const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
 
                 // Random base angle so orbs don't always exit from same direction
                 const baseAngle = Math.random() * Math.PI * 2;
@@ -10248,7 +10360,7 @@
                 const squirrelCount = def.baseSquirrels + Math.floor(level / 2);
                 const pounceDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const walkDamage = def.walkDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const sizeScale = 1 + (level - 1) * 0.025;
+                const sizeScale = (1 + (level - 1) * 0.025) * this.sizeMultiplier;
                 const pounceCooldown = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
                 
                 // Find existing pet squirrels
@@ -10268,7 +10380,7 @@
                     proj.squirrelState = 'walking'; // walking, winding, pouncing, returning
                     proj.pounceDamage = pounceDamage;
                     proj.walkDamage = walkDamage;
-                    proj.splashRadius = def.splashRadius || 45;
+                    proj.splashRadius = (def.splashRadius || 45) * this.sizeMultiplier; // WP7 fix: Tome of Magnitude was missing from the pounce splash
                     proj.lastPounce = now - pounceCooldown; // Ready to pounce immediately
                     proj.pounceCooldown = pounceCooldown;
                     proj.maxDist = 330 + level * 33; // Pounce range (balance pass: +8% from 306)
@@ -10501,12 +10613,12 @@
                 
                 const arrowAim = predictAim(this.x, this.y, target, 7); // V1_357: lead moving targets
                 const baseAngle = Math.atan2(arrowAim.y - this.y, arrowAim.x - this.x);
-                const spread = 0.15;
+                const spread = countTargetsInRange(this.x, this.y, SHARED_TARGETING_RANGE) < 2 ? 0.15 * 0.35 : 0.15; // WP4: converge volley on a lone target
 
                 for (let i = 0; i < arrowCount; i++) {
                     const angle = baseAngle + (i - (arrowCount - 1) / 2) * spread;
                     const proj = new Projectile(
-                        this.x, this.y, angle, 7, baseDamage, def.color, 'arrow', pierce, 1
+                        this.x, this.y, angle, 7, baseDamage, def.color, 'arrow', pierce, this.sizeMultiplier
                     );
                     proj.trailDuration = def.trailDuration;
                     proj.trailDamage = def.trailDamage * (1 + (level - 1) * 0.03);
@@ -10587,9 +10699,9 @@
                 if (!state.wells) state.wells = [];
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
-                const pullRadius = def.pullRadius + level * 5;
-                const visualRadius = def.visualRadius + level * 3;
-                const duration = def.duration + level * 200;
+                const pullRadius = (def.pullRadius + level * 5) * (1 + (this.sizeMultiplier - 1) * 0.5);
+                const visualRadius = (def.visualRadius + level * 3) * (1 + (this.sizeMultiplier - 1) * 0.5);
+                const duration = (def.duration + level * 200) * this.durationMultiplier; // WP3: Tome of Persistence
                 
                 // Create projectile toward target (speed 1.725 -> 2.24, +30%)
                 const angle = Math.atan2(bestPos.y - this.y, bestPos.x - this.x);
@@ -10627,7 +10739,7 @@
                 const discAim = predictAim(this.x, this.y, target, 5.5); // V1_357: lead moving targets
                 const angle = Math.atan2(discAim.y - this.y, discAim.x - this.x);
                 const proj = new Projectile(
-                    this.x, this.y, angle, 5.5, baseDamage, def.color, 'disc', 1, 1.2
+                    this.x, this.y, angle, 5.5, baseDamage, def.color, 'disc', 1, 1.2 * this.sizeMultiplier
                 );
                 proj.bouncesLeft = bounces;
                 proj.bounceRange = bounceRange;
@@ -10658,7 +10770,7 @@
                 SFX.wMineDrop();
 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const blastRadius = def.blastRadius + level * 5;
+                const blastRadius = (def.blastRadius + level * 5) * this.sizeMultiplier;
 
                 // Drop behind player based on movement
                 const dropX = this.x - (this.lastMoveX || 0) * 40;
@@ -10671,7 +10783,7 @@
                     blastRadius: blastRadius,
                     armTime: def.armTime,
                     startTime: now,
-                    duration: def.mineDuration + level * 1000,
+                    duration: (def.mineDuration + level * 1000) * this.durationMultiplier, // WP3: Tome of Persistence
                     exploded: false,
                     armed: false
                 });
@@ -10721,6 +10833,7 @@
                 const spreadAngle = def.spreadAngle + level * 0.02;
                 const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: pellets die at the screen edge
                 const knockback = def.knockback + level * 2.5;
+                state.pelletSizeMult = this.sizeMultiplier; // V1_249: Tome of Magnitude scales pellet visuals
                 
                 // Base angle toward target (V1_357: lead moving targets — pellets are fast so the nudge is small but lands the cone on where they're going)
                 const shotAim = predictAim(this.x, this.y, bestTarget, 13.5);
@@ -10754,7 +10867,8 @@
                         knockback: knockback,
                         distTraveled: 0,
                         startTime: now,
-                        hit: false
+                        hit: false,
+                        sizeMult: this.sizeMultiplier // V1_FIX: Tome of Magnitude was render-only for pellets (visuals scaled, hit radius didn't); carry it onto the pellet so the hit check below can use it too
                     });
                 }
                 
@@ -10785,12 +10899,16 @@
                     // Distance-based damage multiplier (2x at point blank, 0.5x at max range)
                     const distRatio = pellet.distTraveled / maxRange;
                     const damageMultiplier = 2 - distRatio * 1.5;
-                    
+                    // V1_FIX: Tome of Magnitude (sizeMult) scaled pellet visuals only — the hit
+                    // margin below was a bare +8 regardless of size. Scale it so the tome buys
+                    // a real (if small) hit-radius bonus, matching its effect on other weapons.
+                    const pelletHitMargin = 8 * (pellet.sizeMult || 1);
+
                     // Check hits
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
                         const dist = Math.hypot(enemy.x - pellet.x, enemy.y - pellet.y);
-                        if (dist < enemy.radius + 8) {
+                        if (dist < enemy.radius + pelletHitMargin) {
                             const { damage, isCrit } = this.calcDamage(pellet.damage * damageMultiplier);
                             enemy.takeDamage(damage, isCrit);
                             this.onDealDamage(damage);
@@ -10809,7 +10927,7 @@
                         for (const boss of bosses) {
                             if (boss.dead) continue;
                             const dist = Math.hypot(boss.x - pellet.x, boss.y - pellet.y);
-                            if (dist < boss.radius + 8) {
+                            if (dist < boss.radius + pelletHitMargin) {
                                 const { damage, isCrit } = this.calcDamage(pellet.damage * damageMultiplier);
                                 boss.takeDamage(damage, isCrit);
                                 this.onDealDamage(damage);
@@ -10829,7 +10947,7 @@
                         for (const lep of leprechauns) {
                             if (lep.dead) continue;
                             const dist = Math.hypot(lep.x - pellet.x, lep.y - pellet.y);
-                            if (dist < lep.radius + 8) {
+                            if (dist < lep.radius + pelletHitMargin) {
                                 const { damage, isCrit } = this.calcDamage(pellet.damage * damageMultiplier);
                                 lep.takeDamage(damage, isCrit);
                                 this.onDealDamage(damage);
@@ -10848,6 +10966,120 @@
                 
                 // Remove old pellets
                 state.pellets = state.pellets.filter(p => !p.hit && now - p.startTime < 500);
+            }
+
+            // === PRISM LANCE (WP3) ===
+            // Instant piercing ray toward the nearest enemy: damages everything the
+            // segment crosses, then refracts a short mini-ray from each hit enemy
+            // (up to 6 origins) toward its nearest OTHER un-hit enemy.
+            firePrismLance(id, def, state, level, now) {
+                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
+                if (now - state.lastFire < fireRate) return;
+
+                const target = findNearestEnemy(this.x, this.y);
+                if (!target) return;
+
+                state.lastFire = now;
+                SFX.wBeam();
+
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
+                const length = Math.min(def.baseRange + 8 * level, ONSCREEN_RANGE_CAP);
+                const angle = Math.atan2(target.y - this.y, target.x - this.x);
+                const x1 = this.x, y1 = this.y;
+                const x2 = this.x + Math.cos(angle) * length;
+                const y2 = this.y + Math.sin(angle) * length;
+
+                if (!state.segments) state.segments = [];
+                state.segments.push({ x1, y1, x2, y2, time: now, refraction: false });
+
+                // Damage every enemy/boss/leprechaun the main ray crosses.
+                const hitEnemies = []; // regular enemies only (refraction chains off these)
+                const hitSet = new Set();
+                // WP7 fix: Tome of Magnitude now scales the ray's hit tolerance too.
+                const hitTolerance = 6 * this.sizeMultiplier;
+                for (const enemy of enemies) {
+                    if (enemy.dead) continue;
+                    if (distPointToSegment(enemy.x, enemy.y, x1, y1, x2, y2) < enemy.radius + hitTolerance) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        enemy.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        applyStatusEffects(enemy, damage);
+                        spawnParticles(enemy.x, enemy.y, def.color, 5);
+                        hitEnemies.push(enemy);
+                        hitSet.add(enemy);
+                    }
+                }
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    if (distPointToSegment(boss.x, boss.y, x1, y1, x2, y2) < boss.radius + hitTolerance) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        boss.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        spawnParticles(boss.x, boss.y, def.color, 5);
+                    }
+                }
+                for (const lep of leprechauns) {
+                    if (lep.dead) continue;
+                    if (distPointToSegment(lep.x, lep.y, x1, y1, x2, y2) < lep.radius + hitTolerance) {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        lep.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        spawnParticles(lep.x, lep.y, def.color, 5);
+                    }
+                }
+
+                // Refraction: each of the first 6 hit enemies fires a short mini-ray at
+                // its nearest OTHER un-hit enemy within 180px, spending a shared budget.
+                // WP7 fix: Tome of Magnitude extends the refraction search/reach at half rate.
+                const refractionSizeScale = 1 + (this.sizeMultiplier - 1) * 0.5;
+                let refractionBudget = 2 + Math.floor(level / 3);
+                const origins = hitEnemies.slice(0, 6);
+                for (const origin of origins) {
+                    if (refractionBudget <= 0) break;
+                    let candidate = null, bestDist = 180 * refractionSizeScale;
+                    for (const enemy of enemies) {
+                        if (enemy.dead || hitSet.has(enemy)) continue;
+                        const dist = Math.hypot(enemy.x - origin.x, enemy.y - origin.y);
+                        if (dist < bestDist) { bestDist = dist; candidate = enemy; }
+                    }
+                    if (!candidate) continue;
+
+                    const refDamage = baseDamage * 0.4;
+                    const { damage, isCrit } = this.calcDamage(refDamage);
+                    candidate.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    applyStatusEffects(candidate, damage);
+                    spawnParticles(candidate.x, candidate.y, '#88ffff', 5);
+
+                    const rAngle = Math.atan2(candidate.y - origin.y, candidate.x - origin.x);
+                    const rx2 = origin.x + Math.cos(rAngle) * Math.min(170 * refractionSizeScale, bestDist);
+                    const ry2 = origin.y + Math.sin(rAngle) * Math.min(170 * refractionSizeScale, bestDist);
+                    state.segments.push({ x1: origin.x, y1: origin.y, x2: rx2, y2: ry2, time: now, refraction: true });
+
+                    hitSet.add(candidate);
+                    refractionBudget--;
+                }
+
+                // Cleanup faded segments (200ms lifetime, see draw()).
+                state.segments = state.segments.filter(s => now - s.time < 200);
+            }
+
+            // === STORM SENTRY (WP3) ===
+            // Deploys a standalone turret (tracked in the global `sentries` array, not
+            // per-weapon state) that periodically zaps the nearest enemy in range.
+            fireStormSentry(id, def, state, level, now) {
+                const fireRate = def.baseFireRate; // deploy interval — not level-scaled
+                if (now - (state.lastFire || 0) < fireRate) return;
+
+                const maxSentries = 1 + Math.floor(level / 5);
+                const aliveSentries = sentries.filter(s => !s.dead).length;
+                if (aliveSentries >= maxSentries) return;
+
+                state.lastFire = now;
+                SFX.wMineDrop();
+
+                const lifetime = (def.sentryLife + 400 * level) * this.durationMultiplier;
+                sentries.push(new StormSentry(this.x, this.y, def, level, lifetime, this.sizeMultiplier)); // WP7 fix: Tome of Magnitude scales the orb visual + zap thickness
             }
 
             draw() {
@@ -11822,7 +12054,59 @@
                         ctx.globalAlpha = 1;
                         ctx.shadowBlur = 0;
                     }
-                    
+
+                    // WP3: Prism Lance — instant ray segments (main + refractions), each a
+                    // white-hot core with magenta/cyan fringe lines offset 1.5px, fading
+                    // over 200ms (segments are pruned in firePrismLance()).
+                    if (def.type === 'prismLance' && state.segments && state.segments.length) {
+                        const now = Date.now();
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.lineCap = 'round';
+                        for (const seg of state.segments) {
+                            const age = now - seg.time;
+                            if (age > 200) continue;
+                            const fade = 1 - age / 200;
+                            const x1 = camera.screenX(seg.x1), y1 = camera.screenY(seg.y1);
+                            const x2 = camera.screenX(seg.x2), y2 = camera.screenY(seg.y2);
+                            const dx = x2 - x1, dy = y2 - y1;
+                            const len = Math.hypot(dx, dy) || 1;
+                            const px = -dy / len * 1.5, py = dx / len * 1.5;
+                            const w = (seg.refraction ? 1.4 : 2.4) * this.sizeMultiplier; // WP7 fix: Tome of Magnitude scales the ray's visual width too
+
+                            ctx.shadowBlur = seg.refraction ? 8 : 14;
+                            ctx.shadowColor = def.color;
+
+                            // Magenta fringe (offset one way)
+                            ctx.globalAlpha = fade * 0.75;
+                            ctx.strokeStyle = def.color;
+                            ctx.lineWidth = w;
+                            ctx.beginPath();
+                            ctx.moveTo(x1 + px, y1 + py);
+                            ctx.lineTo(x2 + px, y2 + py);
+                            ctx.stroke();
+
+                            // Cyan fringe (offset the other way)
+                            ctx.globalAlpha = fade * 0.75;
+                            ctx.strokeStyle = '#88ffff';
+                            ctx.beginPath();
+                            ctx.moveTo(x1 - px, y1 - py);
+                            ctx.lineTo(x2 - px, y2 - py);
+                            ctx.stroke();
+
+                            // White-hot core
+                            ctx.globalAlpha = fade;
+                            ctx.strokeStyle = '#ffffff';
+                            ctx.lineWidth = w * 0.6;
+                            ctx.shadowBlur = seg.refraction ? 4 : 8;
+                            ctx.beginPath();
+                            ctx.moveTo(x1, y1);
+                            ctx.lineTo(x2, y2);
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                    }
+
                     // Starfall visual (raining stars AOE)
                     if (def.type === 'starfall') {
                         const now = Date.now();
@@ -11983,12 +12267,12 @@
                             const perpX = -ny, perpY = nx;
                             const thrust = Math.min(1, age / 60);          // quick thrust-in
                             const slide = camera.scale(20) * (1 - thrust); // starts further back
-                            const bladeLen = camera.scale(15);
+                            const bladeLen = camera.scale(15) * this.sizeMultiplier; // WP7 fix: Tome of Magnitude (visual only — void daggers are instant strikes)
                             const tipX = tx + nx * (slide - camera.scale(2));   // tip leads toward player
                             const tipY = ty + ny * (slide - camera.scale(2));
                             const baseX = tx + nx * (slide + bladeLen);         // handle behind the enemy
                             const baseY = ty + ny * (slide + bladeLen);
-                            const halfW = camera.scale(4.2) * (0.5 + k * 0.5);
+                            const halfW = camera.scale(4.2) * (0.5 + k * 0.5) * this.sizeMultiplier;
                             // motion-blur streak trailing behind the blade
                             ctx.strokeStyle = def.color;
                             ctx.shadowBlur = 12;
@@ -12009,7 +12293,7 @@
                             ctx.fill();
                             // slash "X" burst at the strike point
                             ctx.strokeStyle = def.color;
-                            const sl = camera.scale(10) * (0.55 + k * 0.6);
+                            const sl = camera.scale(10) * (0.55 + k * 0.6) * this.sizeMultiplier;
                             ctx.lineWidth = camera.scale(2.2) * k;
                             for (let b2 = 0; b2 < 2; b2++) {
                                 const aa = (st.slashAngle || 0) + b2 * Math.PI / 2;
@@ -12237,6 +12521,57 @@
             }
         }
 
+        // ===== WP1: SHARED SPATIAL GRID =====
+        // Uniform 64px-cell grid of alive `enemies`, rebuilt once per frame (O(n)) in the
+        // main loop right before enemy updates. Backs the per-type AI below (separation /
+        // cohesion queries) so none of it degrades into O(n^2) neighbor scans. Only the
+        // plain `enemies` array is indexed — bosses/leprechauns are untouched by WP1.
+        class EnemyGrid {
+            constructor(cellSize) {
+                this.cellSize = cellSize;
+                this.cells = new Map();
+            }
+            _cell(v) { return Math.floor(v / this.cellSize); }
+            build(list) {
+                // Fix round 2 (perf): was this.cells.clear() + a fresh [] per bucket every
+                // frame — full Map + array churn for the GC. Reuse existing bucket arrays
+                // (clear via length = 0) and keep the Map itself; the set of distinct cell
+                // keys is bounded by world size / cellSize, so it never grows unbounded.
+                for (const bucket of this.cells.values()) bucket.length = 0;
+                for (let i = 0; i < list.length; i++) {
+                    const e = list[i];
+                    if (e.dead) continue;
+                    const key = this._cell(e.x) + ',' + this._cell(e.y);
+                    let bucket = this.cells.get(key);
+                    if (!bucket) { bucket = []; this.cells.set(key, bucket); }
+                    bucket.push(e);
+                }
+            }
+            // Returns alive enemies whose CELL overlaps the (x,y,r) box — a superset of the
+            // true radius match; callers already re-check exact distance, so this stays cheap.
+            query(x, y, r) {
+                const out = [];
+                const minCX = this._cell(x - r), maxCX = this._cell(x + r);
+                const minCY = this._cell(y - r), maxCY = this._cell(y + r);
+                for (let cy = minCY; cy <= maxCY; cy++) {
+                    for (let cx = minCX; cx <= maxCX; cx++) {
+                        const bucket = this.cells.get(cx + ',' + cy);
+                        if (bucket) for (let j = 0; j < bucket.length; j++) out.push(bucket[j]);
+                    }
+                }
+                return out;
+            }
+        }
+        let enemyGrid = new EnemyGrid(64);
+        // Heavy per-type AI (grid queries, flank/lead math, tank telegraph) only runs for
+        // enemies within this range — mirrors gameLoop's `cullDistance` so WP1 never adds
+        // cost for enemies that are already getting the cheap/skipped update path.
+        const ENEMY_AI_RANGE = 800;
+        // Smoothed player velocity (px per ~16ms frame), refreshed once per frame in
+        // gameLoop right after player.update(). Consumed by 'fast' enemies for intercept aim.
+        let playerVelX = 0;
+        let playerVelY = 0;
+
         // ===== ENEMY CLASS =====
         class Enemy {
             constructor(type, x, y) {
@@ -12320,6 +12655,26 @@
                 this.knockbackVelX = 0;
                 this.knockbackVelY = 0;
 
+                // ===== WP1: per-type AI support fields =====
+                // Stuck-detection is shared by every type; the rest are only read by their
+                // matching type in update() — harmless (unused) on the others.
+                this._stuckCheckX = this.x;
+                this._stuckCheckY = this.y;
+                this._stuckFrames = 0;
+                this.detourFrames = 0; // >0 while riding out a perpendicular unstick detour
+                this.detourSide = Math.random() < 0.5 ? -1 : 1;
+                this.flankSide = Math.random() < 0.5 ? -1 : 1; // fast: stable per-enemy flank side
+                this.packPhase = Math.random() * Math.PI * 2;  // swarm: per-enemy surge phase offset
+                if (type === 'tank') {
+                    this.chargeState = 'idle'; // idle -> windup -> charging -> recover -> idle
+                    this.chargeCooldown = 1500 + Math.random() * 2500; // ms; staggers first charges
+                    this.chargeWindupFrames = 0;
+                    this.chargeFrames = 0;
+                    this.chargeRecoverFrames = 0;
+                    this.chargeDirX = 0;
+                    this.chargeDirY = 0;
+                }
+
                 // Combat-feel (render-only): hit-flash decay + spawn-in animation
                 this.hitFlash = 0; // 0..1, set to 1 on hit, decays in update()
                 this.spawnT = 0;   // 0..1, eased grow/fade-in over ~250ms
@@ -12331,9 +12686,10 @@
             
             // Status effect methods
             applyBurn(damage) {
-                if (this.burnTicks < 3) { // Don't stack burns, but refresh
+                const burnTickTarget = Math.round(3 * (player ? player.durationMultiplier : 1)); // WP3: Tome of Persistence
+                if (this.burnTicks < burnTickTarget) { // Don't stack burns, but refresh
                     this.burnDamage = damage;
-                    this.burnTicks = 3;
+                    this.burnTicks = burnTickTarget;
                     this.burnTickTimer = 0;
                     // Initial burn damage
                     this.takeDamage(damage, false);
@@ -12342,13 +12698,16 @@
             }
             
             applyFreeze(slowAmount) {
-                this.freezeTimer = 6000; // 6 seconds
+                this.freezeTimer = 6000; // 6 seconds — hard CC, deliberately NOT scaled by Tome of Persistence (see applyShock)
                 this.freezeSlowAmount = slowAmount;
                 spawnParticles(this.x, this.y, COLORS.freeze, 8);
             }
-            
+
             applyShock(damage) {
-                this.shockTimer = 1500; // V1_305: 1.5s (was 3s) — long stun + cheap proc made crowds permanently frozen
+                this.shockTimer = 1500; // V1_305: 1.5s (was 3s) — long stun + cheap proc made crowds permanently frozen.
+                // Excluded from Tome of Persistence's durationMultiplier (fix round 2): that tome maxes at 2.0x,
+                // which silently bought back the exact 3.0s degenerate stun V1_305 nerfed (and a 12s freeze slow).
+                // Hard CC (stun/freeze) stays fixed; DoTs/hazards (burn, poison, mines, auras, etc.) still scale.
                 this.takeDamage(damage, false);
                 spawnParticles(this.x, this.y, COLORS.shock, 10);
             }
@@ -12356,7 +12715,7 @@
             applyPoison(damage) {
                 // Refresh poison - 5 ticks over 4 seconds
                 this.poisonDamage = damage;
-                this.poisonTicks = 5;
+                this.poisonTicks = Math.round(5 * (player ? player.durationMultiplier : 1)); // WP3: Tome of Persistence
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
             }
@@ -12426,8 +12785,166 @@
                     return; // Skip movement and damage while shocked
                 }
                 
+                // Move toward player — distance needed by the per-type AI below, so this
+                // moved up ahead of the (now per-type) effective-speed calculation.
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const dist = Math.hypot(dx, dy);
+
+                // Frame-rate independent movement (dt/16 normalizes to ~60fps)
+                const dtScale = dt / 16;
+
+                // ===== WP1: per-type steering intent =====
+                // aimX/aimY: point this enemy steers toward (defaults to the player).
+                // extraX/extraY: extra steering force in px, pre-scaled by dtScale, blended
+                // into the pursuit vector below (separation/cohesion "nudges", not overrides).
+                // speedMult: multiplies effective speed (swarm surge, tank windup/recover).
+                let aimX = player.x, aimY = player.y;
+                let extraX = 0, extraY = 0;
+                let speedMult = 1;
+                const inAiRange = dist < ENEMY_AI_RANGE; // mirrors gameLoop's cullDistance
+
+                if (this.type === 'basic' && inAiRange) {
+                    // Separation: repel from up to 3 closest neighbors within 20px so packs
+                    // spread out instead of stacking into one blob.
+                    const neighbors = enemyGrid.query(this.x, this.y, 20);
+                    let sepX = 0, sepY = 0, considered = 0;
+                    for (let i = 0; i < neighbors.length && considered < 3; i++) {
+                        const other = neighbors[i];
+                        if (other === this || other.dead) continue;
+                        const ox = this.x - other.x, oy = this.y - other.y;
+                        const od = Math.hypot(ox, oy);
+                        if (od > 0 && od < 20) {
+                            sepX += ox / od; sepY += oy / od;
+                            considered++;
+                        }
+                    }
+                    if (considered > 0) {
+                        extraX += sepX * 0.15 * dtScale;
+                        extraY += sepY * 0.15 * dtScale;
+                    }
+                } else if (this.type === 'fast' && inAiRange && dist > 0) {
+                    // Intercept pursuit: aim where the player is HEADING (tracked velocity),
+                    // not where they currently are.
+                    const leadFrames = Math.min(dist / 6, 26);
+                    aimX = player.x + (playerVelX || 0) * leadFrames;
+                    aimY = player.y + (playerVelY || 0) * leadFrames;
+                    // Flank: beyond 90px, offset the aim point perpendicular to the approach
+                    // line by up to +-55px (stable per-enemy side), fading to 0 below 90px.
+                    const flankFade = Math.max(0, Math.min(1, (dist - 90) / 90));
+                    if (flankFade > 0) {
+                        const pdx = dx / dist, pdy = dy / dist;
+                        aimX += -pdy * this.flankSide * 55 * flankFade;
+                        aimY += pdx * this.flankSide * 55 * flankFade;
+                    }
+                } else if (this.type === 'swarm') {
+                    // Surge waves: per-enemy speed pulse so the pack doesn't move as one
+                    // metronome. Cheap (no grid query) — runs regardless of AI range.
+                    // V1_FIX: was 0.85 + 0.35*sin (mean 0.85), silently nerfing average swarm
+                    // speed ~15% at all times. Centered on 1.0 so it's a feel-only pulse, not
+                    // an undisclosed balance change.
+                    speedMult *= 1.0 + 0.2 * Math.sin(gameTime * 1.4 + this.packPhase);
+                    if (inAiRange) {
+                        // Cohesion toward the local (same-type) pack centroid, plus general
+                        // separation from anything too close. Player pursuit stays the
+                        // default aim (player.x/y) — this only adds a steering nudge.
+                        const nearby = enemyGrid.query(this.x, this.y, 90);
+                        let cx = 0, cy = 0, packCount = 0;
+                        let sepX = 0, sepY = 0, sepCount = 0;
+                        for (let i = 0; i < nearby.length; i++) {
+                            const other = nearby[i];
+                            if (other === this || other.dead) continue;
+                            const ox = this.x - other.x, oy = this.y - other.y;
+                            const od = Math.hypot(ox, oy);
+                            if (od > 0 && od < 90 && other.type === 'swarm') {
+                                cx += other.x; cy += other.y; packCount++;
+                            }
+                            if (od > 0 && od < 24 && sepCount < 3) {
+                                sepX += ox / od; sepY += oy / od; sepCount++;
+                            }
+                        }
+                        if (packCount > 0) {
+                            cx /= packCount; cy /= packCount;
+                            const tcx = cx - this.x, tcy = cy - this.y;
+                            const tcd = Math.hypot(tcx, tcy);
+                            if (tcd > 0) {
+                                extraX += (tcx / tcd) * 0.02 * dtScale;
+                                extraY += (tcy / tcd) * 0.02 * dtScale;
+                            }
+                        }
+                        if (sepCount > 0) {
+                            extraX += sepX * 0.2 * dtScale;
+                            extraY += sepY * 0.2 * dtScale;
+                        }
+                    }
+                } else if (this.type === 'tank') {
+                    // Telegraphed charge state machine. idle chases normally; windup roots
+                    // the tank in place (unmistakable flash+grow — see draw()); charging is a
+                    // fixed-direction dash handled in its own movement branch below (no
+                    // steering); recover limps back in at reduced speed.
+                    if (this.chargeCooldown > 0) this.chargeCooldown -= dt;
+
+                    if (this.chargeState === 'idle') {
+                        // V1_FIX: lower bound was 140, but a stationary/slow-approaching player
+                        // lets the tank close under 140 well before chargeCooldown (1500-4000ms
+                        // on spawn, fixed 4000ms after recover) expires — once dist permanently
+                        // sits below the floor the band can never be re-entered (nothing pushes
+                        // the tank back out to melee-adjacent range against a target that never
+                        // retreats), so chargeState got stuck at 'idle' forever after the very
+                        // first charge (or even before it, depending on the initial cooldown
+                        // draw). A non-zero floor of any size can still be raced this way, so
+                        // the fix drops it: only cap the far side (don't charge from way out of
+                        // melee range) — the 30-frame rooted windup telegraph already gives the
+                        // player fair warning regardless of starting distance.
+                        if (this.chargeCooldown <= 0 && dist > 0 && dist <= 340) {
+                            this.chargeState = 'windup';
+                            this.chargeWindupFrames = 30;
+                            this.chargeDirX = dx / dist;
+                            this.chargeDirY = dy / dist;
+                        }
+                    } else if (this.chargeState === 'windup') {
+                        speedMult = 0; // rooted in place while telegraphing
+                        this.chargeWindupFrames -= dtScale;
+                        if (this.chargeWindupFrames <= 0) {
+                            this.chargeState = 'charging';
+                            this.chargeFrames = 40;
+                        }
+                    } else if (this.chargeState === 'recover') {
+                        speedMult = 0.6;
+                        this.chargeRecoverFrames -= dtScale;
+                        if (this.chargeRecoverFrames <= 0) {
+                            this.chargeState = 'idle';
+                            this.chargeCooldown = 4000; // 4s before the next charge is eligible
+                        }
+                    }
+                    // 'charging' state's movement is handled entirely by the dedicated
+                    // branch below — it deliberately bypasses aim/extra/speedMult steering.
+                }
+
+                // ===== WP1: stuck detection (all types) =====
+                // If effectively immobile for ~60 frames while NOT slowed/frozen (a slow is
+                // working as intended, not "stuck"), force a 30-frame perpendicular detour so
+                // terrain corners / pack jams don't leave enemies vibrating in place forever.
+                if (this.detourFrames > 0) this.detourFrames -= dtScale;
+                this._stuckFrames += dtScale;
+                if (this._stuckFrames >= 60) {
+                    const moved = Math.hypot(this.x - this._stuckCheckX, this.y - this._stuckCheckY);
+                    const impaired = this.freezeSlowAmount > 0 || (this.slowMult && this.slowMult < 1);
+                    // V1_FIX: an enemy pressed into melee contact with the player is immobile
+                    // by design (it's attacking), not jammed on terrain/pack-mates — exempt it
+                    // so it doesn't periodically sidestep away mid-attack.
+                    const touchingPlayer = dist < this.radius + player.radius;
+                    if (moved < 8 && !impaired && !touchingPlayer) {
+                        this.detourFrames = 30;
+                        this.detourSide = Math.random() < 0.5 ? -1 : 1;
+                    }
+                    this._stuckCheckX = this.x;
+                    this._stuckCheckY = this.y;
+                    this._stuckFrames = 0;
+                }
+
                 // Calculate effective speed
-                let effectiveSpeed = this.baseSpeed;
+                let effectiveSpeed = this.baseSpeed * speedMult;
                 if (this.freezeSlowAmount > 0) {
                     effectiveSpeed *= (1 - this.freezeSlowAmount);
                 }
@@ -12435,64 +12952,110 @@
                 if (this.slowMult && this.slowMult < 1) {
                     effectiveSpeed *= this.slowMult;
                 }
-                
-                // Frame-rate independent movement (dt/16 normalizes to ~60fps)
-                const dtScale = dt / 16;
+
                 const frameSpeed = effectiveSpeed * dtScale;
-                
-                // Move toward player
-                const dx = player.x - this.x;
-                const dy = player.y - this.y;
-                const dist = Math.hypot(dx, dy);
-                
-                if (dist > 0) {
-                    const dirX = dx / dist;
-                    const dirY = dy / dist;
-                    let newX = this.x + dirX * frameSpeed;
-                    let newY = this.y + dirY * frameSpeed;
-                    
+
+                if (this.type === 'tank' && this.chargeState === 'charging') {
+                    // Locked-direction charge: no steering, no obstacle-slide — a terrain
+                    // hit simply ends the charge early (recover) instead of sliding around it.
+                    this.chargeFrames -= dtScale;
+                    // V1_FIX: was this.baseSpeed*3.2*dtScale, bypassing the freeze/slow
+                    // reductions folded into effectiveSpeed above (speedMult is still the
+                    // default 1 in the 'charging' state) — a frozen/ice-slowed tank charged
+                    // at full speed. Derive from effectiveSpeed so charge respects slows too.
+                    const chargeSpeed = effectiveSpeed * 3.2 * dtScale;
+                    const cnewX = this.x + this.chargeDirX * chargeSpeed;
+                    const cnewY = this.y + this.chargeDirY * chargeSpeed;
+                    if (isInTerrain(cnewX, cnewY, this.radius)) {
+                        this.chargeState = 'recover';
+                        this.chargeRecoverFrames = 60;
+                    } else {
+                        this.x = cnewX;
+                        this.y = cnewY;
+                    }
+                    if (this.chargeFrames <= 0 && this.chargeState === 'charging') {
+                        this.chargeState = 'recover';
+                        this.chargeRecoverFrames = 60;
+                    }
+                } else if (dist > 0) {
+                    // Combine pursuit-toward-aim with any extra steering force (separation/
+                    // cohesion), then renormalize so the terrain-slide code below still gets
+                    // a plain unit direction + scalar speed, exactly like before WP1.
+                    const adx = aimX - this.x, ady = aimY - this.y;
+                    const adist = Math.hypot(adx, ady);
+                    const baseDirX = adist > 0 ? adx / adist : dx / dist;
+                    const baseDirY = adist > 0 ? ady / adist : dy / dist;
+
+                    const moveX = baseDirX * frameSpeed + extraX;
+                    const moveY = baseDirY * frameSpeed + extraY;
+                    const moveMag = Math.hypot(moveX, moveY);
+
+                    let dirX, dirY, stepSpeed;
+                    if (moveMag > 0.0001) {
+                        dirX = moveX / moveMag;
+                        dirY = moveY / moveMag;
+                        stepSpeed = moveMag;
+                    } else {
+                        dirX = baseDirX;
+                        dirY = baseDirY;
+                        stepSpeed = frameSpeed;
+                    }
+
+                    // Stuck-detour: swap in a perpendicular direction for 30 frames (speed
+                    // unchanged) so a jammed enemy slides free instead of vibrating in place.
+                    if (this.detourFrames > 0) {
+                        const rdx = -dirY * this.detourSide;
+                        const rdy = dirX * this.detourSide;
+                        dirX = rdx;
+                        dirY = rdy;
+                    }
+
+                    let newX = this.x + dirX * stepSpeed;
+                    let newY = this.y + dirY * stepSpeed;
+
                     // Check terrain collision
                     const terrain = isInTerrain(newX, newY, this.radius);
                     if (!terrain) {
                         this.x = newX;
                         this.y = newY;
                     } else {
-                        // Better pathfinding around obstacles
+                        // Better pathfinding around obstacles (unchanged; now driven by the
+                        // per-type dirX/dirY/stepSpeed computed above)
                         // Calculate angle to obstacle center
                         const toObsX = terrain.x - this.x;
                         const toObsY = terrain.y - this.y;
-                        
+
                         // Calculate perpendicular directions (left and right of obstacle)
                         const perpLeft = { x: -dirY, y: dirX };
                         const perpRight = { x: dirY, y: -dirX };
-                        
+
                         // Determine which side is better (closer to player on other side)
                         const crossProduct = dirX * toObsY - dirY * toObsX;
                         const preferredPerp = crossProduct > 0 ? perpRight : perpLeft;
                         const alternatePerp = crossProduct > 0 ? perpLeft : perpRight;
-                        
+
                         // Try preferred perpendicular direction
-                        let slideX = this.x + preferredPerp.x * frameSpeed;
-                        let slideY = this.y + preferredPerp.y * frameSpeed;
-                        
+                        let slideX = this.x + preferredPerp.x * stepSpeed;
+                        let slideY = this.y + preferredPerp.y * stepSpeed;
+
                         if (!isInTerrain(slideX, slideY, this.radius)) {
                             this.x = slideX;
                             this.y = slideY;
                         } else {
                             // Try alternate perpendicular
-                            slideX = this.x + alternatePerp.x * frameSpeed;
-                            slideY = this.y + alternatePerp.y * frameSpeed;
-                            
+                            slideX = this.x + alternatePerp.x * stepSpeed;
+                            slideY = this.y + alternatePerp.y * stepSpeed;
+
                             if (!isInTerrain(slideX, slideY, this.radius)) {
                                 this.x = slideX;
                                 this.y = slideY;
                             } else {
                                 // Try diagonal combinations
-                                const diag1X = this.x + (dirX + preferredPerp.x) * 0.7 * frameSpeed;
-                                const diag1Y = this.y + (dirY + preferredPerp.y) * 0.7 * frameSpeed;
-                                const diag2X = this.x + (dirX + alternatePerp.x) * 0.7 * frameSpeed;
-                                const diag2Y = this.y + (dirY + alternatePerp.y) * 0.7 * frameSpeed;
-                                
+                                const diag1X = this.x + (dirX + preferredPerp.x) * 0.7 * stepSpeed;
+                                const diag1Y = this.y + (dirY + preferredPerp.y) * 0.7 * stepSpeed;
+                                const diag2X = this.x + (dirX + alternatePerp.x) * 0.7 * stepSpeed;
+                                const diag2Y = this.y + (dirY + alternatePerp.y) * 0.7 * stepSpeed;
+
                                 if (!isInTerrain(diag1X, diag1Y, this.radius)) {
                                     this.x = diag1X;
                                     this.y = diag1Y;
@@ -12640,6 +13203,23 @@
                     ctx.translate(-sx, -sy);
                 }
 
+                // WP1: tank telegraphed-charge windup — UNMISTAKABLE grow + shake so the
+                // player reads "this is about to charge." Draw-only; this.radius is untouched.
+                if (this.type === 'tank' && this.chargeState === 'windup') {
+                    const growScale = 1.1;
+                    const shakeAmt = camera.scale(2.5);
+                    const shakeX = (Math.random() - 0.5) * shakeAmt;
+                    const shakeY = (Math.random() - 0.5) * shakeAmt;
+                    // fix round 2: translate(pivot)/scale/translate(-pivot) around a shaken pivot
+                    // canceled itself out (net body shift ≈ (growScale-1)*shake, ~0.25px not ~2.5px).
+                    // Apply the shake as its own direct translate, then grow-scale about the
+                    // (now-shifted) center so the shake actually reaches the screen.
+                    ctx.translate(shakeX, shakeY);
+                    ctx.translate(sx, sy);
+                    ctx.scale(growScale, growScale);
+                    ctx.translate(-sx, -sy);
+                }
+
                 // Status effect color overlays
                 let mainColor = this.color;
                 if (this.shockTimer > 0) {
@@ -12681,33 +13261,33 @@
                 ctx.beginPath();
                 // Dome top (semicircle from left to right)
                 ctx.arc(sx, ghostY - s * 0.2, s, Math.PI, 0, false);
-                
+
                 // Wavy bottom - 3 curves for the ghostly tail
                 const bottomY = ghostY + s * 0.8;
                 const waveAmp = s * 0.25;
                 const tailWiggle = Math.sin(time / 200 + this.x * 0.05) * s * 0.1;
-                
+
                 // Right side down
                 ctx.lineTo(sx + s, bottomY - waveAmp);
-                
+
                 // First wave (right)
                 ctx.quadraticCurveTo(
                     sx + s * 0.7 + tailWiggle, bottomY + waveAmp,
                     sx + s * 0.33, bottomY - waveAmp * 0.5
                 );
-                
+
                 // Second wave (center)
                 ctx.quadraticCurveTo(
                     sx + tailWiggle * 0.5, bottomY + waveAmp * 1.2,
                     sx - s * 0.33, bottomY - waveAmp * 0.5
                 );
-                
+
                 // Third wave (left)
                 ctx.quadraticCurveTo(
                     sx - s * 0.7 - tailWiggle, bottomY + waveAmp,
                     sx - s, bottomY - waveAmp
                 );
-                
+
                 // Left side up to dome
                 ctx.closePath();
                 ctx.fill();
@@ -12722,18 +13302,30 @@
                     ctx.globalAlpha = prevAlpha;
                 }
 
+                // WP1: tank telegraphed-charge windup — bright white flash pulse, re-filling
+                // the same still-active body path (same cheap trick as the hit-flash above).
+                if (this.type === 'tank' && this.chargeState === 'windup') {
+                    const flashPulse = 0.35 + 0.35 * Math.abs(Math.sin(time / 60));
+                    const prevAlpha = ctx.globalAlpha;
+                    ctx.globalAlpha = flashPulse;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowBlur = 0;
+                    ctx.fill();
+                    ctx.globalAlpha = prevAlpha;
+                }
+
                 // Ghost outline for definition
                 ctx.strokeStyle = this.type === 'tank' ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.4)';
                 ctx.lineWidth = this.type === 'tank' ? 2 : 1.5;
                 ctx.shadowBlur = 0;
                 ctx.stroke();
-                
+
                 // ===== GHOST FACE =====
                 const eyeY = ghostY - s * 0.25;
                 const eyeSpacing = s * 0.35;
                 const eyeSize = s * 0.22;
                 const mouthY = ghostY + s * 0.2;
-                
+
                 if (this.type === 'tank') {
                     // Tank: Determined, flat serious expression
                     ctx.fillStyle = '#1a0033';
@@ -12792,7 +13384,7 @@
                     ctx.ellipse(sx, mouthY, s * 0.12, s * 0.1, 0, 0, Math.PI * 2);
                     ctx.fill();
                 }
-                
+
                 // Highlight shine on ghost head
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
                 ctx.beginPath();
@@ -12953,7 +13545,7 @@
 
             applyPoison(damage) {
                 this.poisonDamage = damage;
-                this.poisonTicks = 5;
+                this.poisonTicks = Math.round(5 * (player ? player.durationMultiplier : 1)); // WP3: Tome of Persistence
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
             }
@@ -13722,6 +14314,215 @@
             }
         }
 
+        // ===== STORM SENTRY (WP3) =====
+        // Deployable turret entity for the Storm Sentry weapon. Tracked in the global
+        // `sentries` array (not per-weapon state) so it behaves like any other timed
+        // battlefield entity (Ghost, Chest, etc.) — its own update()/draw(), cleaned up
+        // via cleanupArray() once `dead`.
+        // Fix round 2 (perf): the floating orb used to re-run ctx.shadowBlur every frame
+        // (expensive canvas filter). Bake the glow into an offscreen radial-gradient sprite
+        // once per color, class-first-use, and drawImage it instead — same pattern as
+        // moteSprites above. The zap bolt flash is short-lived (<200ms) and keeps its blur.
+        const _stormSentryOrbSprites = {};
+        function _getStormSentryOrbSprite(color) {
+            let spr = _stormSentryOrbSprites[color];
+            if (spr) return spr;
+            const D = 48; // covers the ~6px core + soft glow falloff at 1x scale
+            const oc = document.createElement('canvas');
+            oc.width = D; oc.height = D;
+            const octx = oc.getContext('2d');
+            const r = D / 2;
+            const g = octx.createRadialGradient(r, r, 0, r, r, r);
+            g.addColorStop(0, '#ffffff');
+            g.addColorStop(0.18, color);
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            octx.fillStyle = g;
+            octx.beginPath();
+            octx.arc(r, r, r, 0, Math.PI * 2);
+            octx.fill();
+            spr = _stormSentryOrbSprites[color] = oc;
+            return spr;
+        }
+        class StormSentry {
+            constructor(x, y, def, level, lifetime, sizeMult = 1) {
+                this.x = x;
+                this.y = y;
+                this.def = def;
+                this.level = level;
+                this.radius = 16;
+                this.sizeMult = sizeMult || 1; // WP7 fix: Tome of Magnitude — orb visual + zap thickness only, NOT zapRange
+                this.spawnTime = Date.now();
+                this.lifetime = lifetime;
+                this.lastZap = 0;
+                this.dead = false;
+                this.orbAngle = Math.random() * Math.PI * 2;
+                this.bolt = null; // { x1,y1,x2,y2, segments, time } — most recent zap, fades over 150ms
+                spawnParticles(x, y, def.color, 10);
+            }
+
+            findZapTarget() {
+                const range = this.def.zapRange;
+                let nearest = null, minDist = range;
+                // fix round 2 (WP5 grid discipline): was a full enemies-array scan every frame the
+                // zap is off cooldown with nothing in range; enemyGrid is already built once per
+                // frame for exactly this. Query results can be a frame stale (see other grid
+                // consumers), so keep the dead check.
+                for (const enemy of enemyGrid.query(this.x, this.y, range)) {
+                    if (enemy.dead) continue;
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (dist < minDist) { minDist = dist; nearest = enemy; }
+                }
+                for (const lep of leprechauns) {
+                    if (lep.dead) continue;
+                    const dist = Math.hypot(lep.x - this.x, lep.y - this.y);
+                    if (dist < minDist) { minDist = dist; nearest = lep; }
+                }
+                for (const boss of bosses) {
+                    if (boss.dead) continue;
+                    const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
+                    if (dist < minDist) { minDist = dist; nearest = boss; }
+                }
+                return nearest;
+            }
+
+            update(dt) {
+                if (this.dead) return;
+                const now = Date.now();
+                const age = now - this.spawnTime;
+                if (age > this.lifetime) {
+                    this.dead = true;
+                    // Fizzle burst on expiry
+                    spawnParticles(this.x, this.y, this.def.color, 14);
+                    spawnParticles(this.x, this.y, '#ffffff', 8);
+                    return;
+                }
+
+                this.orbAngle += 0.06 * (dt / 16);
+
+                const zapRate = this.def.zapRate / ((player && player.attackSpeedMultiplier) || 1);
+                if (now - this.lastZap < zapRate) return;
+
+                const target = this.findZapTarget();
+                if (!target) return;
+                this.lastZap = now;
+                SFX.wChain();
+
+                const baseDamage = this.def.baseDamage * (1 + (this.level - 1) * (this.def.dmgScale ?? 0.05));
+                const { damage, isCrit } = player.calcDamage(baseDamage);
+                target.takeDamage(damage, isCrit);
+                player.onDealDamage(damage);
+                if (typeof applyStatusEffects === 'function') applyStatusEffects(target, damage);
+                spawnParticles(target.x, target.y, this.def.color, 5);
+
+                this.bolt = {
+                    segments: generateLightning(this.x, this.y - this.radius * 0.6, target.x, target.y),
+                    time: now
+                };
+            }
+
+            draw() {
+                const now = Date.now();
+                const sentryVisible = camera.isVisible(this.x, this.y, this.radius + this.def.zapRange * 0.02);
+                const boltActive = this.bolt && now - this.bolt.time < 150;
+                // fix round 2: a zap bolt landing on a still-visible enemy must not be culled just
+                // because the sentry (its source) has scrolled off-screen — the hit would otherwise
+                // read as sourceless damage. Check the bolt's own endpoints instead of piggybacking
+                // on the sentry's visibility; only skip the whole draw when nothing is visible.
+                let boltVisible = false;
+                if (boltActive) {
+                    const firstSeg = this.bolt.segments[0];
+                    const lastSeg = this.bolt.segments[this.bolt.segments.length - 1];
+                    boltVisible = camera.isVisible(firstSeg.x1, firstSeg.y1) || camera.isVisible(lastSeg.x2, lastSeg.y2);
+                }
+                if (!sentryVisible && !boltVisible) return;
+
+                if (sentryVisible) {
+                    const sx = camera.screenX(this.x);
+                    const sy = camera.screenY(this.y);
+                    const age = now - this.spawnTime;
+                    const remaining = this.lifetime - age;
+                    // Pulse faster as expiry approaches (last 2s)
+                    const expiring = remaining < 2000;
+                    const pulse = 0.6 + 0.4 * Math.sin(now * (expiring ? 0.02 : 0.006));
+                    const spawnFade = Math.min(1, age / 250);
+
+                    ctx.save();
+                    ctx.globalAlpha = spawnFade;
+                    ctx.globalCompositeOperation = 'lighter';
+
+                    // Tripod legs
+                    ctx.strokeStyle = this.def.color;
+                    ctx.lineWidth = camera.scale(2);
+                    ctx.shadowBlur = 6;
+                    ctx.shadowColor = this.def.color;
+                    const legR = camera.scale(this.radius);
+                    for (let i = 0; i < 3; i++) {
+                        const a = (i / 3) * Math.PI * 2 + Math.PI / 2;
+                        ctx.globalAlpha = spawnFade * 0.7;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy);
+                        ctx.lineTo(sx + Math.cos(a) * legR, sy + Math.sin(a) * legR * 0.55 + legR * 0.3);
+                        ctx.stroke();
+                    }
+
+                    // Floating orb — glow is a baked sprite (no per-frame shadowBlur); the
+                    // pulse/breathing is now expressed as sprite scale + alpha instead of
+                    // re-rendering the blur filter every frame.
+                    const orbY = sy - camera.scale(this.radius * 1.3) - Math.sin(now * 0.004) * camera.scale(3);
+                    const orbSprite = _getStormSentryOrbSprite(this.def.color);
+                    const glowR = camera.scale(9 * this.sizeMult) * (0.85 + pulse * 0.25);
+                    ctx.globalAlpha = spawnFade * (expiring ? pulse : 1);
+                    ctx.drawImage(orbSprite, sx - glowR, orbY - glowR, glowR * 2, glowR * 2);
+                    // crisp white core, no shadowBlur (cheap)
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(sx, orbY, camera.scale(2.6 * this.sizeMult), 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Orbiting sparks around the orb
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = camera.scale(1);
+                    ctx.globalAlpha = spawnFade * 0.6;
+                    for (let i = 0; i < 2; i++) {
+                        const a = this.orbAngle + i * Math.PI;
+                        const px = sx + Math.cos(a) * camera.scale(10 * this.sizeMult);
+                        const py = orbY + Math.sin(a) * camera.scale(10 * this.sizeMult) * 0.5;
+                        ctx.beginPath();
+                        ctx.arc(px, py, camera.scale(1.4 * this.sizeMult), 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+                }
+
+                // Recent zap bolt (fades over 150ms)
+                if (boltActive) {
+                    const t = 1 - (now - this.bolt.time) / 150;
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter';
+                    ctx.globalAlpha = t * 0.9;
+                    ctx.strokeStyle = this.def.color;
+                    ctx.lineWidth = camera.scale(2 * this.sizeMult); // WP7 fix: Tome of Magnitude — zap thickness only, NOT zapRange
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = this.def.color;
+                    for (const seg of this.bolt.segments) {
+                        ctx.beginPath();
+                        ctx.moveTo(camera.screenX(seg.x1), camera.screenY(seg.y1));
+                        ctx.lineTo(camera.screenX(seg.x2), camera.screenY(seg.y2));
+                        ctx.stroke();
+                    }
+                    ctx.globalAlpha = t; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = camera.scale(1 * this.sizeMult);
+                    for (const seg of this.bolt.segments) {
+                        ctx.beginPath();
+                        ctx.moveTo(camera.screenX(seg.x1), camera.screenY(seg.y1));
+                        ctx.lineTo(camera.screenX(seg.x2), camera.screenY(seg.y2));
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+            }
+        }
+
         // V1_305/V1_307: robust chase-movement with obstacle avoidance for bosses/minibosses.
         // V1_307 rewrite: instead of a fixed perp/diagonal set (which could still wedge between
         // two objects), this fans angles outward from the goal heading — nearest-open-angle
@@ -13836,7 +14637,7 @@
 
             applyPoison(damage) {
                 this.poisonDamage = damage;
-                this.poisonTicks = 5;
+                this.poisonTicks = Math.round(5 * (player ? player.durationMultiplier : 1)); // WP3: Tome of Persistence
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
             }
@@ -14211,7 +15012,7 @@
             
             applyPoison(damage) {
                 this.poisonDamage = damage;
-                this.poisonTicks = 5;
+                this.poisonTicks = Math.round(5 * (player ? player.durationMultiplier : 1)); // WP3: Tome of Persistence
                 this.poisonTickTimer = 0;
                 spawnParticles(this.x, this.y, '#32cd32', 4);
             }
@@ -19158,13 +19959,24 @@
                     // Remove expired trail points
                     this.trailPoints = this.trailPoints.filter(p => now - p.time < this.trailDuration);
                     
-                    // Damage enemies touching trail
+                    // Damage enemies touching trail (WP5: grid query bounded to the trail's own
+                    // reach instead of scanning every enemy on the map for every arrow, every frame)
                     if (!this.trailHitCooldowns) this.trailHitCooldowns = new Map();
-                    for (const enemy of enemies) {
+                    // V1_FIX: was max(29, maxTrailPointDistance) — once the farthest trail
+                    // point exceeded 29px the +29 margin (8px point-hit margin + 21px max
+                    // enemy radius) was dropped entirely instead of added on top, letting
+                    // enemies near the trail tail get missed by the grid query.
+                    let maxTrailPointDistance = 0;
+                    for (let ti = 0; ti < this.trailPoints.length; ti++) {
+                        const td = Math.hypot(this.trailPoints[ti].x - this.x, this.trailPoints[ti].y - this.y);
+                        if (td > maxTrailPointDistance) maxTrailPointDistance = td;
+                    }
+                    const trailReach = maxTrailPointDistance + 29; // point-hit margin (8) + max enemy radius (tank=21)
+                    for (const enemy of enemyGrid.query(this.x, this.y, trailReach)) {
                         if (enemy.dead) continue;
                         const lastHit = this.trailHitCooldowns.get(enemy) || 0;
                         if (now - lastHit < 200) continue; // 0.2s cooldown
-                        
+
                         for (const point of this.trailPoints) {
                             const dist = Math.hypot(enemy.x - point.x, enemy.y - point.y);
                             if (dist < enemy.radius + 8) {
@@ -19232,9 +20044,10 @@
                     // Also spawn after 2 seconds no matter what (ultimate failsafe)
                     if (lifetime > 2000) shouldSpawn = true;
                     
-                    // Also spawn if close to any enemy (dynamic targeting)
+                    // Also spawn if close to any enemy (dynamic targeting) — WP5: grid query
+                    // bounded to the 60px trigger radius instead of scanning every enemy.
                     if (!shouldSpawn) {
-                        for (const enemy of enemies) {
+                        for (const enemy of enemyGrid.query(this.x, this.y, 60)) {
                             if (enemy.dead) continue;
                             const distToEnemy = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                             if (distToEnemy < 60) {
@@ -19315,11 +20128,13 @@
                         const idealDist = 73;  // Preferred orbit distance
                         const seekDist = 235;  // Range to detect enemies (balance pass: +8% from 218)
                         
-                        // Find nearest enemy to walk toward
+                        // Find nearest enemy to walk toward (WP5: grid query bounded to seekDist
+                        // instead of scanning every enemy — this runs every frame while walking,
+                        // the pet's default/most-common state)
                         let nearestEnemy = null;
                         let nearestDist = seekDist;
-                        
-                        for (const enemy of enemies) {
+
+                        for (const enemy of enemyGrid.query(this.x, this.y, seekDist)) {
                             if (enemy.dead) continue;
                             const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                             if (dist < nearestDist) {
@@ -19384,7 +20199,7 @@
                         if (this.walkHitCooldown > 0) this.walkHitCooldown -= dtScale;
                         
                         if (this.walkHitCooldown <= 0) {
-                            for (const enemy of enemies) {
+                            for (const enemy of enemyGrid.query(this.x, this.y, 20 + 21)) {
                                 if (enemy.dead || this.hitEnemies.has(enemy)) continue;
                                 const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                                 if (dist < enemy.radius + 20) {
@@ -19849,14 +20664,16 @@
                 this.x += this.vx * dtScale;
                 this.y += this.vy * dtScale;
                 
-                // Check collision with enemies
-                for (const enemy of enemies) {
+                // Check collision with enemies (WP5: spatial grid query instead of a full
+                // enemies-array scan every projectile, every frame — enemyGrid is rebuilt once
+                // per frame in gameLoop, right before enemy/projectile updates consume it).
+                for (const enemy of enemyGrid.query(this.x, this.y, this.radius + 25)) {
                     if (enemy.dead || this.hitEnemies.has(enemy)) continue;
-                    
+
                     const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
                     if (dist < enemy.radius + this.radius) {
                         this.hitEnemies.add(enemy);
-                        
+
                         const { damage, isCrit } = player.calcDamage(this.damage);
                         enemy.takeDamage(damage, isCrit);
                         player.onDealDamage(damage);
@@ -19897,7 +20714,7 @@
                                 let nextTarget = null;
                                 let closestDist = this.bounceRange;
                                 
-                                for (const e of enemies) {
+                                for (const e of enemyGrid.query(this.x, this.y, closestDist)) {
                                     if (e.dead || this.hitEnemies.has(e)) continue;
                                     const d = Math.hypot(e.x - this.x, e.y - this.y);
                                     if (d < closestDist) {
@@ -20295,7 +21112,7 @@
                     ctx.lineTo(-r, -r * 0.6);
                     ctx.closePath();
                     ctx.fill();
-                    
+
                     // Arrow shaft
                     ctx.fillRect(-r * 1.5, -r * 0.15, r * 1.2, r * 0.3);
                 } else if (this.type === 'disc') {
@@ -20303,20 +21120,20 @@
                     const spin = Date.now() * 0.01;
                     ctx.translate(sx, sy);
                     ctx.rotate(spin);
-                    
+
                     // Outer ring
                     ctx.strokeStyle = this.color;
                     ctx.lineWidth = 3;
                     ctx.beginPath();
                     ctx.arc(0, 0, r, 0, Math.PI * 2);
                     ctx.stroke();
-                    
+
                     // Inner design
                     ctx.fillStyle = this.color;
                     ctx.beginPath();
                     ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
                     ctx.fill();
-                    
+
                     // Radial lines
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 4; i++) {
@@ -20475,11 +21292,11 @@
 
             draw() {
                 if (!camera.isVisible(this.x, this.y)) return;
-                
+
                 const sx = camera.screenX(this.x);
                 const sy = camera.screenY(this.y);
                 const r = camera.scale(this.radius);
-                
+
                 ctx.save();
                 const glow = 6; // V1_253: calmer constant glow (less flicker/clutter)
                 ctx.shadowBlur = glow;
@@ -21009,6 +21826,48 @@
             return { x: target.x, y: target.y };
         }
 
+        // WP4: cheap "are there >=2 valid targets nearby" check used to converge a volley's
+        // spread onto a single target instead of fanning it. Uses enemyGrid (WP1) — one frame
+        // stale since fireWeapons runs before this frame's enemyGrid.build(), which is fine for
+        // a coarse convergence decision (enemies don't relocate meaningfully in one frame).
+        // Early-exits the moment it has counted 2 — never needs an exact total.
+        function countTargetsInRange(x, y, range) {
+            let count = 0;
+            for (const e of enemyGrid.query(x, y, range)) {
+                if (e.dead) continue; // fix round 2: grid can hold last-frame's dead (see comment above)
+                if (Math.hypot(e.x - x, e.y - y) < range) {
+                    count++;
+                    if (count >= 2) return count;
+                }
+            }
+            for (const lep of leprechauns) {
+                if (lep.dead) continue;
+                if (Math.hypot(lep.x - x, lep.y - y) < range) {
+                    count++;
+                    if (count >= 2) return count;
+                }
+            }
+            for (const boss of bosses) {
+                if (boss.dead) continue;
+                if (Math.hypot(boss.x - x, boss.y - y) < range) {
+                    count++;
+                    if (count >= 2) return count;
+                }
+            }
+            return count;
+        }
+
+        // WP3: shortest distance from point (px,py) to line segment (x1,y1)-(x2,y2).
+        // Used by Prism Lance's instant piercing ray to test which enemies it crosses.
+        function distPointToSegment(px, py, x1, y1, x2, y2) {
+            const dx = x2 - x1, dy = y2 - y1;
+            const lenSq = dx * dx + dy * dy;
+            let t = lenSq > 0 ? ((px - x1) * dx + (py - y1) * dy) / lenSq : 0;
+            t = Math.max(0, Math.min(1, t));
+            const cx = x1 + t * dx, cy = y1 + t * dy;
+            return Math.hypot(px - cx, py - cy);
+        }
+
         // Efficient in-place array cleanup (swap-and-pop)
         function cleanupArray(arr, shouldRemove) {
             for (let i = arr.length - 1; i >= 0; i--) {
@@ -21320,9 +22179,14 @@
             activeWarning = warning;
             
             // Animate in
+            // WP6: boss banners get a punchier scale-in (1.4 -> 1.0 over ~20 frames /
+            // 0.33s) instead of the generic warningPulse bounce all other stacked
+            // warnings (swarm/curse/leprechaun) use.
+            const animName = options.scaleIn ? 'bossBannerScaleIn' : 'warningPulse';
+            const animDur = options.scaleIn ? '0.333s' : '0.5s';
             requestAnimationFrame(() => {
                 warning.style.opacity = '1';
-                warning.style.animation = 'warningPulse 0.5s ease-out';
+                warning.style.animation = `${animName} ${animDur} ease-out`;
             });
             
             // Clear any existing timeout
@@ -21367,6 +22231,10 @@
                 @keyframes warningPulse {
                     0% { transform: translateX(-50%) scale(0.5); }
                     50% { transform: translateX(-50%) scale(1.15); }
+                    100% { transform: translateX(-50%) scale(1); }
+                }
+                @keyframes bossBannerScaleIn {
+                    0% { transform: translateX(-50%) scale(1.4); }
                     100% { transform: translateX(-50%) scale(1); }
                 }
                 .stacked-warning {
@@ -21432,6 +22300,10 @@
 
             ({ x, y } = pushOutOfLake(x, y, 60));
             bosses.push(new MiniBoss(x, y));
+            // WP6: boss arrival beat — two expanding neon rings from the spawn point,
+            // second one staggered slightly so they read as a "double pulse".
+            addRing(x, y, 30, '#ff6600');
+            setTimeout(() => addRing(x, y, 30, '#ff6600'), 150);
             showBossWarning('MINI BOSS', '#ff6600');
             
             // Spawn extra bosses from tombstone curse
@@ -21468,6 +22340,10 @@
 
             ({ x, y } = pushOutOfLake(x, y, 80));
             bosses.push(new MajorBoss(x, y));
+            // WP6: boss arrival beat — two expanding neon rings from the spawn point,
+            // second one staggered slightly so they read as a "double pulse".
+            addRing(x, y, 35, '#ff4400');
+            setTimeout(() => addRing(x, y, 35, '#ff4400'), 150);
             showBossWarning('INFERNO BOSS', '#ff4400');
             
             // Spawn extra bosses from tombstone curse
@@ -21493,7 +22369,8 @@
                 color: color,
                 textShadow: `0 0 30px ${color}, 0 0 60px #ffffff`,
                 duration: 2500,
-                priority: WARNING_PRIORITY.BOSS
+                priority: WARNING_PRIORITY.BOSS,
+                scaleIn: true // WP6: boss arrival beat — punchier scale-in than other warnings
             });
         }
         
@@ -21854,10 +22731,14 @@
             beam:          { dmgScale: 0.05, cdScale: null,  count: { noun: 'Beam',   fn: (l, d) => d.baseBeams + Math.floor(l / 4) }, range: { label: 'Range', fn: (l, d) => Math.min(d.baseRange + l * 15, ONSCREEN_RANGE_CAP) } },
             // updateStarfall (L8751): dmg .04, AoE radius baseRadius+lvl*15 (star count is visual only); tick rate fixed (cd n/a)
             starField:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => Math.min(d.baseRadius + l * 15, ONSCREEN_RANGE_CAP) } },
-            // fireDaggers (Phantom Flurry, V1_268): dmg .04, blink-strikes baseDaggers+floor(lvl/2), cd .985
-            voidDaggers:   { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseDaggers + Math.floor(l / 2) } },
-            // updateFlame (L8448): dmg .04, range baseRange+lvl*12, fire rate NOT level-scaled (cd null)
-            flameThrower:  { dmgScale: 0.04, cdScale: null,  range: { label: 'Range', fn: (l, d) => d.baseRange + l * 12 } },
+            // fireDaggers (Phantom Flurry, V1_268): dmg .04, blink-strikes baseDaggers+floor(lvl/3), cd .985
+            // WP4: count divisor was /2 pre-V1_298; V1_298 slowed dagger stacking to /3 in the fire fn
+            // but this display table was never updated to match — cards over-promised strike gains.
+            voidDaggers:   { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Strike', fn: (l, d) => d.baseDaggers + Math.floor(l / 3) } },
+            // updateFlame (L9730/9734): dmg .04, range baseRange+lvl*15, cd .985 — WP4: meta had drifted
+            // from a prior "balance pass" (fire rate went from unscaled to .985, range factor 12->15) without
+            // updating this display table, so upgrade cards were silently under-reporting both gains.
+            flameThrower:  { dmgScale: 0.04, cdScale: 0.985, range: { label: 'Range', fn: (l, d) => d.baseRange + l * 15 } },
             // fireSquirrel (L8983): dmg .04, squirrels baseSquirrels+floor(lvl/2), cd .985
             blackSquirrel: { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Squirrel', fn: (l, d) => d.baseSquirrels + Math.floor(l / 2) } },
             // fireThunder (L8668): dmg .04, strikes baseStrikes+floor(lvl/4), range baseRange+lvl*10, cd .985
@@ -21866,8 +22747,10 @@
             toxicAura:     { dmgScale: 0.04, cdScale: null,  range: { label: 'Radius', fn: (l, d) => d.baseRadius + l * 10 } },
             // fireIceShards (L8826): dmg .04, shards baseProjectiles+floor(lvl/4), pierce 1+floor(lvl/4), cd .985
             iceShard:      { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Shard',  fn: (l, d) => d.baseProjectiles + Math.floor(l / 4) }, pierce: { label: 'Pierce', fn: (l) => 1 + Math.floor(l / 4) } },
-            // fireMeteor (L8854): dmg .04, meteors 1+floor(lvl/5), blast blastRadius+lvl*5, cd .985
-            meteorStrike:  { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Meteor', fn: (l) => 1 + Math.floor(l / 5) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + l * 5 } },
+            // fireMeteor (L10177): dmg .04, meteors 1+floor(lvl/4), blast blastRadius+lvl*5, cd .985
+            // WP4: V1_205 moved the 2nd-meteor threshold from Lv5 to Lv4 in the fire fn but left
+            // this display table on the old /5 divisor — cards under-promised the meteor count gain.
+            meteorStrike:  { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Meteor', fn: (l) => 1 + Math.floor(l / 4) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + l * 5 } },
             // fireSpiritOrbs (L8953): dmg .04, orbs baseOrbs+floor(lvl/4), cd .985
             spiritOrbs:    { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Orb',    fn: (l, d) => d.baseOrbs + Math.floor(l / 4) } },
             // fireBoomerang (L8640): dmg .04, count baseCount+floor(lvl/6), range 250+lvl*12, cd .985
@@ -21882,8 +22765,14 @@
             ricochetDisc:  { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Bounce', fn: (l, d) => d.baseBounces + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => d.bounceRange + l * 10 } },
             // dropMine (L9376): dmg .04, max mines maxMines+floor(lvl/5), blast blastRadius+lvl*5, cd .985
             pulseMine:     { dmgScale: 0.04, cdScale: 0.985, count: { noun: 'Mine',   fn: (l, d) => d.maxMines + Math.floor(l / 5) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + l * 5 } },
-            // fireShotgun (L9416): dmg .06, pellets pelletCount+floor(lvl/3), range maxRange+lvl*15, cd .97
-            shotgun:       { dmgScale: 0.06, cdScale: 0.97,  count: { noun: 'Pellet', fn: (l, d) => d.pelletCount + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => Math.min(d.maxRange + l * 15, ONSCREEN_RANGE_CAP) } }
+            // fireShotgun (L10774/10737): dmg .05, pellets pelletCount+floor(lvl/3), range maxRange+lvl*15, cd .98
+            // WP4: V1_298 softened both scalars (dmg .06->.05, cd .97->.98) in the fire fn but left
+            // this display table on the pre-nerf values — cards over-promised damage/fire-rate gains.
+            shotgun:       { dmgScale: 0.05, cdScale: 0.98,  count: { noun: 'Pellet', fn: (l, d) => d.pelletCount + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => Math.min(d.maxRange + l * 15, ONSCREEN_RANGE_CAP) } },
+            // WP3: firePrismLance: dmg .05, instant ray length baseRange+8*lvl (capped on-screen), cd .985
+            prismLance:    { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Length', fn: (l, d) => Math.min(d.baseRange + 8 * l, ONSCREEN_RANGE_CAP) } },
+            // WP3: fireStormSentry: dmg .05, max deployed sentries 1+floor(lvl/5), deploy cadence fixed (cd null)
+            stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => 1 + Math.floor(l / 5) } }
         };
 
         // Mirror of fire-time damage scaling: baseDamage * (1 + (level-1)*scale).
@@ -23165,8 +24054,8 @@
                     // Trigger when below 30% HP and off cooldown
                     if (hpPercent < 0.3 && !legendaryEffects.timeSlow.isSlowed && now > legendaryEffects.timeSlow.cooldownEnd) {
                         legendaryEffects.timeSlow.isSlowed = true;
-                        legendaryEffects.timeSlow.effectEnd = now + 8000; // 8 seconds
-                        legendaryEffects.timeSlow.regenBoostEnd = now + 8000;
+                        legendaryEffects.timeSlow.effectEnd = now + 8000 * player.durationMultiplier; // 8 seconds (WP3: Tome of Persistence)
+                        legendaryEffects.timeSlow.regenBoostEnd = now + 8000 * player.durationMultiplier;
                         timeSlowMultiplier = 0.4; // 60% slower
                         spawnParticles(player.x, player.y, '#9966ff', 25);
                     }
@@ -23222,7 +24111,17 @@
                 
                 // Update
                 if (!player) return;
+                const _prevPlayerX = player.x, _prevPlayerY = player.y; // WP1: velocity track
                 player.update(dt, input);
+                // WP1: smoothed player velocity (px per ~16ms frame) — same normalize+smooth
+                // pattern as trackAimVel() below, feeding 'fast' enemies' intercept-aim lead.
+                {
+                    const inv = dt > 0 ? 16 / dt : 0;
+                    const rvx = (player.x - _prevPlayerX) * inv;
+                    const rvy = (player.y - _prevPlayerY) * inv;
+                    playerVelX = playerVelX * 0.6 + rvx * 0.4;
+                    playerVelY = playerVelY * 0.6 + rvy * 0.4;
+                }
                 // V1_254: real countdown timer + cooldown ring. While out of charges the
                 // 💨 swaps to the seconds remaining; the ring sweeps down as it recharges.
                 const jb = document.getElementById('jumpBtn');
@@ -23246,7 +24145,11 @@
                 updateLeprechaunSpawning(dt);
                 updateBossSpawning(dt);
                 updateDirectives(dt);   // V1_276: late-game directives
-                
+
+                // WP1: rebuild the shared spatial grid once per frame, right before enemy
+                // updates consume it (separation/cohesion queries in Enemy.update()).
+                enemyGrid.build(enemies);
+
                 // Update enemies with distance-based culling for performance
                 const cullDistance = 800; // Full update within this distance
                 const skipDistance = 1500; // Skip updates beyond this
@@ -23304,6 +24207,9 @@
                 for (const ghost of ghosts) {
                     if (!ghost.dead) ghost.update(dt);
                 }
+                for (const sentry of sentries) { // WP3
+                    if (!sentry.dead) sentry.update(dt);
+                }
                 for (const chest of chests) {
                     if (!chest.dead) chest.update(dt);
                 }
@@ -23338,10 +24244,20 @@
                 // Clean up dead entities (in-place for performance)
                 cleanupArray(enemies, e => e.dead);
                 cleanupArray(projectiles, p => p.dead);
+                // WP5: defensive cap — projectiles are otherwise bounded only by each type's own
+                // lifetime/pierce cleanup, which is normally plenty (peak stays well under
+                // LIMITS.projectiles even with several maxed weapons firing at once). This just
+                // stops a genuine runaway from growing the array without limit; should never
+                // actually bind. Trim from the FRONT (oldest-pushed), not the tail — cleanupArray
+                // just above uses swap-and-pop so the array order is scrambled, but this frame's
+                // just-fired projectiles are still appended at the end via push(), so truncating
+                // the tail would silently drop the newest shots instead of the oldest.
+                if (projectiles.length > LIMITS.projectiles) projectiles.splice(0, projectiles.length - LIMITS.projectiles);
                 cleanupArray(xpGems, g => g.dead);
                 cleanupArray(leprechauns, l => l.dead);
                 cleanupArray(rainbows, r => r.dead);
                 cleanupArray(ghosts, g => g.dead);
+                cleanupArray(sentries, s => s.dead); // WP3
                 cleanupArray(chests, c => c.dead);
                 cleanupArray(shopkeepers, s => s.dead);
                 cleanupArray(skullStatues, s => s.dead);
@@ -23467,6 +24383,8 @@
                 uiState.critDamage = player.critMultiplier;
                 uiState.pickupRange = Math.round((player.pickupRange / 50) * 100);
                 uiState.luck = Math.round(player.luck * 100);
+                uiState.sizeBonus = Math.round(((player.sizeMultiplier || 1) - 1) * 100);
+                uiState.durationBonus = Math.round(((player.durationMultiplier || 1) - 1) * 100);
                 // Defensive
                 uiState.maxHpStat = Math.round(player.maxHp);
                 uiState.hpRegen = player.regenRate;
@@ -23782,7 +24700,9 @@
                 ['CRIT %', `${uiState.critChance}%`],
                 ['CRIT DMG', `${uiState.critDamage.toFixed(1)}×`],
                 ['SPEED', `${uiState.moveSpeed}%`],
-                ['LUCK', `${uiState.luck}%`]
+                ['LUCK', `${uiState.luck}%`],
+                ['SIZE', `+${uiState.sizeBonus}%`],
+                ['DURATION', `+${uiState.durationBonus}%`]
             ], 'offense');
             
             // ===== DEFENSE PANEL (far right) =====
@@ -24683,6 +25603,27 @@
                 return;
             }
 
+            // Ambient motes (WP6): soft drifting dots, parallax 0.5x camera, behind everything.
+            {
+                const wrapW = gameWidth + 200;
+                const wrapH = gameHeight + 200;
+                const parX = camera.x * camera.zoom * 0.5; // half the camera's screen-space pan
+                const parY = camera.y * camera.zoom * 0.5;
+                ctx.save();
+                ctx.globalAlpha = 0.15;
+                for (const m of ambientMotes) {
+                    let sx = (m.baseX + gameTime * m.driftX - parX) % wrapW;
+                    if (sx < 0) sx += wrapW;
+                    sx -= 100;
+                    let sy = (m.baseY + gameTime * m.driftY - parY) % wrapH;
+                    if (sy < 0) sy += wrapH;
+                    sy -= 100;
+                    const d = m.radius * 2;
+                    ctx.drawImage(moteSprites[m.spriteIdx], sx - m.radius, sy - m.radius, d, d);
+                }
+                ctx.restore();
+            }
+
             // Draw terrain obstacles (lakes/mountains - background)
             drawTerrain();
             
@@ -24789,6 +25730,9 @@
             drawLeprechaunThrows(); // V1_341
             for (const ghost of ghosts) {
                 if (!ghost.dead) ghost.draw();
+            }
+            for (const sentry of sentries) { // WP3
+                if (!sentry.dead) sentry.draw();
             }
             for (const boss of bosses) {
                 if (!boss.dead) boss.draw();
@@ -24995,6 +25939,7 @@
                 // Draw pellets — V1_358: glowing buckshot, each a hot white core wrapped in an
                 // orange glow with a two-tone ember trail (outer color, inner amber) raking back.
                 if (state.pellets) {
+                    const pelletSizeMult = state.pelletSizeMult || 1; // V1_249: Tome of Magnitude
                     for (const pellet of state.pellets) {
                         if (pellet.hit) continue;
                         if (!camera.isVisible(pellet.x, pellet.y, 12)) continue;
@@ -25014,18 +25959,18 @@
                         // outer ember streak
                         const t1 = camera.scale(16);
                         ctx.shadowBlur = 8;
-                        ctx.globalAlpha = fadeAlpha * 0.5; ctx.strokeStyle = def.color; ctx.lineWidth = camera.scale(2);
+                        ctx.globalAlpha = fadeAlpha * 0.5; ctx.strokeStyle = def.color; ctx.lineWidth = camera.scale(2 * pelletSizeMult);
                         ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - ca * t1, sy - sa * t1); ctx.stroke();
                         // inner amber streak
                         const t2 = camera.scale(9);
-                        ctx.globalAlpha = fadeAlpha * 0.85; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = camera.scale(2.6);
+                        ctx.globalAlpha = fadeAlpha * 0.85; ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = camera.scale(2.6 * pelletSizeMult);
                         ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx - ca * t2, sy - sa * t2); ctx.stroke();
 
                         // glow + hot white core
                         ctx.globalAlpha = fadeAlpha; ctx.shadowBlur = 10; ctx.fillStyle = def.color;
-                        ctx.beginPath(); ctx.arc(sx, sy, camera.scale(3.4), 0, Math.PI * 2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(sx, sy, camera.scale(3.4 * pelletSizeMult), 0, Math.PI * 2); ctx.fill();
                         ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 5;
-                        ctx.beginPath(); ctx.arc(sx, sy, camera.scale(1.8), 0, Math.PI * 2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(sx, sy, camera.scale(1.8 * pelletSizeMult), 0, Math.PI * 2); ctx.fill();
 
                         ctx.restore();
                     }
@@ -25163,17 +26108,23 @@
                 ctx.globalAlpha = d.life;
 
                 if (d.isCrit) {
-                    ctx.font = `bold ${camera.scale(20 * punch)}px Oxanium, monospace`;
+                    // WP7: d.isCrit now carries the overcrit TIER (1 = normal crit, 2-4 =
+                    // overcrit). Tier 1 is unchanged; tier 2+ reads bigger/whiter/brighter
+                    // with one '!' per tier so a chain of lucky overcrits visibly escalates.
+                    const overcrit = d.isCrit >= 2;
+                    const fontScale = overcrit ? punch * 1.3 : punch;
+                    const bangs = '!'.repeat(Math.min(4, d.isCrit));
+                    ctx.font = `bold ${camera.scale(20 * fontScale)}px Oxanium, monospace`;
                     // Dark outline first for readability over bright enemies
                     ctx.lineWidth = 3;
                     ctx.strokeStyle = 'rgba(40, 10, 0, 0.85)';
                     ctx.shadowBlur = 0;
-                    ctx.strokeText(d.damage + '!', sx, sy);
-                    // Gold shadow pulse on crits
-                    ctx.fillStyle = COLORS.yellow;
-                    ctx.shadowBlur = 12;
-                    ctx.shadowColor = COLORS.gold;
-                    ctx.fillText(d.damage + '!', sx, sy);
+                    ctx.strokeText(d.damage + bangs, sx, sy);
+                    // Gold shadow pulse on crits; white-hot instead once it's an overcrit
+                    ctx.fillStyle = overcrit ? '#ffffff' : COLORS.yellow;
+                    ctx.shadowBlur = overcrit ? 16 : 12;
+                    ctx.shadowColor = overcrit ? '#ffffff' : COLORS.gold;
+                    ctx.fillText(d.damage + bangs, sx, sy);
                 } else {
                     ctx.font = `bold ${camera.scale(16 * punch)}px Oxanium, monospace`;
                     // Dark outline first for readability over bright enemies
@@ -25230,15 +26181,15 @@
                 }
             }
 
-            // Low health warning flash
-            if (player && player.hp / player.maxHp < 0.3) {
-                const pulse = 0.15 + Math.sin(Date.now() * 0.008) * 0.1;
-                ctx.fillStyle = `rgba(255, 0, 0, ${pulse})`;
-                ctx.fillRect(0, 0, gameWidth, gameHeight);
-
+            // Low-HP danger vignette (WP6): red radial edge vignette, alpha pulsing
+            // 0..0.22 on a ~1.2s period. Single pre-baked radial canvas (no per-frame
+            // gradient/flat-fill alloc) — stops as soon as HP recovers to 30%+ or the
+            // player dies (death animation takes over the screen instead).
+            if (player && player.hp / player.maxHp < 0.3 && !deathAnimationActive) {
+                const pulse = 0.11 + Math.sin(Date.now() * 0.005236) * 0.11; // ~1.2s period, 0..0.22
                 if (lowHpVignetteCanvas) {
                     ctx.save();
-                    ctx.globalAlpha = pulse + 0.15; // matches old outer color-stop alpha
+                    ctx.globalAlpha = pulse;
                     ctx.drawImage(lowHpVignetteCanvas, 0, 0, gameWidth, gameHeight);
                     ctx.restore();
                 }
@@ -25490,7 +26441,18 @@
         const MAX_DISABLED_WEAPONS = 5;
         
         // Disabled tomes (won't appear in upgrade pool) - persisted
-        let disabledTomes = new Set((function(){ try { return JSON.parse(localStorage.getItem('disabledTomes') || '[]'); } catch(e){ return []; } })()); // V1_164: defensive parse
+        let disabledTomes = new Set((function(){
+            try {
+                const raw = JSON.parse(localStorage.getItem('disabledTomes') || '[]');
+                // Fix round 2: drop stale ids that no longer exist in TOMES (e.g. the
+                // removed 'magnetTome') so they don't linger forever, and persist the clean set.
+                const cleaned = raw.filter(id => TOMES.hasOwnProperty(id));
+                if (cleaned.length !== raw.length) {
+                    try { localStorage.setItem('disabledTomes', JSON.stringify(cleaned)); } catch(e){}
+                }
+                return cleaned;
+            } catch(e){ return []; }
+        })()); // V1_164: defensive parse
         const MAX_DISABLED_TOMES = 3;
         
         // Banished weapons (removed for current run only)
@@ -25503,7 +26465,7 @@
             'thunderStrike', 'chainLightning', 'toxicAura', 'boomerang',
             'spectralArrows', 'ricochetDisc', 'gravityWell',
             'starField', 'meteorStrike', 'spiritOrbs', 'pulseMine',
-            'shotgun'
+            'shotgun', 'prismLance', 'stormSentry'
         ];
         
         // Player color options (neon palette, cold to hot)
@@ -25994,6 +26956,66 @@
                     ctx.beginPath(); ctx.arc(x, y, 1.3, 0, TAU); ctx.fill();
                 }
                 _wpReset(ctx);
+            },
+            // 🔱 Prism Lance — mirrors in-game: an instant white-hot ray flashes across the
+            // box (magenta/cyan fringe either side) and lands on a hit point that sprays 2
+            // short refracted mini-beams outward — matching firePrismLance()'s main ray +
+            // refraction chain. Longer duty cycle than a single flash so the card never
+            // reads as blank between strikes.
+            prismLance(ctx, t, w, h, color) {
+                const period = 1.3, p = (t % period) / period;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.shadowColor = color;
+                const x1 = 8, y1 = h / 2 - 6, x2 = w - 22, y2 = h / 2 + 7; // main ray endpoints
+                if (p < 0.3) {
+                    const fade = 1 - p / 0.3;
+                    ctx.globalAlpha = fade * 0.75; ctx.strokeStyle = color; ctx.lineWidth = 2.4; ctx.shadowBlur = 10;
+                    ctx.beginPath(); ctx.moveTo(x1, y1 + 1.6); ctx.lineTo(x2, y2 + 1.6); ctx.stroke();
+                    ctx.globalAlpha = fade * 0.75; ctx.strokeStyle = '#88ffff';
+                    ctx.beginPath(); ctx.moveTo(x1, y1 - 1.6); ctx.lineTo(x2, y2 - 1.6); ctx.stroke();
+                    ctx.globalAlpha = fade; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                    // impact dot at the hit point
+                    ctx.globalAlpha = fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 7;
+                    _wpStar(ctx, x2, y2, 2.8);
+                    // 2 refracted mini-beams spray outward at angles off the impact point,
+                    // slightly delayed behind the main ray so they read as a chain reaction
+                    if (p > 0.05) {
+                        const rf = Math.min(1, (p - 0.05) / 0.12);
+                        const angles = [-0.85, 0.55];
+                        const refColors = ['#ff88ff', '#88ffff'];
+                        for (let i = 0; i < 2; i++) {
+                            const a = angles[i];
+                            const rx2 = x2 + Math.cos(a) * 16 * rf, ry2 = y2 + Math.sin(a) * 16 * rf;
+                            ctx.globalAlpha = fade * 0.7 * rf; ctx.strokeStyle = refColors[i]; ctx.lineWidth = 1.3; ctx.shadowBlur = 6;
+                            ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(rx2, ry2); ctx.stroke();
+                        }
+                    }
+                }
+                _wpReset(ctx);
+            },
+            // 🗼 Storm Sentry — a tripod turret with a pulsing orb that periodically
+            // zaps a jagged bolt outward.
+            stormSentry(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h * 0.66;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.globalAlpha = 0.7; ctx.shadowBlur = 4;
+                for (let i = 0; i < 3; i++) {
+                    const a = (i / 3) * TAU + Math.PI / 2;
+                    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * 13, cy + Math.sin(a) * 6 + 5); ctx.stroke();
+                }
+                const orbY = cy - 13 - Math.sin(t * 2) * 2;
+                const pulse = 0.6 + 0.4 * Math.sin(t * 3);
+                ctx.globalAlpha = 0.9; ctx.fillStyle = color; ctx.shadowBlur = 8 + pulse * 6;
+                ctx.beginPath(); ctx.arc(cx, orbY, 4, 0, TAU); ctx.fill();
+                ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 4;
+                ctx.beginPath(); ctx.arc(cx, orbY, 1.8, 0, TAU); ctx.fill();
+                const zp = (t % 1.2) / 1.2;
+                if (zp < 0.15) {
+                    const fade = 1 - zp / 0.15;
+                    ctx.globalAlpha = fade * 0.9; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4; ctx.shadowBlur = 8;
+                    _wpBolt(ctx, cx, orbY, cx + 26, orbY + 8, 4, 3);
+                }
+                _wpReset(ctx);
             }
         };
 
@@ -26183,6 +27205,70 @@
                 }
                 ctx.globalAlpha = 0.9; ctx.fillStyle = '#fff'; ctx.shadowBlur = 9; ctx.beginPath(); ctx.arc(cx, cy, 2.4, 0, TAU); ctx.fill();
                 const pr = (t * 0.8) % 1; ctx.globalAlpha = (1 - pr) * 0.5; ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.ellipse(cx, cy, pr * 15 + 2, (pr * 15 + 2) * 0.6, 0, 0, TAU); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // 🔮 Magnitude (weapon size) — a pulsing core with two rings that expand
+            // outward and fade, suggesting growth.
+            sizeTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                for (let i = 0; i < 2; i++) {
+                    const p = (t * 0.55 + i * 0.5) % 1, rad = 3 + p * 16;
+                    ctx.globalAlpha = (1 - p) * 0.8; ctx.strokeStyle = i === 0 ? color : '#ffccff';
+                    ctx.lineWidth = 1.8 - p * 0.8; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.arc(cx, cy, rad, 0, TAU); ctx.stroke();
+                }
+                const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+                ctx.globalAlpha = 0.9; ctx.fillStyle = color; ctx.shadowBlur = 9 + pulse * 4;
+                ctx.beginPath(); ctx.arc(cx, cy, 3 + pulse, 0, TAU); ctx.fill();
+                ctx.fillStyle = '#fff'; ctx.shadowBlur = 6;
+                ctx.beginPath(); ctx.arc(cx, cy, 1.4, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // ⏳ Persistence (effect duration) — hourglass outline with sand draining
+            // from the top bulb into the bottom one, a trickling grain at the neck,
+            // and a slow aqua pulse ring (suggests time stretching, not ticking down).
+            persistTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2, hw = 7, hh = 13;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+
+                // Glass outline
+                ctx.globalAlpha = 0.85; ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.shadowBlur = 6;
+                ctx.beginPath();
+                ctx.moveTo(cx - hw, cy - hh); ctx.lineTo(cx + hw, cy - hh); ctx.lineTo(cx, cy);
+                ctx.lineTo(cx + hw, cy + hh); ctx.lineTo(cx - hw, cy + hh); ctx.lineTo(cx, cy);
+                ctx.closePath(); ctx.stroke();
+
+                // Sand: drains from top bulb into bottom bulb over a slow cycle
+                const p = (t * 0.3) % 1;
+                ctx.globalAlpha = 0.5; ctx.fillStyle = color; ctx.shadowBlur = 0;
+                if (p < 0.96) {
+                    const topFrac = 1 - p;
+                    ctx.beginPath();
+                    ctx.moveTo(cx - hw * topFrac, cy - hh);
+                    ctx.lineTo(cx + hw * topFrac, cy - hh);
+                    ctx.lineTo(cx, cy - hh * (1 - topFrac));
+                    ctx.closePath(); ctx.fill();
+                }
+                if (p > 0.04) {
+                    const botFrac = p;
+                    ctx.beginPath();
+                    ctx.moveTo(cx - hw * botFrac, cy + hh);
+                    ctx.lineTo(cx + hw * botFrac, cy + hh);
+                    ctx.lineTo(cx, cy + hh * (1 - botFrac));
+                    ctx.closePath(); ctx.fill();
+                }
+
+                // Trickling grain through the neck
+                const dropT = (t * 4) % 1;
+                ctx.globalAlpha = 0.9; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 4;
+                ctx.beginPath(); ctx.arc(cx, cy - hh * 0.35 + dropT * hh * 0.7, 1.1, 0, TAU); ctx.fill();
+
+                // Slow aqua pulse ring around the whole hourglass
+                const pulse = 0.5 + 0.5 * Math.sin(t * 1.2);
+                ctx.globalAlpha = 0.25 * pulse; ctx.strokeStyle = '#7fffd4'; ctx.lineWidth = 3; ctx.shadowBlur = 10;
+                ctx.beginPath(); ctx.arc(cx, cy, hh + 4, 0, TAU); ctx.stroke();
+
                 _wpReset(ctx);
             }
         };
@@ -27069,6 +28155,7 @@
             resetDirectives(); // V1_276
             rainbows = [];
             ghosts = [];
+            sentries = []; // WP3
             chests = [];
             shopkeepers = [];          // V1_299: traveling merchants
             pendingShop = null;
@@ -27494,6 +28581,8 @@
             set('plCritMult', player.critMultiplier.toFixed(1) + '×');
             set('plPickup', Math.round((player.pickupRange / 50) * 100) + '%');
             set('plLuck', Math.round(player.luck * 100) + '%');
+            set('plSize', '+' + Math.round(((player.sizeMultiplier || 1) - 1) * 100) + '%');
+            set('plDuration', '+' + Math.round(((player.durationMultiplier || 1) - 1) * 100) + '%');
             set('plMaxHp', Math.round(player.maxHp));
             set('plRegen', player.regenRate.toFixed(1) + '/s');
             set('plLifesteal', Math.round(player.lifesteal * 100) + '%');
