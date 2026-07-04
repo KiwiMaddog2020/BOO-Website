@@ -229,7 +229,9 @@ const AU = (() => {
   const sfx = {
     jump(){ tone(240,0.14,'square',0.16,260); },
     spin(){ tone(300,0.08,'square',0.13,120); tone(380,0.08,'square',0.11,140,0,0.05); },
-    stomp(){ noise(0.08,0.22,0,300); tone(160,0.08,'square',0.14,-70); },
+    stomp(){ const ch = (typeof stompChain!=='undefined') ? Math.min(stompChain,7) : 0;
+             noise(0.08,0.22,0,300); tone(160*Math.pow(1.1,ch),0.08,'square',0.14,-70); },
+    land(){ tone(85,0.05,'sine',0.10,-25); },
     coin(){ tone(N(83),0.06,'square',0.14); tone(N(88),0.16,'square',0.14,0,0.06); },
     boo(){ [76,80,83,88].forEach((n,i)=>tone(N(n),0.1,'square',0.15,0,i*0.06)); },
     grow(){ [60,64,67,72,76].forEach((n,i)=>tone(N(n),0.07,'square',0.15,0,i*0.045)); },
@@ -1155,9 +1157,18 @@ let ents = [];        // enemies / items / platforms / misc entities
 let fireballs = [];
 let bumps = [];       // block bounce anims {tx,ty,t}
 let G = null;         // active level-game state (set by scene)
+let hitPause = 0;     // SMW-style hit-stop: freeze the world a few frames on impacts
+function hitStop(n){ hitPause = Math.max(hitPause, n); }
 
 // block helpers
 function bumpBlock(tx,ty,big){
+  // SMW detail: bumping a block flips/kills any enemy standing on top of it
+  for (const e of ents){
+    if (e.dead || !CORPSE_COLOR[e.kind]) continue;
+    if (e.x+e.w > tx*T && e.x < tx*T+T && Math.abs((e.y+e.h) - ty*T) < 8){
+      killEnemy(e,'bump'); AU.sfx.kick();
+    }
+  }
   const ch = tileAt(tx,ty);
   if (ch==='?' || ch==='M' || ch==='U'){
     room.grid[ty][tx] = '%';   // used block
@@ -1205,11 +1216,19 @@ const player = {
   inv:0, dead:false, carry:null, kickCd:0,
   anim:0, skidding:false, pipeT:0, pipeDir:0, pipeDest:null,
   climbingGoal:false, groundVy:0, ridePlat:null,
+  landT:0, stretchT:0, trail:[],
+  landed(impact){ // squash + dust + soft thud, scaled by fall speed
+    this.landT = 8;
+    const n = impact > 6 ? 5 : 3;
+    puff(this.x+this.w/2, this.y+this.h, 'rgba(220,255,255,0.9)', n, 1.1, 14);
+    AU.sfx.land();
+  },
   reset(tx,ty){
     this.x = tx*T+6; this.y = ty*T + (T - this.hgt()); this.vx=0; this.vy=0;
     this.face=1; this.onGround=false; this.duck=false; this.spin=false;
     this.coyote=0; this.jbuf=0; this.pMeter=0; this.inv=0; this.dead=false;
     this.carry=null; this.pipeT=0; this.climbingGoal=false; this.ridePlat=null;
+    this.landT=0; this.stretchT=0; this.trail=[];
     this.syncSize();
   },
   hgt(){ return (this.form>0 && !this.duck) ? 46 : 26; },
@@ -1270,12 +1289,12 @@ const player = {
     if (this.jbuf>0 && this.coyote>0){
       this.vy = PHYS.jump + PHYS.jumpSpdBonus*spdRatio;
       this.onGround=false; this.coyote=0; this.jbuf=0; this.spin=false;
-      this.jumpHeld=true; AU.sfx.jump();
+      this.jumpHeld=true; this.stretchT=8; AU.sfx.jump();
       puff(this.x+this.w/2, this.y+this.h, COL.cyan, 3, 1, 12);
     }
     if (inp.spinEdge && (this.onGround || this.coyote>0)){
       this.vy = PHYS.spin; this.onGround=false; this.coyote=0; this.spin=true;
-      this.jumpHeld=true; AU.sfx.spin();
+      this.jumpHeld=true; this.stretchT=8; AU.sfx.spin();
       if (this.carry){ this.dropCarry(); } // spin drops carried item (SMW)
     }
     if (!inp.jump && !inp.spin) this.jumpHeld=false;
@@ -1308,9 +1327,21 @@ const player = {
     // ---- world bounds / fall death ----
     this.x = clamp(this.x, 0, room.W*T - this.w);
     if (this.y > room.H*T + 40) this.die(true);
-    // ---- timers ----
+    // ---- timers / juice ----
     if (this.inv>0) this.inv--;
+    if (this.landT>0) this.landT--;
+    if (this.stretchT>0) this.stretchT--;
     this.anim += Math.abs(this.vx)*0.06 + 0.02;
+    // run dust at speed
+    if (this.onGround && Math.abs(this.vx) > 3.3 && G && G.frame%7===0)
+      puff(this.x + this.w/2 - this.face*10, this.y+this.h-2, 'rgba(200,240,255,0.7)', 1, 0.7, 12);
+    // spin-jump afterimages
+    if (this.spin && !this.onGround){
+      if (!G || G.frame%2===0){
+        this.trail.push({x:this.x, y:this.y});
+        if (this.trail.length>3) this.trail.shift();
+      }
+    } else if (this.trail.length) this.trail.length = 0;
     // ---- pipe entry ----
     this.tryPipes();
   },
@@ -1350,6 +1381,7 @@ const player = {
     for (let ty=ty0; ty<=ty1+1; ty++){
       const sy = slopeFloorY(footTx, ty, footX);
       if (sy != null && this.y+this.h >= sy-1 && this.vy >= 0 && this.y+this.h <= ty*T+T+8){
+        if (this.vy > 3.4) this.landed(this.vy);
         this.y = sy - this.h; this.vy = 0; this.onGround = true; this.onSlope = true;
         break;
       }
@@ -1363,12 +1395,15 @@ const player = {
           const ch = tileAt(tx,tyDn);
           const tileTop = tyDn*T;
           if (SOLID.has(ch)){
+            if (this.vy > 3.4) this.landed(this.vy);
             this.y = tileTop - this.h; this.vy = 0; this.onGround = true; break;
           }
           if (ch==='=' && (this.y+this.h) - this.vy <= tileTop+4 && !input.d){
+            if (this.vy > 3.4) this.landed(this.vy);
             this.y = tileTop - this.h; this.vy = 0; this.onGround = true; break;
           }
           if (ch==='-'){ // crumble
+            if (this.vy > 3.4) this.landed(this.vy);
             this.y = tileTop - this.h; this.vy = 0; this.onGround = true;
             crumbleTouch(tx,tyDn);
             break;
@@ -1408,6 +1443,8 @@ const player = {
   stompBounce(){
     this.vy = (input.jump||input.spin) ? PHYS.stompHold : PHYS.stomp;
     this.jumpHeld = !!(input.jump||input.spin);
+    this.stretchT = 6;
+    hitStop(3); // crunchy stomp
   },
   hurt(){
     if (this.inv>0 || this.dead) return;
@@ -1497,8 +1534,24 @@ const player = {
     const form = this.form;
     const bodyC = form===2 ? COL.orange : COL.cyan;
     const trimC = form===1 ? COL.magenta : (form===2 ? COL.white : COL.white);
+    // spin-jump afterimages (drawn before the body)
+    if (this.trail.length){
+      for (let i=0;i<this.trail.length;i++){
+        const tr = this.trail[i];
+        cx.globalAlpha = 0.10 + i*0.07;
+        cx.fillStyle = bodyC;
+        cx.beginPath(); cx.arc(tr.x-cam.x+w/2, tr.y-cam.y+h/2, w*0.45, 0, TAU); cx.fill();
+      }
+      cx.globalAlpha = 1;
+    }
     cx.save();
     cx.translate(px+w/2, py+h);
+    // SMW squash & stretch, anchored at the feet
+    if (this.landT>0){ const k=this.landT/8; cx.scale(1+0.26*k, 1-0.30*k); }
+    else if (this.stretchT>0 && !this.onGround){ const k=this.stretchT/8; cx.scale(1-0.16*k, 1+0.20*k); }
+    // lean into the run
+    if (this.onGround && !this.duck && Math.abs(this.vx)>1)
+      cx.rotate(clamp(this.vx*0.035, -0.15, 0.15));
     if (this.dead){ cx.rotate(Math.sin(this.deadT*0.2)*0.2); }
     const spinA = this.spin && !this.onGround ? (G.frame*0.5) : 0;
     if (spinA) cx.scale(Math.abs(Math.cos(spinA))*0.85+0.15, 1);
@@ -1520,12 +1573,18 @@ const player = {
       cx.strokeStyle = trimC; cx.lineWidth = 2.5;
       cx.beginPath(); cx.moveTo(-bw/2+2, -bh*0.55); cx.quadraticCurveTo(0, -bh*0.55+3, bw/2-2, -bh*0.55); cx.stroke();
     }
-    // face
-    cx.fillStyle = '#04222a';
+    // face (with an occasional blink for life)
     const ey = -bh + bw/2 - 1;
-    cx.beginPath(); cx.arc(3, ey, 2.6, 0, TAU); cx.arc(9, ey, 2.6, 0, TAU); cx.fill();
-    cx.fillStyle = COL.white;
-    cx.beginPath(); cx.arc(3.8, ey-0.8, 1, 0, TAU); cx.arc(9.8, ey-0.8, 1, 0, TAU); cx.fill();
+    const blinking = !this.dead && (G.frame % 205) < 7;
+    if (blinking){
+      cx.strokeStyle = '#04222a'; cx.lineWidth = 2; cx.lineCap='round';
+      cx.beginPath(); cx.moveTo(1,ey); cx.lineTo(5,ey); cx.moveTo(7,ey); cx.lineTo(11,ey); cx.stroke();
+    } else {
+      cx.fillStyle = '#04222a';
+      cx.beginPath(); cx.arc(3, ey, 2.6, 0, TAU); cx.arc(9, ey, 2.6, 0, TAU); cx.fill();
+      cx.fillStyle = COL.white;
+      cx.beginPath(); cx.arc(3.8, ey-0.8, 1, 0, TAU); cx.arc(9.8, ey-0.8, 1, 0, TAU); cx.fill();
+    }
     if (this.skidding){ cx.strokeStyle='#04222a'; cx.lineWidth=1.5;
       cx.beginPath(); cx.arc(6, ey+6, 3, 0.15*Math.PI, 0.85*Math.PI); cx.stroke(); }
     // feet (run cycle) when grounded
@@ -1661,9 +1720,15 @@ function chainScore(x,y){
   else addScore(v,x,y);
 }
 
+const CORPSE_COLOR = { glimmer:'#ff1493', shelby:'#39ff14', wing:'#39ff14',
+                       zapfly:'#9b30ff', spikord:'#ff3344', bro:'#ff6600', maw:'#39ff14' };
 function killEnemy(e, byWhat){
   e.dead = true;
-  puff(e.x+e.w/2, e.y+e.h/2, e.kind==='spikord'?COL.red:COL.magenta, 8, 2, 22);
+  const col = CORPSE_COLOR[e.kind] || COL.magenta;
+  puff(e.x+e.w/2, e.y+e.h/2, col, 8, 2, 22);
+  // SMW-style squashed remains that fade out where it died
+  ents.push({ kind:'corpse', x:e.x, y:e.y+e.h-8, w:e.w, h:8, vx:0, vy:0,
+              color:col, life:26, dead:false, t:0 });
   chainScore(e.x+e.w/2, e.y);
 }
 
@@ -1733,7 +1798,7 @@ function updateEnt(e){
             e.vx = (player.x+player.w/2 < e.x+e.w/2) ? 5.2 : -5.2;
             e.x += Math.sign(e.vx)*6;
             AU.sfx.kick(); addScore(200,e.x,e.y,false);
-            player.kickCd = 12;
+            player.kickCd = 12; hitStop(2);
           }
         }
       } else if (e.state==='slide'){
@@ -1914,6 +1979,10 @@ function updateEnt(e){
       if (e.life<=0) e.dead=true;
       if (plOver(e) && !player.dead) player.hurt();
       break;
+    case 'corpse':
+      e.life--;
+      if (e.life<=0) e.dead=true;
+      break;
   }
 }
 
@@ -1964,7 +2033,7 @@ function bruteUpdate(e){
     if (plStomps(e) && e.state!=='stun'){
       e.hp--;
       player.stompBounce();
-      AU.sfx.bossHit(); camShake(5,16);
+      AU.sfx.bossHit(); camShake(5,16); hitStop(7); G.flash = 4;
       puff(e.x+e.w/2, e.y, COL.white, 12, 2.6, 24);
       if (e.hp<=0){ e.state='die'; AU.sfx.bossDie(); AU.stopSong(); }
       else {
@@ -2017,7 +2086,7 @@ function wyrmUpdate(e){
   if (plOver(e) && !player.dead && e.state!=='die'){
     if (plStomps(e) && e.state==='stun'){
       e.hp--;
-      player.stompBounce(); AU.sfx.bossHit(); camShake(5,16);
+      player.stompBounce(); AU.sfx.bossHit(); camShake(5,16); hitStop(7); G.flash = 4;
       puff(e.x+e.w/2, e.y, COL.white, 12, 2.6, 24);
       if (e.hp<=0){ e.state='die'; AU.sfx.bossDie(); AU.stopSong(); }
       else { e.state='hover'; e.hoverT=100; }
@@ -2254,6 +2323,12 @@ function drawEnt(e){
         cx.fillRect(x+e.w/2-16+i2*12, y-14, 8, 5); }
       cx.globalAlpha = 1;
       break; }
+    case 'corpse': {
+      cx.globalAlpha = e.life/26;
+      cx.fillStyle = e.color;
+      cx.beginPath(); cx.ellipse(x+e.w/2, y+e.h/2+2, e.w/2, 4, 0, 0, TAU); cx.fill();
+      cx.globalAlpha = 1;
+      break; }
     case 'shock': {
       cx.shadowColor = COL.purple; cx.shadowBlur = 10;
       cx.strokeStyle = COL.purple; cx.lineWidth = 3;
@@ -2277,7 +2352,8 @@ function startLevel(id){
   const def = LEVELS[id];
   G = { id, frame:0, timer: def.meta.time, booTotal:0, booMask: save.boo[id]||0,
         midway:false, paused:false, ending:false, bossActive:false, boss:null,
-        bossBanner:0, switchDone:0, hurry:false, nameBanner:100 };
+        bossBanner:0, switchDone:0, hurry:false, nameBanner:100, flash:0 };
+  hitPause = 0;
   enterRoom(id, null, null, false);
   scene = 'level';
   irisOpen();
@@ -2396,6 +2472,7 @@ function drawTiles(){
   const atlas = TILE_ATLAS[room.area];
   const x0 = Math.max(0, Math.floor(cam.x/T)), x1 = Math.min(room.W-1, Math.ceil((cam.x+LW)/T));
   const y0 = Math.max(0, Math.floor(cam.y/T)), y1 = Math.min(room.H-1, Math.ceil((cam.y+LH)/T));
+  const tNow = Date.now()*0.004;
   for (let y=y0;y<=y1;y++) for (let x=x0;x<=x1;x++){
     const ch = room.grid[y][x];
     if (ch==='.') continue;
@@ -2403,7 +2480,30 @@ function drawTiles(){
     if (idx===undefined) continue;
     let oy = 0;
     for (const b of bumps){ if (b.tx===x && b.ty===y){ oy = -Math.sin((10-b.t)/10*Math.PI)*7; } }
-    cx.drawImage(atlas, idx*T, 0, T, T, Math.round(x*T-cam.x), Math.round(y*T-cam.y+oy), T, T);
+    const dx2 = Math.round(x*T-cam.x), dy2 = Math.round(y*T-cam.y+oy);
+    cx.drawImage(atlas, idx*T, 0, T, T, dx2, dy2, T, T);
+    // living-tile overlays (cheap, no shadowBlur)
+    if (ch==='?'||ch==='M'||ch==='U'){
+      const p = 0.25+0.25*Math.sin(tNow*2 + x*0.9);
+      cx.globalAlpha = p; cx.fillStyle = '#fff8d0';
+      cx.fillRect(dx2+4, dy2+4, 4, 4);
+      cx.globalAlpha = 1;
+    } else if (ch==='~'){
+      const w1 = Math.sin(tNow*3 + x*1.3)*3;
+      cx.fillStyle = '#ffd24a';
+      cx.fillRect(dx2+6+w1, dy2+4, 6, 2);
+      cx.fillRect(dx2+20-w1, dy2+5, 4, 2);
+    } else if (ch==='A'){
+      // midway pennant: gold + waving once claimed, dim cyan before
+      const claimed = G && G.midway;
+      const wave = Math.sin(tNow*4)*2;
+      cx.fillStyle = claimed ? COL.gold : 'rgba(0,255,255,0.45)';
+      cx.beginPath();
+      cx.moveTo(dx2+T/2+1, dy2+3);
+      cx.lineTo(dx2+T/2+14+(claimed?wave:0), dy2+7);
+      cx.lineTo(dx2+T/2+1, dy2+12);
+      cx.closePath(); cx.fill();
+    }
   }
   // pipe caps (draw lips on pipe tops)
   for (let y=y0;y<=y1;y++) for (let x=x0;x<=x1;x++){
@@ -2420,13 +2520,25 @@ function drawTiles(){
 function drawGoalBar(){
   if (!G.goal) return;
   const g = G.goal;
+  const xl = g.xL*T+T/2-cam.x, xr = g.xR*T+T/2-cam.x;
+  // shimmering energy field between the posts
+  const sh = 0.05 + 0.04*Math.sin(Date.now()*0.004);
+  cx.globalAlpha = sh;
+  cx.fillStyle = COL.gold;
+  cx.fillRect(xl, g.top-cam.y, xr-xl, g.bot-g.top);
+  cx.globalAlpha = 1;
+  // the bonus bar
   cx.shadowColor = COL.gold; cx.shadowBlur = 10;
   cx.strokeStyle = COL.gold; cx.lineWidth = 3.5;
   cx.beginPath();
-  cx.moveTo(g.xL*T+T/2-cam.x, g.barY-cam.y);
-  cx.lineTo(g.xR*T+T/2-cam.x, g.barY-cam.y);
+  cx.moveTo(xl, g.barY-cam.y);
+  cx.lineTo(xr, g.barY-cam.y);
   cx.stroke();
   cx.shadowBlur = 0;
+  // bar end sparks
+  cx.fillStyle = '#fff';
+  cx.fillRect(xl-2, g.barY-cam.y-2, 4, 4);
+  cx.fillRect(xr-2, g.barY-cam.y-2, 4, 4);
 }
 function drawBG(){
   const bg = BGS[room.area];
@@ -2446,6 +2558,7 @@ function drawBG(){
 function updateLevel(){
   if (input.pauseEdge && !G.ending && !player.dead){ G.paused = !G.paused; AU.sfx.pause(); }
   if (G.paused) return;
+  if (hitPause > 0){ hitPause--; return; } // hit-stop: world frozen, render continues
   G.frame++;
   if (G.nameBanner>0) G.nameBanner--;
   if (G.bossBanner>0) G.bossBanner--;
@@ -2485,6 +2598,12 @@ function updateLevel(){
   if (player.climbingGoal){
     G.clearT = (G.clearT||0)+1;
     if (G.clearT===1){ puff(player.x+player.w/2, player.y, COL.gold, 14, 2.4, 30); }
+    // celebration fireworks while walking off
+    if (G.clearT%22===0 && G.clearT<100){
+      puff(player.x+rnd(-70,90), player.y-rnd(30,110),
+           [COL.gold,COL.cyan,COL.magenta][(G.clearT/22)%3|0], 10, 2.2, 26);
+      AU.sfx.coin();
+    }
     if (G.clearT>110){
       player.climbingGoal = false;
       irisClose(()=>{ exitToMap(false); }, player.x+player.w/2-cam.x, player.y-cam.y);
@@ -2534,6 +2653,12 @@ function drawLevel(){
   player.draw();
   drawParts(); drawPops();
   cx.restore();
+  // boss-hit white flash
+  if (G.flash > 0){
+    cx.fillStyle = `rgba(255,255,255,${0.22*G.flash/4})`;
+    cx.fillRect(0,0,LW,LH);
+    G.flash--;
+  }
   // dark rooms: radial light around the player
   if (room.meta.dark){
     const px = player.x+player.w/2-cam.x, py = player.y+player.h/2-cam.y;
