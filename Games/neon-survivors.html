@@ -1447,7 +1447,13 @@
                 max-width: 300px;
                 padding: 0 5px;
             }
-            
+            /* WP8: 25 cards in 4 columns leaves a lone orphan on the last row (25 = 6*4+1) —
+               center it under the full row width instead of letting it hug the left edge. */
+            .weapon-select-grid > .weapon-select-card:last-child:nth-child(4n+1) {
+                grid-column: 1 / -1;
+                justify-self: center;
+            }
+
             .weapon-select-card {
                 width: 68px !important;
                 padding: 6px 4px !important;
@@ -2003,6 +2009,13 @@
             .tome-editor-grid {
                 grid-template-columns: repeat(3, 1fr);
                 gap: 10px;
+            }
+            /* WP8: 16 tomes in 3 columns leaves a lone orphan on the last row (16 = 5*3+1) —
+               center it under the full row width instead of letting it hug the left edge.
+               (4-column desktop layout divides 16 evenly, so no fix needed there.) */
+            .tome-editor-grid > .tome-select-card:last-child:nth-child(3n+1) {
+                grid-column: 1 / -1;
+                justify-self: center;
             }
             .tome-select-card {
                 width: 110px;
@@ -6575,6 +6588,8 @@
                     <div class="pl-stat"><span>Luck</span><b id="plLuck">—</b></div>
                     <div class="pl-stat"><span>Weapon Size</span><b id="plSize">—</b></div>
                     <div class="pl-stat"><span>Effect Duration</span><b id="plDuration">—</b></div>
+                    <div class="pl-stat"><span>Proj Speed</span><b id="plProjSpeed">—</b></div>
+                    <div class="pl-stat"><span>Gold Gain</span><b id="plGoldGain">—</b></div>
                 </div>
                 <div class="pl-statcol pl-defense">
                     <div class="pl-col-title">DEFENSE 🛡️</div>
@@ -6584,6 +6599,7 @@
                     <div class="pl-stat"><span>Armor</span><b id="plArmor">—</b></div>
                     <div class="pl-stat"><span>Shield</span><b id="plShield">—</b></div>
                     <div class="pl-stat"><span>Move Speed</span><b id="plSpeed">—</b></div>
+                    <div class="pl-stat"><span>Thorns</span><b id="plThorns">—</b></div>
                 </div>
             </div>
         </div>
@@ -6832,6 +6848,11 @@
                 wMineDrop:    function () { tone(440, 0.05, 'square', 0.09, 330); },
                 wMineBlast:   function () { noise(0.16, 0.18); tone(120, 0.12, 'square', 0.14, 60); },
                 wShotgun:     function () { noise(0.10, 0.18); tone(220, 0.07, 'square', 0.12, 90); },
+                // ---- WP8: new weapon cues ----
+                wScythe:      function () { tone(260, 0.14, 'sawtooth', 0.14, 130); noise(0.06, 0.08); },
+                wMortarLaunch:function () { tone(200, 0.09, 'square', 0.12, 90); noise(0.05, 0.07); },
+                wMortarBlast: function () { noise(0.16, 0.18); tone(100, 0.20, 'sawtooth', 0.15, 55); },
+                wRailgunFire: function () { tone(1800, 0.05, 'sawtooth', 0.16, 60); noise(0.08, 0.12); },
                 // ---- event cues ----
                 hit:        function () { if (!gate('hit', 55)) return; noise(0.03, 0.06); },
                 kill:       function () { if (!gate('kill', 40)) return; tone(180, 0.07, 'square', 0.12, 90); noise(0.05, 0.08); },
@@ -7955,7 +7976,8 @@
             executioner: { active: false },  // instakill non-boss enemies below 12% HP
             combustion: { active: false },   // slain enemies explode (AoE)
             deadeye: { active: false },      // +crit chance / +crit damage
-            windRunner: { active: false }    // V1_359: +2 dash charges, +move speed, faster dash recharge
+            windRunner: { active: false },   // V1_359: +2 dash charges, +move speed, faster dash recharge
+            splitFire: { active: false }     // WP8: volley weapons fire +1 projectile
         };
         let combustionChaining = false; // V1_325: re-entrancy guard so one kill = one blast (no runaway cascade)
         
@@ -8481,6 +8503,53 @@
                 zapRange: 300,
                 dmgScale: 0.05,
                 type: 'stormSentry'
+            },
+            // WP8: new weapons (photon scythe / plasma mortar / void railgun)
+            photonScythe: {
+                name: 'Photon Scythe',
+                icon: '🌙',
+                color: '#9b30ff',
+                desc: 'Reaping arcs, heavy knockback',
+                // WP8 balance: baseDamage tuned down from an initial 16 to 4 — a swing hits
+                // ~3 targets at once (more at Lv7+ full-circle reap), so per-target damage has
+                // to be much lower than a single-target hitter to land near the arsenal median.
+                baseDamage: 4,
+                baseFireRate: 950,
+                baseRadius: 130,
+                baseSweep: 3.4,
+                dmgScale: 0.05,
+                type: 'photonScythe'
+            },
+            plasmaMortar: {
+                name: 'Plasma Mortar',
+                icon: '💣',
+                color: '#ff6600',
+                desc: 'Lobs shells onto dense packs',
+                // WP8 balance: baseDamage tuned down from an initial 22 to 4.5 — each shell
+                // splashes ~4 targets and shell COUNT also grows with level, so both multipliers
+                // compound fast; a much lower per-shell base keeps L1/L8 DPS near the median.
+                baseDamage: 4.5,
+                baseFireRate: 1500,
+                blastRadius: 74,
+                dmgScale: 0.05,
+                type: 'plasmaMortar'
+            },
+            voidRailgun: {
+                name: 'Void Railgun',
+                icon: '🛰️',
+                color: '#c98fff',
+                desc: 'Obliterates the strongest foe',
+                // WP8 balance: baseDamage tuned down from an initial 150 to 18, and dmgScale
+                // raised from 0.06 to 0.14 — the railgun deliberately does NOT speed up its
+                // idle cooldown with level (only the charge phase shrinks), so unlike every
+                // other weapon its DPS growth from L1->L8 can't come from firing faster; a
+                // steeper per-level damage curve is the only lever left to keep L8 near median
+                // while L1 sits ~+28% hot (its "trades uptime for single-target burst" identity).
+                baseDamage: 18,
+                baseFireRate: 2700,
+                chargeMs: 1100,
+                dmgScale: 0.14,
+                type: 'voidRailgun'
             }
         };
 
@@ -8612,6 +8681,31 @@
                 desc: '+10% effect duration',
                 stat: 'durationBonus',
                 value: 0.10
+            },
+            // WP8: new tomes (pool grows 13 -> 16)
+            velocityTome: {
+                name: 'Tome of Velocity',
+                icon: '🏹',
+                color: '#66e0ff',
+                desc: '+8% projectile speed',
+                stat: 'projSpeedBonus',
+                value: 0.08
+            },
+            midasTome: {
+                name: 'Tome of Midas',
+                icon: '👑',
+                color: '#ffd700',
+                desc: '+12% gold gain',
+                stat: 'goldBonus',
+                value: 0.12
+            },
+            retributionTome: {
+                name: 'Tome of Retribution',
+                icon: '🌵',
+                color: '#ff6699',
+                desc: 'Reflect 15% contact damage',
+                stat: 'thornsBonus',
+                value: 0.15
             }
         };
         const MAX_UNIQUE_TOMES = 4;
@@ -8656,6 +8750,9 @@
                 this.damageMultiplier = 1;
                 this.sizeMultiplier = 1; // Tome of Magnitude weapon-size bonus (V1_249)
                 this.durationMultiplier = 1; // Tome of Persistence duration bonus (WP3) — must exist before first applyPassives()
+                this.projSpeedMultiplier = 1; // WP8: Tome of Velocity — must exist before first applyPassives()
+                this.goldMultiplier = 1;      // WP8: Tome of Midas — must exist before first applyPassives()
+                this.thornsPct = 0;            // WP8: Tome of Retribution — must exist before first applyPassives()
                 this.regenRate = 1.5; // Baseline regen (tripled from 0.5)
                 this.invincible = 0;
                 this.invincibilityDuration = 600; // Buffed from 500ms
@@ -8694,7 +8791,11 @@
                     critMultiplierBonus: 0,
                     pickupBonus: 0,
                     sizeBonus: 0,
-                    durationBonus: 0
+                    durationBonus: 0,
+                    // WP8: new tomes
+                    projSpeedBonus: 0,
+                    goldBonus: 0,
+                    thornsBonus: 0
                 };
 
                 // Shrine bonuses (stacking)
@@ -8864,6 +8965,13 @@
 
                 // Effect duration from Tome of Persistence (WP3): scales status/hazard durations
                 this.durationMultiplier = 1 + Math.min(1.0, this.tomeBonuses.durationBonus || 0);
+
+                // WP8: Tome of Velocity — projectile speed (applied at each weapon-fire site)
+                this.projSpeedMultiplier = 1 + Math.min(0.6, this.tomeBonuses.projSpeedBonus || 0);
+                // WP8: Tome of Midas — gold gain (applied at each gameplay gold-reward site)
+                this.goldMultiplier = 1 + (this.tomeBonuses.goldBonus || 0);
+                // WP8: Tome of Retribution — % of incoming contact damage reflected to the attacker
+                this.thornsPct = Math.min(1.2, this.tomeBonuses.thornsBonus || 0);
             }
             
             addShrineBonus(stat, value) {
@@ -8984,11 +9092,20 @@
                 }
             }
 
-            takeDamage(amount) {
+            takeDamage(amount, attacker = null) {
                 if (this.invincible > 0) return;
                 if (this.boostActiveTimer > 0) return;  // invincible during boost dash
                 if (timeStopActive) return;             // V1_351: frozen enemies can't hurt the player
                 amount *= 0.95;                          // V1_355: ~5% global enemy-damage trim
+
+                // WP8 Tome of Retribution: reflect a % of the incoming contact damage back at
+                // whoever dealt it (PRE-armor amount, matching the amount the player actually
+                // absorbs the brunt of). Only fires when a real attacker was threaded through —
+                // lava/hazard damage never passes one, so it's naturally excluded.
+                if (this.thornsPct > 0 && attacker && !attacker.dead && amount > 0) {
+                    attacker.takeDamage(amount * this.thornsPct, false);
+                    spawnParticles(attacker.x, attacker.y, '#ff6699', 5);
+                }
 
                 // Check plasma shield charges first
                 if (this.weapons.plasmaOrbit) {
@@ -9196,6 +9313,12 @@
                 if (meteorState) {
                     this.updateMeteors(meteorState, Date.now());
                 }
+
+                // WP8: update in-flight plasma mortar shells (same pattern as meteors above)
+                const mortarState = this.weapons['plasmaMortar'];
+                if (mortarState) {
+                    this.updateMortarShells(mortarState, Date.now());
+                }
             }
 
             fireWeapons(dt) {
@@ -9276,6 +9399,15 @@
                         case 'stormSentry':
                             this.fireStormSentry(weaponId, weaponDef, weaponState, level, now);
                             break;
+                        case 'photonScythe':
+                            this.firePhotonScythe(weaponId, weaponDef, weaponState, level, now);
+                            break;
+                        case 'plasmaMortar':
+                            this.fireMortar(weaponId, weaponDef, weaponState, level, now);
+                            break;
+                        case 'voidRailgun':
+                            this.fireRailgun(weaponId, weaponDef, weaponState, level, now);
+                            break;
                     }
                 }
             }
@@ -9285,7 +9417,8 @@
                 if (now - state.lastFire < fireRate) return;
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const projectileCount = def.baseProjectiles + Math.floor(level / 4);
+                let projectileCount = def.baseProjectiles + Math.floor(level / 4);
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) projectileCount++; // WP8
                 const totalDamage = baseDamage * projectileCount;
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
 
@@ -9303,7 +9436,7 @@
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
                     projectiles.push(new Projectile(
-                        this.x, this.y, a, 4.4, baseDamage, def.color, 'bolt', pierce, sizeScale
+                        this.x, this.y, a, 4.4 * this.projSpeedMultiplier, baseDamage, def.color, 'bolt', pierce, sizeScale
                     ));
                 }
             }
@@ -9775,7 +9908,8 @@
                 state.lastFire = now;
                 SFX.wVoidDaggers();
 
-                const strikeCount = def.baseDaggers + Math.floor(level / 3); // V1_298: slower dagger stacking (was /2)
+                let strikeCount = def.baseDaggers + Math.floor(level / 3); // V1_298: slower dagger stacking (was /2)
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) strikeCount++; // WP8
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
                 // Nearest-first so the flurry focuses the closest threats; wrap to re-hit when
@@ -10007,7 +10141,8 @@
                 
                 state.lastFire = now;
                 SFX.wBoomerang();
-                const count = def.baseCount + Math.floor(level / 6);
+                let count = def.baseCount + Math.floor(level / 6);
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) count++; // WP8
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
                 
@@ -10018,7 +10153,7 @@
                     const angle = boomBaseAngle + angleOffset;
 
                     // Create boomerang projectile (slower speed)
-                    const boom = new Projectile(this.x, this.y, angle, 3.5, baseDamage, def.color, 'boomerang', 999, sizeScale);
+                    const boom = new Projectile(this.x, this.y, angle, 3.5 * this.projSpeedMultiplier, baseDamage, def.color, 'boomerang', 999, sizeScale);
                     boom.startX = this.x;
                     boom.startY = this.y;
                     boom.maxDist = Math.min(181 + level * 12, ONSCREEN_RANGE_CAP); // V1_322: -15% start reach (213->181) // V1_303: keep the boomerang's apex on-screen; V1_305: -15% start reach (250->213) — also edited in the meta range.fn
@@ -10190,8 +10325,9 @@
             fireIceShards(id, def, state, level, now) {
                 const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
                 if (now - state.lastFire < fireRate) return;
-                
-                const shardCount = def.baseProjectiles + Math.floor(level / 4);
+
+                let shardCount = def.baseProjectiles + Math.floor(level / 4);
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) shardCount++; // WP8
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
 
@@ -10207,7 +10343,7 @@
 
                 for (let i = 0; i < shardCount; i++) {
                     const a = angle + (i - (shardCount - 1) / 2) * spread;
-                    const proj = new Projectile(this.x, this.y, a, 5, baseDamage, def.color, 'ice', pierce, sizeScale);
+                    const proj = new Projectile(this.x, this.y, a, 5 * this.projSpeedMultiplier, baseDamage, def.color, 'ice', pierce, sizeScale);
                     proj.slowAmount = def.slowAmount;
                     proj.slowDuration = def.slowDuration * this.durationMultiplier; // WP3: Tome of Persistence
                     proj.iceTarget = target; // Store initial target for homing
@@ -10360,7 +10496,8 @@
                 
                 state.lastFire = now;
                 SFX.wGhost();
-                const orbCount = def.baseOrbs + Math.floor(level / 4);
+                let orbCount = def.baseOrbs + Math.floor(level / 4);
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) orbCount++; // WP8
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
 
@@ -10369,7 +10506,7 @@
                 
                 for (let i = 0; i < orbCount; i++) {
                     const angle = baseAngle + (Math.PI * 2 / orbCount) * i + Math.random() * 0.5;
-                    const proj = new Projectile(this.x, this.y, angle, 3.3, baseDamage, def.color, 'homing', 1, sizeScale);
+                    const proj = new Projectile(this.x, this.y, angle, 3.3 * this.projSpeedMultiplier, baseDamage, def.color, 'homing', 1, sizeScale);
                     proj.isHoming = true;
                     proj.homingStrength = 0.08;
                     proj.lifetime = 3000;
@@ -10631,7 +10768,8 @@
                 state.burstShots++;
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const arrowCount = level >= 3 ? 3 + Math.floor((level - 3) / 5) * 2 : def.baseArrows; // 1 -> 3 at L3, then 5, 7...
+                let arrowCount = level >= 3 ? 3 + Math.floor((level - 3) / 5) * 2 : def.baseArrows; // 1 -> 3 at L3, then 5, 7...
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) arrowCount++; // WP8
                 const pierce = def.pierce + Math.floor(level / 4);
                 
                 const arrowAim = predictAim(this.x, this.y, target, 7); // V1_357: lead moving targets
@@ -10641,7 +10779,7 @@
                 for (let i = 0; i < arrowCount; i++) {
                     const angle = baseAngle + (i - (arrowCount - 1) / 2) * spread;
                     const proj = new Projectile(
-                        this.x, this.y, angle, 7, baseDamage, def.color, 'arrow', pierce, this.sizeMultiplier
+                        this.x, this.y, angle, 7 * this.projSpeedMultiplier, baseDamage, def.color, 'arrow', pierce, this.sizeMultiplier
                     );
                     proj.trailDuration = def.trailDuration;
                     proj.trailDamage = def.trailDamage * (1 + (level - 1) * 0.03);
@@ -10762,7 +10900,7 @@
                 const discAim = predictAim(this.x, this.y, target, 5.5); // V1_357: lead moving targets
                 const angle = Math.atan2(discAim.y - this.y, discAim.x - this.x);
                 const proj = new Projectile(
-                    this.x, this.y, angle, 5.5, baseDamage, def.color, 'disc', 1, 1.2 * this.sizeMultiplier
+                    this.x, this.y, angle, 5.5 * this.projSpeedMultiplier, baseDamage, def.color, 'disc', 1, 1.2 * this.sizeMultiplier
                 );
                 proj.bouncesLeft = bounces;
                 proj.bounceRange = bounceRange;
@@ -10852,7 +10990,8 @@
                 SFX.wShotgun();
 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05); // V1_298: gentler damage scaling (was 0.06)
-                const pelletCount = def.pelletCount + Math.floor(level / 3);
+                let pelletCount = def.pelletCount + Math.floor(level / 3);
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) pelletCount += 2; // WP8: shotgun gets +2 per spec
                 const spreadAngle = def.spreadAngle + level * 0.02;
                 const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: pellets die at the screen edge
                 const knockback = def.knockback + level * 2.5;
@@ -10879,7 +11018,7 @@
                     const offsetAngle = (i - (pelletCount - 1) / 2) * (spreadAngle / pelletCount);
                     const pelletAngle = baseAngle + offsetAngle + (Math.random() - 0.5) * 0.1;
                     
-                    const speed = 12 + Math.random() * 3;
+                    const speed = (12 + Math.random() * 3) * this.projSpeedMultiplier; // WP8: Tome of Velocity
                     state.pellets.push({
                         x: this.x,
                         y: this.y,
@@ -11103,6 +11242,316 @@
 
                 const lifetime = (def.sentryLife + 400 * level) * this.durationMultiplier;
                 sentries.push(new StormSentry(this.x, this.y, def, level, lifetime, this.sizeMultiplier)); // WP7 fix: Tome of Magnitude scales the orb visual + zap thickness
+            }
+
+            // === PHOTON SCYTHE (WP8) ===
+            // Melee reaper-blade arc: swings toward the nearest target every cooldown,
+            // alternating swing direction each time. Sweep/radius grow with level; Lv7+
+            // becomes a full 360 reap. Damage lands progressively as the blade sweeps
+            // through the arc (state.swing persists across frames until it completes).
+            firePhotonScythe(id, def, state, level, now) {
+                // Advance an in-progress swing every frame, regardless of cooldown.
+                if (state.swing) {
+                    this.updateScytheSwing(state, now);
+                    if (state.swing) return; // still swinging
+                }
+
+                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
+                if (now - (state.lastFire || 0) < fireRate) return;
+
+                // Aim at the nearest enemy/boss/leprechaun.
+                let nearest = null, nd = Infinity;
+                const consider = (arr) => {
+                    for (const e of arr) {
+                        if (e.dead) continue;
+                        const d = Math.hypot(e.x - this.x, e.y - this.y);
+                        if (d < nd) { nd = d; nearest = e; }
+                    }
+                };
+                consider(enemies); consider(bosses); consider(leprechauns);
+                if (!nearest) return; // hold the swing until something's in reach
+
+                state.lastFire = now;
+                SFX.wScythe();
+
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
+                const sweep = level >= 7 ? Math.PI * 2 : def.baseSweep + 0.09 * level;
+                const radius = (def.baseRadius + 7 * level) * this.sizeMultiplier;
+                const aim = Math.atan2(nearest.y - this.y, nearest.x - this.x);
+                state.side = -(state.side || -1); // alternate swing direction each cast
+
+                state.swing = {
+                    startTime: now,
+                    a0: aim - (sweep / 2) * state.side,
+                    dir: state.side,
+                    sweep,
+                    radius,
+                    damage: baseDamage,
+                    color: def.color,
+                    hitSet: new Set()
+                };
+            }
+
+            // Progresses the active scythe swing (320ms) and damages anything the blade
+            // sweeps over. Enemies/leprechauns take heavy knockback away from the player;
+            // bosses take damage but no knockback (matches Phantom Flurry's existing pattern).
+            updateScytheSwing(state, now) {
+                const sw = state.swing;
+                const SWING_MS = 320;
+                const k = Math.min(1, (now - sw.startTime) / SWING_MS);
+                const ease = 1 - Math.pow(1 - k, 3);
+
+                const inArc = (e) => {
+                    if (e.dead || sw.hitSet.has(e)) return false;
+                    const d = Math.hypot(e.x - this.x, e.y - this.y);
+                    if (d > sw.radius + (e.radius || 10)) return false;
+                    const ea = Math.atan2(e.y - this.y, e.x - this.x);
+                    let rel = (ea - sw.a0) * sw.dir;
+                    while (rel < -Math.PI) rel += Math.PI * 2;
+                    while (rel > Math.PI * 2) rel -= Math.PI * 2;
+                    return rel >= -0.15 && rel <= sw.sweep * ease;
+                };
+
+                for (const enemy of enemies) {
+                    if (!inArc(enemy)) continue;
+                    sw.hitSet.add(enemy);
+                    const { damage, isCrit } = this.calcDamage(sw.damage);
+                    enemy.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    applyStatusEffects(enemy, damage);
+                    enemy.applyKnockback(Math.atan2(enemy.y - this.y, enemy.x - this.x), 45);
+                    spawnParticles(enemy.x, enemy.y, sw.color, 5);
+                }
+                for (const lep of leprechauns) {
+                    if (!inArc(lep)) continue;
+                    sw.hitSet.add(lep);
+                    const { damage, isCrit } = this.calcDamage(sw.damage);
+                    lep.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    lep.applyKnockback(Math.atan2(lep.y - this.y, lep.x - this.x), 45);
+                    spawnParticles(lep.x, lep.y, sw.color, 5);
+                }
+                for (const boss of bosses) {
+                    if (!inArc(boss)) continue;
+                    sw.hitSet.add(boss);
+                    const { damage, isCrit } = this.calcDamage(sw.damage);
+                    boss.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    // No knockback on bosses — matches the existing Phantom Flurry pattern.
+                    spawnParticles(boss.x, boss.y, sw.color, 5);
+                }
+
+                if (k >= 1) state.swing = null;
+            }
+
+            // === PLASMA MORTAR (WP8) ===
+            // Lobs 1+ shells onto the densest nearby pack, spreading multiple shells across
+            // separate clusters (excludes spots already claimed by an earlier shell this
+            // volley). Shells fly on a parabolic arc and blast on landing.
+            fireMortar(id, def, state, level, now) {
+                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
+                if (now - (state.lastFire || 0) < fireRate) return;
+
+                const range = Math.min(520, ONSCREEN_RANGE_CAP);
+                const cand = [];
+                const addCands = (arr) => {
+                    for (const e of arr) {
+                        if (e.dead) continue;
+                        if (Math.hypot(e.x - this.x, e.y - this.y) >= range) continue;
+                        cand.push(e);
+                    }
+                };
+                addCands(enemies); addCands(bosses); addCands(leprechauns);
+                if (cand.length === 0) return; // hold the volley until something's in range
+
+                state.lastFire = now;
+                SFX.wMortarLaunch();
+
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
+                const blastRadius = (def.blastRadius + 5 * level) * this.sizeMultiplier;
+                let shellCount = 1 + Math.floor(level / 4);
+                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) shellCount++;
+
+                if (!state.shells) state.shells = [];
+                const placed = [];
+                for (let i = 0; i < shellCount; i++) {
+                    // Densest cluster, de-weighting spots already claimed by an earlier shell.
+                    let best = null, bestScore = -Infinity;
+                    for (const e of cand) {
+                        let score = 0;
+                        for (const o of cand) {
+                            if (Math.hypot(o.x - e.x, o.y - e.y) < 90) score++;
+                        }
+                        for (const p of placed) {
+                            if (Math.hypot(p.x - e.x, p.y - e.y) < 110) score -= 8;
+                        }
+                        if (score > bestScore) { bestScore = score; best = e; }
+                    }
+                    if (!best) break;
+
+                    const tx = best.x + (Math.random() - 0.5) * 24;
+                    const ty = best.y + (Math.random() - 0.5) * 24;
+                    placed.push({ x: tx, y: ty });
+
+                    const dist = Math.hypot(tx - this.x, ty - this.y);
+                    const flightMs = (820 + dist * 0.35) / this.projSpeedMultiplier; // Tome of Velocity: faster shells
+                    state.shells.push({
+                        sx: this.x, sy: this.y, tx, ty,
+                        startTime: now + i * 140,
+                        flightMs,
+                        impactTime: now + i * 140 + flightMs,
+                        damage: baseDamage,
+                        radius: blastRadius,
+                        exploded: false
+                    });
+                }
+            }
+
+            // Advances in-flight mortar shells and detonates them on arrival (same
+            // called-from-Player.update pattern as updateMeteors above).
+            updateMortarShells(state, now) {
+                if (!state.shells) return;
+
+                for (let i = state.shells.length - 1; i >= 0; i--) {
+                    const shell = state.shells[i];
+
+                    if (!shell.exploded && now >= shell.impactTime) {
+                        shell.exploded = true;
+                        const r2 = shell.radius * shell.radius;
+
+                        for (const enemy of enemies) {
+                            if (enemy.dead) continue;
+                            const dx = enemy.x - shell.tx, dy = enemy.y - shell.ty;
+                            if (dx * dx + dy * dy >= r2) continue;
+                            const { damage, isCrit } = this.calcDamage(shell.damage);
+                            enemy.takeDamage(damage, isCrit);
+                            this.onDealDamage(damage);
+                            applyStatusEffects(enemy, damage);
+                            enemy.applyKnockback(Math.atan2(enemy.y - shell.ty, enemy.x - shell.tx), 14);
+                        }
+                        for (const lep of leprechauns) {
+                            if (lep.dead) continue;
+                            const dx = lep.x - shell.tx, dy = lep.y - shell.ty;
+                            if (dx * dx + dy * dy >= r2) continue;
+                            const { damage, isCrit } = this.calcDamage(shell.damage);
+                            lep.takeDamage(damage, isCrit);
+                            this.onDealDamage(damage);
+                            lep.applyKnockback(Math.atan2(lep.y - shell.ty, lep.x - shell.tx), 14);
+                        }
+                        for (const boss of bosses) {
+                            if (boss.dead) continue;
+                            const dx = boss.x - shell.tx, dy = boss.y - shell.ty;
+                            if (dx * dx + dy * dy >= r2) continue;
+                            const { damage, isCrit } = this.calcDamage(shell.damage);
+                            boss.takeDamage(damage, isCrit);
+                            this.onDealDamage(damage);
+                            boss.applyKnockback(Math.atan2(boss.y - shell.ty, boss.x - shell.tx), 14);
+                        }
+
+                        spawnParticles(shell.tx, shell.ty, '#ff6600', 14);
+                        spawnParticles(shell.tx, shell.ty, '#ffd24a', 8);
+                        SFX.wMortarBlast();
+                        if (camera.shake && isInPlayerView(shell.tx, shell.ty, 60)) camera.shake(3, 140);
+                    }
+
+                    // Keep exploded shells around briefly so the blast-ring render can fade out.
+                    if (now > shell.impactTime + 400) {
+                        state.shells.splice(i, 1);
+                    }
+                }
+            }
+
+            // === VOID RAILGUN (WP8) ===
+            // Charge-then-fire snipe weapon: targets the highest-current-HP entity on
+            // screen, telegraphs a charge, then fires an instant piercing ray through the
+            // target's position out to the range cap. Only the charge phase speeds up with
+            // level — the idle cooldown between cycles is fixed, trading uptime for burst.
+            fireRailgun(id, def, state, level, now) {
+                if (!state.phase) state.phase = 'idle';
+
+                if (state.phase === 'firing') {
+                    if (now - state.fireStart >= 420) state.phase = 'idle';
+                    return;
+                }
+
+                if (state.phase === 'charging') {
+                    if (!state.target || state.target.dead) {
+                        state.target = this.findRailgunTarget();
+                        if (!state.target) { state.phase = 'idle'; return; }
+                    }
+                    if (now - state.chargeStart < state.chargeMs) return;
+
+                    // FIRE — instant ray from the player through the target, out to the cap.
+                    const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
+                    const halfW = (5 + 0.7 * level) * this.sizeMultiplier;
+                    const angle = Math.atan2(state.target.y - this.y, state.target.x - this.x);
+                    const cosA = Math.cos(angle), sinA = Math.sin(angle);
+
+                    const hitLine = (e) => {
+                        if (e.dead) return false;
+                        const t = (e.x - this.x) * cosA + (e.y - this.y) * sinA;
+                        if (t < 0 || t > ONSCREEN_RANGE_CAP) return false;
+                        const px = this.x + cosA * t, py = this.y + sinA * t;
+                        const dx = e.x - px, dy = e.y - py;
+                        const w = halfW + (e.radius || 10);
+                        return (dx * dx + dy * dy) < w * w;
+                    };
+
+                    for (const enemy of enemies) {
+                        if (!hitLine(enemy)) continue;
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        enemy.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        applyStatusEffects(enemy, damage);
+                    }
+                    for (const lep of leprechauns) {
+                        if (!hitLine(lep)) continue;
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        lep.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                    }
+                    for (const boss of bosses) {
+                        if (!hitLine(boss)) continue;
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        boss.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                    }
+
+                    state.railAngle = angle;
+                    state.fireStart = now;
+                    state.phase = 'firing';
+                    state.lastFire = now;
+                    SFX.wRailgunFire();
+                    spawnParticles(this.x, this.y, def.color, 10);
+                    if (camera.shake) camera.shake(4, 140);
+                    return;
+                }
+
+                // idle: wait out the fixed post-fire cooldown, then start charging.
+                const idleCooldown = def.baseFireRate / this.attackSpeedMultiplier; // not level-scaled — chargeMs speeds the cycle instead
+                if (now - (state.lastFire || 0) < idleCooldown) return;
+
+                const target = this.findRailgunTarget();
+                if (!target) return;
+
+                state.target = target;
+                state.phase = 'charging';
+                state.chargeStart = now;
+                state.chargeMs = def.chargeMs * Math.pow(0.96, level - 1) / this.attackSpeedMultiplier;
+            }
+
+            // Highest-current-HP entity within the on-screen range cap (enemies+bosses+leprechauns).
+            findRailgunTarget() {
+                let best = null, bestHp = -Infinity;
+                const scan = (arr) => {
+                    for (const e of arr) {
+                        if (e.dead) continue;
+                        if (Math.hypot(e.x - this.x, e.y - this.y) > ONSCREEN_RANGE_CAP) continue;
+                        if (e.hp > bestHp) { bestHp = e.hp; best = e; }
+                    }
+                };
+                scan(enemies); scan(bosses); scan(leprechauns);
+                return best;
             }
 
             draw() {
@@ -12487,6 +12936,162 @@
                         ctx.shadowBlur = 0;
                         ctx.restore();
                     }
+
+                    // WP8: Photon Scythe — filled reaper-blade arc + 3 trailing ghost copies,
+                    // matching the approved demo geometry exactly (heel/spine/droop-tip blade).
+                    if (def.type === 'photonScythe' && state.swing) {
+                        const sw = state.swing;
+                        const nowT = Date.now();
+                        const k = Math.min(1, (nowT - sw.startTime) / 320);
+                        const ease = 1 - Math.pow(1 - k, 3);
+                        const a = sw.a0 + sw.sweep * ease * sw.dir;
+                        const R = camera.scale(sw.radius);
+                        const fade = 1 - Math.max(0, k - 0.8) * 5;
+
+                        const drawScythe = (ang, alpha, hot) => {
+                            if (alpha <= 0) return;
+                            ctx.globalAlpha = alpha;
+                            const pt = (rad, aOff) => [sx + Math.cos(ang + sw.dir * aOff) * rad, sy + Math.sin(ang + sw.dir * aOff) * rad];
+                            const baseR = R * 0.66;
+                            const [bx, by] = pt(baseR, 0);
+                            ctx.strokeStyle = '#c98fff'; ctx.lineWidth = camera.scale(3.5); ctx.lineCap = 'round';
+                            ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(bx, by); ctx.stroke();
+                            const heelO = pt(baseR + camera.scale(13), 0.02);
+                            const heelI = pt(baseR - camera.scale(11), 0.07);
+                            const spineC = pt(R * 1.10, 0.34);
+                            const tip = pt(R * 0.80, 0.82);
+                            const edgeC = pt(R * 0.84, 0.30);
+                            ctx.fillStyle = sw.color || '#9b30ff';
+                            ctx.beginPath();
+                            ctx.moveTo(heelO[0], heelO[1]);
+                            ctx.quadraticCurveTo(spineC[0], spineC[1], tip[0], tip[1]);
+                            ctx.quadraticCurveTo(edgeC[0], edgeC[1], heelI[0], heelI[1]);
+                            ctx.closePath(); ctx.fill();
+                            if (hot) {
+                                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = camera.scale(2.5); ctx.lineCap = 'round';
+                                ctx.beginPath();
+                                ctx.moveTo(tip[0], tip[1]);
+                                ctx.quadraticCurveTo(edgeC[0], edgeC[1], heelI[0], heelI[1]);
+                                ctx.stroke();
+                                ctx.fillStyle = '#c98fff';
+                                ctx.beginPath(); ctx.arc(bx, by, camera.scale(4.5), 0, Math.PI * 2); ctx.fill();
+                            }
+                        };
+                        for (let g = 3; g >= 0; g--) {
+                            const al = (g === 0 ? 1 : 0.28 - g * 0.07) * Math.max(0, fade);
+                            drawScythe(a - sw.dir * g * 0.22, al, g === 0);
+                        }
+                        ctx.globalAlpha = 1;
+                    }
+
+                    // WP8: Plasma Mortar — shells arc with a fake-altitude lob + dashed landing
+                    // telegraph while in flight, then a double blast ring (orange + gold) on impact.
+                    if (def.type === 'plasmaMortar' && state.shells && state.shells.length) {
+                        const nowT = Date.now();
+                        for (const shell of state.shells) {
+                            const tx = camera.screenX(shell.tx), ty = camera.screenY(shell.ty);
+                            if (!shell.exploded) {
+                                const k = Math.min(1, Math.max(0, (nowT - shell.startTime) / shell.flightMs));
+                                const x = camera.screenX(shell.sx + (shell.tx - shell.sx) * k);
+                                const y = camera.screenY(shell.sy + (shell.ty - shell.sy) * k);
+                                const h = camera.scale(Math.sin(Math.PI * k) * 150);
+
+                                ctx.globalAlpha = 0.35 + k * 0.4;
+                                ctx.strokeStyle = '#ff6600'; ctx.lineWidth = camera.scale(2);
+                                ctx.setLineDash([camera.scale(4), camera.scale(4)]);
+                                ctx.beginPath(); ctx.arc(tx, ty, camera.scale(12 - k * 4), 0, Math.PI * 2); ctx.stroke();
+                                ctx.setLineDash([]);
+                                ctx.globalAlpha = 1;
+
+                                ctx.fillStyle = '#ffd24a';
+                                ctx.beginPath(); ctx.arc(x, y - h, camera.scale(6 - k * 1.5), 0, Math.PI * 2); ctx.fill();
+                                ctx.globalAlpha = 0.5;
+                                ctx.fillStyle = '#ff6600';
+                                ctx.beginPath();
+                                ctx.arc(x - camera.scale((shell.tx - shell.sx) * 0.018), y - h + camera.scale(6), camera.scale(4), 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.globalAlpha = 1;
+                            } else {
+                                const bt = Math.min(1, (nowT - shell.impactTime) / 300);
+                                const e2 = 1 - Math.pow(1 - bt, 2);
+                                const r = camera.scale(shell.radius);
+                                ctx.globalAlpha = Math.max(0, 1 - bt);
+                                ctx.strokeStyle = '#ff6600'; ctx.lineWidth = camera.scale(4 * (1 - bt) + 1);
+                                ctx.beginPath(); ctx.arc(tx, ty, r * e2, 0, Math.PI * 2); ctx.stroke();
+                                ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = camera.scale(2);
+                                ctx.beginPath(); ctx.arc(tx, ty, r * e2 * 0.7, 0, Math.PI * 2); ctx.stroke();
+                                ctx.globalAlpha = 1;
+                            }
+                        }
+                    }
+
+                    // WP8: Void Railgun — flickering lock-line + tightening reticle while charging;
+                    // white-hot core + magenta/purple fringe beam lingering 420ms on fire. Transient
+                    // (<450ms) so the brief shadowBlur on the muzzle pop / charge particles is fine.
+                    if (def.type === 'voidRailgun') {
+                        const nowT = Date.now();
+                        if (state.phase === 'charging' && state.target && !state.target.dead) {
+                            const k = Math.min(1, (nowT - state.chargeStart) / state.chargeMs);
+                            const boltA = Math.atan2(state.target.y - this.y, state.target.x - this.x);
+
+                            ctx.globalAlpha = 0.25 + 0.35 * Math.abs(Math.sin(nowT * 0.02));
+                            ctx.strokeStyle = '#c98fff';
+                            ctx.setLineDash([camera.scale(6), camera.scale(Math.max(2, 10 - k * 8))]);
+                            ctx.lineWidth = camera.scale(1.5);
+                            ctx.beginPath();
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(sx + Math.cos(boltA) * camera.scale(2000), sy + Math.sin(boltA) * camera.scale(2000));
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                            ctx.globalAlpha = 1;
+
+                            const tx = camera.screenX(state.target.x), ty = camera.screenY(state.target.y);
+                            const rr = camera.scale(30 - k * 14);
+                            ctx.strokeStyle = '#ff1493'; ctx.lineWidth = camera.scale(2);
+                            ctx.globalAlpha = 0.5 + k * 0.5;
+                            ctx.beginPath(); ctx.arc(tx, ty, rr, 0, Math.PI * 2); ctx.stroke();
+                            ctx.beginPath();
+                            for (const q of [0, 1.57, 3.14, 4.71]) {
+                                const qa = q + nowT * 0.003;
+                                ctx.moveTo(tx + Math.cos(qa) * (rr + camera.scale(6)), ty + Math.sin(qa) * (rr + camera.scale(6)));
+                                ctx.lineTo(tx + Math.cos(qa) * (rr - camera.scale(2)), ty + Math.sin(qa) * (rr - camera.scale(2)));
+                            }
+                            ctx.stroke();
+                            ctx.globalAlpha = 1;
+
+                            if (Math.random() < 0.5) {
+                                const a2 = Math.random() * Math.PI * 2, d2 = camera.scale(30 + Math.random() * 26);
+                                ctx.save();
+                                ctx.shadowBlur = camera.scale(6); ctx.shadowColor = '#c98fff';
+                                ctx.fillStyle = '#c98fff'; ctx.globalAlpha = 0.7;
+                                ctx.beginPath();
+                                ctx.arc(sx + Math.cos(a2) * d2, sy + Math.sin(a2) * d2, camera.scale(2), 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.restore();
+                            }
+                        } else if (state.phase === 'firing' && state.railAngle !== undefined) {
+                            const lingT = Math.max(0, 420 - (nowT - state.fireStart));
+                            const kf = lingT / 420;
+                            const halfW = camera.scale(state.railHalfW || 6);
+                            for (const [w2, col, al] of [[halfW * 3, '#9b30ff', 0.16 * kf], [halfW * 1.6, '#ff1493', 0.3 * kf], [halfW * 0.7, '#ffffff', 0.95 * kf]]) {
+                                ctx.globalAlpha = al; ctx.strokeStyle = col; ctx.lineWidth = w2 * 2; ctx.lineCap = 'round';
+                                ctx.beginPath();
+                                ctx.moveTo(sx, sy);
+                                ctx.lineTo(sx + Math.cos(state.railAngle) * camera.scale(2000), sy + Math.sin(state.railAngle) * camera.scale(2000));
+                                ctx.stroke();
+                            }
+                            ctx.globalAlpha = 1;
+                            if (kf > 0.85) {
+                                ctx.save();
+                                ctx.shadowBlur = camera.scale(10); ctx.shadowColor = '#ffffff';
+                                ctx.fillStyle = '#fff';
+                                ctx.beginPath();
+                                ctx.arc(sx + Math.cos(state.railAngle) * camera.scale(20), sy + Math.sin(state.railAngle) * camera.scale(20), camera.scale(14 * kf), 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.restore();
+                            }
+                        }
+                    }
                 }
 
                 // Combined health + shield bar above player
@@ -13110,7 +13715,7 @@
                 
                 // Collision with player
                 if (dist < this.radius + player.radius) {
-                    player.takeDamage(this.damage);
+                    player.takeDamage(this.damage, this);
                 }
                 
                 // Orbit cooldown
@@ -13699,7 +14304,7 @@
                 
                 // Collision damage (more when enraged)
                 if (distToPlayer < this.radius + player.radius) {
-                    player.takeDamage(potClaimed ? 20 : 15);
+                    player.takeDamage(potClaimed ? 20 : 15, this);
                 }
 
                 // V1_341: occasional ranged throw — lob a spinning gold coin at the player.
@@ -13712,7 +14317,8 @@
                         x: this.x, y: this.y,
                         vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd,
                         damage: enraged ? 18 : 12, radius: 9, life: 4000,
-                        spin: Math.random() * Math.PI, dead: false
+                        spin: Math.random() * Math.PI, dead: false,
+                        attacker: this // WP8: threaded so Tome of Retribution can reflect onto the thrower
                     });
                     spawnParticles(this.x, this.y, COLORS.gold, 6);
                     this.throwCooldown = (enraged ? 1800 : 2600) + Math.random() * 1400;
@@ -13739,7 +14345,7 @@
                     spawnParticles(player.x, player.y, COLORS.green, 8);
                     
                     // Small damage
-                    player.takeDamage(10);
+                    player.takeDamage(10, this);
                 }
             }
 
@@ -13767,7 +14373,7 @@
                 spawnParticles(this.x, this.y, COLORS.gold, 6);
                 
                 // Drop some gold
-                playerGold += 25;
+                playerGold += Math.round(25 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
                 updateGoldDisplay();
             }
 
@@ -13981,7 +14587,7 @@
                 spawnParticles(this.x, this.y, '#ffffff', 10);
                 
                 // Give 50 gold
-                playerGold += 50;
+                playerGold += Math.round(50 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
                 updateGoldDisplay();
                 
                 // Show pot reward sequence (3 chest offers)
@@ -14724,7 +15330,7 @@
                 
                 // Collision damage
                 if (dist < this.radius + player.radius) {
-                    player.takeDamage(25);
+                    player.takeDamage(25, this);
                 }
                 
                 // Spawn minions periodically
@@ -14783,7 +15389,7 @@
                 }
                 
                 // Drop lots of gold and XP
-                playerGold += 100;
+                playerGold += Math.round(100 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
                 updateGoldDisplay();
                 
                 for (let i = 0; i < 8; i++) {
@@ -15102,7 +15708,7 @@
                         // Damage player if close
                         const playerDist = Math.hypot(player.x - this.x, player.y - this.y);
                         if (playerDist < 100) {
-                            player.takeDamage(this.damage);
+                            player.takeDamage(this.damage, this);
                             // Knockback
                             const kbDx = player.x - this.x;
                             const kbDy = player.y - this.y;
@@ -15148,7 +15754,7 @@
                 // Collision damage
                 const dist = Math.hypot(player.x - this.x, player.y - this.y);
                 if (dist < this.radius + player.radius) {
-                    player.takeDamage(35);
+                    player.takeDamage(35, this);
                 }
                 
                 // Attack patterns
@@ -15243,7 +15849,7 @@
                 }
                 
                 // Drop lots of gold and XP
-                playerGold += 250;
+                playerGold += Math.round(250 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
                 updateGoldDisplay();
                 
                 for (let i = 0; i < 15; i++) {
@@ -17722,7 +18328,7 @@
                 t.spin += dt * 0.02;
                 t.life -= dt;
                 if (player && Math.hypot(player.x - t.x, player.y - t.y) < player.radius + t.radius) {
-                    player.takeDamage(t.damage);
+                    player.takeDamage(t.damage, t.attacker || null);
                     spawnParticles(t.x, t.y, COLORS.gold, 8);
                     t.dead = true; anyDead = true; continue;
                 }
@@ -19601,6 +20207,13 @@
                 color: '#66e0ff',
                 desc: '+2 Dash Charges, +10% Move Speed',
                 effect: 'Dashes recharge 25% faster'
+            },
+            splitFire: {
+                name: 'Split Fire',
+                icon: '🎇',
+                color: '#ff9944',
+                desc: 'Volley weapons fire +1 projectile',
+                effect: 'Permanent for this run'
             }
         };
 
@@ -19729,6 +20342,9 @@
                     legendaryEffects.windRunner.active = true;
                     player.applyPassives(); // V1_359: bake +speed / +dash cap / faster recharge into stats
                     player.boostCharges = player.boostMaxCharges; // hand over the new charges right away
+                    break;
+                case 'splitFire':
+                    legendaryEffects.splitFire.active = true;
                     break;
             }
 
@@ -21306,7 +21922,7 @@
 
                     // Gold from collecting orbs (based on XP value)
                     const goldDrop = Math.max(1, Math.floor(this.value / 2));
-                    playerGold += goldDrop;
+                    playerGold += Math.round(goldDrop * (player.goldMultiplier || 1)); // WP8: Tome of Midas
                     updateGoldDisplay();
                     
                     this.dead = true;
@@ -22795,7 +23411,13 @@
             // WP3: firePrismLance: dmg .05, instant ray length baseRange+8*lvl (capped on-screen), cd .985
             prismLance:    { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Length', fn: (l, d) => Math.min(d.baseRange + 8 * l, ONSCREEN_RANGE_CAP) } },
             // WP3: fireStormSentry: dmg .05, max deployed sentries 1+floor(lvl/5), deploy cadence fixed (cd null)
-            stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => 1 + Math.floor(l / 5) } }
+            stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => 1 + Math.floor(l / 5) } },
+            // WP8: firePhotonScythe: dmg .05, swing radius baseRadius+7*lvl, cd .985 (sweep angle isn't surfaced — no display field for it)
+            photonScythe:  { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Radius', fn: (l, d) => d.baseRadius + 7 * l } },
+            // WP8: fireMortar: dmg .05, shells 1+floor(lvl/4), blast blastRadius+5*lvl, cd .985
+            plasmaMortar:  { dmgScale: 0.05, cdScale: 0.985, count: { noun: 'Shell', fn: (l) => 1 + Math.floor(l / 4) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + 5 * l } },
+            // WP8: fireRailgun: dmg .14, rail half-width 5+0.7*lvl (single ray, no count); charge phase (cd .96) is the only part of its cycle that speeds up with level
+            voidRailgun:   { dmgScale: 0.14, cdScale: 0.96,  range: { label: 'Width', fn: (l) => 5 + 0.7 * l } }
         };
 
         // Mirror of fire-time damage scaling: baseDamage * (1 + (level-1)*scale).
@@ -24408,6 +25030,8 @@
                 uiState.luck = Math.round(player.luck * 100);
                 uiState.sizeBonus = Math.round(((player.sizeMultiplier || 1) - 1) * 100);
                 uiState.durationBonus = Math.round(((player.durationMultiplier || 1) - 1) * 100);
+                uiState.projSpeedBonus = Math.round(((player.projSpeedMultiplier || 1) - 1) * 100); // WP8: Tome of Velocity
+                uiState.goldBonus = Math.round(((player.goldMultiplier || 1) - 1) * 100); // WP8: Tome of Midas
                 // Defensive
                 uiState.maxHpStat = Math.round(player.maxHp);
                 uiState.hpRegen = player.regenRate;
@@ -24415,6 +25039,7 @@
                 uiState.armor = Math.round(player.armor * 100);
                 uiState.shield = Math.round(player.maxShieldHp);
                 uiState.moveSpeed = Math.round((player.speed / player.baseSpeed) * 100);
+                uiState.thorns = Math.round((player.thornsPct || 0) * 100); // WP8: Tome of Retribution
                 
                 // Update weapons array for canvas rendering
                 uiState.weapons = [];
@@ -24570,7 +25195,7 @@
             const panelW = 175;
             // Dynamic height - fill trackpad area minus stats row and instructions
             const availableH = h - 68;
-            const panelH = Math.min(availableH - 15, 165); // 15px shorter (was 12px)
+            const panelH = Math.min(availableH - 15, 195); // WP8: +30px cap (was 165) — OFFENSE grew from 8 to 10 rows (PROJ SPEED, GOLD GAIN) and DEFENSE from 6 to 7 (THORNS); keeps row spacing from the pre-WP8 8-row OFFENSE panel instead of crushing rows to fit
             const mmSize = Math.min(availableH + 15, 200); // Minimap bigger (+5px)
             const panelMargin = 20;
             const iconSize = 28;
@@ -24725,9 +25350,11 @@
                 ['SPEED', `${uiState.moveSpeed}%`],
                 ['LUCK', `${uiState.luck}%`],
                 ['SIZE', `+${uiState.sizeBonus}%`],
-                ['DURATION', `+${uiState.durationBonus}%`]
+                ['DURATION', `+${uiState.durationBonus}%`],
+                ['PROJ SPEED', `+${uiState.projSpeedBonus}%`],
+                ['GOLD GAIN', `+${uiState.goldBonus}%`]
             ], 'offense');
-            
+
             // ===== DEFENSE PANEL (far right) =====
             drawStatPanel(rightPanelX, panelY, panelW, panelH, '🛡️ DEFENSE', [
                 ['MAX HP', `${uiState.maxHpStat}`],
@@ -24735,7 +25362,8 @@
                 ['LIFESTEAL', `${uiState.lifesteal}%`],
                 ['ARMOR', `${uiState.armor}%`],
                 ['SHIELD', `${uiState.shield}`],
-                ['PICKUP', `${uiState.pickupRange}%`]
+                ['PICKUP', `${uiState.pickupRange}%`],
+                ['THORNS', `${uiState.thorns}%`]
             ], 'defense');
             
             // ===== WEAPONS COLUMN (vertical, between offense and minimap) =====
@@ -25038,7 +25666,7 @@
 
         function directiveReward(x, y, color) {
             const gold = Math.floor(60 + gameTime / 8);   // scales gently with run length
-            playerGold += gold;
+            playerGold += Math.round(gold * (player.goldMultiplier || 1)); // WP8: Tome of Midas
             updateGoldDisplay();
             spawnParticles(x, y, color, 36);
             spawnParticles(x, y, COLORS.gold, 24);
@@ -25060,7 +25688,7 @@
             } else {
                 directivesSinceLegendary++;
                 const bonus = Math.floor(50 + gameTime / 8); // consolation gold so the run still feels rewarded
-                playerGold += bonus;
+                playerGold += Math.round(bonus * (player.goldMultiplier || 1)); // WP8: Tome of Midas
                 updateGoldDisplay();
                 directiveBanner = { text: 'DIRECTIVE COMPLETE', sub: '+Gold', color: '#00ffaa', until: gameTime + 3.5 };
                 try { if (typeof SFX !== 'undefined' && SFX.chest) SFX.chest(); } catch (e) {}
@@ -26488,7 +27116,8 @@
             'thunderStrike', 'chainLightning', 'toxicAura', 'boomerang',
             'spectralArrows', 'ricochetDisc', 'gravityWell',
             'starField', 'meteorStrike', 'spiritOrbs', 'pulseMine',
-            'shotgun', 'prismLance', 'stormSentry'
+            'shotgun', 'prismLance', 'stormSentry',
+            'photonScythe', 'plasmaMortar', 'voidRailgun'
         ];
         
         // Player color options (neon palette, cold to hot)
@@ -27039,6 +27668,100 @@
                     _wpBolt(ctx, cx, orbY, cx + 26, orbY + 8, 4, 3);
                 }
                 _wpReset(ctx);
+            },
+            // 🌙 Photon Scythe — mini reaper swing: a filled crescent blade arcs back and
+            // forth, alternating direction each cycle (mirrors the in-game heel/spine/droop-tip shape).
+            photonScythe(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                const cyc = t / 1.0, p = cyc % 1;
+                const dir = Math.floor(cyc) % 2 === 0 ? 1 : -1;
+                const ease = 1 - Math.pow(1 - Math.min(1, p * 1.5), 3);
+                const sweep = 2.2;
+                const ang = -sweep / 2 * dir + sweep * Math.min(1, ease) * dir;
+                const flat = 0.45; // vertical flatten so the arc fits the wide preview box
+                const pt = (rad, aOff) => {
+                    const a = ang + dir * aOff;
+                    return [cx + Math.cos(a) * rad, cy + Math.sin(a) * rad * flat];
+                };
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                const fadeOut = 1 - Math.max(0, p - 0.82) * 5.5;
+                ctx.globalAlpha = Math.max(0, Math.min(1, p * 4) * fadeOut);
+                const R = 17, baseR = R * 0.62;
+                const [bx, by] = pt(baseR, 0);
+                ctx.strokeStyle = '#c98fff'; ctx.lineWidth = 1.5; ctx.lineCap = 'round'; ctx.shadowBlur = 3;
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(bx, by); ctx.stroke();
+                const heelO = pt(baseR + 3.5, 0.06), heelI = pt(baseR - 3, 0.18), spineC = pt(R * 1.15, 0.55), tip = pt(R * 0.9, 1.15), edgeC = pt(R * 0.92, 0.5);
+                ctx.fillStyle = color; ctx.shadowBlur = 5;
+                ctx.beginPath();
+                ctx.moveTo(heelO[0], heelO[1]);
+                ctx.quadraticCurveTo(spineC[0], spineC[1], tip[0], tip[1]);
+                ctx.quadraticCurveTo(edgeC[0], edgeC[1], heelI[0], heelI[1]);
+                ctx.closePath(); ctx.fill();
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.shadowBlur = 3;
+                ctx.beginPath(); ctx.moveTo(tip[0], tip[1]); ctx.quadraticCurveTo(edgeC[0], edgeC[1], heelI[0], heelI[1]); ctx.stroke();
+                ctx.globalAlpha = 1;
+                _wpReset(ctx);
+            },
+            // 💣 Plasma Mortar — a shell lobs across on a fake-altitude arc with a dashed
+            // landing telegraph, then a double blast ring (orange + gold) on impact.
+            plasmaMortar(ctx, t, w, h, color) {
+                const period = 1.4, p = (t % period) / period;
+                const sxp = 14, syp = h - 8, txp = w - 20, typ = h - 8;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                if (p < 0.72) {
+                    const k = p / 0.72;
+                    const x = sxp + (txp - sxp) * k, y = syp + (typ - syp) * k;
+                    const arc = Math.sin(Math.PI * k) * 16;
+                    ctx.globalAlpha = 0.3 + k * 0.4; ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+                    ctx.setLineDash([2.5, 2.5]);
+                    ctx.beginPath(); ctx.arc(txp, typ, 5 - k * 1.5, 0, TAU); ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.globalAlpha = 1;
+                    ctx.fillStyle = '#ffd24a'; ctx.shadowBlur = 5;
+                    ctx.beginPath(); ctx.arc(x, y - arc, 2.6, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = 0.5; ctx.fillStyle = color;
+                    ctx.beginPath(); ctx.arc(x, y - arc + 3, 1.8, 0, TAU); ctx.fill();
+                    ctx.globalAlpha = 1;
+                } else {
+                    const bp = (p - 0.72) / 0.28;
+                    const e2 = 1 - Math.pow(1 - bp, 2);
+                    ctx.globalAlpha = 1 - bp; ctx.strokeStyle = color; ctx.lineWidth = 2.5 * (1 - bp) + 0.6; ctx.shadowBlur = 8;
+                    ctx.beginPath(); ctx.arc(txp, typ, 14 * e2, 0, TAU); ctx.stroke();
+                    ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 1.4;
+                    ctx.beginPath(); ctx.arc(txp, typ, 14 * e2 * 0.7, 0, TAU); ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+                _wpReset(ctx);
+            },
+            // 🛰️ Void Railgun — flickering dashed lock-line + tightening reticle, then an
+            // instant white-hot rail flash with magenta/purple fringe.
+            voidRailgun(ctx, t, w, h, color) {
+                const period = 1.6, p = (t % period) / period;
+                const cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                if (p < 0.75) {
+                    const k = p / 0.75;
+                    ctx.globalAlpha = 0.3 + 0.3 * Math.abs(Math.sin(t * 14));
+                    ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+                    ctx.setLineDash([4, Math.max(1.5, 7 - k * 5)]);
+                    ctx.beginPath(); ctx.moveTo(10, cy); ctx.lineTo(w - 12, cy); ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.globalAlpha = 1;
+                    const rr = 7 - k * 3.5;
+                    ctx.strokeStyle = '#ff1493'; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.5 + k * 0.5;
+                    ctx.beginPath(); ctx.arc(w - 16, cy, rr, 0, TAU); ctx.stroke();
+                    ctx.globalAlpha = 1;
+                } else {
+                    const fp = (p - 0.75) / 0.25;
+                    const fade = 1 - fp;
+                    ctx.lineCap = 'round';
+                    for (const [lw, col, al] of [[7, '#9b30ff', 0.18 * fade], [4, '#ff1493', 0.35 * fade], [1.8, '#ffffff', 0.95 * fade]]) {
+                        ctx.globalAlpha = al; ctx.strokeStyle = col; ctx.lineWidth = lw;
+                        ctx.beginPath(); ctx.moveTo(10, cy); ctx.lineTo(w - 10, cy); ctx.stroke();
+                    }
+                    ctx.globalAlpha = 1;
+                }
+                _wpReset(ctx);
             }
         };
 
@@ -27292,6 +28015,72 @@
                 ctx.globalAlpha = 0.25 * pulse; ctx.strokeStyle = '#7fffd4'; ctx.lineWidth = 3; ctx.shadowBlur = 10;
                 ctx.beginPath(); ctx.arc(cx, cy, hh + 4, 0, TAU); ctx.stroke();
 
+                _wpReset(ctx);
+            },
+            // 🏹 Velocity (projectile speed) — streaks that accelerate mid-flight.
+            velocityTome(ctx, t, w, h, color) {
+                const cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.shadowColor = color;
+                for (let i = 0; i < 3; i++) {
+                    const cyc = (t * 0.9 + i / 3) % 1;
+                    const accel = cyc * cyc; // accelerating ease
+                    const x = 8 + accel * (w - 16);
+                    const fade = _wpFadeX(x, w, 12);
+                    const len = 6 + accel * 14;
+                    const rowY = cy + (i - 1) * 8;
+                    ctx.globalAlpha = (0.4 + accel * 0.5) * fade; ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.shadowBlur = 6;
+                    ctx.beginPath(); ctx.moveTo(Math.max(4, x - len), rowY); ctx.lineTo(x, rowY); ctx.stroke();
+                    ctx.globalAlpha = fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 5;
+                    ctx.beginPath(); ctx.arc(x, rowY, 1.6, 0, TAU); ctx.fill();
+                }
+                _wpReset(ctx);
+            },
+            // 👑 Midas (gold gain) — a pulsing crown with coins raining down beneath it.
+            midasTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2 - 6;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+                ctx.globalAlpha = 0.9; ctx.fillStyle = color; ctx.shadowBlur = 6 + pulse * 4;
+                ctx.beginPath();
+                ctx.moveTo(cx - 8, cy + 5); ctx.lineTo(cx - 8, cy - 2); ctx.lineTo(cx - 4, cy + 2);
+                ctx.lineTo(cx, cy - 5); ctx.lineTo(cx + 4, cy + 2); ctx.lineTo(cx + 8, cy - 2);
+                ctx.lineTo(cx + 8, cy + 5); ctx.closePath(); ctx.fill();
+                for (let i = 0; i < 4; i++) {
+                    const sx = 14 + _wpRand(i, 1) * (w - 28);
+                    const fall = (t * (0.5 + _wpRand(i, 2) * 0.3) + _wpRand(i, 3)) % 1;
+                    const y = 6 + fall * (h - 12);
+                    ctx.globalAlpha = (1 - fall * 0.3) * 0.9; ctx.fillStyle = '#ffd700'; ctx.shadowBlur = 5;
+                    ctx.beginPath(); ctx.arc(sx, y, 2, 0, TAU); ctx.fill();
+                    ctx.strokeStyle = '#fff8c0'; ctx.lineWidth = 0.6; ctx.globalAlpha = 0.6;
+                    ctx.beginPath(); ctx.arc(sx, y, 1.1, 0, TAU); ctx.stroke();
+                }
+                _wpReset(ctx);
+            },
+            // 🌵 Retribution (thorns) — a ring of spikes flares outward the instant an
+            // incoming dot touches the core (contact damage being reflected).
+            retributionTome(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                const cyc = (t * 0.9) % 1;
+                const approach = Math.min(1, cyc / 0.7);
+                const flare = cyc > 0.7 ? 1 - (cyc - 0.7) / 0.3 : 0;
+                if (cyc < 0.7) {
+                    const dx = cx + 22 * (1 - approach), dy = cy - 6 * (1 - approach);
+                    ctx.globalAlpha = 0.85; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 5;
+                    ctx.beginPath(); ctx.arc(dx, dy, 1.8, 0, TAU); ctx.fill();
+                }
+                ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+                ctx.globalAlpha = 0.7 + flare * 0.3; ctx.shadowBlur = 4 + flare * 7;
+                for (let i = 0; i < 8; i++) {
+                    const a = (i / 8) * TAU;
+                    const r0 = 6 + flare * 2, r1 = 10 + flare * 6;
+                    ctx.beginPath();
+                    ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.6);
+                    ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.6);
+                    ctx.stroke();
+                }
+                ctx.globalAlpha = 0.9; ctx.fillStyle = color; ctx.shadowBlur = 6;
+                ctx.beginPath(); ctx.arc(cx, cy, 3.4, 0, TAU); ctx.fill();
                 _wpReset(ctx);
             }
         };
@@ -28268,7 +29057,8 @@
                 executioner: { active: false },
                 combustion: { active: false },
                 deadeye: { active: false },
-                windRunner: { active: false } // V1_359
+                windRunner: { active: false }, // V1_359
+                splitFire: { active: false }   // WP8
             };
             combustionChaining = false;
             
@@ -28606,12 +29396,15 @@
             set('plLuck', Math.round(player.luck * 100) + '%');
             set('plSize', '+' + Math.round(((player.sizeMultiplier || 1) - 1) * 100) + '%');
             set('plDuration', '+' + Math.round(((player.durationMultiplier || 1) - 1) * 100) + '%');
+            set('plProjSpeed', '+' + Math.round(((player.projSpeedMultiplier || 1) - 1) * 100) + '%'); // WP8: Tome of Velocity
+            set('plGoldGain', '+' + Math.round(((player.goldMultiplier || 1) - 1) * 100) + '%'); // WP8: Tome of Midas
             set('plMaxHp', Math.round(player.maxHp));
             set('plRegen', player.regenRate.toFixed(1) + '/s');
             set('plLifesteal', Math.round(player.lifesteal * 100) + '%');
             set('plArmor', Math.round(player.armor * 100) + '%');
             set('plShield', Math.round(player.maxShieldHp));
             set('plSpeed', Math.round((player.speed / player.baseSpeed) * 100) + '%');
+            set('plThorns', Math.round((player.thornsPct || 0) * 100) + '%'); // WP8: Tome of Retribution
             // V1_331: pills show the live weapon/tome animation when one exists (emoji fallback).
             const item = (type, id, def, lvl) => {
                 const ic = resolveRewardPreview(type, id)
