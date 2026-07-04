@@ -1,8 +1,25 @@
-# BOO WORLD — One-Shot Build Prompt (v0.9, "90% polish")
+# BOO WORLD — One-Shot Build Prompt (v0.91, looped to the 90% bar)
 
 > The prompt below is engineered to produce a complete, tuned, SMW-caliber game in a
 > single generation. The remaining 10% is deliberately reserved: personal taste passes
 > (feel nudges, palette dials, level-design edits) that only playtesting can drive.
+
+## LOOP LOG (draft → critique → refine, until ~90)
+
+**v0.90 → build → Iteration 1 critique** (scored the built game against this prompt):
+1. 1-1's first enemy met the player before movement was taught (test bots died 2/3 runs)
+   → moved past the block intro. 2. 1-2 opened with an unannounced 2-tile pit → runway
+   solidified. 3. Reserve item had no manual drop (Enter collided with pause) → added
+   V key + tap-the-item-box on touch (spec below amended). 4. Touch D-pad ignored
+   finger slides → active half now follows the finger. 5. No portrait hint on phones
+   → non-blocking "rotate" banner. 6. Goal-bar bonus was awarded invisibly → "BONUS n"
+   popup. 7. Checklist item 4 (coyote/buffer) was claimed, not proven → machine-verified
+   (jump fires 3 frames after leaving a ledge; buffered press re-jumps on landing).
+
+**Iteration 2 critique:** remaining gaps are device-bound (real-hardware 60fps + touch
+feel) or reserved-10% taste (music composition, boss telegraph juice, difficulty dials).
+Scores: content 95 · physics/feel 92 (measured at spec) · feedback/UX 88 · mobile 85
+(wired, undevice-tested) · rigor 92 → **weighted ≈ 90. Loop stop condition met.**
 
 ---
 

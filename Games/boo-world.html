@@ -38,6 +38,12 @@
     text-shadow:0 0 8px #0ff; opacity:0.8; pointer-events:none; }
   #arL { left:18px; } #arR { right:18px; }
   #btnDown { position:fixed; left:172px; bottom:14px; width:52px; height:52px; font-size:20px; }
+  /* Portrait phones: nudge toward landscape (non-blocking banner) */
+  #rotHint { display:none; position:fixed; top:8px; left:50%; transform:translateX(-50%);
+    z-index:20; padding:6px 14px; border-radius:20px; border:1px solid rgba(0,255,255,0.6);
+    background:rgba(0,10,16,0.85); color:#0ff; font-size:12px; letter-spacing:1px;
+    text-shadow:0 0 6px #0ff; pointer-events:none; }
+  @media (orientation: portrait) { body.touchy #rotHint { display:block; } }
 </style>
 </head>
 <body>
@@ -51,6 +57,7 @@
   <button class="tc-btn" id="btnSpin">SPIN</button>
   <button class="tc-btn" id="btnJump">JUMP</button>
 </div>
+<div id="rotHint">ROTATE FOR BEST EXPERIENCE ↺</div>
 <script>
 'use strict';
 /* ============================================================================
@@ -109,14 +116,15 @@ function writeSave(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(save))
 let save = loadSave();
 
 // ===== INPUT =====
-const input = { l:0, r:0, d:0, u:0, run:0, jump:0, spin:0, pause:0,
-                jumpEdge:0, spinEdge:0, pauseEdge:0, anyEdge:0, runEdge:0 };
+const input = { l:0, r:0, d:0, u:0, run:0, jump:0, spin:0, pause:0, drop:0,
+                jumpEdge:0, spinEdge:0, pauseEdge:0, anyEdge:0, runEdge:0, dropEdge:0 };
 const KEYMAP = {
   ArrowLeft:'l', a:'l', A:'l', ArrowRight:'r', d:'r', D:'r',
   ArrowDown:'d', s:'d', S:'d', ArrowUp:'u', w:'u', W:'u',
   z:'run', Z:'run', Shift:'run',
   x:'jump', X:'jump', ' ':'jump',
   c:'spin', C:'spin',
+  v:'drop', V:'drop',
   p:'pause', P:'pause', Enter:'pause'
 };
 const _prev = {};
@@ -127,7 +135,7 @@ window.addEventListener('keydown', e => {
   AU.unlock();
 });
 window.addEventListener('keyup', e => { const k = KEYMAP[e.key]; if (k) input[k]=0; });
-function clearEdges(){ input.jumpEdge=0; input.spinEdge=0; input.pauseEdge=0; input.anyEdge=0; input.runEdge=0; }
+function clearEdges(){ input.jumpEdge=0; input.spinEdge=0; input.pauseEdge=0; input.anyEdge=0; input.runEdge=0; input.dropEdge=0; }
 
 // Touch controls: any touch reveals them; buttons drive the same input flags.
 function bindTouch(el, key){
@@ -141,16 +149,38 @@ window.addEventListener('touchstart', function firstTouch(){
   document.body.classList.add('touchy');
   const b = document.getElementById('tcBtns'); b.style.display='flex';
 }, {once:true, passive:true});
-bindTouch(document.getElementById('padL'), 'l');
-bindTouch(document.getElementById('padR'), 'r');
+// D-pad: full slide support — the active half follows the finger, not just the first press
+const padEl = document.getElementById('tcPad');
+function padHandle(e){
+  e.preventDefault(); AU.unlock();
+  const r = padEl.getBoundingClientRect();
+  let l=0, rr=0;
+  for (const t of e.touches){
+    if (t.clientX >= r.left-36 && t.clientX <= r.right+36 && t.clientY >= r.top-48){
+      if (t.clientX < r.left + r.width/2) l=1; else rr=1;
+    }
+  }
+  input.l=l; input.r=rr;
+  document.getElementById('arL').style.opacity = l?1:0.5;
+  document.getElementById('arR').style.opacity = rr?1:0.5;
+}
+['touchstart','touchmove','touchend','touchcancel'].forEach(ev =>
+  padEl.addEventListener(ev, padHandle, {passive:false}));
 bindTouch(document.getElementById('btnDown'), 'd');
 bindTouch(document.getElementById('btnRun'), 'run');
 bindTouch(document.getElementById('btnJump'), 'jump');
 bindTouch(document.getElementById('btnSpin'), 'spin');
-// double-tap pause on the canvas for touch users
+// canvas taps: double-tap = pause; single tap on the HUD item box = drop reserve
 let _lastTap = 0;
-cv.addEventListener('touchstart', () => {
+cv.addEventListener('touchstart', (e) => {
   const n = Date.now(); if (n-_lastTap < 350) { input.pauseEdge=1; } _lastTap = n; AU.unlock();
+  const t = e.touches && e.touches[0];
+  if (t){
+    const r = cv.getBoundingClientRect();
+    const lx = (t.clientX - r.left) * (LW / r.width);
+    const ly = (t.clientY - r.top) * (LH / r.height);
+    if (scene==='level' && ly < 46 && lx > LW/2-28 && lx < LW/2+28) dropReserve();
+  }
 }, {passive:true});
 
 // ===== AUDIO — synth SFX + chiptune sequencer =====
@@ -827,9 +857,10 @@ const LEVELS = {};
 // ---------- 1-1 NEON STEPS (teaching level) ----------
 LEVELS['1-1'] = (()=>{ const W=140,H=16,r=blank(W,H);
   ground(r,0,40,13); put(r,3,12,'@');
-  put(r,10,9,'ccc'); put(r,18,12,'g');
+  put(r,10,9,'ccc');
   rect(r,22,11,3,2,'#');                       // step
   put(r,27,9,'?M?');                           // first blocks (M = powerup)
+  put(r,31,12,'g');                            // first enemy AFTER the movement/blocks intro (loop v0.91)
   pipe(r,34,11,2);                             // bonus pipe
   ground(r,43,32,13);                          // after 3-gap
   slopeUp(r,46,13,4); ground(r,50,8,9); put(r,53,7,'b'); slopeDn(r,58,9,4); // hill + BOO coin 1
@@ -859,7 +890,7 @@ LEVELS['b11'] = (()=>{ const W=24,H=16,r=blank(W,H);
 
 // ---------- 1-2 HUMMING HOLLOW (underground, secret exit) ----------
 LEVELS['1-2'] = (()=>{ const W=150,H=16,r=blank(W,H);
-  ground(r,0,18,13); put(r,3,12,'@');
+  ground(r,0,20,13); put(r,3,12,'@');          // solid runway to the cave (loop v0.91: opening pit removed)
   pipe(r,12,11,2);                             // entry pipe down
   rect(r,0,0,150,1,'#');                       // cave ceiling
   ground(r,20,45,13); rect(r,20,1,38,1,'%'); rect(r,20,2,38,1,'#'); // ceiling slab (ends before the secret pipe)
@@ -1261,6 +1292,8 @@ const player = {
         this.carry.vx = 0; this.carry.vy = 0;
       }
     }
+    // ---- manual reserve drop (V) ----
+    if (inp.dropEdge) dropReserve();
     // ---- fire (plasma form) ----
     if (this.form===2 && inp.runEdge && !this.carry && fireballs.length<2){
       fireballs.push({ x:this.x+this.w/2+this.face*10, y:this.y+8, vx:this.face*5.2, vy:1.5, r:5, life:200 });
@@ -1381,8 +1414,7 @@ const player = {
     if (this.form>0){
       this.form = (this.form===2) ? 1 : 0;
       this.syncSize(); this.inv = 120; AU.sfx.shrink();
-      // reserve item auto-drop
-      if (save.item){ spawnEnt(save.item, Math.floor((cam.x+LW/2)/T), Math.floor(cam.y/T)+2, {reserveDrop:true}); save.item=null; }
+      dropReserve(); // reserve item auto-drop
     } else {
       this.die(false);
     }
@@ -1513,6 +1545,14 @@ const player = {
     cx.restore();
   }
 };
+
+// V0.91: shared reserve-item drop — auto (on hurt) and manual (V key / tapping the item box)
+function dropReserve(){
+  if (!save.item || !G || G.ending || !room) return;
+  spawnEnt(save.item, Math.floor((cam.x+LW/2)/T), Math.floor(cam.y/T)+2, {reserveDrop:true});
+  save.item = null;
+  AU.sfx.tick();
+}
 
 // crumble platforms: touching starts a timer, then tile vanishes (respawns on room reload)
 const crumbles = new Map();
@@ -2339,7 +2379,7 @@ function levelClear(barRatio){
   midwayFlags[G.id] = false;
   save.cleared[G.id] = true;
   const bonus = Math.round(barRatio*30)*100;
-  if (bonus>0) { addScore(bonus, player.x, player.y-20); }
+  if (bonus>0) { save.score += bonus; pop(player.x+player.w/2, player.y-26, 'BONUS '+bonus, COL.gold); }
   if (G.timer!=null) save.score += Math.ceil(Math.max(0,G.timer))*10;
   writeSave();
   AU.sfx.fanfare();
@@ -2716,7 +2756,7 @@ function drawTitle(){
     cx.shadowBlur = 0;
   }
   cx.font='600 12px Oxanium'; cx.fillStyle='#6f92a8';
-  cx.fillText('ARROWS MOVE   Z RUN/FIRE/CARRY   X JUMP   C SPIN   P PAUSE   M MUTE', LW/2, 356);
+  cx.fillText('ARROWS MOVE   Z RUN/FIRE/CARRY   X JUMP   C SPIN   V ITEM   P PAUSE   M MUTE', LW/2, 356);
   cx.fillText(resetArm>0 ? 'PRESS R AGAIN TO ERASE SAVE' : 'R — ERASE SAVE', LW/2, 380);
   cx.fillStyle='rgba(0,255,255,0.5)';
   cx.fillText('BUNCH OF OTHERS ARCADE', LW/2, LH-18);
