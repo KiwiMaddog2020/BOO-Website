@@ -8160,7 +8160,7 @@
             ricochetDisc: 'rare',
             pulseMine: 'rare',
             shotgun: 'epic',
-            prismLance: 'rare',
+            lighthouse: 'rare',
             stormSentry: 'rare'
         };
 
@@ -8494,17 +8494,24 @@
                 knockback: 30,
                 type: 'shotgun'
             },
-            // WP3: new weapons
-            prismLance: {
-                name: 'Prism Lance',
-                icon: '🔱',
-                color: '#ff88ff',
-                desc: 'Refracting light lance',
-                baseDamage: 14,
-                baseFireRate: 950,
-                baseRange: 420,
+            // WP-Lighthouse: replaces the old refracting-ray lance weapon. Continuously rotating beam
+            // wedge (never stops firing, no cooldown gaps) — see updateLighthouse() for
+            // the full DPS derivation. baseDamage is tuned down from an initial 6 to 1.1
+            // so the always-on wedge lands at ~100% of arsenal median DPS at both L1 and
+            // L8 once the wedge's sector AREA (halfArc * length^2, both of which scale
+            // with level) is accounted for instead of a flat per-tick target count.
+            lighthouse: {
+                name: 'Lighthouse',
+                icon: '🚨',
+                color: '#7de8ff',
+                desc: 'A sweeping beam that never sleeps',
+                baseDamage: 1.1,
+                baseFireRate: 250,
+                baseLength: 290,
+                baseHalfArc: 0.055,
+                baseSpin: 0.55,
                 dmgScale: 0.05,
-                type: 'prismLance'
+                type: 'lighthouse'
             },
             stormSentry: {
                 name: 'Storm Sentry',
@@ -9408,8 +9415,8 @@
                             this.fireShotgun(weaponId, weaponDef, weaponState, level, now);
                             this.updateShotgunPellets(weaponState, weaponDef, level, now, dt);
                             break;
-                        case 'prismLance':
-                            this.firePrismLance(weaponId, weaponDef, weaponState, level, now);
+                        case 'lighthouse':
+                            this.updateLighthouse(weaponId, weaponDef, weaponState, level, now, dt);
                             break;
                         case 'stormSentry':
                             this.fireStormSentry(weaponId, weaponDef, weaponState, level, now);
@@ -11145,100 +11152,90 @@
                 state.pellets = state.pellets.filter(p => !p.hit && now - p.startTime < 500);
             }
 
-            // === PRISM LANCE (WP3) ===
-            // Instant piercing ray toward the nearest enemy: damages everything the
-            // segment crosses, then refracts a short mini-ray from each hit enemy
-            // (up to 6 origins) toward its nearest OTHER un-hit enemy.
-            firePrismLance(id, def, state, level, now) {
-                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
-                if (now - state.lastFire < fireRate) return;
+            // === LIGHTHOUSE ===
+            // Continuously rotating beam wedge anchored on the player — never stops,
+            // never aims (unlike updateOrbit's charge system or a fire-and-forget shot).
+            // The angle advances every frame so rendering is smooth; damage is applied
+            // on a fixed global tick (reuses updateAura's gate pattern) to whatever
+            // currently sits inside the wedge. A second, exactly-opposing beam unlocks
+            // at level 7 (mirrors the approved concept demo's Lv7 behavior).
+            //
+            // Balance math (WP-Lighthouse): a rotating wedge's "effective DPS" isn't a
+            // flat per-tick number — the world-space AREA it sweeps grows with level
+            // (both baseHalfArc and baseLength scale up), so more of a surrounding crowd
+            // sits inside it as you level, on top of the usual damage-per-hit scaling.
+            // Modeled as:
+            //   area(lvl)    = halfArc(lvl) * length(lvl)^2                 (sector area)
+            //   targets(lvl) = 2.5 * area(lvl) / area(1)                    (anchored at 2.5 targets/tick @ L1)
+            //   DPS(lvl)     = damage(lvl) * targets(lvl) * (1000/baseFireRate) * beams(lvl)
+            // With the given baseHalfArc(.055)/baseLength(290)/baseFireRate(250)/dmgScale(.05):
+            //   L1: halfArc .059, length 300          -> area 5310  -> targets 2.50 (anchor), beams x1
+            //   L8: halfArc .087, length 348 (capped)  -> area 10536 -> targets 4.96, beams x2, dmg x1.35
+            //   DPS(1) = 1.1 * 2.50 * 4 * 1        = 11.0  (median target 11.1  -> 99.1%)
+            //   DPS(8) = 1.1*1.35 * 4.96 * 4 * 2   = 58.95 (median target 59.5  -> 99.1%)
+            // That pins baseDamage at ~1.1 (down from an initial 6 guess) with dmgScale
+            // left untouched at the given 0.05 — the level-driven wedge geometry alone
+            // supplies almost exactly the L1->L8 ratio the arsenal median calls for.
+            updateLighthouse(id, def, state, level, now, dt) {
+                if (state.angle === undefined) state.angle = 0;
+                const spinSpeed = (def.baseSpin + 0.035 * level) * this.attackSpeedMultiplier; // rad/s
+                state.angle += spinSpeed * dt / 1000;
 
-                const target = findNearestEnemy(this.x, this.y);
-                if (!target) return;
+                const length = Math.min(def.baseLength + 10 * level, ONSCREEN_RANGE_CAP) * this.sizeMultiplier;
+                const halfArc = (def.baseHalfArc + 0.004 * level) * (1 + (this.sizeMultiplier - 1) * 0.5);
+                const twoBeams = level >= 7;
 
-                state.lastFire = now;
+                // Store every frame so rendering stays smooth regardless of the tick below.
+                state.beamAngle = state.angle;
+                state.beamLength = length;
+                state.beamHalfArc = halfArc;
+                state.beamCount = twoBeams ? 2 : 1;
+
+                // Damage tick — global gate (like updateAura's tickRate), applied to
+                // whatever currently sits inside any active beam wedge.
+                const tickRate = def.baseFireRate / this.attackSpeedMultiplier;
+                if (now - (state.lastTick || 0) < tickRate) return;
+                state.lastTick = now;
                 SFX.wBeam();
 
-                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const length = Math.min(def.baseRange + 8 * level, ONSCREEN_RANGE_CAP);
-                const angle = Math.atan2(target.y - this.y, target.x - this.x);
-                const x1 = this.x, y1 = this.y;
-                const x2 = this.x + Math.cos(angle) * length;
-                const y2 = this.y + Math.sin(angle) * length;
+                const baseDamage = def.baseDamage * (1 + (level - 1) * def.dmgScale);
+                const angles = twoBeams ? [state.angle, state.angle + Math.PI] : [state.angle];
 
-                if (!state.segments) state.segments = [];
-                state.segments.push({ x1, y1, x2, y2, time: now, refraction: false });
+                const inWedge = (tx, ty) => {
+                    const dist = Math.hypot(tx - this.x, ty - this.y);
+                    if (dist > length) return false;
+                    const ea = Math.atan2(ty - this.y, tx - this.x);
+                    for (const a of angles) {
+                        let da = Math.abs(ea - a);
+                        da = Math.min(da, Math.PI * 2 - da);
+                        if (da < halfArc) return true;
+                    }
+                    return false;
+                };
 
-                // Damage every enemy/boss/leprechaun the main ray crosses.
-                const hitEnemies = []; // regular enemies only (refraction chains off these)
-                const hitSet = new Set();
-                // WP7 fix: Tome of Magnitude now scales the ray's hit tolerance too.
-                const hitTolerance = 6 * this.sizeMultiplier;
                 for (const enemy of enemies) {
                     if (enemy.dead) continue;
-                    if (distPointToSegment(enemy.x, enemy.y, x1, y1, x2, y2) < enemy.radius + hitTolerance) {
-                        const { damage, isCrit } = this.calcDamage(baseDamage);
-                        enemy.takeDamage(damage, isCrit);
-                        this.onDealDamage(damage);
-                        applyStatusEffects(enemy, damage);
-                        spawnParticles(enemy.x, enemy.y, def.color, 5);
-                        hitEnemies.push(enemy);
-                        hitSet.add(enemy);
-                    }
+                    if (!inWedge(enemy.x, enemy.y)) continue;
+                    const { damage, isCrit } = this.calcDamage(baseDamage);
+                    enemy.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
+                    applyStatusEffects(enemy, damage);
+                    spawnParticles(enemy.x, enemy.y, def.color, 3);
                 }
                 for (const boss of bosses) {
                     if (boss.dead) continue;
-                    if (distPointToSegment(boss.x, boss.y, x1, y1, x2, y2) < boss.radius + hitTolerance) {
-                        const { damage, isCrit } = this.calcDamage(baseDamage);
-                        boss.takeDamage(damage, isCrit);
-                        this.onDealDamage(damage);
-                        spawnParticles(boss.x, boss.y, def.color, 5);
-                    }
+                    if (!inWedge(boss.x, boss.y)) continue;
+                    const { damage, isCrit } = this.calcDamage(baseDamage);
+                    boss.takeDamage(damage, isCrit);
+                    this.onDealDamage(damage);
                 }
                 for (const lep of leprechauns) {
                     if (lep.dead) continue;
-                    if (distPointToSegment(lep.x, lep.y, x1, y1, x2, y2) < lep.radius + hitTolerance) {
-                        const { damage, isCrit } = this.calcDamage(baseDamage);
-                        lep.takeDamage(damage, isCrit);
-                        this.onDealDamage(damage);
-                        spawnParticles(lep.x, lep.y, def.color, 5);
-                    }
-                }
-
-                // Refraction: each of the first 6 hit enemies fires a short mini-ray at
-                // its nearest OTHER un-hit enemy within 180px, spending a shared budget.
-                // WP7 fix: Tome of Magnitude extends the refraction search/reach at half rate.
-                const refractionSizeScale = 1 + (this.sizeMultiplier - 1) * 0.5;
-                let refractionBudget = 2 + Math.floor(level / 3);
-                const origins = hitEnemies.slice(0, 6);
-                for (const origin of origins) {
-                    if (refractionBudget <= 0) break;
-                    let candidate = null, bestDist = 180 * refractionSizeScale;
-                    for (const enemy of enemies) {
-                        if (enemy.dead || hitSet.has(enemy)) continue;
-                        const dist = Math.hypot(enemy.x - origin.x, enemy.y - origin.y);
-                        if (dist < bestDist) { bestDist = dist; candidate = enemy; }
-                    }
-                    if (!candidate) continue;
-
-                    const refDamage = baseDamage * 0.4;
-                    const { damage, isCrit } = this.calcDamage(refDamage);
-                    candidate.takeDamage(damage, isCrit);
+                    if (!inWedge(lep.x, lep.y)) continue;
+                    const { damage, isCrit } = this.calcDamage(baseDamage);
+                    lep.takeDamage(damage, isCrit);
                     this.onDealDamage(damage);
-                    applyStatusEffects(candidate, damage);
-                    spawnParticles(candidate.x, candidate.y, '#88ffff', 5);
-
-                    const rAngle = Math.atan2(candidate.y - origin.y, candidate.x - origin.x);
-                    const rx2 = origin.x + Math.cos(rAngle) * Math.min(170 * refractionSizeScale, bestDist);
-                    const ry2 = origin.y + Math.sin(rAngle) * Math.min(170 * refractionSizeScale, bestDist);
-                    state.segments.push({ x1: origin.x, y1: origin.y, x2: rx2, y2: ry2, time: now, refraction: true });
-
-                    hitSet.add(candidate);
-                    refractionBudget--;
                 }
-
-                // Cleanup faded segments (200ms lifetime, see draw()).
-                state.segments = state.segments.filter(s => now - s.time < 200);
             }
 
             // === STORM SENTRY (WP3) ===
@@ -12542,55 +12539,41 @@
                         ctx.shadowBlur = 0;
                     }
 
-                    // WP3: Prism Lance — instant ray segments (main + refractions), each a
-                    // white-hot core with magenta/cyan fringe lines offset 1.5px, fading
-                    // over 200ms (segments are pruned in firePrismLance()).
-                    if (def.type === 'prismLance' && state.segments && state.segments.length) {
-                        const now = Date.now();
+                    // Lighthouse — sweeping beam wedge(s). Cheap layered-fill render (NO
+                    // shadowBlur — hot path): 3 flat wedge fills (wide faint / mid / narrow
+                    // white-hot) + a bright leading-edge line + a small pulsing lamp above
+                    // the player, per beam. Mirrors the approved concept demo exactly.
+                    if (def.type === 'lighthouse' && state.beamLength) {
+                        const R = camera.scale(state.beamLength);
+                        const half = state.beamHalfArc;
+                        const beamCount = state.beamCount || 1;
                         ctx.save();
                         ctx.globalCompositeOperation = 'lighter';
-                        ctx.lineCap = 'round';
-                        for (const seg of state.segments) {
-                            const age = now - seg.time;
-                            if (age > 200) continue;
-                            const fade = 1 - age / 200;
-                            const x1 = camera.screenX(seg.x1), y1 = camera.screenY(seg.y1);
-                            const x2 = camera.screenX(seg.x2), y2 = camera.screenY(seg.y2);
-                            const dx = x2 - x1, dy = y2 - y1;
-                            const len = Math.hypot(dx, dy) || 1;
-                            const px = -dy / len * 1.5, py = dx / len * 1.5;
-                            const w = (seg.refraction ? 1.4 : 2.4) * this.sizeMultiplier; // WP7 fix: Tome of Magnitude scales the ray's visual width too
-
-                            ctx.shadowBlur = seg.refraction ? 8 : 14;
-                            ctx.shadowColor = def.color;
-
-                            // Magenta fringe (offset one way)
-                            ctx.globalAlpha = fade * 0.75;
-                            ctx.strokeStyle = def.color;
-                            ctx.lineWidth = w;
+                        for (let b = 0; b < beamCount; b++) {
+                            const a = state.beamAngle + b * Math.PI;
+                            for (const [w2, col, al] of [[half * 2.2, '#00ffff', 0.05], [half * 1.3, '#00ffff', 0.10], [half * 0.5, '#ffffff', 0.28]]) {
+                                ctx.globalAlpha = al;
+                                ctx.fillStyle = col;
+                                ctx.beginPath();
+                                ctx.moveTo(sx, sy);
+                                ctx.arc(sx, sy, R, a - w2, a + w2);
+                                ctx.closePath();
+                                ctx.fill();
+                            }
+                            ctx.globalAlpha = 1;
+                            ctx.strokeStyle = '#aef7ff';
+                            ctx.lineWidth = 2;
                             ctx.beginPath();
-                            ctx.moveTo(x1 + px, y1 + py);
-                            ctx.lineTo(x2 + px, y2 + py);
-                            ctx.stroke();
-
-                            // Cyan fringe (offset the other way)
-                            ctx.globalAlpha = fade * 0.75;
-                            ctx.strokeStyle = '#88ffff';
-                            ctx.beginPath();
-                            ctx.moveTo(x1 - px, y1 - py);
-                            ctx.lineTo(x2 - px, y2 - py);
-                            ctx.stroke();
-
-                            // White-hot core
-                            ctx.globalAlpha = fade;
-                            ctx.strokeStyle = '#ffffff';
-                            ctx.lineWidth = w * 0.6;
-                            ctx.shadowBlur = seg.refraction ? 4 : 8;
-                            ctx.beginPath();
-                            ctx.moveTo(x1, y1);
-                            ctx.lineTo(x2, y2);
+                            ctx.moveTo(sx, sy);
+                            ctx.lineTo(sx + Math.cos(a + half) * R, sy + Math.sin(a + half) * R);
                             ctx.stroke();
                         }
+                        // Pulsing lamp above the player.
+                        ctx.globalAlpha = 1;
+                        ctx.fillStyle = '#ffffff';
+                        ctx.beginPath();
+                        ctx.arc(sx, sy - camera.scale(16), camera.scale(4 + Math.sin(time * 0.01) * 1.2), 0, Math.PI * 2);
+                        ctx.fill();
                         ctx.restore();
                     }
 
@@ -22511,17 +22494,6 @@
             return count;
         }
 
-        // WP3: shortest distance from point (px,py) to line segment (x1,y1)-(x2,y2).
-        // Used by Prism Lance's instant piercing ray to test which enemies it crosses.
-        function distPointToSegment(px, py, x1, y1, x2, y2) {
-            const dx = x2 - x1, dy = y2 - y1;
-            const lenSq = dx * dx + dy * dy;
-            let t = lenSq > 0 ? ((px - x1) * dx + (py - y1) * dy) / lenSq : 0;
-            t = Math.max(0, Math.min(1, t));
-            const cx = x1 + t * dx, cy = y1 + t * dy;
-            return Math.hypot(px - cx, py - cy);
-        }
-
         // Efficient in-place array cleanup (swap-and-pop)
         function cleanupArray(arr, shouldRemove) {
             for (let i = arr.length - 1; i >= 0; i--) {
@@ -23423,8 +23395,10 @@
             // WP4: V1_298 softened both scalars (dmg .06->.05, cd .97->.98) in the fire fn but left
             // this display table on the pre-nerf values — cards over-promised damage/fire-rate gains.
             shotgun:       { dmgScale: 0.05, cdScale: 0.98,  count: { noun: 'Pellet', fn: (l, d) => d.pelletCount + Math.floor(l / 3) }, range: { label: 'Range', fn: (l, d) => Math.min(d.maxRange + l * 15, ONSCREEN_RANGE_CAP) } },
-            // WP3: firePrismLance: dmg .05, instant ray length baseRange+8*lvl (capped on-screen), cd .985
-            prismLance:    { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Length', fn: (l, d) => Math.min(d.baseRange + 8 * l, ONSCREEN_RANGE_CAP) } },
+            // updateLighthouse (see its balance comment for the full DPS derivation): dmg .05,
+            // length min(baseLength+10*lvl, cap), spin rate baseSpin+.035*lvl rad/s, tick rate
+            // fixed (cd n/a, continuous like toxicAura/stormSentry — never stops sweeping)
+            lighthouse:    { dmgScale: 0.05, cdScale: null, range: { label: 'Length', fn: (l, d) => Math.min(d.baseLength + 10 * l, ONSCREEN_RANGE_CAP) }, spin: { label: 'Spin', fn: (l, d) => d.baseSpin + 0.035 * l } },
             // WP3: fireStormSentry: dmg .05, max deployed sentries 1+floor(lvl/5), deploy cadence fixed (cd null)
             stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => 1 + Math.floor(l / 5) } },
             // WP8: firePhotonScythe: dmg .05, swing radius baseRadius+7*lvl, cd .985 (sweep angle isn't surfaced — no display field for it)
@@ -23501,6 +23475,14 @@
                 const pFrom = meta.pierce.fn(fromLevel, def);
                 const pTo = meta.pierce.fn(toLevel, def);
                 if (pTo !== pFrom) lines.push(`${meta.pierce.label} ${pFrom} → ${pTo}`);
+            }
+
+            // Spin-rate step (only when it changes this level) — rare field, currently
+            // only used by Lighthouse's rotation speed.
+            if (meta.spin) {
+                const spFrom = meta.spin.fn(fromLevel, def);
+                const spTo = meta.spin.fn(toLevel, def);
+                if (Math.abs(spTo - spFrom) > 0.0005) lines.push(`${meta.spin.label} ${spFrom.toFixed(2)} → ${spTo.toFixed(2)}`);
             }
 
             // If nothing but cooldown moved this level, surface the faster-attack note.
@@ -27102,7 +27084,19 @@
         let selectedStartingWeapon = 'energyBolt';
         
         // Disabled weapons (won't appear in upgrade pool) - persisted
-        let disabledWeapons = new Set((function(){ try { return JSON.parse(localStorage.getItem('disabledWeapons') || '[]'); } catch(e){ return []; } })()); // V1_164: defensive parse (storage/JSON can throw at init in iOS WebView / private mode)
+        let disabledWeapons = new Set((function(){
+            try {
+                const raw = JSON.parse(localStorage.getItem('disabledWeapons') || '[]');
+                // WP-Lighthouse: drop stale ids that no longer exist in WEAPONS (e.g. a
+                // weapon removed in a later update) so they don't linger forever, and
+                // persist the clean set — mirrors the disabledTomes cleanup below.
+                const cleaned = raw.filter(id => WEAPONS.hasOwnProperty(id));
+                if (cleaned.length !== raw.length) {
+                    try { localStorage.setItem('disabledWeapons', JSON.stringify(cleaned)); } catch(e){}
+                }
+                return cleaned;
+            } catch(e){ return []; }
+        })()); // V1_164: defensive parse (storage/JSON can throw at init in iOS WebView / private mode)
         let weaponEditMode = false;
         const MAX_DISABLED_WEAPONS = 5;
         
@@ -27131,7 +27125,7 @@
             'thunderStrike', 'chainLightning', 'toxicAura', 'boomerang',
             'spectralArrows', 'ricochetDisc', 'gravityWell',
             'starField', 'meteorStrike', 'spiritOrbs', 'pulseMine',
-            'shotgun', 'prismLance', 'stormSentry',
+            'shotgun', 'lighthouse', 'stormSentry',
             'photonScythe', 'plasmaMortar', 'voidRailgun'
         ];
         
@@ -27624,40 +27618,38 @@
                 }
                 _wpReset(ctx);
             },
-            // 🔱 Prism Lance — mirrors in-game: an instant white-hot ray flashes across the
-            // box (magenta/cyan fringe either side) and lands on a hit point that sprays 2
-            // short refracted mini-beams outward — matching firePrismLance()'s main ray +
-            // refraction chain. Longer duty cycle than a single flash so the card never
-            // reads as blank between strikes.
-            prismLance(ctx, t, w, h, color) {
-                const period = 1.3, p = (t % period) / period;
-                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.shadowColor = color;
-                const x1 = 8, y1 = h / 2 - 6, x2 = w - 22, y2 = h / 2 + 7; // main ray endpoints
-                if (p < 0.3) {
-                    const fade = 1 - p / 0.3;
-                    ctx.globalAlpha = fade * 0.75; ctx.strokeStyle = color; ctx.lineWidth = 2.4; ctx.shadowBlur = 10;
-                    ctx.beginPath(); ctx.moveTo(x1, y1 + 1.6); ctx.lineTo(x2, y2 + 1.6); ctx.stroke();
-                    ctx.globalAlpha = fade * 0.75; ctx.strokeStyle = '#88ffff';
-                    ctx.beginPath(); ctx.moveTo(x1, y1 - 1.6); ctx.lineTo(x2, y2 - 1.6); ctx.stroke();
-                    ctx.globalAlpha = fade; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4; ctx.shadowBlur = 6;
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-                    // impact dot at the hit point
-                    ctx.globalAlpha = fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 7;
-                    _wpStar(ctx, x2, y2, 2.8);
-                    // 2 refracted mini-beams spray outward at angles off the impact point,
-                    // slightly delayed behind the main ray so they read as a chain reaction
-                    if (p > 0.05) {
-                        const rf = Math.min(1, (p - 0.05) / 0.12);
-                        const angles = [-0.85, 0.55];
-                        const refColors = ['#ff88ff', '#88ffff'];
-                        for (let i = 0; i < 2; i++) {
-                            const a = angles[i];
-                            const rx2 = x2 + Math.cos(a) * 16 * rf, ry2 = y2 + Math.sin(a) * 16 * rf;
-                            ctx.globalAlpha = fade * 0.7 * rf; ctx.strokeStyle = refColors[i]; ctx.lineWidth = 1.3; ctx.shadowBlur = 6;
-                            ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(rx2, ry2); ctx.stroke();
-                        }
-                    }
+            // 🚨 Lighthouse — mirrors in-game: a rotating beam wedge sweeps the box (3
+            // layered fills, wide faint / mid / narrow white-hot, exactly like the in-game
+            // wedge) with a pulsing lamp at the hub, and 3 fixed "target" dots around the
+            // sweep radius flash white as the beam crosses them.
+            lighthouse(ctx, t, w, h, color) {
+                const cx = w / 2, cy = h / 2, R = 16;
+                const spin = 1.15, half = 0.32;
+                const ang = t * spin;
+                ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
+                for (const [w2, col, al] of [[half * 2.2, '#00ffff', 0.10], [half * 1.3, '#00ffff', 0.18], [half * 0.5, '#ffffff', 0.35]]) {
+                    ctx.globalAlpha = al; ctx.fillStyle = col; ctx.shadowBlur = 4;
+                    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, ang - w2, ang + w2); ctx.closePath(); ctx.fill();
                 }
+                ctx.globalAlpha = 0.9; ctx.strokeStyle = '#aef7ff'; ctx.lineWidth = 1.4; ctx.shadowBlur = 5;
+                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(ang + half) * R, cy + Math.sin(ang + half) * R); ctx.stroke();
+
+                // 3 fixed "targets" around the ring — flash white as the sweep crosses them.
+                const dotAngles = [0.6, 2.4, 4.3];
+                for (let i = 0; i < dotAngles.length; i++) {
+                    const da = dotAngles[i];
+                    const dx = cx + Math.cos(da) * R, dy = cy + Math.sin(da) * R;
+                    let diff = Math.abs(ang - da) % TAU;
+                    if (diff > Math.PI) diff = TAU - diff;
+                    const lit = diff < half;
+                    ctx.globalAlpha = lit ? 1 : 0.5; ctx.fillStyle = lit ? '#ffffff' : color; ctx.shadowBlur = lit ? 8 : 3;
+                    ctx.beginPath(); ctx.arc(dx, dy, lit ? 2.6 : 1.8, 0, TAU); ctx.fill();
+                }
+
+                // Pulsing lamp at the hub.
+                const pulse = 0.5 + 0.5 * Math.sin(t * 6);
+                ctx.globalAlpha = 0.9; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 6 + pulse * 4;
+                ctx.beginPath(); ctx.arc(cx, cy, 2 + pulse * 0.8, 0, TAU); ctx.fill();
                 _wpReset(ctx);
             },
             // 🗼 Storm Sentry — a tripod turret with a pulsing orb that periodically
