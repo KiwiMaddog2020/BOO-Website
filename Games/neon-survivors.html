@@ -17134,6 +17134,11 @@
                 acceptPotReward();
                 return;
             }
+            // V1_385: directive-completion blessing (forced accept, gold on exit)
+            if (pendingChest.isDirectiveBlessing) {
+                acceptDirectiveBlessing();
+                return;
+            }
             
             const chest = pendingChest;
 
@@ -17194,8 +17199,8 @@
                 return;
             }
             
-            if (pendingChest.isPotReward === true) return;
-            
+            if (pendingChest.isPotReward === true || pendingChest.isDirectiveBlessing === true) return; // V1_385: blessing is forced-accept too
+
             if (pendingChest.opened !== undefined) {
                 pendingChest.opened = false;
             }
@@ -17221,7 +17226,7 @@
         
         // Global leave function for inline onclick
         window.leaveChest = function() {
-            if (pendingChest && pendingChest.isPotReward === true) return;
+            if (pendingChest && (pendingChest.isPotReward === true || pendingChest.isDirectiveBlessing === true)) return; // V1_385
             if (pendingChest) {
                 // Require player to walk away before chest can reopen
                 pendingChest.needsPlayerToLeave = true;
@@ -24522,7 +24527,7 @@
         };
         
         window.chestLeave = function() {
-            if (pendingChest && pendingChest.isPotReward === true) return;
+            if (pendingChest && (pendingChest.isPotReward === true || pendingChest.isDirectiveBlessing === true)) return; // V1_385
             if (pendingChest && pendingChest.opened !== undefined) {
                 pendingChest.opened = false;
             }
@@ -25809,9 +25814,6 @@
         }
 
         function directiveReward(x, y, color) {
-            const gold = Math.floor(60 + gameTime / 8);   // scales gently with run length
-            playerGold += Math.round(gold * (player.goldMultiplier || 1)); // WP8: Tome of Midas
-            updateGoldDisplay();
             spawnParticles(x, y, color, 36);
             spawnParticles(x, y, COLORS.gold, 24);
             addRing(x, y, 120, color);
@@ -25826,17 +25828,71 @@
 
             if (giveLegendary) {
                 directivesSinceLegendary = 0;
+                const gold = Math.floor(60 + gameTime / 8);   // scales gently with run length
+                playerGold += Math.round(gold * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                updateGoldDisplay();
                 directiveBanner = { text: 'DIRECTIVE COMPLETE', sub: '✦ Legendary  +Gold', color: '#00ffaa', until: gameTime + 4 };
                 try { if (typeof SFX !== 'undefined' && SFX.legendary) SFX.legendary(); } catch (e) {}
                 showLegendaryUpgrade(); // headline reward — pauses the run cleanly
             } else {
+                // V1_385 (Kevin): no legendary -> a free blessing from the shrine pool
+                // instead of silent consolation gold. The gold (half the player's
+                // current chest cost) is granted + announced when the card is taken.
                 directivesSinceLegendary++;
-                const bonus = Math.floor(50 + gameTime / 8); // consolation gold so the run still feels rewarded
-                playerGold += Math.round(bonus * (player.goldMultiplier || 1)); // WP8: Tome of Midas
-                updateGoldDisplay();
-                directiveBanner = { text: 'DIRECTIVE COMPLETE', sub: '+Gold', color: '#00ffaa', until: gameTime + 3.5 };
-                try { if (typeof SFX !== 'undefined' && SFX.chest) SFX.chest(); } catch (e) {}
+                showDirectiveBlessing();
             }
+        }
+
+        // V1_385: directive completed without a legendary — present ONE free blessing
+        // drawn from the (build-aware) shrine pool in the shared chest modal, forced
+        // accept like pot rewards. Gold lands on exit so the banner states the amount.
+        function showDirectiveBlessing() {
+            const pool = shrinePowerupPool();
+            const id = pool[Math.floor(Math.random() * pool.length)];
+            const powerup = SHRINE_POWERUPS[id];
+            gamePaused = true;
+
+            if (DOM.chestSlotReel) {
+                DOM.chestSlotReel.classList.remove('spinning', 'stopped');
+                DOM.chestSlotReel.style.display = 'none';
+            }
+            DOM.modalCard.style.display = '';
+            DOM.modalTake.parentElement.style.display = '';
+            DOM.modalTitle.textContent = '✦ DIRECTIVE COMPLETE ✦';
+            DOM.modalTitle.style.color = '#00ffaa';
+            DOM.modalTitle.style.textShadow = '0 0 20px #00ffaa';
+            DOM.modalCost.style.display = 'none';
+            DOM.modalCard.style.borderColor = '#00ffaa';
+            DOM.modalCard.style.boxShadow = '0 0 20px rgba(0, 255, 170, 0.4)';
+            DOM.modalCard.classList.remove('legendary');
+            DOM.modalName.style.color = '#fff';
+            DOM.modalType.textContent = 'BLESSING';
+            DOM.modalType.style.color = '#00ffaa';
+            setChestRewardIcon('shrine', id, powerup.icon);
+            DOM.modalName.textContent = powerup.name;
+            DOM.modalDesc.textContent = powerup.desc;
+            DOM.modalTake.classList.remove('disabled');
+            DOM.modalTake.textContent = 'TAKE';
+            DOM.modalLeave.style.display = 'none'; // forced accept, like pot rewards
+            DOM.chestModal.classList.add('visible');
+            pendingChest = { isDirectiveBlessing: true, id };
+        }
+
+        function acceptDirectiveBlessing() {
+            const powerup = SHRINE_POWERUPS[pendingChest.id];
+            player.addShrineBonus(powerup.stat, powerup.value);
+            updateBuffsBar();
+            // Kevin: gold = half the player's CURRENT chest cost, announced on exit
+            const gold = Math.max(1, Math.round((nextChestCost / 2) * (player.goldMultiplier || 1)));
+            playerGold += gold;
+            updateGoldDisplay();
+            directiveBanner = { text: `+${gold} GOLD`, sub: 'Directive reward', color: '#00ffaa', until: gameTime + 3.5 };
+            try { if (typeof SFX !== 'undefined' && SFX.chest) SFX.chest(); } catch (e) {}
+            DOM.chestModal.classList.remove('visible');
+            DOM.modalCard.classList.remove('legendary');
+            DOM.modalLeave.style.display = '';
+            pendingChest = null;
+            gamePaused = false;
         }
 
         function spawnDirective() {
