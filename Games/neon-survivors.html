@@ -6879,8 +6879,6 @@
                 wShotgun:     function () { noise(0.10, 0.18); tone(220, 0.07, 'square', 0.12, 90); },
                 // ---- WP8: new weapon cues ----
                 wScythe:      function () { tone(260, 0.14, 'sawtooth', 0.14, 130); noise(0.06, 0.08); },
-                wMortarLaunch:function () { tone(200, 0.09, 'square', 0.12, 90); noise(0.05, 0.07); },
-                wMortarBlast: function () { noise(0.16, 0.18); tone(100, 0.20, 'sawtooth', 0.15, 55); },
                 wRailgunFire: function () { tone(1800, 0.05, 'sawtooth', 0.16, 60); noise(0.08, 0.12); },
                 // ---- event cues ----
                 hit:        function () { if (!gate('hit', 55)) return; noise(0.03, 0.06); },
@@ -8540,7 +8538,7 @@
                 dmgScale: 0.05,
                 type: 'stormSentry'
             },
-            // WP8: new weapons (photon scythe / plasma mortar / void railgun)
+            // WP8: new weapons (photon scythe / void railgun); V1_379: encore replaced plasma mortar
             photonScythe: {
                 name: 'Photon Scythe',
                 icon: '🌙',
@@ -8556,19 +8554,19 @@
                 dmgScale: 0.05,
                 type: 'photonScythe'
             },
-            plasmaMortar: {
-                name: 'Plasma Mortar',
-                icon: '💣',
-                color: '#ff6600',
-                desc: 'Lobs shells onto dense packs',
-                // WP8 balance: baseDamage tuned down from an initial 22 to 4.5 — each shell
-                // splashes ~4 targets and shell COUNT also grows with level, so both multipliers
-                // compound fast; a much lower per-shell base keeps L1/L8 DPS near the median.
-                baseDamage: 4.3, // V1_377: -4% volley offset for the Barrage blessing
-                baseFireRate: 1500,
-                blastRadius: 74,
+            encore: {
+                name: 'Encore',
+                icon: '👻',
+                color: '#c9f7ff',
+                desc: 'Your ghost replays your path',
+                // V1_379: replaces Plasma Mortar (too close to Meteor Strike — Kevin).
+                // A spectral BOO retraces the player's path from a few seconds ago,
+                // damaging everything inside its aura. Your movement writes the weapon.
+                baseDamage: 7, // V1_379 kiting-bench: 112 L1 / 280 L7 DPS (stationary = 0 by design — the ghost rests within 60px of the player)
+                tickRate: 300,
+                baseAura: 36,
                 dmgScale: 0.05,
-                type: 'plasmaMortar'
+                type: 'encore'
             },
             voidRailgun: {
                 name: 'Void Railgun',
@@ -9361,11 +9359,6 @@
                     this.updateMeteors(meteorState, Date.now());
                 }
 
-                // WP8: update in-flight plasma mortar shells (same pattern as meteors above)
-                const mortarState = this.weapons['plasmaMortar'];
-                if (mortarState) {
-                    this.updateMortarShells(mortarState, Date.now());
-                }
             }
 
             fireWeapons(dt) {
@@ -9449,8 +9442,8 @@
                         case 'photonScythe':
                             this.firePhotonScythe(weaponId, weaponDef, weaponState, level, now);
                             break;
-                        case 'plasmaMortar':
-                            this.fireMortar(weaponId, weaponDef, weaponState, level, now);
+                        case 'encore':
+                            this.updateEncore(weaponId, weaponDef, weaponState, level, now, dt);
                             break;
                         case 'voidRailgun':
                             this.fireRailgun(weaponId, weaponDef, weaponState, level, now);
@@ -11392,116 +11385,72 @@
             // Lobs 1+ shells onto the densest nearby pack, spreading multiple shells across
             // separate clusters (excludes spots already claimed by an earlier shell this
             // volley). Shells fly on a parabolic arc and blast on landing.
-            fireMortar(id, def, state, level, now) {
-                const fireRate = def.baseFireRate * Math.pow(0.985, level - 1) / this.attackSpeedMultiplier;
-                if (now - (state.lastFire || 0) < fireRate) return;
+            // === ENCORE (V1_379, replaces Plasma Mortar) ===
+            // A spectral BOO retraces the player's path from `delay` ms ago and burns
+            // everything inside its aura. The trail clock accumulates game dt (not wall
+            // time) so pauses don't teleport the ghost. Lv7+ adds a second ghost twice
+            // as far behind. Not a volley weapon — Split Fire / Barrage don't apply.
+            updateEncore(id, def, state, level, now, dt) {
+                if (!state.trail) { state.trail = []; state.clock = 0; }
+                state.clock += dt;
+                const trail = state.trail;
+                trail.push({ x: this.x, y: this.y, t: state.clock });
+                while (trail.length && trail[0].t < state.clock - 6500) trail.shift();
 
-                const range = Math.min(520, ONSCREEN_RANGE_CAP);
-                const cand = [];
-                const addCands = (arr) => {
-                    for (const e of arr) {
-                        if (e.dead) continue;
-                        if (Math.hypot(e.x - this.x, e.y - this.y) >= range) continue;
-                        cand.push(e);
-                    }
-                };
-                addCands(enemies); addCands(bosses); addCands(leprechauns);
-                if (cand.length === 0) return; // hold the volley until something's in range
+                // echo rides ~1.2s behind — close enough to sweep the tail of enemies
+                // chasing a kiting player. Lv7 adds a second ghost twice as far back.
+                const delay = Math.max(900, 1200 - (level - 1) * 40);
+                const delays = level >= 7 ? [delay, delay * 2] : [delay];
+                const auraR = (def.baseAura + level * 2) * this.sizeMultiplier;
 
-                state.lastFire = now;
-                SFX.wMortarLaunch();
-
-                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
-                const blastRadius = (def.blastRadius + 5 * level) * this.sizeMultiplier;
-                let shellCount = 1 + Math.floor(level / 4);
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) shellCount++;
-                shellCount += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
-
-                if (!state.shells) state.shells = [];
-                const placed = [];
-                for (let i = 0; i < shellCount; i++) {
-                    // Densest cluster, de-weighting spots already claimed by an earlier shell.
-                    let best = null, bestScore = -Infinity;
-                    for (const e of cand) {
-                        let score = 0;
-                        for (const o of cand) {
-                            if (Math.hypot(o.x - e.x, o.y - e.y) < 90) score++;
+                // resolve ghost positions by interpolating the trail. A ghost within
+                // 60px of the player is RESTING (deals nothing): standing still merges
+                // your echo into you — moving is what turns the weapon on.
+                state.ghosts = [];
+                for (const d of delays) {
+                    const target = state.clock - d;
+                    for (let i = trail.length - 1; i > 0; i--) {
+                        if (trail[i - 1].t <= target) {
+                            const A = trail[i - 1], B = trail[i];
+                            const k = (target - A.t) / Math.max(1, B.t - A.t);
+                            const gx = A.x + (B.x - A.x) * k, gy = A.y + (B.y - A.y) * k;
+                            state.ghosts.push({ x: gx, y: gy, resting: Math.hypot(gx - this.x, gy - this.y) < 60 });
+                            break;
                         }
-                        for (const p of placed) {
-                            if (Math.hypot(p.x - e.x, p.y - e.y) < 110) score -= 8;
-                        }
-                        if (score > bestScore) { bestScore = score; best = e; }
                     }
-                    if (!best) break;
-
-                    const tx = best.x + (Math.random() - 0.5) * 24;
-                    const ty = best.y + (Math.random() - 0.5) * 24;
-                    placed.push({ x: tx, y: ty });
-
-                    const dist = Math.hypot(tx - this.x, ty - this.y);
-                    const flightMs = (820 + dist * 0.35) / this.projSpeedMultiplier; // Tome of Velocity: faster shells
-                    state.shells.push({
-                        sx: this.x, sy: this.y, tx, ty,
-                        startTime: now + i * 140,
-                        flightMs,
-                        impactTime: now + i * 140 + flightMs,
-                        damage: baseDamage,
-                        radius: blastRadius,
-                        exploded: false
-                    });
                 }
-            }
+                if (!state.ghosts.length) return;
 
-            // Advances in-flight mortar shells and detonates them on arrival (same
-            // called-from-Player.update pattern as updateMeteors above).
-            updateMortarShells(state, now) {
-                if (!state.shells) return;
+                // damage tick (toxicAura-style global gate)
+                const tickRate = def.tickRate / this.attackSpeedMultiplier;
+                if (state.clock - (state.lastTick || 0) < tickRate) return;
+                state.lastTick = state.clock;
+                const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
-                for (let i = state.shells.length - 1; i >= 0; i--) {
-                    const shell = state.shells[i];
-
-                    if (!shell.exploded && now >= shell.impactTime) {
-                        shell.exploded = true;
-                        const r2 = shell.radius * shell.radius;
-
-                        for (const enemy of enemies) {
-                            if (enemy.dead) continue;
-                            const dx = enemy.x - shell.tx, dy = enemy.y - shell.ty;
-                            if (dx * dx + dy * dy >= r2) continue;
-                            const { damage, isCrit } = this.calcDamage(shell.damage);
-                            enemy.takeDamage(damage, isCrit);
-                            this.onDealDamage(damage);
-                            applyStatusEffects(enemy, damage);
-                            enemy.applyKnockback(Math.atan2(enemy.y - shell.ty, enemy.x - shell.tx), 14);
-                        }
-                        for (const lep of leprechauns) {
-                            if (lep.dead) continue;
-                            const dx = lep.x - shell.tx, dy = lep.y - shell.ty;
-                            if (dx * dx + dy * dy >= r2) continue;
-                            const { damage, isCrit } = this.calcDamage(shell.damage);
-                            lep.takeDamage(damage, isCrit);
-                            this.onDealDamage(damage);
-                            lep.applyKnockback(Math.atan2(lep.y - shell.ty, lep.x - shell.tx), 14);
-                        }
-                        for (const boss of bosses) {
-                            if (boss.dead) continue;
-                            const dx = boss.x - shell.tx, dy = boss.y - shell.ty;
-                            if (dx * dx + dy * dy >= r2) continue;
-                            const { damage, isCrit } = this.calcDamage(shell.damage);
-                            boss.takeDamage(damage, isCrit);
-                            this.onDealDamage(damage);
-                            boss.applyKnockback(Math.atan2(boss.y - shell.ty, boss.x - shell.tx), 14);
-                        }
-
-                        spawnParticles(shell.tx, shell.ty, '#ff6600', 14);
-                        spawnParticles(shell.tx, shell.ty, '#ffd24a', 8);
-                        SFX.wMortarBlast();
-                        if (camera.shake && isInPlayerView(shell.tx, shell.ty, 60)) camera.shake(3, 140);
+                for (const g of state.ghosts) {
+                    if (g.resting) continue;
+                    const hitOne = (t) => {
+                        const { damage, isCrit } = this.calcDamage(baseDamage);
+                        t.takeDamage(damage, isCrit);
+                        this.onDealDamage(damage);
+                        return damage;
+                    };
+                    for (const enemy of enemyGrid.query(g.x, g.y, auraR)) {
+                        if (enemy.dead) continue;
+                        if (Math.hypot(enemy.x - g.x, enemy.y - g.y) >= auraR + enemy.radius) continue;
+                        const dmg = hitOne(enemy);
+                        applyStatusEffects(enemy, dmg);
+                        if (Math.random() < 0.3) spawnParticles(enemy.x, enemy.y, def.color, 2);
                     }
-
-                    // Keep exploded shells around briefly so the blast-ring render can fade out.
-                    if (now > shell.impactTime + 400) {
-                        state.shells.splice(i, 1);
+                    for (const lep of leprechauns) {
+                        if (lep.dead) continue;
+                        if (Math.hypot(lep.x - g.x, lep.y - g.y) >= auraR + 12) continue;
+                        hitOne(lep);
+                    }
+                    for (const boss of bosses) {
+                        if (boss.dead) continue;
+                        if (Math.hypot(boss.x - g.x, boss.y - g.y) >= auraR + boss.radius) continue;
+                        hitOne(boss);
                     }
                 }
             }
@@ -13017,45 +12966,53 @@
                         ctx.globalAlpha = 1;
                     }
 
-                    // WP8: Plasma Mortar — shells arc with a fake-altitude lob + dashed landing
-                    // telegraph while in flight, then a double blast ring (orange + gold) on impact.
-                    if (def.type === 'plasmaMortar' && state.shells && state.shells.length) {
+                    // V1_379: Encore — faint shimmer along the recorded path, plus a translucent
+                    // ghost BOO with a layered aura at each echo position. No shadowBlur (glow
+                    // is baked as stacked low-alpha fills, same policy as the beam fix).
+                    if (def.type === 'encore' && state.ghosts && state.ghosts.length) {
                         const nowT = Date.now();
-                        for (const shell of state.shells) {
-                            const tx = camera.screenX(shell.tx), ty = camera.screenY(shell.ty);
-                            if (!shell.exploded) {
-                                const k = Math.min(1, Math.max(0, (nowT - shell.startTime) / shell.flightMs));
-                                const x = camera.screenX(shell.sx + (shell.tx - shell.sx) * k);
-                                const y = camera.screenY(shell.sy + (shell.ty - shell.sy) * k);
-                                const h = camera.scale(Math.sin(Math.PI * k) * 150);
-
-                                ctx.globalAlpha = 0.35 + k * 0.4;
-                                ctx.strokeStyle = '#ff6600'; ctx.lineWidth = camera.scale(2);
-                                ctx.setLineDash([camera.scale(4), camera.scale(4)]);
-                                ctx.beginPath(); ctx.arc(tx, ty, camera.scale(12 - k * 4), 0, Math.PI * 2); ctx.stroke();
-                                ctx.setLineDash([]);
-                                ctx.globalAlpha = 1;
-
-                                ctx.fillStyle = '#ffd24a';
-                                ctx.beginPath(); ctx.arc(x, y - h, camera.scale(6 - k * 1.5), 0, Math.PI * 2); ctx.fill();
-                                ctx.globalAlpha = 0.5;
-                                ctx.fillStyle = '#ff6600';
-                                ctx.beginPath();
-                                ctx.arc(x - camera.scale((shell.tx - shell.sx) * 0.018), y - h + camera.scale(6), camera.scale(4), 0, Math.PI * 2);
-                                ctx.fill();
-                                ctx.globalAlpha = 1;
-                            } else {
-                                const bt = Math.min(1, (nowT - shell.impactTime) / 300);
-                                const e2 = 1 - Math.pow(1 - bt, 2);
-                                const r = camera.scale(shell.radius);
-                                ctx.globalAlpha = Math.max(0, 1 - bt);
-                                ctx.strokeStyle = '#ff6600'; ctx.lineWidth = camera.scale(4 * (1 - bt) + 1);
-                                ctx.beginPath(); ctx.arc(tx, ty, r * e2, 0, Math.PI * 2); ctx.stroke();
-                                ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = camera.scale(2);
-                                ctx.beginPath(); ctx.arc(tx, ty, r * e2 * 0.7, 0, Math.PI * 2); ctx.stroke();
-                                ctx.globalAlpha = 1;
+                        const level = Math.min(20, (state.level || 1) + (state.bonusLevel || 0));
+                        const auraR = camera.scale((def.baseAura + level * 2) * this.sizeMultiplier);
+                        if (state.trail && state.trail.length > 6) {
+                            ctx.globalAlpha = 0.08;
+                            ctx.strokeStyle = def.color; ctx.lineWidth = camera.scale(2); ctx.lineCap = 'round';
+                            ctx.beginPath();
+                            ctx.moveTo(camera.screenX(state.trail[0].x), camera.screenY(state.trail[0].y));
+                            for (let i = 4; i < state.trail.length; i += 4) {
+                                ctx.lineTo(camera.screenX(state.trail[i].x), camera.screenY(state.trail[i].y));
                             }
+                            ctx.stroke();
+                            ctx.globalAlpha = 1;
                         }
+                        state.ghosts.forEach((g, gi) => {
+                            const gx = camera.screenX(g.x), gy = camera.screenY(g.y);
+                            if (!camera.isVisible(g.x, g.y, auraR + 20)) return;
+                            const pulse = (g.resting ? 0.4 : 0.85) + Math.sin(nowT * 0.008 + gi * 2) * 0.15;
+                            if (!g.resting) for (const [rr, al] of [[auraR * 1.4, 0.05], [auraR, 0.09], [auraR * 0.5, 0.15]]) {
+                                ctx.globalAlpha = al * pulse;
+                                ctx.fillStyle = '#00e5ff';
+                                ctx.beginPath(); ctx.arc(gx, gy, rr, 0, Math.PI * 2); ctx.fill();
+                            }
+                            // the ghost boo (dome + zigzag hem, translucent)
+                            const r = camera.scale(12);
+                            const wob = Math.sin(nowT * 0.01 + gi) * camera.scale(2);
+                            ctx.globalAlpha = 0.55 * pulse;
+                            ctx.fillStyle = def.color;
+                            ctx.beginPath(); ctx.arc(gx, gy, r, Math.PI, 0);
+                            ctx.lineTo(gx + r, gy + r * 0.85 + wob);
+                            for (let k = 2; k >= -2; k--) {
+                                ctx.lineTo(gx + k * r * 0.4, gy + r * 0.85 + (k % 2 ? r * 0.3 : r * 0.65) + wob * 0.5);
+                            }
+                            ctx.lineTo(gx - r, gy + r * 0.85 + wob);
+                            ctx.closePath(); ctx.fill();
+                            ctx.globalAlpha = 0.8;
+                            ctx.fillStyle = '#04222a';
+                            ctx.beginPath();
+                            ctx.arc(gx - r * 0.33, gy - r * 0.15, r * 0.18, 0, Math.PI * 2);
+                            ctx.arc(gx + r * 0.33, gy - r * 0.15, r * 0.18, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.globalAlpha = 1;
+                        });
                     }
 
                     // WP8: Void Railgun — flickering lock-line + tightening reticle while charging;
@@ -23485,8 +23442,8 @@
             stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => 1 + Math.floor(l / 5) } },
             // WP8: firePhotonScythe: dmg .05, swing radius baseRadius+7*lvl, cd .985 (sweep angle isn't surfaced — no display field for it)
             photonScythe:  { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Radius', fn: (l, d) => d.baseRadius + 7 * l } },
-            // WP8: fireMortar: dmg .05, shells 1+floor(lvl/4), blast blastRadius+5*lvl, cd .985
-            plasmaMortar:  { dmgScale: 0.05, cdScale: 0.985, count: { noun: 'Shell', fn: (l) => 1 + Math.floor(l / 4) }, range: { label: 'Blast', fn: (l, d) => d.blastRadius + 5 * l } },
+            // V1_379: updateEncore: dmg .05, ghosts 1 (2 at Lv7+), aura baseAura+2*lvl, continuous tick (cd null)
+            encore:        { dmgScale: 0.05, cdScale: null,  count: { noun: 'Ghost', fn: (l) => l >= 7 ? 2 : 1 }, range: { label: 'Aura', fn: (l, d) => d.baseAura + 2 * l } },
             // WP8: fireRailgun: dmg .14, rail half-width 5+0.7*lvl (single ray, no count); charge phase (cd .96) is the only part of its cycle that speeds up with level
             voidRailgun:   { dmgScale: 0.14, cdScale: 0.96,  range: { label: 'Width', fn: (l) => 5 + 0.7 * l } }
         };
@@ -27211,7 +27168,7 @@
             'spectralArrows', 'ricochetDisc', 'gravityWell',
             'starField', 'meteorStrike', 'spiritOrbs', 'pulseMine',
             'shotgun', 'lighthouse', 'stormSentry',
-            'photonScythe', 'plasmaMortar', 'voidRailgun'
+            'photonScythe', 'encore', 'voidRailgun'
         ];
         
         // Player color options (neon palette, cold to hot)
@@ -27794,35 +27751,38 @@
                 ctx.globalAlpha = 1;
                 _wpReset(ctx);
             },
-            // 💣 Plasma Mortar — a shell lobs across on a fake-altitude arc with a dashed
-            // landing telegraph, then a double blast ring (orange + gold) on impact.
-            plasmaMortar(ctx, t, w, h, color) {
-                const period = 1.4, p = (t % period) / period;
-                const sxp = 14, syp = h - 8, txp = w - 20, typ = h - 8;
+            // 👻 Encore (V1_379) — a bright "player" dot runs a sine path; a translucent ghost
+            // boo with a soft aura retraces the exact same path a beat behind it.
+            encore(ctx, t, w, h, color) {
+                const cy = h / 2;
+                const pathAt = (ph) => ({ x: 10 + ph * (w - 20), y: cy + Math.sin(ph * Math.PI * 2.2) * 8 });
+                const p = (t * 0.45) % 1;
+                const gp = ((t * 0.45) - 0.28 + 1) % 1;
                 ctx.globalCompositeOperation = 'lighter'; ctx.shadowColor = color;
-                if (p < 0.72) {
-                    const k = p / 0.72;
-                    const x = sxp + (txp - sxp) * k, y = syp + (typ - syp) * k;
-                    const arc = Math.sin(Math.PI * k) * 16;
-                    ctx.globalAlpha = 0.3 + k * 0.4; ctx.strokeStyle = color; ctx.lineWidth = 1.2;
-                    ctx.setLineDash([2.5, 2.5]);
-                    ctx.beginPath(); ctx.arc(txp, typ, 5 - k * 1.5, 0, TAU); ctx.stroke();
-                    ctx.setLineDash([]);
-                    ctx.globalAlpha = 1;
-                    ctx.fillStyle = '#ffd24a'; ctx.shadowBlur = 5;
-                    ctx.beginPath(); ctx.arc(x, y - arc, 2.6, 0, TAU); ctx.fill();
-                    ctx.globalAlpha = 0.5; ctx.fillStyle = color;
-                    ctx.beginPath(); ctx.arc(x, y - arc + 3, 1.8, 0, TAU); ctx.fill();
-                    ctx.globalAlpha = 1;
-                } else {
-                    const bp = (p - 0.72) / 0.28;
-                    const e2 = 1 - Math.pow(1 - bp, 2);
-                    ctx.globalAlpha = 1 - bp; ctx.strokeStyle = color; ctx.lineWidth = 2.5 * (1 - bp) + 0.6; ctx.shadowBlur = 8;
-                    ctx.beginPath(); ctx.arc(txp, typ, 14 * e2, 0, TAU); ctx.stroke();
-                    ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 1.4;
-                    ctx.beginPath(); ctx.arc(txp, typ, 14 * e2 * 0.7, 0, TAU); ctx.stroke();
-                    ctx.globalAlpha = 1;
+                // the path shimmer
+                ctx.globalAlpha = 0.14; ctx.strokeStyle = color; ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let i = 0; i <= 20; i++) { const q = pathAt(i / 20); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); }
+                ctx.stroke();
+                // live player dot (leader)
+                const P2 = pathAt(p);
+                ctx.globalAlpha = 1; ctx.fillStyle = '#00ffff'; ctx.shadowBlur = 5;
+                ctx.beginPath(); ctx.arc(P2.x, P2.y, 3, 0, TAU); ctx.fill();
+                // ghost aura + boo trailing behind on the same path
+                const G = pathAt(gp);
+                const fade = _wpFadeX(G.x, w, 12);
+                for (const [rr, al] of [[11, 0.10], [7, 0.16]]) {
+                    ctx.globalAlpha = al * fade; ctx.fillStyle = color; ctx.shadowBlur = 0;
+                    ctx.beginPath(); ctx.arc(G.x, G.y, rr, 0, TAU); ctx.fill();
                 }
+                ctx.globalAlpha = 0.75 * fade; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 4;
+                ctx.beginPath(); ctx.arc(G.x, G.y, 4.2, Math.PI, 0);
+                ctx.lineTo(G.x + 4.2, G.y + 3.4);
+                for (let k = 1; k >= -1; k--) ctx.lineTo(G.x + k * 2.1, G.y + (k % 2 ? 2.2 : 4.4));
+                ctx.lineTo(G.x - 4.2, G.y + 3.4);
+                ctx.closePath(); ctx.fill();
+                ctx.globalAlpha = fade; ctx.fillStyle = '#04222a'; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(G.x - 1.4, G.y - 0.6, 0.8, 0, TAU); ctx.arc(G.x + 1.4, G.y - 0.6, 0.8, 0, TAU); ctx.fill();
                 _wpReset(ctx);
             },
             // 🛰️ Void Railgun — flickering dashed lock-line + tightening reticle, then an
