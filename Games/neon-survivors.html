@@ -8786,6 +8786,34 @@
             projectiles: { name: 'Barrage', icon: '🎇', color: '#ff9f43', desc: '+1 Projectile', stat: 'bonusProjectiles', value: 1, preview: 'barrage' } // V1_377: Kevin — shrines can now roll flat +1 projectile count (capped +2 in applyPassives)
         };
 
+        // ===== BUILD-AWARE OFFER GATING (V1_384, Kevin) =====
+        // A stat is only OFFERED once the player owns a weapon that can use it —
+        // no dead picks. Each list mirrors the actual consumer call sites of its
+        // stat (grep bonusProjectiles / projSpeedMultiplier / durationMultiplier).
+        const VOLLEY_WEAPONS = ['energyBolt', 'thunderStrike', 'boomerang', 'iceShard', 'spiritOrbs', 'spectralArrows', 'shotgun'];   // bonusProjectiles (Barrage)
+        const PROJSPEED_WEAPONS = ['energyBolt', 'boomerang', 'iceShard', 'spiritOrbs', 'spectralArrows', 'ricochetDisc', 'shotgun']; // projSpeedMultiplier (Tome of Velocity)
+        const PERSIST_WEAPONS = ['flameThrower', 'iceShard', 'gravityWell', 'pulseMine', 'stormSentry', 'toxicAura'];                 // durationMultiplier (Tome of Persistence)
+        function playerHasAnyWeapon(list) {
+            return !!(player && player.weapons && list.some(id => player.weapons[id]));
+        }
+        // Central blessing pool — every offer surface (shrine, chest, pot of gold,
+        // shop) draws from this instead of Object.keys(SHRINE_POWERUPS) directly.
+        function shrinePowerupPool() {
+            return Object.keys(SHRINE_POWERUPS).filter(id => {
+                if (id === 'projectiles') {
+                    if (!playerHasAnyWeapon(VOLLEY_WEAPONS)) return false; // no volley weapon — dead stat
+                    if (player && (player.shrineBonuses.bonusProjectiles || 0) >= 2) return false; // already at the +2 cap
+                }
+                return true;
+            });
+        }
+        // Tome-offer gate, applied by both level-up offer builders.
+        function tomeOfferAllowed(id) {
+            if (id === 'velocityTome') return playerHasAnyWeapon(PROJSPEED_WEAPONS);
+            if (id === 'persistTome') return playerHasAnyWeapon(PERSIST_WEAPONS);
+            return true;
+        }
+
         // ===== PLAYER CLASS =====
         class Player {
             constructor() {
@@ -14709,7 +14737,7 @@
             const legendaryOfferCount = 0;
             
             // Fill all 3 slots with shrine powerups
-            const powerupIds = Object.keys(SHRINE_POWERUPS);
+            const powerupIds = shrinePowerupPool(); // V1_384: build-aware pool
             for (let i = 0; i < 3; i++) {
                 const randomId = powerupIds[Math.floor(Math.random() * powerupIds.length)];
                 const powerup = SHRINE_POWERUPS[randomId];
@@ -16567,7 +16595,7 @@
                     };
                 } else {
                     // Random shrine powerup
-                    const powerupIds = Object.keys(SHRINE_POWERUPS);
+                    const powerupIds = shrinePowerupPool(); // V1_384: build-aware pool
                     const randomId = powerupIds[Math.floor(Math.random() * powerupIds.length)];
                     const powerup = SHRINE_POWERUPS[randomId];
                     return { 
@@ -17359,7 +17387,7 @@
             }
 
             rollItems() {
-                const pool = Object.keys(SHRINE_POWERUPS);
+                const pool = shrinePowerupPool(); // V1_384: build-aware pool
                 const picks = [];
                 for (let i = 0; i < 3 && pool.length > 0; i++) {
                     const idx = Math.floor(Math.random() * pool.length);
@@ -20493,6 +20521,7 @@
 
             // Add all tomes (each rolls for rarity dynamically)
             for (const [id, def] of Object.entries(TOMES)) {
+                if (!tomeOfferAllowed(id)) continue; // V1_384: no dead-stat offers
                 const rarity = rollRarity(); // Roll rarity for each tome
                 available.push({
                     ...def,
@@ -22207,7 +22236,7 @@
             DOM.shrineOptions.innerHTML = '';
             
             // Pick 3 random powerups
-            const powerupKeys = Object.keys(SHRINE_POWERUPS);
+            const powerupKeys = shrinePowerupPool(); // V1_384: build-aware pool
             const shuffled = powerupKeys.sort(() => Math.random() - 0.5).slice(0, 3);
             shrineSlotResults = shuffled.map(key => ({ key, ...SHRINE_POWERUPS[key] }));
             
@@ -23263,6 +23292,7 @@
             for (const [id, def] of Object.entries(TOMES)) {
                 // Skip disabled tomes (from tome editor)
                 if (disabledTomes.has(id)) continue;
+                if (!tomeOfferAllowed(id)) continue; // V1_384: no dead-stat offers (Velocity w/o projectile weapon, Persistence w/o duration weapon)
                 
                 const tomeData = player.tomes[id];
                 const level = tomeData?.level || 0;
