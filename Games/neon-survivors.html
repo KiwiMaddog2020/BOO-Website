@@ -8531,7 +8531,7 @@
                 name: 'Storm Sentry',
                 icon: '🗼',
                 color: '#66e0ff',
-                desc: 'Deploys a zapping sentry',
+                desc: 'Roving zap turret escorts you', // V1_378: rover AI rework
                 baseDamage: 14, // V1_376 measured-DPS pass: +56% (was 9) — roster floor at 37 swarm / 34 tank DPS (Lv7), weak in both arenas
                 baseFireRate: 5200,
                 sentryLife: 9000,
@@ -15060,6 +15060,53 @@
                 }
 
                 this.orbAngle += 0.06 * (dt / 16);
+
+                // V1_378: rover AI (Kevin) — the sentry is no longer static. It escorts the
+                // player (hard catch-up beyond the leash) and otherwise creeps toward the
+                // nearest enemy until it has a comfortable firing solution, then parks.
+                // Deliberate rover-bot pace — nothing like a pet.
+                if (player) {
+                    const ROVER_SPEED = 0.55;          // px/frame — slow, deliberate
+                    const LEASH = 260;                 // beyond this, catching up to the player wins
+                    const step = (dt / 16);
+                    const dpx = player.x - this.x, dpy = player.y - this.y;
+                    const distToPlayer = Math.hypot(dpx, dpy) || 1;
+                    let mx = 0, my = 0;
+                    if (distToPlayer > LEASH) {
+                        // fell behind — hustle back toward the player (1.6x rover speed)
+                        mx = (dpx / distToPlayer) * ROVER_SPEED * 1.6;
+                        my = (dpy / distToPlayer) * ROVER_SPEED * 1.6;
+                    } else {
+                        // in escort range — hunt a firing position on the nearest enemy
+                        const zr = this.def.zapRange;
+                        let tgt = null, td = zr * 2;
+                        for (const e2 of enemyGrid.query(this.x, this.y, zr * 2)) {
+                            if (e2.dead) continue;
+                            const d2 = Math.hypot(e2.x - this.x, e2.y - this.y);
+                            if (d2 < td) { td = d2; tgt = e2; }
+                        }
+                        if (tgt && td > zr * 0.6) {
+                            // creep in until the target sits comfortably inside zap range,
+                            // but never wander past the player leash
+                            const ex = (tgt.x - this.x) / td, ey = (tgt.y - this.y) / td;
+                            const nx = this.x + ex * ROVER_SPEED * step, ny = this.y + ey * ROVER_SPEED * step;
+                            if (Math.hypot(player.x - nx, player.y - ny) <= LEASH) { mx = ex * ROVER_SPEED; my = ey * ROVER_SPEED; }
+                        } else if (!tgt && distToPlayer > 130) {
+                            // quiet field — drift back to the player's side
+                            mx = (dpx / distToPlayer) * ROVER_SPEED * 0.7;
+                            my = (dpy / distToPlayer) * ROVER_SPEED * 0.7;
+                        }
+                    }
+                    if (mx || my) {
+                        this.x += mx * step;
+                        this.y += my * step;
+                        // sparse thruster motes so the motion reads as powered
+                        if (!this._lastPuff || now - this._lastPuff > 420) {
+                            this._lastPuff = now;
+                            spawnParticles(this.x - mx * 8, this.y - my * 8 + this.radius * 0.4, this.def.color, 2);
+                        }
+                    }
+                }
 
                 const zapRate = this.def.zapRate / ((player && player.attackSpeedMultiplier) || 1);
                 if (now - this.lastZap < zapRate) return;
