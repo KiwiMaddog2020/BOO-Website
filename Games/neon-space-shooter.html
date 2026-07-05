@@ -837,6 +837,7 @@
         </div>
     </div>
 
+    <script src="boo-music.js"></script>
     <script>
         // V1_174: CORS-redacted "Script error." suppressor (mirrors tower-defense
         // and brickbreaker) — keeps the WebView console clean for App Review
@@ -915,8 +916,9 @@
             }
             return {
                 get muted() { return muted; },
+                audioCtx: ensure, // V1_389: shared context for the music engine (one ctx total — iOS limit)
                 unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
-                setMuted: function (m) { muted = !!m; try { localStorage.setItem('spaceshooter_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('spaceshooter_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; if (window.MUSIC) MUSIC.setMuted(muted); }, // V1_389: mute silences music too
                 toggle: function () { this.setMuted(!muted); return muted; },
                 setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
                 tone: tone, noise: noise, gate: gate,
@@ -962,6 +964,87 @@
             mb.addEventListener('click', function (e) { e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
             mb.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
         })();
+
+        // ===== NEON SPACE SHOOTER MUSIC (V1_389) — retro shmup, C minor / D# major =====
+        // Title "Launch Bay" (104) · "Star Run" (164, Cm) · "Photon Belt" (156, D# relative major) · Over "Re-Entry" (80)
+        const BOO_TRACKS = {
+            title: {
+                bpm: 104, bars: 8, v1: 0.10, v2: 0.045, vb: 0.18, d1: 0.5, d2: 0.25,
+                bass: ['C3:8 G2:4 C3:4', 'G#2:8 D#3:4 G#2:4', 'A#2:8 F3:4 A#2:4', 'G2:8 D3:4 G2:4',
+                       'C3:8 G2:4 C3:4', 'G#2:8 D#3:4 G#2:4', 'F2:8 C3:4 F2:4', 'G2:8 B2:4 D3:4'],
+                p2: ['C4 G4 C5 D#5 C5 G4 C5 D#5', 'G#3 D#4 G#4 C5 G#4 D#4 G#4 C5', 'A#3 F4 A#4 D5 A#4 F4 A#4 D5', 'G3 D4 G4 B4 G4 D4 G4 B4',
+                     'C4 G4 C5 D#5 C5 G4 C5 D#5', 'G#3 D#4 G#4 C5 G#4 D#4 G#4 C5', 'F3 C4 F4 G#4 F4 C4 F4 G#4', 'G3 D4 G4 B4 D5 B4 G4 D4'],
+                p1: ['.:16', '.:16', 'G5:6 D#5:2 C5:8', 'D5:8 A#4:8', 'C5:6 D5:2 D#5:8', 'G#4:8 C5:4 D#5:4', 'F5:4 D#5:4 D5:4 C5:4', 'B4:12 .:4'],
+                drums: ['k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.',
+                        'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k...s...']
+            },
+            starrun: { // "Star Run" — Cm shmup drive
+                bpm: 164, bars: 16, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125,
+                bass: ['C3 C3 G2 C3 C3 A#2 G2 F2', 'C3 C3 G2 C3 D#3 D3 C3 A#2', 'G#2 G#2 D#3 G#2 G#2 G2 F2 D#2', 'G#2 G#2 D#3 G#2 C3 A#2 G#2 G2',
+                       'A#2 A#2 F3 A#2 A#2 G#2 G2 F2', 'A#2 A#2 F3 A#2 D3 C3 A#2 A2', 'G2 G2 D3 G2 G2 F2 D#2 D2', 'G2 G2 D3 G2 B2 D3 F3 G3',
+                       'C3 C3 G2 C3 C3 A#2 G2 F2', 'C3 C3 G2 C3 D#3 D3 C3 A#2', 'G#2 G#2 D#3 G#2 G#2 G2 F2 D#2', 'G#2 G#2 D#3 G#2 C3 A#2 G#2 G2',
+                       'F2 F2 C3 F2 F2 D#3 D3 C3', 'G#2 G#2 D#3 G#2 C3 D#3 G3 G#3', 'G2 G2 D3 G2 B2 D3 F3 G3', 'C3:4 C3:4 C3:4 C3:4'],
+                p1: ['C5:2 D#5:2 G5:4 F5:2 D#5:2 F5:4', 'D#5:2 C5:2 A#4:4 C5:8', 'C5:2 D#5:2 G#5:4 G5:2 F5:2 D#5:4', 'F5:2 D#5:2 C5:4 D#5:8',
+                     'D5:2 F5:2 A#5:4 G#5:2 F5:2 D5:4', 'A#5:4 G#5:2 F5:2 D5:8', 'B4:2 D5:2 G5:4 F5:2 D5:2 B4:4', 'D5:4 B4:4 G4:8',
+                     'C5:2 D#5:2 G5:4 F5:2 D#5:2 F5:4', 'D#5:2 C5:2 A#4:4 C5:8', 'C5:2 D#5:2 G#5:4 G5:2 F5:2 D#5:4', 'F5:2 D#5:2 C5:4 D#5:8',
+                     'G#5:8 F5:8', 'C6:4 A#5:4 G#5:8', 'G5:2 F5:2 D5:2 B4:2 D5:4 F5:4', 'D#5:2 D5:2 C5:2 G4:2 C5:8'],
+                p2: ['.:2 G4:2 .:2 G4:2 .:2 G4:2 .:2 G4:2', '.:2 G4:2 .:2 G4:2 .:2 G4:2 .:2 G4:2',
+                     '.:2 D#4:2 .:2 D#4:2 .:2 D#4:2 .:2 D#4:2', '.:2 D#4:2 .:2 D#4:2 .:2 D#4:2 .:2 D#4:2',
+                     '.:2 F4:2 .:2 F4:2 .:2 F4:2 .:2 F4:2', '.:2 F4:2 .:2 F4:2 .:2 F4:2 .:2 F4:2',
+                     '.:2 D4:2 .:2 D4:2 .:2 D4:2 .:2 D4:2', '.:2 D4:2 .:2 D4:2 .:2 D4:2 .:2 D4:2',
+                     'C4:1 D#4:1 G4:1 C5:1 C4:1 D#4:1 G4:1 C5:1 C4:1 D#4:1 G4:1 C5:1 C4:1 D#4:1 G4:1 C5:1',
+                     'C4:1 D#4:1 G4:1 C5:1 C4:1 D#4:1 G4:1 C5:1 C4:1 D#4:1 G4:1 C5:1 C4:1 D#4:1 G4:1 C5:1',
+                     'G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1',
+                     'G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1',
+                     'F3:1 G#3:1 C4:1 F4:1 F3:1 G#3:1 C4:1 F4:1 F3:1 G#3:1 C4:1 F4:1 F3:1 G#3:1 C4:1 F4:1',
+                     'G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1 G#3:1 C4:1 D#4:1 G#4:1',
+                     '.:2 D4:2 .:2 D4:2 .:2 D4:2 .:2 D4:2', 'G4:4 G4:4 G4:4 G4:4'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.ssss']
+            },
+            photon: { // "Photon Belt" — D# major relative lift
+                bpm: 156, bars: 16, v1: 0.105, v2: 0.05, vb: 0.19, d1: 0.25, d2: 0.125,
+                bass: ['D#3 D#3 A#2 D#3 D#3 D3 C3 A#2', 'D#3 D#3 A#2 D#3 G3 F3 D#3 D3', 'G#2 G#2 D#3 G#2 G#2 G2 F2 D#2', 'G#2 G#2 D#3 G#2 C3 A#2 G#2 G2',
+                       'A#2 A#2 F3 A#2 A#2 G#2 G2 F2', 'A#2 A#2 F3 A#2 D3 C3 A#2 A2', 'C3 C3 G2 C3 D#3 D3 C3 A#2', 'A#2 A#2 F3 A#2 D3 F3 G#3 A#3',
+                       'D#3 D#3 A#2 D#3 D#3 D3 C3 A#2', 'D#3 D#3 A#2 D#3 G3 F3 D#3 D3', 'G#2 G#2 D#3 G#2 G#2 G2 F2 D#2', 'G#2 G#2 D#3 G#2 C3 A#2 G#2 G2',
+                       'C3 C3 G2 C3 C3 A#2 G#2 G2', 'G#2 G#2 D#3 G#2 C3 D#3 G3 G#3', 'A#2 A#2 F3 A#2 D3 F3 G#3 A#3', 'D#3:4 D#3:4 D#3:4 D#3:4'],
+                p1: ['D#5:2 G5:2 A#5:4 G#5:2 G5:2 G#5:4', 'G5:2 D#5:2 D5:4 D#5:8', 'D#5:2 G#5:2 C6:4 A#5:2 G#5:2 G5:4', 'G#5:2 G5:2 D#5:4 G5:8',
+                     'F5:2 A#5:2 D6:4 C6:2 A#5:2 F5:4', 'A#5:4 G#5:2 F5:2 D5:8', 'G5:2 C6:2 D#6:4 D6:2 C6:2 G5:4', 'A#5:4 D6:4 F6:8',
+                     'D#5:2 G5:2 A#5:4 G#5:2 G5:2 G#5:4', 'G5:2 D#5:2 D5:4 D#5:8', 'D#5:2 G#5:2 C6:4 A#5:2 G#5:2 G5:4', 'G#5:2 G5:2 D#5:4 G5:8',
+                     'G#5:8 C6:8', 'G#5:4 G5:4 F5:8', 'F5:2 G5:2 G#5:2 A#5:2 D6:4 A#5:4', 'D#6:4 A#5:4 G5:8'],
+                p2: ['A#3:8 G4:8', 'A#3:8 G4:8', 'C4:8 G#4:8', 'C4:8 G#4:8', 'D4:8 A#4:8', 'D4:8 A#4:8', 'D#4:8 C5:8', 'D4:8 A#4:8',
+                     'A#3:8 G4:8', 'A#3:8 G4:8', 'C4:8 G#4:8', 'C4:8 G#4:8', 'D#4:8 C5:8', 'C4:8 G#4:8', 'D4:8 A#4:8', 'D#4:8 G4:8'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.s.ss']
+            },
+            over: { // "Re-Entry" — Cm descent, once
+                bpm: 80, bars: 4, v1: 0.10, v2: 0.05, vb: 0.17, d1: 0.5, d2: 0.25, once: true,
+                bass: ['C3:16', 'G#2:16', 'F2:16', 'G2:16'],
+                p2: ['C3:4 D#3:4 G3:4 C4:4', 'G#2:4 C3:4 D#3:4 G#3:4', 'F2:4 G#2:4 C3:4 F3:4', 'G2:4 B2:4 D3:4 G3:4'],
+                p1: ['G4:8 D#4:4 C4:4', 'D#4:6 F4:2 D#4:4 C4:4', 'F4:8 G#4:8', 'G4:2 F4:2 D4:4 B3:8'],
+                drums: ['k...............', 'k...............', 'k...............', '................']
+            }
+        };
+
+        // ===== V1_389: MUSIC — shared procedural chiptune engine (boo-music.js) =====
+        // States: menu (title theme "Launch Bay") / game (Star Run + Photon Belt
+        // rotation, 2 loops each) / gameover ("Re-Entry" sting once, then back to
+        // the title theme — handled inside the engine). No pause mechanic exists
+        // in this game, so the low-pass duck on pause is effectively unused here.
+        const MUSIC = createBooMusic({
+            audioCtx: SFX.audioCtx,
+            isPaused: function () { return false; },
+            tracks: BOO_TRACKS,
+            playlist: ['starrun', 'photon']
+        });
+        window.MUSIC = MUSIC;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { MUSIC.unlock(); }, { once: true, passive: true });
+        });
 
         // ========== CONFIGURATION ==========
         const TWO_PI = Math.PI * 2;
@@ -1425,6 +1508,7 @@
         function startGame() {
             initGame();
             gameState = 'playing';
+            if (window.MUSIC) MUSIC.setState('game'); // V1_389: music — rotate the in-game songs
             startScreen.classList.remove('active');
             gameOverScreen.classList.remove('active');
             upgradeOverlay.classList.remove('active');
@@ -2946,6 +3030,7 @@
 
         function endGame() {
             gameState = 'gameover';
+            if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music — Re-Entry sting, then the title theme
             SFX.gameover();
             finalScore.textContent = score.toLocaleString();
             finalWave.textContent = wave;

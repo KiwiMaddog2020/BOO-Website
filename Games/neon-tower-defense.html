@@ -3410,6 +3410,7 @@
     <!-- Sound toggle: body-level fixed element so it stays visible in windowed AND fullscreen/iframe modes -->
     <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:fixed;top:8px;left:8px;z-index:9999;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
 
+    <script src="boo-music.js"></script>
     <script>
         // ===== Synth WebAudio SFX engine (BOO Tower Defense) =====
         const SFX = (function () {
@@ -3464,9 +3465,10 @@
             }
             return {
                 get muted() { return muted; },
+                audioCtx: ensure, // V1_389: shared context for the music engine (one ctx total — iOS limit)
                 unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
                 suspend: function () { if (actx && actx.state === 'running') actx.suspend().catch(function () {}); },
-                setMuted: function (m) { muted = !!m; try { localStorage.setItem('towerdefense_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('towerdefense_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; if (window.MUSIC) MUSIC.setMuted(muted); }, // V1_389: mute silences music too
                 toggle: function () { this.setMuted(!muted); return muted; },
                 setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
                 tone: tone, noise: noise, gate: gate,
@@ -3529,6 +3531,82 @@
           function r(){ mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true':'false'); } r();
           mb.addEventListener('click', function(e){ e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
           mb.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:true}); })();
+
+        // ===== V1_389: MUSIC — shared BOO chiptune engine (boo-music.js) =====
+        // ===== BOO TOWER DEFENSE MUSIC (V1_389) — martial strategy, D dorian/minor =====
+        // Title "War Table" (100) · "Hold the Line" (132 march) · "Wave Break" (140) · Over "Last Stand" (76)
+        const BOO_TRACKS = {
+            title: {
+                bpm: 100, bars: 8, v1: 0.10, v2: 0.045, vb: 0.18, d1: 0.5, d2: 0.25,
+                bass: ['D3:8 A2:4 D3:4', 'F2:8 C3:4 F2:4', 'G2:8 D3:4 G2:4', 'A2:8 E3:4 A2:4',
+                       'D3:8 A2:4 D3:4', 'F2:8 C3:4 F2:4', 'C3:8 G2:4 C3:4', 'A2:8 C#3:4 E3:4'],
+                p2: ['D4 A4 D5 F5 D5 A4 D5 F5', 'F3 C4 F4 A4 F4 C4 F4 A4', 'G3 D4 G4 B4 G4 D4 G4 B4', 'A3 E4 A4 C5 A4 E4 A4 C5',
+                     'D4 A4 D5 F5 D5 A4 D5 F5', 'F3 C4 F4 A4 F4 C4 F4 A4', 'C4 G4 C5 E5 C5 G4 C5 E5', 'A3 E4 A4 C#5 E5 C#5 A4 E4'],
+                p1: ['.:16', '.:16', 'D5:8 F5:4 A5:4', 'G5:6 F5:2 E5:8', 'F5:8 D5:4 B4:4', 'A4:16', 'E5:6 D5:2 C5:8', 'C#5:12 .:4'],
+                drums: ['k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.',
+                        'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k...s...']
+            },
+            holdline: { // "Hold the Line" — snare-forward march
+                bpm: 132, bars: 16, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125,
+                bass: ['D3 D3 A2 D3 D3 C3 A2 G2', 'D3 D3 A2 D3 F3 E3 D3 C3', 'A#2 A#2 F3 A#2 A#2 A2 G2 F2', 'A#2 A#2 F3 A#2 D3 C3 A#2 A2',
+                       'F2 F2 C3 F3 F2 E3 D3 C3', 'F2 F2 C3 F3 A2 A#2 C3 E3', 'A2 A2 E3 A3 A2 G3 E3 C#3', 'A2 A2 E3 A3 C#3 E3 G3 A3',
+                       'D3 D3 A2 D3 D3 C3 A2 G2', 'D3 D3 A2 D3 F3 E3 D3 C3', 'A#2 A#2 F3 A#2 A#2 A2 G2 F2', 'A#2 A#2 F3 A#2 D3 C3 A#2 A2',
+                       'G2 G2 D3 G3 G2 F3 D3 A#2', 'G2 G2 D3 G3 A#2 C3 D3 F3', 'A2 A2 E3 A3 C#3 E3 G3 A3', 'A2:4 A2:4 A2:4 A2:4'],
+                p1: ['D5:2 F5:2 A5:4 G5:2 F5:2 G5:4', 'F5:2 D5:2 C5:4 D5:8', 'D5:2 F5:2 A#5:4 A5:2 G5:2 F5:4', 'G5:2 F5:2 D5:4 F5:8',
+                     'A5:4 G5:2 F5:2 C5:8', '.:4 C5:2 D5:2 F5:2 G5:2 A5:4', 'E5:2 G5:2 A5:4 G5:2 E5:2 C#5:4', 'E5:4 C#5:4 A4:8',
+                     'D5:2 F5:2 A5:4 G5:2 F5:2 G5:4', 'F5:2 D5:2 C5:4 D5:8', 'D5:2 F5:2 A#5:4 A5:2 G5:2 F5:4', 'G5:2 F5:2 D5:4 F5:8',
+                     'G5:8 A#5:8', 'A5:4 G5:4 F5:4 D5:4', 'E5:2 F5:2 G5:2 A5:2 C#5:4 E5:4', 'D5:12 A4:4'],
+                p2: ['.:2 A4:2 .:2 A4:2 .:2 A4:2 .:2 A4:2', '.:2 A4:2 .:2 A4:2 .:2 A4:2 .:2 A4:2',
+                     '.:2 F4:2 .:2 F4:2 .:2 F4:2 .:2 F4:2', '.:2 F4:2 .:2 F4:2 .:2 F4:2 .:2 F4:2',
+                     '.:2 A4:2 .:2 A4:2 .:2 A4:2 .:2 A4:2', '.:2 A4:2 .:2 A4:2 .:2 A4:2 .:2 A4:2',
+                     '.:2 C#5:2 .:2 C#5:2 .:2 C#5:2 .:2 C#5:2', '.:2 C#5:2 .:2 C#5:2 .:2 C#5:2 .:2 C#5:2',
+                     'D4:1 F4:1 A4:1 D5:1 D4:1 F4:1 A4:1 D5:1 D4:1 F4:1 A4:1 D5:1 D4:1 F4:1 A4:1 D5:1',
+                     'D4:1 F4:1 A4:1 D5:1 D4:1 F4:1 A4:1 D5:1 D4:1 F4:1 A4:1 D5:1 D4:1 F4:1 A4:1 D5:1',
+                     'A#3:1 D4:1 F4:1 A#4:1 A#3:1 D4:1 F4:1 A#4:1 A#3:1 D4:1 F4:1 A#4:1 A#3:1 D4:1 F4:1 A#4:1',
+                     'A#3:1 D4:1 F4:1 A#4:1 A#3:1 D4:1 F4:1 A#4:1 A#3:1 D4:1 F4:1 A#4:1 A#3:1 D4:1 F4:1 A#4:1',
+                     'G3:1 A#3:1 D4:1 G4:1 G3:1 A#3:1 D4:1 G4:1 G3:1 A#3:1 D4:1 G4:1 G3:1 A#3:1 D4:1 G4:1',
+                     'G3:1 A#3:1 D4:1 G4:1 G3:1 A#3:1 D4:1 G4:1 G3:1 A#3:1 D4:1 G4:1 G3:1 A#3:1 D4:1 G4:1',
+                     '.:2 C#5:2 .:2 C#5:2 .:2 C#5:2 .:2 C#5:2', 'A4:4 A4:4 A4:4 A4:4'],
+                drums: ['k...s...k...s...', 'k...s...k...s.s.', 'k...s...k...s...', 'k...s...k...s.s.',
+                        'k...s...k...s...', 'k...s...k...s.s.', 'k...s...k...s...', 'k...s.s.k.s.s.s.',
+                        'k.h.s...k.h.s...', 'k.h.s...k.h.s.s.', 'k.h.s...k.h.s...', 'k.h.s...k.h.s.s.',
+                        'k.h.s...k.h.s...', 'k.h.s...k.h.s.s.', 'k.h.s...k.h.s...', 'k.s.s.s.k.s.ssss']
+            },
+            wavebreak: { // "Wave Break" — F lift into Dm tension
+                bpm: 140, bars: 16, v1: 0.105, v2: 0.05, vb: 0.19, d1: 0.25, d2: 0.125,
+                bass: ['F2 F2 C3 F3 F2 E3 D3 C3', 'F2 F2 C3 F3 A2 A#2 C3 E3', 'C3 C3 G3 C3 C3 A#2 A2 G2', 'C3 C3 G3 C3 E3 D3 C3 A#2',
+                       'D3 D3 A2 D3 D3 C3 A2 G2', 'D3 D3 A2 D3 F3 E3 D3 C3', 'A#2 A#2 F3 A#2 C3 D3 F3 G3', 'A2 A2 E3 A2 C#3 E3 G3 A3',
+                       'F2 F2 C3 F3 F2 E3 D3 C3', 'F2 F2 C3 F3 A2 A#2 C3 E3', 'C3 C3 G3 C3 C3 A#2 A2 G2', 'C3 C3 G3 C3 E3 D3 C3 A#2',
+                       'A#2 A#2 F3 A#2 A#2 A2 G2 F2', 'G2 G2 D3 G3 G2 A#2 D3 F3', 'A2 A2 E3 A2 C#3 E3 G3 A3', 'D3 D3 A3 D3 D3:4 .:2 A2:2'],
+                p1: ['A5:4 G5:2 F5:2 C5:8', '.:4 C5:2 F5:2 G5:2 A5:2 C6:4', 'G5:4 E5:2 C5:2 E5:8', 'D5:2 E5:2 G5:2 E5:2 C5:4 D5:4',
+                     'F5:4 E5:2 D5:2 A4:8', '.:4 A4:2 D5:2 E5:2 F5:2 A5:4', 'F5:2 G5:2 A#5:4 A5:2 G5:2 F5:4', 'E5:4 C#5:4 A4:8',
+                     'A5:4 G5:2 F5:2 C5:8', '.:4 C5:2 F5:2 G5:2 A5:2 C6:4', 'G5:4 E5:2 C5:2 E5:8', 'D5:2 E5:2 G5:2 E5:2 C5:4 D5:4',
+                     'D6:8 C6:8', 'A#5:4 A5:4 G5:8', 'A5:2 G5:2 E5:2 C#5:2 E5:4 G5:4', 'F5:4 E5:4 D5:8'],
+                p2: ['A3:8 C4:8', 'A3:8 C4:8', 'G3:8 E4:8', 'G3:8 E4:8', 'F3:8 A3:8', 'F3:8 A3:8', 'F4:8 D4:8', 'E4:8 C#4:8',
+                     'A3:8 C4:8', 'A3:8 C4:8', 'G3:8 E4:8', 'G3:8 E4:8', 'D4:8 F4:8', 'D4:8 A#3:8', 'E4:8 C#4:8', 'D4:8 F4:8'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.s.ss']
+            },
+            over: { // "Last Stand" — slow Dm lament, once
+                bpm: 76, bars: 4, v1: 0.10, v2: 0.05, vb: 0.17, d1: 0.5, d2: 0.25, once: true,
+                bass: ['D3:16', 'A#2:16', 'G2:16', 'A2:16'],
+                p2: ['D3:4 F3:4 A3:4 D4:4', 'A#2:4 D3:4 F3:4 A#3:4', 'G2:4 A#2:4 D3:4 G3:4', 'A2:4 C#3:4 E3:4 A3:4'],
+                p1: ['A4:8 F4:4 D4:4', 'F4:6 G4:2 F4:4 D4:4', 'G4:8 A#4:8', 'A4:2 G4:2 E4:4 C#4:8'],
+                drums: ['k...............', 'k...............', 'k...............', '................']
+            }
+        };
+        const MUSIC = createBooMusic({
+            audioCtx: SFX.audioCtx,
+            isPaused: function () { return typeof gamePaused !== 'undefined' && gamePaused; }, // V1_389: music — upgrade-selector duck, not a state change
+            tracks: BOO_TRACKS,
+            playlist: ['holdline', 'wavebreak']
+        });
+        window.MUSIC = MUSIC;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { MUSIC.unlock(); }, { once: true, passive: true });
+        });
 
         // ========== FIREBASE CONFIGURATION ==========
         const firebaseConfig = {
@@ -5514,6 +5592,7 @@
         function exitToMenu() {
             // Stop the game
             gameRunning = false;
+            if (window.MUSIC) MUSIC.setState('menu'); // V1_389: music — back to the title theme
             if (gameLoopId) {
                 cancelAnimationFrame(gameLoopId);
                 gameLoopId = null;
@@ -5662,6 +5741,7 @@
             shopBtn.disabled = false;
             
             gameRunning = true;
+            if (window.MUSIC) MUSIC.setState('game'); // V1_389: music — run starts, rotate the in-game songs
             lastTime = performance.now();
             gameLoopId = requestAnimationFrame(gameLoop);
         }
@@ -8813,6 +8893,7 @@
         function gameOver() {
             gameRunning = false;
             SFX.gameover();
+            if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music — Last Stand sting, then the title theme
             gameoverOverlay.classList.add('active');
             
             let statsHtml;

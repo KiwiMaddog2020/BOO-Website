@@ -1493,6 +1493,7 @@
         </div>
     </div>
 
+    <script src="boo-music.js"></script>
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
@@ -1550,8 +1551,9 @@
             }
             return {
                 get muted() { return muted; },
+                audioCtx: ensure, // V1_389: shared context for the music engine (one ctx total — iOS limit)
                 unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
-                setMuted: function (m) { muted = !!m; try { localStorage.setItem('snake_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; },
+                setMuted: function (m) { muted = !!m; try { localStorage.setItem('snake_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; if (window.MUSIC) MUSIC.setMuted(muted); }, // V1_389: mute silences music too
                 toggle: function () { this.setMuted(!muted); return muted; },
                 setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
                 tone: tone, noise: noise, gate: gate,
@@ -1583,6 +1585,84 @@
           function r(){ mb.textContent = SFX.muted ? '🔇' : '🔊'; mb.setAttribute('aria-pressed', SFX.muted ? 'true':'false'); } r();
           mb.addEventListener('click', function(e){ e.stopPropagation(); SFX.unlock(); SFX.toggle(); r(); });
           mb.addEventListener('touchstart', function(e){ e.stopPropagation(); }, {passive:true}); })();
+
+        // ===== SNAKE RACING MUSIC (V1_389) — high-speed techno chiptune, B minor =====
+        // Title "Grid Start" (122, revving) · "Full Throttle" (176, Bm) · "Neon Apex" (170, D major lift) · Over "Spin Out" (88)
+        const BOO_TRACKS = {
+            title: {
+                bpm: 122, bars: 8, v1: 0.10, v2: 0.045, vb: 0.18, d1: 0.5, d2: 0.25,
+                bass: ['B2:8 F#3:4 B2:4', 'G2:8 D3:4 G2:4', 'A2:8 E3:4 A2:4', 'F#2:8 C#3:4 F#2:4',
+                       'B2:8 F#3:4 B2:4', 'G2:8 D3:4 G2:4', 'E3:8 B2:4 E3:4', 'F#3:8 A#2:4 C#3:4'],
+                p2: ['B3 F#4 B4 D5 B4 F#4 B4 D5', 'G3 D4 G4 B4 G4 D4 G4 B4', 'A3 E4 A4 C#5 A4 E4 A4 C#5', 'F#3 C#4 F#4 A4 F#4 C#4 F#4 A4',
+                     'B3 F#4 B4 D5 B4 F#4 B4 D5', 'G3 D4 G4 B4 G4 D4 G4 B4', 'E4 B4 E5 G5 E5 B4 E5 G5', 'F#4 C#5 F#5 A#5 F#5 C#5 F#5 A#5'],
+                p1: ['.:16', '.:16', 'D5:6 F#5:2 D5:8', 'C#5:8 A4:8', 'B4:6 C#5:2 D5:8', 'G5:8 F#5:4 D5:4', 'E5:6 F#5:2 G5:8', 'A#4:12 .:4'],
+                drums: ['k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k.....h.',
+                        'k.....h.k.....h.', 'k.....h.k.....h.', 'k.....h.k...s...', 'k...s...k..s.s.s'],
+            },
+            throttle: { // "Full Throttle" — relentless 8th drive
+                bpm: 176, bars: 16, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125,
+                bass: ['B2 B2 F#3 B2 B2 A2 F#2 A2', 'B2 B2 F#3 B2 D3 C#3 B2 A2', 'G2 G2 D3 G3 G2 F#3 E3 D3', 'G2 G2 D3 G3 B2 A2 G2 F#2',
+                       'A2 A2 E3 A3 A2 G3 E3 C#3', 'A2 A2 E3 A3 C#3 E3 G3 A3', 'F#2 F#2 C#3 F#3 F#2 E3 C#3 A#2', 'F#2 F#2 C#3 F#3 A#2 C#3 E3 F#3',
+                       'B2 B2 F#3 B2 B2 A2 F#2 A2', 'B2 B2 F#3 B2 D3 C#3 B2 A2', 'G2 G2 D3 G3 G2 F#3 E3 D3', 'G2 G2 D3 G3 B2 A2 G2 F#2',
+                       'E3 E3 B2 E3 E3 D3 B2 A2', 'G2 G2 D3 G3 B2 C3 D3 F#3', 'F#2 F#2 C#3 F#3 A#2 C#3 E3 F#3', 'B2:4 B2:4 B2:4 B2:4'],
+                p1: ['B4:2 D5:2 F#5:4 E5:2 D5:2 E5:4', 'D5:2 B4:2 A4:4 B4:8', 'B4:2 D5:2 G5:4 F#5:2 E5:2 D5:4', 'E5:2 D5:2 B4:4 D5:8',
+                     'C#5:2 E5:2 A5:4 G5:2 F#5:2 E5:4', 'A5:4 G5:2 E5:2 C#5:8', 'A#4:2 C#5:2 F#5:4 F#5:2 A#5:2 C#6:4', 'C#6:2 A#5:2 F#5:4 C#5:8',
+                     'B4:2 D5:2 F#5:4 E5:2 D5:2 E5:4', 'D5:2 B4:2 A4:4 B4:8', 'B4:2 D5:2 G5:4 F#5:2 E5:2 D5:4', 'E5:2 D5:2 B4:4 D5:8',
+                     'G5:8 E5:8', 'B5:4 A5:4 G5:8', 'F#5:2 G5:2 A#5:2 C#6:2 A#5:4 F#5:4', 'B5:2 A5:2 F#5:2 D5:2 B4:8'],
+                p2: ['.:2 F#4:2 .:2 F#4:2 .:2 F#4:2 .:2 F#4:2', '.:2 F#4:2 .:2 F#4:2 .:2 F#4:2 .:2 F#4:2',
+                     '.:2 D4:2 .:2 D4:2 .:2 D4:2 .:2 D4:2', '.:2 D4:2 .:2 D4:2 .:2 D4:2 .:2 D4:2',
+                     '.:2 E4:2 .:2 E4:2 .:2 E4:2 .:2 E4:2', '.:2 E4:2 .:2 E4:2 .:2 E4:2 .:2 E4:2',
+                     '.:2 C#4:2 .:2 C#4:2 .:2 C#4:2 .:2 C#4:2', '.:2 C#4:2 .:2 C#4:2 .:2 C#4:2 .:2 C#4:2',
+                     'B3:1 D4:1 F#4:1 B4:1 B3:1 D4:1 F#4:1 B4:1 B3:1 D4:1 F#4:1 B4:1 B3:1 D4:1 F#4:1 B4:1',
+                     'B3:1 D4:1 F#4:1 B4:1 B3:1 D4:1 F#4:1 B4:1 B3:1 D4:1 F#4:1 B4:1 B3:1 D4:1 F#4:1 B4:1',
+                     'G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1',
+                     'G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1',
+                     'E4:1 G4:1 B4:1 E5:1 E4:1 G4:1 B4:1 E5:1 E4:1 G4:1 B4:1 E5:1 E4:1 G4:1 B4:1 E5:1',
+                     'G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1 G3:1 B3:1 D4:1 G4:1',
+                     '.:2 C#4:2 .:2 C#4:2 .:2 C#4:2 .:2 C#4:2', 'F#4:4 F#4:4 F#4:4 F#4:4'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.ssss']
+            },
+            apex: { // "Neon Apex" — D major sustained speed
+                bpm: 170, bars: 16, v1: 0.105, v2: 0.05, vb: 0.19, d1: 0.25, d2: 0.125,
+                bass: ['D3 D3 A3 D3 D3 C#3 B2 A2', 'D3 D3 A3 D3 F#3 E3 D3 C#3', 'G2 G2 D3 G3 G2 F#3 E3 D3', 'G2 G2 D3 G3 B2 A2 G2 F#2',
+                       'B2 B2 F#3 B2 B2 A2 F#2 E2', 'B2 B2 F#3 B2 D3 C#3 B2 A2', 'A2 A2 E3 A3 A2 G3 E3 C#3', 'A2 A2 E3 A3 C#3 E3 G3 A3',
+                       'D3 D3 A3 D3 D3 C#3 B2 A2', 'D3 D3 A3 D3 F#3 E3 D3 C#3', 'G2 G2 D3 G3 G2 F#3 E3 D3', 'G2 G2 D3 G3 B2 A2 G2 F#2',
+                       'E3 E3 B2 E3 E3 D3 C#3 B2', 'G2 G2 D3 G3 B2 C#3 D3 F#3', 'A2 A2 E3 A3 C#3 E3 G3 A3', 'D3:4 D3:4 D3:4 D3:4'],
+                p1: ['D5:2 F#5:2 A5:4 G5:2 F#5:2 G5:4', 'F#5:2 D5:2 C#5:4 D5:8', 'D5:2 G5:2 B5:4 A5:2 G5:2 F#5:4', 'G5:2 F#5:2 D5:4 F#5:8',
+                     'B4:2 D5:2 F#5:4 E5:2 F#5:2 B5:4', 'B5:4 A5:2 F#5:2 D5:8', 'C#5:2 E5:2 A5:4 G5:2 E5:2 C#5:4', 'E5:4 C#5:4 A4:8',
+                     'D5:2 F#5:2 A5:4 G5:2 F#5:2 G5:4', 'F#5:2 D5:2 C#5:4 D5:8', 'D5:2 G5:2 B5:4 A5:2 G5:2 F#5:4', 'G5:2 F#5:2 D5:4 F#5:8',
+                     'G5:8 B5:8', 'A5:4 G5:4 F#5:8', 'E5:2 F#5:2 G5:2 A5:2 C#6:4 A5:4', 'D6:4 A5:4 F#5:8'],
+                p2: ['A3:8 F#4:8', 'A3:8 F#4:8', 'B3:8 G4:8', 'B3:8 G4:8', 'F#3:8 D4:8', 'F#3:8 D4:8', 'A3:8 E4:8', 'A3:8 C#4:8',
+                     'A3:8 F#4:8', 'A3:8 F#4:8', 'B3:8 G4:8', 'B3:8 G4:8', 'G3:8 E4:8', 'B3:8 D4:8', 'A3:8 C#4:8', 'D4:8 F#4:8'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.s.ss']
+            },
+            over: { // "Spin Out" — quick Bm sting, once
+                bpm: 88, bars: 4, v1: 0.10, v2: 0.05, vb: 0.17, d1: 0.5, d2: 0.25, once: true,
+                bass: ['B2:16', 'G2:16', 'E3:16', 'F#3:16'],
+                p2: ['B3:4 D4:4 F#4:4 B4:4', 'G3:4 B3:4 D4:4 G4:4', 'E3:4 G3:4 B3:4 E4:4', 'F#3:4 A#3:4 C#4:4 F#4:4'],
+                p1: ['F#5:8 D5:4 B4:4', 'D5:6 E5:2 D5:4 B4:4', 'G4:8 B4:8', 'A#4:12 F#4:4'],
+                drums: ['k...............', 'k...............', 'k...............', '................']
+            }
+        };
+
+        // ===== V1_389: MUSIC — shared BOO chiptune engine (Games/boo-music.js) =====
+        // Ducks (low-pass) while powerupPaused is true (powerup slot-selection freeze).
+        const MUSIC = createBooMusic({
+            audioCtx: SFX.audioCtx,
+            isPaused: function () { return powerupPaused; },
+            tracks: BOO_TRACKS,
+            playlist: ['throttle', 'apex']
+        });
+        window.MUSIC = MUSIC;
+        ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () { MUSIC.unlock(); }, { once: true, passive: true });
+        });
 
         const startBtn = document.getElementById('startBtn');
         const scoreEl = document.getElementById('score');
@@ -3012,6 +3092,7 @@
 
         function gameOver() {
             SFX.gameover();
+            if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music
             gameRunning = false;
             controlsButtons.style.display = 'flex';
             powerupTimerEl.classList.remove('active');
@@ -3043,6 +3124,7 @@
         
         // ========== MENU FUNCTIONS ==========
         function showMenu(isGameOver = false) {
+            if (window.MUSIC) MUSIC.setState('menu'); // V1_389: music
             menuOverlay.classList.remove('hidden');
             
             if (isGameOver) {
@@ -3116,9 +3198,10 @@
 
         function startGame() {
             if (gameRunning) return;
-            
+
             initGame();
             gameRunning = true;
+            if (window.MUSIC) MUSIC.setState('game'); // V1_389: music
             controlsButtons.style.display = 'none';
             lastUpdateTime = performance.now();
             
