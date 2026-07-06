@@ -33,7 +33,7 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 - Rumble Brave — home h1 + section h2 headers (V1_110 promoted this from historical; declared with cursive fallback per V1_123 — Kevin prefers the system-cursive look it falls back to)
 - Bebas Neue — *historical, avoid in new work*
 
-**Game audio:** xDeviruchi 16-bit Fantasy & Adventure collection (used in BOO Survivors).
+**Game audio (V1_386–V1_389):** all 7 games have original procedural chiptune soundtracks — NES-style Web Audio synthesis (duty-cycle pulse leads, triangle bass, noise drums), zero audio assets. Survivors' engine is embedded in its file (V1_386/387); the other 6 games share `Games/boo-music.js` with per-game composed track data. Standard structure per game: title theme on menus, 2 in-game songs rotating (shuffled, 2 loops each, beat-tight fills between), game-over sting that swells back into the title. Pause/upgrade overlays low-pass duck the music; the mute button silences music+SFX; **all game music auto-yields while the site's `#audio-player` is playing** (same-origin parent check). Track data = per-bar note strings, validated to exactly 16 steps/bar. (The old xDeviruchi collection note was never realized — no audio files were ever committed.)
 
 **iOS dev (in progress):** Xcode (beta, iOS 26.2 runtime); Capacitor 6 wrapper at `mobile/` bundling the existing HTML5 games as a native iOS app. `Games/`, `Images/`, `Music/` at the repo root remain canonical — `mobile/build-www.sh` syncs them into `mobile/www/` before each build. Phase 2 (V1_96+) activates all 7 games in the arcade menu; V1_92 added custom radial-halo icon + animated splash; V1_97/V1_98 unified game sizing with an 8%-per-side letterbox cap for fullscreen.
 
