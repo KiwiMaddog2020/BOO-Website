@@ -7071,6 +7071,7 @@
             let muted = SFX.muted, vol = 0.5, suppressed = false, running = false;
             let state = 'off', track = null, stepIdx = 0, nextTime = 0, loopsDone = 0;
             let playlist = [], plIdx = 0, tickTimer = null, lastSiteCheck = 0;
+            let echoWet = null, curKey = null; // V1_394: per-track echo depth handle + current key (parity with boo-music.js V1_390; key exposed via _dbg for tests)
             const LOOKAHEAD = 0.24, TICK_MS = 90, MASTER_LVL = 0.42;
 
             // --- note helpers ---
@@ -7257,6 +7258,199 @@
                         'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
                         'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.ssss']
             };
+            // ===== V1_394: six more in-game tracks (24-bar A/B/C forms; the original six are 16-bar) =====
+            // Kevin: repetitive at 9min; 'think megabonk and vampire survivors meet our current style'
+            // -- v3 pattern helpers (defined once, shared by the six V1_394 tracks) --
+            const V3_ARP = function (a, b, c, d) { // relentless 16th arp, one bar
+                const q = a + ':1 ' + b + ':1 ' + c + ':1 ' + d + ':1 ';
+                return (q + q + q + q).trim();
+            };
+            const V3_WAVE = function (a, b, c, d, e) { // up-down kaleido wave, one bar of 16ths
+                const half = a + ':1 ' + b + ':1 ' + c + ':1 ' + d + ':1 ' + e + ':1 ' + d + ':1 ' + c + ':1 ' + b + ':1 ';
+                return (half + half).trim();
+            };
+            const V3_GAL = function (n) { // metal gallop (8th + two 16ths), one bar
+                const q = n + ':2 ' + n + ':1 ' + n + ':1 ';
+                return (q + q + q + q).trim();
+            };
+            const V3_OFF = function (n) { // off-beat 8th comp stabs, one bar
+                const q = '.:2 ' + n + ':2 ';
+                return (q + q + q + q).trim();
+            };
+
+            // -- Game 7 (V1_394): "Neon Carnevale" — 156bpm Dm harmonic, the VS tarantella --
+            const T_CARNEVALE = {
+                bpm: 156, bars: 24, v1: 0.105, v2: 0.05, vb: 0.19, d1: 0.25, d2: 0.125, echoWet: 0.16,
+                bass: ['D3 D2 D3 D2 D3 D2 A2 C#3', 'D3 D2 D3 D2 F3 E3 D3 C#3', 'G2 G3 G2 G3 A#2 A2 G2 F3', 'A2 A3 A2 A3 C#3 A2 E3 A2',
+                       'D3 D2 D3 D2 D3 D2 A2 C#3', 'A#2 A#3 A#2 A#3 A#2 A#3 A2 G2', 'G2 G3 G2 G3 A2 A3 A2 A3', 'D3 D2 D3 D2 A2 A#2 B2 C#3',
+                       'F2 F3 F2 F3 F2 F3 E3 D3', 'F2 F3 F2 F3 A2 A#2 B2 C3', 'A#2 A#3 A#2 A#3 A#2 A#3 A2 G2', 'A#2 A#3 A#2 A#3 D3 C3 A#2 A2',
+                       'G2 G3 G2 G3 G2 G3 F3 E3', 'D3 D2 D3 D2 D3 D2 F3 A3', 'A2 A3 A2 A3 A2 A3 G3 E3', 'A2 A2 A2 A2 A2 A#2 B2 C#3',
+                       'D3 D2 D3 D2 D3 D2 A2 C#3', 'C3 C2 C3 C2 C3 C2 E3 G3', 'A#2 A#3 A#2 A#3 A#2 A#3 D3 F3', 'A2 A3 A2 A3 C#3 E3 G3 A3',
+                       'D3 D2 D3 D2 D3 D2 A2 C#3', 'G2 G3 G2 G3 A#2 C3 D3 D3', 'A2 A3 A2 A3 A2 B2 C#3 E3', 'D3:4 A2:4 D3:4 D3:2 C#3:2'],
+                p1: ['A4:2 D5:2 F5:4 E5:2 D5:2 C#5:4', 'D5:2 E5:2 F5:2 G5:2 A5:4 F5:2 D5:2', 'G5:2 A#5:2 A5:2 G5:2 F5:4 D5:2 F5:2', 'C#5:2 E5:2 A5:4 G5:2 E5:2 C#5:4',
+                     'A4:2 D5:2 F5:4 E5:2 D5:2 C#5:4', 'D5:2 F5:2 A#5:4 A5:2 G5:2 F5:4', 'G5:2 A5:2 A#5:2 G5:2 E5:2 C#5:2 E5:4', 'D5:4 .:2 A4:2 D5:2 E5:2 F5:2 G5:2',
+                     'A5:4 C6:2 A5:2 F5:4 C5:2 F5:2', 'G5:2 A5:2 G5:2 F5:2 E5:4 C5:4', 'D5:2 F5:2 A#5:4 A5:2 A#5:2 C6:4', 'D6:4 C6:2 A#5:2 A5:4 F5:4',
+                     'A#5:2 A5:2 G5:4 D5:2 G5:2 A#5:4', 'A5:2 F5:2 D5:4 F5:2 A5:2 D6:4', 'C#6:4 E6:2 C#6:2 A5:4 E5:2 C#5:2', 'E5:1 F5:1 G5:1 G#5:1 A5:2 E5:2 C#5:2 A4:2 E5:2 G5:2',
+                     'D5:1 E5:1 F5:1 G5:1 A5:2 F5:2 D5:2 A4:2 D5:4', 'C5:1 D5:1 E5:1 F5:1 G5:2 E5:2 C5:2 G4:2 C5:4', 'A#4:1 C5:1 D5:1 D#5:1 F5:2 D5:2 A#4:2 F4:2 A#4:4', 'A4:2 C#5:2 E5:2 G5:2 A5:2 G5:2 E5:2 C#5:2',
+                     'D5:2 F5:2 A5:2 D6:2 C#6:2 D6:2 A5:2 F5:2', 'G5:2 A#5:2 D6:4 C6:2 A#5:2 A5:4', 'E5:1 F5:1 G5:1 G#5:1 A5:2 C#6:2 E6:4 .:2 A5:2', 'D6:4 A5:2 F5:2 D5:6 .:2'],
+                p2: [V3_OFF('F4'), V3_OFF('F4'), V3_OFF('G4'), V3_OFF('C#4'),
+                     V3_OFF('F4'), V3_OFF('F4'), '.:2 G4:2 .:2 G4:2 .:2 C#4:2 .:2 C#4:2', V3_OFF('F4'),
+                     V3_ARP('F3', 'A3', 'C4', 'F4'), V3_ARP('F3', 'A3', 'C4', 'F4'), V3_ARP('F3', 'A#3', 'D4', 'F4'), V3_ARP('F3', 'A#3', 'D4', 'F4'),
+                     V3_ARP('G3', 'A#3', 'D4', 'G4'), V3_ARP('F3', 'A3', 'D4', 'F4'), V3_ARP('E3', 'A3', 'C#4', 'E4'), V3_ARP('E3', 'A3', 'C#4', 'E4'),
+                     V3_ARP('D3', 'F3', 'A3', 'D4'), V3_ARP('C3', 'E3', 'G3', 'C4'), V3_ARP('A#3', 'D4', 'F4', 'A#4'), V3_ARP('A3', 'C#4', 'E4', 'G4'),
+                     V3_ARP('D3', 'F3', 'A3', 'D4'), V3_ARP('G3', 'A#3', 'D4', 'G4'), V3_ARP('A3', 'C#4', 'E4', 'G4'), 'D4:4 A3:4 F3:4 D3:4'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.s.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.ssss']
+            };
+
+            // -- Game 8 (V1_394): "Bonk Stampede" — 174bpm Em, Megabonk four-on-floor banger --
+            const T_STAMPEDE = {
+                bpm: 174, bars: 24, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125, echoWet: 0.12,
+                bass: ['E2 E3 E2 E3 E2 E3 E2 E3', 'E2 E3 E2 E3 E2 E3 D3 B2', 'C3 C2 C3 C2 C3 C2 C3 C2', 'D3 D2 D3 D2 D3 D2 D3 D2',
+                       'E2 E3 E2 E3 E2 E3 E2 E3', 'E2 E3 E2 E3 G2 A2 B2 D3', 'C3 C2 C3 C2 C3 C2 A2 B2', 'D3 D2 D3 D2 D3 E3 F#3 D#3',
+                       'A2 A3 A2 A3 A2 A3 A2 A3', 'A2 A3 A2 A3 G2 A2 B2 C3', 'C3 C2 C3 C2 C3 C2 C3 C2', 'C3 C2 C3 C2 E3 D3 C3 B2',
+                       'G2 G3 G2 G3 G2 G3 G2 G3', 'G2 G3 G2 G3 B2 C3 D3 E3', 'B2 B1 B2 B1 B2 B1 B2 B1', 'B2 B1 B2 B1 D#3 F#3 A3 B3',
+                       'E2:16', 'E2:8 G2:4 A2:4', 'E2 E2 E2 E2 E2 E2 E2 E2', 'E2 E2 E2 E2 A2 B2 D3 D#3',
+                       'E3 E2 E3 E2 E3 E2 E3 E2', 'E3 E2 E3 E2 G3 F#3 E3 D3', 'C3 C2 C3 C2 D3 D2 D3 D2', 'E3 E2 E3 E2 E3 D3 B2 D#3'],
+                p1: ['E5:2 G5:2 B5:4 A5:2 G5:2 F#5:4', 'G5:2 F#5:2 E5:4 B4:4 E5:4', 'C5:2 E5:2 G5:4 F#5:2 E5:2 D5:4', 'F#5:2 A5:2 D6:4 A5:2 F#5:2 D5:4',
+                     'E5:2 G5:2 B5:4 A5:2 G5:2 F#5:4', 'G5:2 A5:2 B5:4 C6:2 B5:2 A5:4', 'G5:4 E5:2 C5:2 E5:4 G5:4', 'F#5:2 E5:2 D#5:2 E5:2 F#5:4 A5:2 B5:2',
+                     'C6:4 B5:2 A5:2 E5:4 A5:4', 'B5:2 C6:2 B5:2 A5:2 G5:4 E5:4', 'G5:2 E5:2 C5:4 E5:2 G5:2 C6:4', 'B5:2 C6:2 D6:4 C6:2 B5:2 A5:4',
+                     'B5:4 A5:2 G5:2 D5:4 G5:4', 'A5:2 B5:2 C6:2 D6:2 E6:4 D6:2 B5:2', 'D#5:2 F#5:2 B5:4 A5:2 F#5:2 D#5:4', 'F#5:1 G5:1 A5:1 A#5:1 B5:4 A5:2 F#5:2 D#5:2 B4:2',
+                     'E5:8 .:4 B4:2 E5:2', 'G5:6 F#5:2 E5:8', 'B4:2 E5:2 B4:2 E5:2 B4:2 E5:2 G5:2 A5:2', 'B5:1 B5:1 B5:1 B5:1 B5:1 B5:1 B5:1 B5:1 B5:2 A5:2 G5:2 F#5:2',
+                     'E6:4 B5:2 G5:2 E5:4 G5:2 B5:2', 'D6:2 C6:2 B5:4 A5:2 G5:2 F#5:4', 'C6:2 E6:2 G5:4 A5:2 B5:2 D6:4', 'E6:4 D6:2 B5:2 E5:4 D#5:2 E5:2'],
+                p2: [V3_OFF('G4'), V3_OFF('G4'), V3_OFF('E4'), V3_OFF('F#4'),
+                     V3_OFF('G4'), V3_OFF('G4'), V3_OFF('E4'), V3_OFF('F#4'),
+                     V3_ARP('A3', 'C4', 'E4', 'A4'), V3_ARP('A3', 'C4', 'E4', 'A4'), V3_ARP('C4', 'E4', 'G4', 'C5'), V3_ARP('C4', 'E4', 'G4', 'C5'),
+                     V3_ARP('G3', 'B3', 'D4', 'G4'), V3_ARP('G3', 'B3', 'D4', 'G4'), V3_ARP('B3', 'D#4', 'F#4', 'B4'), V3_ARP('B3', 'D#4', 'F#4', 'B4'),
+                     '.:16', '.:16', V3_ARP('B4', 'B4', 'B4', 'B4'), V3_ARP('B4', 'B4', 'B4', 'B4'),
+                     V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('C4', 'E4', 'G4', 'C5'), V3_ARP('E4', 'G4', 'B4', 'E5')],
+                drums: ['k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hos.s.',
+                        'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.s.s.s.',
+                        'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hos.s.',
+                        'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.s.k.s.s.s.ssss',
+                        'k.......h.......', 'k.......h.....s.', 'k.h.k.h.k.h.k.h.', 's.s.s.s.ssssssss',
+                        'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.hok.hok.hok.ho', 'k.s.k.s.k.s.ssss']
+            };
+
+            // -- Game 9 (V1_394): "Midnight Séance" — 140bpm A dorian, spooky-psych groove --
+            const T_SEANCE = {
+                bpm: 140, bars: 24, v1: 0.10, v2: 0.05, vb: 0.18, d1: 0.25, d2: 0.5, echoWet: 0.24,
+                bass: ['A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2', 'A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2', 'D3:3 D3:1 .:2 A2:2 D3:2 .:2 C3:2 D3:2', 'A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2',
+                       'A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2', 'C3:3 C3:1 .:2 G2:2 C3:2 .:2 B2:2 C3:2', 'G2:3 G2:1 .:2 D3:2 G3:2 .:2 F#3:2 G3:2', 'A2:3 A2:1 .:2 E3:2 A2:2 .:2 G2:2 E2:2',
+                       'E3:3 E3:1 .:2 B2:2 E3:2 .:2 D3:2 E3:2', 'E3:3 E3:1 .:2 B2:2 E3:2 .:2 D3:2 E3:2', 'G2:3 G2:1 .:2 D3:2 G3:2 .:2 F#3:2 G3:2', 'D3:3 D3:1 .:2 A2:2 D3:2 .:2 F#3:2 A3:2',
+                       'E3:3 E3:1 .:2 B2:2 E3:2 .:2 D3:2 E3:2', 'G2:3 G2:1 .:2 D3:2 G3:2 .:2 B2:2 D3:2', 'D3:3 D3:1 .:2 A2:2 D3:2 .:2 C3:2 B2:2', 'E3:3 E3:1 .:2 E3:2 F#3:2 .:2 G3:2 G#3:2',
+                       'A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2', 'A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2', 'D3:3 D3:1 .:2 A2:2 D3:2 .:2 C3:2 D3:2', 'A2:3 A2:1 .:2 E3:2 A3:2 .:2 G3:2 A2:2',
+                       'F2:3 F2:1 .:2 C3:2 F3:2 .:2 E3:2 F2:2', 'C3:3 C3:1 .:2 G2:2 C3:2 .:2 B2:2 C3:2', 'G2:3 G2:1 .:2 D3:2 G3:2 .:2 F#3:2 G3:2', 'A2:4 .:2 A2:2 E2:4 G2:2 A2:2'],
+                p1: ['E5:6 G5:2 E5:4 .:4', 'D5:4 C5:2 B4:2 A4:8', 'F#5:6 A5:2 F#5:2 D5:2 C5:4', '.:4 A4:2 B4:2 C5:2 B4:2 A4:4',
+                     'E5:2 G5:2 A5:6 G5:2 E5:4', 'G5:1 A5:1 G5:1 A5:1 G5:2 E5:2 C5:4 E5:4', 'D5:4 B4:2 G4:2 B4:8', 'A4:12 .:4',
+                     'B4:2 E5:2 G5:6 F#5:2 E5:4', 'B5:4 A5:2 G5:2 B5:4 D6:4', 'A5:1 B5:1 A5:1 B5:1 A5:2 F#5:2 D5:4 F#5:4', 'A5:4 F#5:2 D5:2 A4:8',
+                     'G5:2 B5:2 E6:4 D6:2 B5:2 G5:4', 'D6:2 B5:2 G5:4 B5:2 D6:2 G5:4', 'F#5:4 A5:2 F#5:2 D5:4 A4:4', 'B4:4 E5:4 G#4:4 B4:2 E5:2',
+                     'A5:6 G5:2 E5:4 C5:4', 'G5:4 E5:2 D5:2 C5:4 A4:4', 'F#5:2 A5:2 D6:6 C6:2 A5:4', 'B5:1 C6:1 B5:1 C6:1 B5:2 A5:2 G5:2 E5:2 A5:4',
+                     'F5:6 A5:2 F5:2 C5:2 F5:4', 'E5:2 G5:2 C6:6 B5:2 G5:4', 'D6:4 B5:2 G5:2 F#5:2 D5:2 B4:4', 'A4:2 C5:2 E5:8 .:4'],
+                p2: ['A3:8 C4:8', 'G3:8 E4:8', 'F#3:8 D4:8', 'A3:8 E4:8',
+                     'A3:8 C4:8', 'G3:8 E4:8', 'B3:8 D4:8', 'A3:8 C4:8',
+                     'G3:8 B3:8', 'G3:8 B3:8', 'G3:8 D4:8', 'F#3:8 D4:8',
+                     'G3:8 B3:8', 'B3:8 D4:8', 'F#3:8 A3:8', 'E3:8 G#3:8',
+                     V3_WAVE('A3', 'C4', 'E4', 'G4', 'A4'), V3_WAVE('A3', 'C4', 'E4', 'G4', 'A4'), V3_WAVE('A3', 'D4', 'F#4', 'A4', 'D5'), V3_WAVE('A3', 'C4', 'E4', 'G4', 'A4'),
+                     V3_WAVE('F3', 'A3', 'C4', 'F4', 'A4'), V3_WAVE('G3', 'C4', 'E4', 'G4', 'C5'), V3_WAVE('G3', 'B3', 'D4', 'G4', 'B4'), 'A3:4 E4:4 A4:4 E4:2 C4:2'],
+                drums: ['k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.',
+                        'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.s.s.o.',
+                        'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.',
+                        'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.s.s.s.',
+                        'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.s.o.',
+                        'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k..h..s.h.k.h.o.', 'k...s...k...s.o.']
+            };
+
+            // -- Game 10 (V1_394): "Ghost Gallop" — 164bpm Gm harmonic, Maiden-gallop anthem --
+            const T_GALLOP = {
+                bpm: 164, bars: 24, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125, echoWet: 0.12,
+                bass: [V3_GAL('G2'), 'G2:2 G2:1 G2:1 G2:2 G2:1 G2:1 A#2:2 A#2:1 A#2:1 C3:2 C3:1 C3:1', V3_GAL('D#3'), 'D3:2 D3:1 D3:1 D3:2 D3:1 D3:1 D3:2 D3:1 D3:1 F#3:2 F#3:1 F#3:1',
+                       V3_GAL('G2'), V3_GAL('A#2'), V3_GAL('D#3'), 'D3:2 D3:1 D3:1 D3:2 D3:1 D3:1 C3:2 C3:1 C3:1 A#2:2 A2:1 F#2:1',
+                       V3_GAL('C3'), V3_GAL('C3'), V3_GAL('G2'), V3_GAL('G2'),
+                       V3_GAL('D#3'), V3_GAL('F3'), V3_GAL('D3'), 'D2:2 D3:2 D2:2 D3:2 F#2:2 A2:2 C3:2 D3:2',
+                       V3_GAL('G2'), V3_GAL('F2'), V3_GAL('D#3'), V3_GAL('D3'),
+                       V3_GAL('G2'), V3_GAL('F2'), V3_GAL('D#3'), 'D3:2 D3:1 D3:1 D3:2 D3:1 D3:1 F#3:2 F#3:1 F#3:1 A3:2 C3:1 D3:1'],
+                p1: ['G4:2 A#4:2 D5:4 C5:2 A#4:2 A4:4', 'A#4:2 A4:2 G4:4 D5:4 G5:4', 'G5:4 F5:2 D#5:2 A#4:4 D#5:4', 'D5:4 A4:2 F#4:2 A4:4 D5:4',
+                     'G4:2 A#4:2 D5:4 C5:2 A#4:2 A4:4', 'F5:2 D5:2 A#4:4 D5:2 F5:2 A#5:4', 'G5:2 A#5:2 G5:2 D#5:2 G5:4 A#4:4', 'A4:2 C5:2 F#5:4 A5:2 F#5:2 D5:4',
+                     'C5:2 D#5:2 G5:4 F5:2 D#5:2 D5:4', 'D#5:2 D5:2 C5:4 G4:4 C5:4', 'A#4:2 D5:2 G5:4 F5:2 D5:2 A#4:4', 'G4:4 A#4:2 D5:2 G5:8',
+                     'D#5:2 G5:2 A#5:4 G5:2 D#5:2 G5:4', 'F5:2 A5:2 C6:4 A5:2 F5:2 C5:4', 'D5:2 F#5:2 A5:4 F#5:2 D5:2 A4:4', 'D5:1 E5:1 F#5:1 G5:1 A5:2 F#5:2 D5:2 A4:2 F#4:2 D4:2',
+                     'G5:4 D5:2 A#4:2 G4:4 A#4:2 D5:2', 'F5:4 C5:2 A4:2 F4:4 A4:2 C5:2', 'D#5:4 A#4:2 G4:2 D#4:4 G4:2 A#4:2', 'D5:2 F#5:2 A5:4 C6:2 A5:2 F#5:4',
+                     'G5:2 A5:2 A#5:4 A5:2 G5:2 F5:4', 'F5:2 E5:2 F5:2 C5:2 A4:4 F5:4', 'D#5:2 F5:2 G5:2 A#5:2 G5:4 D#5:4', 'D5:4 F#5:2 A5:2 D6:4 .:2 D5:2'],
+                p2: ['G3:8 D4:8', 'G3:8 D4:8', 'D#3:8 A#3:8', 'D4:8 F#4:8',
+                     'G3:8 D4:8', 'A#3:8 F4:8', 'D#4:8 G4:8', 'D4:8 F#4:8',
+                     V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('G3', 'A#3', 'D4', 'G4'), V3_ARP('G3', 'A#3', 'D4', 'G4'),
+                     V3_ARP('D#4', 'G4', 'A#4', 'D#5'), V3_ARP('F3', 'A3', 'C4', 'F4'), V3_ARP('D4', 'F#4', 'A4', 'D5'), V3_ARP('D4', 'F#4', 'A4', 'D5'),
+                     'G3:8 D4:8', 'F3:8 C4:8', 'D#3:8 A#3:8', 'D4:8 F#4:8',
+                     V3_ARP('G3', 'A#3', 'D4', 'G4'), V3_ARP('F3', 'A3', 'C4', 'F4'), V3_ARP('D#3', 'G3', 'A#3', 'D#4'), 'D4:4 F#4:4 A4:4 C5:4'],
+                drums: ['k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.s.s.s.',
+                        'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.s.s.s.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.s.k.s.k.s.ssss',
+                        'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.s.s.s.',
+                        'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.s.s.ssss']
+            };
+
+            // -- Game 11 (V1_394): "Prism Pit" — 150bpm C mixolydian, euphoric kaleido shimmer --
+            const T_PRISM = {
+                bpm: 150, bars: 24, v1: 0.10, v2: 0.05, vb: 0.19, d1: 0.25, d2: 0.25, echoWet: 0.20,
+                bass: ['C3 C2 C3 C2 C3 C2 A#2 G2', 'C3 C2 C3 C2 E3 F3 G3 E3', 'A#2 A#3 A#2 A#3 A#2 A#3 G2 F2', 'F2 F3 F2 F3 F2 F3 A2 C3',
+                       'C3 C2 C3 C2 C3 C2 A#2 G2', 'A2 A3 A2 A3 A2 A3 G2 E2', 'A#2 A#3 A#2 A#3 A#2 A#3 C3 D3', 'F2 G2 A2 B2 C3 E3 G3 A#3',
+                       'D3 D2 D3 D2 D3 D2 F3 A3', 'F2 F3 F2 F3 F2 F3 A2 C3', 'C3 C2 C3 C2 C3 C2 E3 G3', 'C3 C2 C3 C2 A#2 A2 G2 F2',
+                       'D3 D2 D3 D2 D3 D2 F3 A3', 'F2 F3 F2 F3 F2 F3 G2 A2', 'A#2 A#3 A#2 A#3 A#2 A#3 A#2 A#3', 'A#2 A#3 A#2 A#3 C3 D3 D#3 E3',
+                       'C3 C2 C3 C2 C3 C2 A#2 G2', 'A#2 A#3 A#2 A#3 A#2 A#3 G2 F2', 'F2 F3 F2 F3 F2 F3 A2 C3', 'C3 C2 C3 C2 E3 G3 A3 A#3',
+                       'C3 C2 C3 C2 C3 C2 A#2 G2', 'A#2 A#3 A#2 A#3 A#2 A#3 D3 F3', 'F2 F3 F2 F3 G2 G3 A2 A3', 'C3:4 G2:4 C3:4 A#2:2 G2:2'],
+                p1: ['G4:2 C5:2 E5:4 D5:2 C5:2 D5:4', 'E5:2 G5:2 C6:4 A#5:2 G5:2 E5:4', 'F5:2 A#5:2 D6:4 C6:2 A#5:2 F5:4', 'A5:4 F5:2 C5:2 F5:8',
+                     'G4:2 C5:2 E5:4 D5:2 C5:2 D5:4', 'E5:4 C5:2 A4:2 C5:2 E5:2 A5:4', 'A#5:1 C6:1 A#5:1 C6:1 A#5:2 F5:2 D5:4 F5:4', 'G5:2 A5:2 A#5:2 B5:2 C6:4 G5:4',
+                     'F5:2 A5:2 D6:4 C6:2 A5:2 F5:4', 'A5:4 C6:2 A5:2 F5:4 C5:4', 'E5:2 G5:2 C6:4 B5:2 C6:2 D6:4', 'E6:4 D6:2 C6:2 G5:8',
+                     'D6:4 C6:2 A5:2 F5:4 A5:4', 'C6:2 A5:2 F5:4 A5:2 C6:2 E6:4', 'D6:4 A#5:2 F5:2 A#5:8', 'C6:1 D6:1 C6:1 D6:1 C6:2 A#5:2 G5:2 F5:2 G5:4',
+                     'E5:2 G5:2 C6:4 D6:2 C6:2 G5:4', 'F5:2 A#5:2 D6:4 C6:2 A#5:2 F5:4', 'A5:2 C6:2 F5:4 C5:2 F5:2 A5:4', 'G5:2 E5:2 C5:4 E5:2 G5:2 C6:4',
+                     'E6:4 C6:2 G5:2 E5:4 G5:2 C6:2', 'D6:4 A#5:2 F5:2 D5:4 F5:2 A#5:2', 'A5:2 B5:2 C6:2 D6:2 E6:4 D6:2 E6:2', 'C6:4 G5:2 E5:2 C5:6 .:2'],
+                p2: [V3_WAVE('C4', 'E4', 'G4', 'C5', 'E5'), V3_WAVE('C4', 'E4', 'G4', 'C5', 'E5'), V3_WAVE('A#3', 'D4', 'F4', 'A#4', 'D5'), V3_WAVE('F3', 'A3', 'C4', 'F4', 'A4'),
+                     V3_WAVE('C4', 'E4', 'G4', 'C5', 'E5'), V3_WAVE('A3', 'C4', 'E4', 'A4', 'C5'), V3_WAVE('A#3', 'D4', 'F4', 'A#4', 'D5'), V3_WAVE('F3', 'A3', 'C4', 'F4', 'A4'),
+                     V3_WAVE('A3', 'D4', 'F4', 'A4', 'D5'), V3_WAVE('A3', 'C4', 'F4', 'A4', 'C5'), V3_WAVE('G3', 'C4', 'E4', 'G4', 'C5'), V3_WAVE('G3', 'C4', 'E4', 'G4', 'C5'),
+                     V3_WAVE('A3', 'D4', 'F4', 'A4', 'D5'), V3_WAVE('A3', 'C4', 'F4', 'A4', 'C5'), V3_WAVE('A#3', 'D4', 'F4', 'A#4', 'D5'), V3_WAVE('A#3', 'D4', 'F4', 'A#4', 'D5'),
+                     'E4:8 G4:8', 'D4:8 F4:8', 'C4:8 F4:8', 'E4:8 G4:8',
+                     V3_WAVE('C4', 'E4', 'G4', 'C5', 'E5'), V3_WAVE('A#3', 'D4', 'F4', 'A#4', 'D5'), V3_WAVE('F3', 'A3', 'C4', 'F4', 'A4'), 'C4:4 E4:4 G4:4 A#4:4'],
+                drums: ['k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.',
+                        'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.s.s.o.',
+                        'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.',
+                        'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.s.k.s.k.s.s.o.',
+                        'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.s.s.o.',
+                        'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.h.s.h.k.h.s.o.', 'k.s.k.s.k.s.ssss']
+            };
+
+            // -- Game 12 (V1_394): "Reaper's Run" — 176bpm Em harmonic, the late-run finale --
+            const T_REAPER = {
+                bpm: 176, bars: 24, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125, echoWet: 0.13,
+                bass: ['E3 E2 E3 E2 E3 E2 E3 E2', 'E3 E2 E3 E2 G2 A2 B2 D#3', 'A2 A3 A2 A3 A2 A3 A2 A3', 'B2 B1 B2 B1 B2 B1 D#3 F#3',
+                       'E3 E2 E3 E2 E3 E2 E3 E2', 'C3 C2 C3 C2 C3 C2 C3 C2', 'A2 A3 A2 A3 A2 A3 C3 E3', 'B2 B1 B2 B1 B2 C3 D#3 E3',
+                       'C3 C2 C3 C2 C3 C2 C3 C2', 'D3 D2 D3 D2 D3 D2 D3 D2', 'G2 G3 G2 G3 G2 G3 G2 G3', 'E3 E2 E3 E2 E3 E2 G2 B2',
+                       'C3 C2 C3 C2 C3 C2 E3 G3', 'A2 A3 A2 A3 A2 A3 C3 E3', 'B2 B1 B2 B1 B2 B1 B2 B1', 'B2 C3 D3 D#3 E3 F#3 G3 B3',
+                       'E3 E2 E3 E2 E3 E2 E3 E2', 'D3 D2 D3 D2 D3 D2 D3 D2', 'C3 C2 C3 C2 C3 C2 C3 C2', 'B2 B1 B2 B1 D#3 F#3 A3 B3',
+                       'E3 E2 E3 E2 E3 E2 E3 E2', 'C3 C2 C3 C2 C3 C2 A2 A#2', 'B2 B1 B2 B1 B2 B1 D#3 F#3', 'E3:2 E2:2 E3:2 E2:2 E3:4 B2:2 D#3:2'],
+                p1: ['B4:2 E5:2 G5:4 F#5:2 E5:2 D#5:4', 'E5:2 F#5:2 G5:2 A5:2 B5:4 G5:2 E5:2', 'C6:4 B5:2 A5:2 E5:4 A5:4', 'B5:2 A5:2 F#5:4 D#5:2 F#5:2 B4:4',
+                     'B4:2 E5:2 G5:4 F#5:2 E5:2 D#5:4', 'G5:2 A5:2 B5:2 C6:2 B5:4 G5:4', 'A5:2 C6:2 E6:4 D6:2 C6:2 B5:4', 'A#5:1 B5:1 A#5:1 B5:1 A#5:2 F#5:2 D#5:4 B4:4',
+                     'E5:2 G5:2 C6:4 B5:2 C6:2 D6:4', 'D6:2 C6:2 A5:4 F#5:2 A5:2 D5:4', 'G5:2 B5:2 D6:4 C6:2 B5:2 A5:4', 'G5:2 F#5:2 E5:4 G5:2 B5:2 E6:4',
+                     'E6:4 D6:2 C6:2 G5:4 E5:4', 'A5:2 C6:2 E6:4 D6:2 C6:2 B5:4', 'D#5:1 E5:1 F#5:1 G5:1 A5:1 B5:1 C6:1 D#6:1 B5:4 F#5:4', 'D#6:2 B5:2 F#5:2 D#5:2 F#5:2 B4:2 D#5:2 F#5:2',
+                     'E5:1 F#5:1 G5:1 A5:1 B5:2 G5:2 E5:2 B4:2 E5:4', 'D5:1 E5:1 F#5:1 G5:1 A5:2 F#5:2 D5:2 A4:2 D5:4', 'C5:1 D5:1 E5:1 F5:1 G5:2 E5:2 C5:2 G4:2 C5:4', 'B4:2 D#5:2 F#5:2 A5:2 B5:2 A5:2 F#5:2 D#5:2',
+                     'E5:2 G5:2 B5:4 E6:4 D#6:2 E6:2', 'C6:2 B5:2 A5:2 G5:2 A5:4 C6:4', 'B5:1 C6:1 B5:1 C6:1 B5:2 F#5:2 D#5:4 F#5:4', 'E6:4 B5:2 G5:2 E5:4 .:2 D#5:2'],
+                p2: [V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('E4', 'A4', 'C5', 'E5'), V3_ARP('D#4', 'F#4', 'B4', 'D#5'),
+                     V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('E4', 'G4', 'C5', 'E5'), V3_ARP('E4', 'A4', 'C5', 'E5'), V3_ARP('D#4', 'F#4', 'B4', 'D#5'),
+                     V3_ARP('E4', 'G4', 'C5', 'E5'), V3_ARP('D4', 'F#4', 'A4', 'D5'), V3_ARP('D4', 'G4', 'B4', 'D5'), V3_ARP('E4', 'G4', 'B4', 'E5'),
+                     V3_ARP('E4', 'G4', 'C5', 'E5'), V3_ARP('E4', 'A4', 'C5', 'E5'), V3_ARP('D#4', 'F#4', 'B4', 'D#5'), V3_ARP('D#4', 'F#4', 'B4', 'D#5'),
+                     V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('D4', 'F#4', 'A4', 'D5'), V3_ARP('E4', 'G4', 'C5', 'E5'), V3_ARP('D#4', 'F#4', 'B4', 'D#5'),
+                     V3_ARP('E4', 'G4', 'B4', 'E5'), V3_ARP('E4', 'G4', 'C5', 'E5'), V3_ARP('D#4', 'F#4', 'B4', 'D#5'), 'E4:2 B4:2 E5:2 G5:2 B5:8'],
+                drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.s.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.ssss',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.s.s.ssss']
+            };
             const T_OVER = {
                 bpm: 84, bars: 4, v1: 0.10, v2: 0.05, vb: 0.17, d1: 0.5, d2: 0.25, once: true,
                 bass: ['A2:16', 'G2:16', 'F2:16', 'E2:16'],
@@ -7264,7 +7458,7 @@
                 p1: ['A5:8 E5:4 C5:4', 'B4:6 C5:2 D5:4 B4:4', 'C5:8 A4:8', 'G#4:12 E4:4'],
                 drums: ['k...............', 'k...............', 'k...............', '................']
             };
-            const TRACKS = { title: T_TITLE, rush: T_RUSH, drift: T_DRIFT, bloom: T_BLOOM, polter: T_POLTER, grave: T_GRAVE, banshee: T_BANSHEE, over: T_OVER }; // V1_391: 6-song rotation for long runs
+            const TRACKS = { title: T_TITLE, rush: T_RUSH, drift: T_DRIFT, bloom: T_BLOOM, polter: T_POLTER, grave: T_GRAVE, banshee: T_BANSHEE, carnevale: T_CARNEVALE, stampede: T_STAMPEDE, seance: T_SEANCE, gallop: T_GALLOP, prism: T_PRISM, reaper: T_REAPER, over: T_OVER }; // V1_394: 12-song rotation (V1_391 was 6)
             // pre-index each track's events by step
             Object.keys(TRACKS).forEach(function (k) {
                 const t = TRACKS[k];
@@ -7294,6 +7488,7 @@
                 const dly = a.createDelay(0.5), fb = a.createGain(), wet = a.createGain();
                 dly.delayTime.value = 0.23; fb.gain.value = 0.24; wet.gain.value = 0.14;
                 chans.p1.connect(dly); dly.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(duckLP);
+                echoWet = wet; // V1_394: switchTrack retunes wet depth per track
                 waves = { w25: pulseWave(0.25), w125: pulseWave(0.125) };
                 // white-noise buffer for drums (reused)
                 const n = Math.floor(a.sampleRate * 0.3), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
@@ -7373,7 +7568,7 @@
                 (t.iDr[s] || []).forEach(function (e) { vDrum(e[1], when); });
             }
             function shufflePlaylist() {
-                playlist = ['rush', 'drift', 'bloom', 'polter', 'grave', 'banshee'].sort(function () { return Math.random() - 0.5; }); // V1_391: ~5min full cycle — runs last 30min+
+                playlist = ['rush', 'drift', 'bloom', 'polter', 'grave', 'banshee', 'carnevale', 'stampede', 'seance', 'gallop', 'prism', 'reaper'].sort(function () { return Math.random() - 0.5; }); // V1_394: 12 songs, ~12min full cycle (Kevin: repetitive at 9min on the 6-song set) — reshuffles each cycle
                 plIdx = 0;
             }
             // V1_387: real transitions. fade = old song ramps to silence (its last
@@ -7397,6 +7592,14 @@
                     master.gain.setValueAtTime(effVol(), startAt);
                 }
                 track = TRACKS[key];
+                curKey = key;
+                // V1_394: per-track echo depth — the outgoing tail keeps its own wet until the new
+                // downbeat. Cancel first: back-to-back switches (menu->game) schedule at different
+                // startAts, and the earlier switch's event can land LAST and stomp this one.
+                if (echoWet) {
+                    echoWet.gain.cancelScheduledValues(t);
+                    echoWet.gain.setValueAtTime(track.echoWet !== undefined ? track.echoWet : 0.14, startAt);
+                }
                 stepIdx = 0; loopsDone = 0;
                 nextTime = startAt + 0.02;
             }
@@ -7470,7 +7673,7 @@
                 setMuted: function (m) { muted = !!m; applyVol(0.1); },
                 setVolume: function (v) { vol = Math.max(0, Math.min(1, v || 0)); applyVol(0.1); },
                 _tracks: TRACKS, // exposed for tests + future tuning
-                _dbg: function () { return { state: state, suppressed: suppressed, muted: muted, vol: vol, running: running, gain: master ? master.gain.value : null, bpm: track ? track.bpm : null, step: stepIdx }; }
+                _dbg: function () { return { state: state, suppressed: suppressed, muted: muted, vol: vol, running: running, gain: master ? master.gain.value : null, bpm: track ? track.bpm : null, step: stepIdx, key: curKey, wet: echoWet ? echoWet.gain.value : null, playlist: playlist.slice() }; } // V1_394: key/wet/playlist for tests
             };
         })();
         window.MUSIC = MUSIC;
