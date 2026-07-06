@@ -31,7 +31,7 @@ window.createBooMusic = function (cfg) {
     let muted = !!cfg.startMuted, vol = (cfg.volume === undefined ? 0.5 : cfg.volume);
     let suppressed = false, running = false;
     let state = 'off', track = null, stepIdx = 0, nextTime = 0, loopsDone = 0;
-    let playlist = [], plIdx = 0, tickTimer = null, lastSiteCheck = 0;
+    let playlist = [], plIdx = 0, tickTimer = null, lastSiteCheck = 0, echoWetNode = null, overrideKey = null;
     const LOOKAHEAD = 0.24, TICK_MS = 90;
     const MASTER_LVL = cfg.masterLevel === undefined ? 0.42 : cfg.masterLevel;
     const LOOPS_PER = cfg.loopsPerTrack === undefined ? 2 : cfg.loopsPerTrack;
@@ -97,6 +97,7 @@ window.createBooMusic = function (cfg) {
         const dly = a.createDelay(0.5), fb = a.createGain(), wet = a.createGain();
         dly.delayTime.value = 0.23; fb.gain.value = 0.24; wet.gain.value = 0.14;
         chans.p1.connect(dly); dly.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(duckLP);
+        echoWetNode = wet; // V1_390: per-track echo depth (track.echoWet, default 0.14)
         waves = { w25: pulseWave(0.25), w125: pulseWave(0.125) };
         const n = Math.floor(a.sampleRate * 0.3), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
         for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
@@ -196,6 +197,7 @@ window.createBooMusic = function (cfg) {
         track = TRACKS[key];
         stepIdx = 0; loopsDone = 0;
         nextTime = startAt + 0.02;
+        if (echoWetNode) echoWetNode.gain.setValueAtTime(track.echoWet === undefined ? 0.14 : track.echoWet, startAt); // V1_390
     }
     function tick() {
         if (!a || !running) return;
@@ -232,7 +234,7 @@ window.createBooMusic = function (cfg) {
                     if (state === 'gameover') { state = 'menu'; switchTrack(TITLE_KEY, { fade: 0, gap: 1.1, rise: 0.9 }); }
                     break;
                 }
-                if (state === 'game' && playlist.length > 1 && loopsDone >= LOOPS_PER) {
+                if (state === 'game' && !overrideKey && playlist.length > 1 && loopsDone >= LOOPS_PER) {
                     plIdx = (plIdx + 1) % playlist.length;
                     switchTrack(playlist[plIdx], { fade: 0, gap: 0.12 });
                     break;
@@ -253,9 +255,23 @@ window.createBooMusic = function (cfg) {
                 else if (!track) this.setState(state, true);
             }
         },
+        // V1_390: hold a specific track (e.g. a boss room) until cleared — rotation
+        // pauses while an override is active. Entry slams in hard; exit swells back
+        // into whichever rotation song was playing.
+        setOverride: function (key, opts) {
+            if (!TRACKS[key] || overrideKey === key || !a) return;
+            overrideKey = key;
+            switchTrack(key, opts || { fade: 0.12, gap: 0.1 });
+        },
+        clearOverride: function (opts) {
+            if (!overrideKey) return;
+            overrideKey = null;
+            if (a && state === 'game') switchTrack(playlist[plIdx] || TITLE_KEY, opts || { fade: 0.3, gap: 0.25, rise: 0.4 });
+        },
         setState: function (s, force) {
             if (s === state && !force) return;
             state = s;
+            overrideKey = null; // any real state change ends a boss hold
             if (!a) { return; }
             if (s === 'menu') switchTrack(TITLE_KEY, { fade: 0.22, gap: 0.15, rise: 0.35 });
             else if (s === 'game') { shufflePlaylist(); switchTrack(playlist[0] || TITLE_KEY, { fade: 0.15, gap: 0.08 }); }
