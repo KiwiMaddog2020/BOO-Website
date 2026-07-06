@@ -470,6 +470,10 @@
             color: rgba(255, 255, 255, 0.4); width: 100%; text-align: center;
         }
         .pl-items { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; flex: 1; min-width: 0; }
+        /* V1_393: legendary pills must NEVER wrap to a second line or bleed off screen
+           (Kevin) — one-line strip; renderPauseLoadout caps the pills and folds the rest
+           into a +K pill (display only, acquisition untouched) */
+        #plLegendaries { flex-wrap: nowrap; overflow: hidden; }
         /* V1_325: icon-only pills (emoji carries identity, name lives in a hover/tap
            tooltip) so weapons + tomes each fit on one line. */
         .pl-item {
@@ -489,20 +493,25 @@
         }
 
         /* V1_388: the stat columns grew (PROJECTILES row; LUCK + GOLD GAIN moved in) and a
-           full late-game loadout no longer fit ~900px-tall windows. Two height-based compact
-           tiers shave the generous vertical spacing while keeping the exact layout. */
-        @media (max-height: 950px) {
-            .pause-title { font-size: 26px; margin-bottom: 12px; }
-            .pause-loadout { gap: 12px; margin-bottom: 14px; }
-            .pl-loadout-row { gap: 7px; }
-            .pl-stats-bottom { margin-top: 12px; margin-bottom: 6px; }
-            .pl-stat { font-size: 12px; padding: 1.5px 0; }
-            .pause-menu-buttons { gap: 11px; }
+           full late-game loadout no longer fit ~900px-tall windows.
+           V1_393: flipped the logic (Kevin: over-scrunched with room to spare) —
+           comfortable spacing is the DEFAULT again; a light tier covers laptop heights and
+           the V1_388 compact values only kick in on genuinely short windows. Budgeted
+           worst-case (4 weapons + 4 tomes + 4 legendaries + 9+9 stat rows): base ≈ 660px
+           tall, light ≈ 580px, compact ≈ 515px; below that the overlay scrolls (V1_314). */
+        @media (max-height: 780px) {
+            .pause-title { font-size: 26px; margin-bottom: 14px; }
+            .pause-loadout { gap: 14px; margin-bottom: 16px; }
+            .pl-loadout-row { gap: 8px; }
+            .pl-stats-bottom { margin-top: 14px; margin-bottom: 8px; }
+            .pl-stat { font-size: 12px; padding: 2px 0; }
+            .pause-menu-buttons { gap: 12px; }
             .pause-menu-btn { padding: 8px 20px; }
         }
-        @media (max-height: 800px) {
+        @media (max-height: 620px) {
             .pause-title { font-size: 22px; margin-bottom: 8px; }
             .pause-loadout { gap: 9px; margin-bottom: 10px; }
+            .pl-loadout-row { gap: 7px; }
             .pl-stats-bottom { margin-top: 8px; }
             .pl-stat { font-size: 11.5px; padding: 1px 0; }
             .pl-item { padding: 3px 6px; }
@@ -1787,13 +1796,13 @@
         
         .tome-editor-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(4, minmax(0, 1fr)); /* V1_393: minmax(0,…) so fluid cards can compress below content size */
             gap: 15px;
             margin-bottom: 25px;
         }
-        
+
         .tome-select-card {
-            width: 140px;
+            width: auto; /* V1_393: fluid — fills its grid track (was fixed 140px); zero-scroll policy needs cards that flex with the window */
             padding: 16px 10px;
             background: rgba(0, 0, 0, 0.8);
             border: 2px solid rgba(100, 200, 255, 0.4);
@@ -1857,6 +1866,7 @@
             max-width: 96px;
             aspect-ratio: 96 / 40;
             height: auto;
+            max-height: 100%; /* V1_393: shrink with the icon wrapper on short windows (aspect-ratio keeps it undistorted; JS backing store reads client size) */
             display: block;
             border-radius: 4px;
         }
@@ -1948,7 +1958,37 @@
             background: #0ff;
             color: #000;
         }
-        
+
+        /* V1_393: always-visible ✕ exit — position:fixed pins it to the viewport corner
+           (the overlay is the scroll container, so an absolute child would scroll away).
+           Same cyan neon language as .tome-editor-close. */
+        .tome-editor-x {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid #0ff;
+            border-radius: 50%;
+            color: #0ff;
+            font-size: 17px;
+            line-height: 1;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 0 10px #0ff;
+            transition: background 0.2s, color 0.2s;
+            z-index: 10003; /* above the overlay content */
+        }
+
+        .tome-editor-x:hover {
+            background: #0ff;
+            color: #000;
+        }
+
         .tome-disabled-count {
             font-size: 13px;
             color: #888;
@@ -1987,23 +2027,59 @@
             color: #ccc;
         }
         
-        /* V1_380: height-based compacting — 16 tomes at full size are ~856px tall, which
-           clipped the DONE button on laptop windows (768px). Reuses the proven 700px-width
-           compact values but keeps 4 columns. */
-        @media (max-height: 900px) {
+        /* V1_393: zero-scroll policy (supersedes the V1_380 two-tier compacting) — the
+           editor must fit COMPLETELY, no scrolling, at all realistic window sizes; Kevin
+           got stranded with ✓ DONE below the fold. Fluid cards + progressive height tiers
+           compress chrome, icons and gaps; the per-card desc text yields first (the strip
+           under the grid still shows it on click). overflow-y:auto on the overlay stays as
+           a last-resort fallback for absurdly short windows (< ~450px) only. */
+        @media (max-height: 950px) {
             .tome-editor-content { padding: 16px; }
             .tome-editor-title { font-size: 24px; margin-bottom: 4px; }
             .tome-editor-subtitle { font-size: 12px; margin-bottom: 10px; }
-            .tome-editor-grid { gap: 12px; margin-bottom: 16px; }
-            .tome-select-card { width: 120px; padding: 12px 8px; gap: 6px; }
+            .tome-mode-toggle { margin-bottom: 12px; }
+            .tome-editor-grid { gap: 12px; margin-bottom: 14px; }
+            .tome-select-card { padding: 12px 8px; gap: 6px; }
             .tome-select-card .tome-icon-wrapper { font-size: 32px; height: 40px; }
             .tome-select-card .tome-name { font-size: 10px; }
+            .tome-editor-desc { margin: 10px auto; }
+        }
+        @media (max-height: 800px) {
+            .tome-editor-content { padding: 12px 16px; }
+            .tome-editor-title { font-size: 21px; }
+            .tome-editor-subtitle { margin-bottom: 8px; }
+            .tome-mode-toggle { margin-bottom: 10px; }
+            .tome-editor-grid { gap: 10px; margin-bottom: 10px; }
+            .tome-select-card { padding: 9px 6px; gap: 5px; }
+            .tome-select-card .tome-icon-wrapper { font-size: 28px; height: 34px; }
+            .tome-editor-desc { height: 28px; min-height: 28px; margin: 8px auto; padding: 4px 20px; font-size: 13px; }
+            .tome-editor-close { padding: 9px 18px; font-size: 12px; }
         }
         @media (max-height: 700px) {
-            .tome-editor-grid { gap: 10px; margin-bottom: 12px; }
-            .tome-select-card { width: 106px; padding: 9px 6px; gap: 5px; }
-            .tome-select-card .tome-icon-wrapper { font-size: 28px; height: 34px; }
-            .tome-editor-close { padding: 9px 18px; font-size: 12px; }
+            .tome-select-card .tome-desc { display: none; } /* per-card desc yields first — the strip below still shows it */
+            .tome-editor-title { font-size: 18px; }
+            .tome-editor-subtitle { font-size: 11px; margin-bottom: 6px; }
+            .tome-mode-toggle { margin-bottom: 8px; }
+            .tome-editor-grid { gap: 8px; margin-bottom: 8px; }
+            .tome-select-card { padding: 7px 5px; gap: 4px; }
+            .tome-select-card .tome-icon-wrapper { font-size: 24px; height: 30px; }
+            .tome-editor-desc { height: 26px; min-height: 26px; margin: 6px auto; font-size: 12px; }
+            .tome-editor-close { padding: 8px 16px; }
+        }
+        @media (max-height: 560px) {
+            /* extreme short (landscape phones) — smallest fixed sizes before the
+               overflow-y:auto fallback has to take over */
+            .tome-editor-title { font-size: 15px; letter-spacing: 2px; }
+            .tome-editor-subtitle { display: none; }
+            .tome-mode-toggle { margin-bottom: 6px; }
+            .tome-mode-btn { padding: 4px 10px; font-size: 10px; min-width: 90px; }
+            .tome-editor-grid { gap: 6px; margin-bottom: 6px; }
+            .tome-select-card { padding: 5px 4px; gap: 3px; }
+            .tome-select-card .tome-icon-wrapper { font-size: 18px; height: 22px; }
+            .tome-select-card .tome-name { font-size: 9px; }
+            .tome-editor-desc { height: 22px; min-height: 22px; margin: 4px auto; font-size: 11px; padding: 2px 12px; }
+            .tome-editor-close { padding: 6px 14px; font-size: 11px; }
+            .tome-editor-x { top: 8px; right: 8px; width: 32px; height: 32px; font-size: 14px; }
         }
 
         @media (max-width: 700px) {
@@ -2021,8 +2097,7 @@
                 gap: 12px;
             }
             .tome-select-card {
-                width: 120px;
-                padding: 12px 8px;
+                padding: 12px 8px; /* V1_393: width dropped — cards are fluid (fill their track) */
             }
             .tome-select-card .tome-icon-wrapper {
                 font-size: 32px;
@@ -2061,8 +2136,7 @@
                 justify-self: center;
             }
             .tome-select-card {
-                width: 110px;
-                padding: 10px 6px;
+                padding: 10px 6px; /* V1_393: width dropped — cards are fluid (fill their track) */
             }
             .tome-select-card .tome-icon-wrapper {
                 font-size: 28px;
@@ -2094,8 +2168,7 @@
                 gap: 8px;
             }
             .tome-select-card {
-                width: 90px;
-                padding: 8px 5px;
+                padding: 8px 5px; /* V1_393: width dropped — cards are fluid (fill their track) */
             }
             .tome-select-card .tome-icon-wrapper {
                 font-size: 24px;
@@ -2109,6 +2182,20 @@
                 padding: 8px 14px;
                 font-size: 11px;
             }
+        }
+
+        /* V1_393: phones — the 3-column grid stacks 16 tomes into 6 rows, which only fits
+           the per-card desc text on tall screens; below 800px height it yields (the strip
+           under the grid still shows descriptions on tap). Placed AFTER the width tiers so
+           it wins their icon/padding values. */
+        @media (max-width: 550px) and (max-height: 800px) {
+            .tome-select-card .tome-desc { display: none; }
+            .tome-select-card { padding: 7px 5px; gap: 4px; }
+            .tome-select-card .tome-icon-wrapper { font-size: 24px; height: 30px; }
+            .tome-editor-grid { gap: 8px; }
+            /* strip stays FIXED height (no hover layout shift) but sized for the 2 lines
+               that long descriptions need at phone widths — text can't bleed into DONE */
+            .tome-editor-desc { height: 34px; min-height: 34px; font-size: 12px; line-height: 1.35; margin: 6px auto; padding: 2px 10px; }
         }
         
         /* V1_312: weapon "dossier" detail card — replaces the old thin desc strip.
@@ -6604,6 +6691,10 @@
     
     <!-- Tome Editor Overlay -->
     <div class="tome-editor-overlay" id="tomeEditorOverlay">
+        <!-- V1_393: always-visible exit pinned to the viewport corner (Kevin got stranded
+             with ✓ DONE below the fold) — lives OUTSIDE .tome-editor-content so it can
+             never scroll away; same close routine as ✓ Done -->
+        <button class="tome-editor-x" id="tomeEditorX" aria-label="Close tome editor">✕</button>
         <div class="tome-editor-content">
             <div class="tome-editor-title">Edit Tomes</div>
             <div class="tome-editor-subtitle">Choose which tomes will be offered as upgrades</div>
@@ -8998,7 +9089,7 @@
                 desc: 'Roving zap turret escorts you', // V1_378: rover AI rework
                 baseDamage: 14, // V1_376 measured-DPS pass: +56% (was 9) — roster floor at 37 swarm / 34 tank DPS (Lv7), weak in both arenas
                 baseFireRate: 5200,
-                sentryLife: 9000,
+                sentryLife: 5000, // V1_393: uncapped overlap — retuned down so base field count stays ~1 early / ~2 late (lifetime ÷ 5.2s cadence); Persistence now genuinely stacks sentries
                 zapRate: 520,
                 zapRange: 300,
                 dmgScale: 0.05,
@@ -11764,14 +11855,12 @@
                 const fireRate = def.baseFireRate; // deploy interval — not level-scaled
                 if (now - (state.lastFire || 0) < fireRate) return;
 
-                const maxSentries = 1 + Math.floor(level / 5);
-                const aliveSentries = sentries.filter(s => !s.dead).length;
-                if (aliveSentries >= maxSentries) return;
-
+                // V1_393: no alive cap — field count emerges from lifetime ÷ deploy cadence
+                // (Kevin: Persistence must stack sentries, never delay the next dispatch)
                 state.lastFire = now;
                 SFX.wMineDrop();
 
-                const lifetime = (def.sentryLife + 400 * level) * this.durationMultiplier;
+                const lifetime = (def.sentryLife + 1000 * level) * this.durationMultiplier;
                 sentries.push(new StormSentry(this.x, this.y, def, level, lifetime, this.sizeMultiplier)); // WP7 fix: Tome of Magnitude scales the orb visual + zap thickness
             }
 
@@ -24017,8 +24106,8 @@
             // length min(baseLength+10*lvl, cap), spin rate baseSpin+.035*lvl rad/s, tick rate
             // fixed (cd n/a, continuous like toxicAura/stormSentry — never stops sweeping)
             lighthouse:    { dmgScale: 0.05, cdScale: null, range: { label: 'Length', fn: (l, d) => Math.min(d.baseLength + 10 * l, ONSCREEN_RANGE_CAP) }, spin: { label: 'Spin', fn: (l, d) => d.baseSpin + 0.035 * l } },
-            // WP3: fireStormSentry: dmg .05, max deployed sentries 1+floor(lvl/5), deploy cadence fixed (cd null)
-            stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => 1 + Math.floor(l / 5) } },
+            // WP3/V1_393: fireStormSentry: dmg .05, deploy cadence fixed (cd null); no alive cap — avg field count = lifetime (5000+1000*lvl) ÷ 5.2s cadence
+            stormSentry:   { dmgScale: 0.05, cdScale: null,  count: { noun: 'Sentry', fn: (l) => Math.max(1, Math.round((5000 + 1000 * l) / 5200)) } }, // V1_393: natural throughput (lifetime ÷ cadence), keep in sync with fireStormSentry
             // WP8: firePhotonScythe: dmg .05, swing radius baseRadius+7*lvl, cd .985 (sweep angle isn't surfaced — no display field for it)
             photonScythe:  { dmgScale: 0.05, cdScale: 0.985, range: { label: 'Radius', fn: (l, d) => d.baseRadius + 7 * l } },
             // V1_379: updateEncore: dmg .05, ghosts 1 (2 at Lv7+), aura baseAura+2*lvl, continuous tick (cd null)
@@ -29665,6 +29754,12 @@
         
         // Set up tome editor close button
         DOM.tomeEditorClose.onclick = closeTomeEditor;
+        // V1_393: pinned ✕ exit (top-right) — binds the SAME routine as ✓ Done, no duplicate close logic
+        const tomeEditorXBtn = document.getElementById('tomeEditorX');
+        if (tomeEditorXBtn) {
+            tomeEditorXBtn.onclick = closeTomeEditor;
+            tomeEditorXBtn.addEventListener('touchend', (e) => { e.preventDefault(); closeTomeEditor(); });
+        }
         
         function highlightWeapon(weaponId) {
             // Cannot select disabled weapons as starter
@@ -30208,10 +30303,21 @@
             const lEl = document.getElementById('plLegendaries');
             const lGroup = document.getElementById('plLegendariesGroup');
             if (lGroup) lGroup.style.display = ownedLeg.length ? '' : 'none';
-            if (lEl) lEl.innerHTML = ownedLeg.map(id => {
-                const d = LEGENDARY_UPGRADES[id];
-                return `<div class="pl-item" data-name="${d.name}" data-color="${d.color || '#0ff'}" data-desc="${d.desc}"><span class="pl-ic">${d.icon}</span></div>`;
-            }).join('');
+            // V1_393: one-line guarantee (Kevin) — cap the pills at what fits the 412px
+            // panel (~371px inner: 8 icon pills + a "+K" ≈ 355px) and fold the overflow
+            // into a +K pill whose tooltip lists the hidden names. Display only —
+            // acquisition (MAX_LEGENDARIES = 4) is untouched, so the fold is future-proofing.
+            const PL_LEG_PILL_CAP = 8;
+            if (lEl) {
+                const shownLeg = ownedLeg.slice(0, PL_LEG_PILL_CAP);
+                const hiddenLeg = ownedLeg.slice(PL_LEG_PILL_CAP);
+                lEl.innerHTML = shownLeg.map(id => {
+                    const d = LEGENDARY_UPGRADES[id];
+                    return `<div class="pl-item" data-name="${d.name}" data-color="${d.color || '#0ff'}" data-desc="${d.desc}"><span class="pl-ic">${d.icon}</span></div>`;
+                }).join('') + (hiddenLeg.length
+                    ? `<div class="pl-item" data-name="+${hiddenLeg.length} more" data-color="#ffd700" data-desc="${hiddenLeg.map(id => LEGENDARY_UPGRADES[id].name).join(', ')}"><span class="pl-lv">+${hiddenLeg.length}</span></div>`
+                    : '');
+            }
         }
 
         // V1_350: does the player currently own this legendary? (chance-based or active flag)
