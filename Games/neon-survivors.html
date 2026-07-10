@@ -2424,15 +2424,16 @@
             .achievements-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         }
         @media (max-width: 480px) {
-            /* 23 cards at 2 columns = 12 rows — condition text yields immediately here
-               (same precedent as the V1_393 tome-editor per-card desc) so 12 rows of
-               name + bar + unlock-line actually fit a 412px-class phone without scrolling. */
-            .achievements-content { max-width: 420px; padding: 8px 8px 6px; }
-            .achievements-title { font-size: 15px; letter-spacing: 1.5px; margin-bottom: 1px; }
-            .achievements-subtitle { font-size: 9px; margin-bottom: 3px; }
-            .achievements-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-bottom: 5px; }
-            .achievement-card { padding: 2px 5px; gap: 1px; }
-            .achievement-card .ach-name { font-size: 9.5px; padding-right: 13px; line-height: 1.05; }
+            /* V1_409: 25 cards at 2 columns = 13 rows — condition text yields immediately here
+               (same precedent as the V1_393 tome-editor per-card desc) so 13 rows of
+               name + bar + unlock-line actually fit a 412px-class phone without scrolling.
+               Padding/line-height trimmed a hair vs. the old 12-row layout to absorb the +1 row. */
+            .achievements-content { max-width: 420px; padding: 6px 8px 5px; }
+            .achievements-title { font-size: 14px; letter-spacing: 1.5px; margin-bottom: 1px; }
+            .achievements-subtitle { font-size: 9px; margin-bottom: 2px; }
+            .achievements-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; margin-bottom: 4px; }
+            .achievement-card { padding: 2px 5px; gap: 0; }
+            .achievement-card .ach-name { font-size: 9px; padding-right: 13px; line-height: 1.03; }
             .achievement-card .ach-cond { display: none; }
             .achievement-card .ach-unlocks { font-size: 7.5px; line-height: 1.05; }
             .achievement-card .ach-bar-track { height: 2px; margin-top: 0; }
@@ -8446,7 +8447,8 @@
                 survivor25:    { name: 'Unbreakable',   desc: 'Survive 25:00 in one run',       kind: 'runStat',  stat: 'time',       target: 1500, unlocks: { tome: 'persistTome' } },
                 slaughter300:  { name: 'Slaughter',     desc: '300 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 300,  unlocks: { tome: 'velocityTome' } },
                 tycoon:        { name: 'Tycoon',        desc: 'Earn 5,000 gold lifetime',       kind: 'lifetime', stat: 'gold',       target: 5000, unlocks: { tome: 'midasTome' } },
-                phoenix:       { name: 'Phoenix',       desc: 'Perish 5 times',                 kind: 'lifetime', stat: 'deaths',     target: 5,    unlocks: { tome: 'retributionTome' } }
+                phoenix:       { name: 'Phoenix',       desc: 'Perish 5 times',                 kind: 'lifetime', stat: 'deaths',     target: 5,    unlocks: { tome: 'retributionTome' } },
+                mawSealed:     { name: 'Sealed the Hellmouth', desc: 'Defeat The Maw',           kind: 'event',                                       unlocks: { sprite: 'legend' } } // V1_409: 25th achievement — unlocks the 9th sprite (legend / gold crown + halo)
             };
 
             function canUseStorage() {
@@ -8688,6 +8690,7 @@
                         else if (evt === 'chest') { state.life.chests++; _scan(_runSnapshot()); _saveNow(); }
                         else if (evt === 'directive' || evt === 'shrine') { _scan(_runSnapshot()); }
                         else if (evt === 'weaponMaxed') { award('perfectionist'); }
+                        else if (evt === 'mawSealed') { award('mawSealed'); } // V1_409: defeat The Maw -> legend sprite
                         else if (evt === 'levelClear') {
                             const lvl = data && data.level;
                             if (!lvl) return;
@@ -19052,6 +19055,780 @@
             }
         }
         
+        // ==================================================================
+        // V1_409: THE MAW — true final boss of Hellmouth (inferno only).
+        // Portal spawns on level-clear; player enters when they choose; a
+        // 3-phase, fully-telegraphed fight in a fire-walled arena. TheMaw
+        // duck-types as a boss (isBoss + takeDamage/applyPoison/applyKnockback)
+        // and lives in the `bosses` array so EVERY weapon hits it for free.
+        // Telegraph doctrine is LAW: every damaging effect gets a >=0.6s visible
+        // warning, everything is dodgeable at base move speed, nothing homes.
+        // ==================================================================
+        let mawPortal = null;        // world object once the level is cleared on inferno
+        let mawFightActive = false;  // suspends spawn/boss/directive systems (gameplay runs)
+        let maw = null;              // TheMaw instance (also pushed into `bosses`)
+        let mawArena = null;         // { x, y, baseRadius, radius }
+        let mawFightStart = 0;       // gameTime (s) at arena entry — for fight duration
+        let mawSealed = false;       // run latch: portal gone, fight cannot recur
+        let mawWhiteout = 0;         // 0..1 entry white-out alpha
+        let mawWhiteoutDir = 0;      // +1 fading in, -1 fading out, 0 idle
+        let mawEntryPending = false; // swap to arena at the whiteout peak
+        let mawWinFlash = 0;         // 0..1 victory white flash (decays)
+        let mawBanner = null;        // { text, until } phase banner (gameTime seconds)
+        let mawWin = false;          // routes the shared victory overlay buttons
+        let mawFinish = false;       // routes showGameOverMenu() to the "SEALED!" retitle
+        const mawTelemetry = [];     // {effect, warn, fire} in ms — harness telegraph asserts
+        const MAW_CHANNEL_REQUIRED = 2000; // ms stood inside the ring to enter
+        const MAW_ARENA_RADIUS = 700;
+        // V1_409: HP tuned to ~170s of a representative endgame build's single-target DPS.
+        // Headless measurement (10 weapons @L15, lvl30, stationary far target) = 222 DPS — a
+        // CONSERVATIVE floor (no tomes/legendaries/L20 rarity levels, and short-range auras/orbits/
+        // mines never connect on a parked target). A real optimized 30-min build that kites the Maw
+        // close lands far more: estimated ~650-1100 single-target DPS. HP set for that band =>
+        // ~120-200s fight for a strong build, ~60-90s for a monster crit build. Flagged for a live
+        // playtest fine-tune (see report). Phase gates at 66% / 33%.
+        const MAW_HP = 130000;
+
+        function mawNow() { return gameTime * 1000; }
+        function mawTele(effect, warnMs, fireMs) {
+            mawTelemetry.push({ effect: effect, warn: warnMs, fire: fireMs });
+            if (mawTelemetry.length > 200) mawTelemetry.shift();
+        }
+        function mawRoar() {
+            try {
+                if (window.SFX) {
+                    if (SFX.tone) SFX.tone(84, 0.55, 'sawtooth', 0.22, 44);
+                    if (SFX.noise) SFX.noise(0.35, 0.20);
+                    if (SFX.bossWarn) setTimeout(function () { try { SFX.bossWarn(); } catch (e) {} }, 90);
+                }
+            } catch (e) {}
+        }
+        function mawSetBanner(text) { mawBanner = { text: text, until: gameTime + 2.6 }; }
+
+        // Spawn the portal at a clear spot 600-900px from the player (terrain-aware,
+        // same rejection pattern as other world spawns). Persists for the run.
+        function spawnMawPortal() {
+            if (mawPortal || mawSealed || !player) return;
+            let px = player.x + 700, py = player.y, placed = false;
+            for (let i = 0; i < 48 && !placed; i++) {
+                const ang = Math.random() * Math.PI * 2;
+                const dist = 600 + Math.random() * 300;
+                let x = player.x + Math.cos(ang) * dist;
+                let y = player.y + Math.sin(ang) * dist;
+                x = Math.max(MAW_ARENA_RADIUS + 60, Math.min(WORLD.width - MAW_ARENA_RADIUS - 60, x));
+                y = Math.max(MAW_ARENA_RADIUS + 60, Math.min(WORLD.height - MAW_ARENA_RADIUS - 60, y));
+                if (isInTerrain(x, y, 90) || isInLake(x, y, 90)) continue;
+                px = x; py = y; placed = true;
+            }
+            mawPortal = { x: px, y: py, spawnTime: gameTime, channel: 0, r: 60, pulse: 0 };
+        }
+
+        // Runs each active frame (post-clear) — channel-fill when the player stands inside.
+        function updateMawPortal(dt) {
+            if (!mawPortal || mawFightActive || mawSealed || !player) return;
+            mawPortal.pulse += dt * 0.003;
+            const dist = Math.hypot(player.x - mawPortal.x, player.y - mawPortal.y);
+            if (dist < mawPortal.r) {
+                mawPortal.channel += dt;
+                if (Math.random() < 0.25) {
+                    const a = Math.random() * Math.PI * 2, rr = mawPortal.r * (0.4 + Math.random() * 0.9);
+                    spawnParticles(mawPortal.x + Math.cos(a) * rr, mawPortal.y + Math.sin(a) * rr, '#ff7722', 1);
+                }
+                if (mawPortal.channel >= MAW_CHANNEL_REQUIRED) beginMawEntry();
+            } else {
+                mawPortal.channel = Math.max(0, mawPortal.channel - dt * 0.6);
+            }
+        }
+
+        function beginMawEntry() {
+            if (mawFightActive || mawEntryPending) return;
+            mawEntryPending = true;
+            mawWhiteout = 0; mawWhiteoutDir = 1;   // fade to white; arena swaps at the peak
+            try { if (window.SFX && SFX.legendary) SFX.legendary(); } catch (e) {}
+        }
+
+        // Drive the entry white-out on real dt (independent of gameplay pausing).
+        function updateMawWhiteout(dt) {
+            if (mawWhiteoutDir === 0) return;
+            mawWhiteout += mawWhiteoutDir * dt / 300; // ~0.3s each way => ~0.6s total
+            if (mawWhiteout >= 1) {
+                mawWhiteout = 1; mawWhiteoutDir = -1;
+                if (mawEntryPending) { mawEntryPending = false; enterMawArena(); }
+            } else if (mawWhiteout <= 0) {
+                mawWhiteout = 0; mawWhiteoutDir = 0;
+            }
+        }
+
+        function enterMawArena() {
+            mawFightActive = true;
+            mawFightStart = gameTime;
+            mawArena = { x: mawPortal.x, y: mawPortal.y, baseRadius: MAW_ARENA_RADIUS, radius: MAW_ARENA_RADIUS };
+            // Clear existing world enemies/bosses with the normal death-fade, NO rewards.
+            for (const e of enemies) { if (!e.dead) { e.dead = true; spawnParticles(e.x, e.y, '#552222', 3); } }
+            for (const b of bosses) { if (!b.dead) b.dead = true; }
+            enemyProjectiles.length = 0;
+            // Clear any active directive marker so its compass/vault doesn't linger.
+            try { if (typeof directiveActive !== 'undefined') directiveActive = null; } catch (e) {}
+            maw = new TheMaw(mawArena.x, mawArena.y - 260);
+            bosses.push(maw); // free weapon collision + boss-loop update/draw
+            mawTelemetry.length = 0;
+            if (window.MUSIC && MUSIC.setOverride) MUSIC.setOverride('maw'); // inert until the architect ports it
+            mawRoar();
+            if (camera.shake) camera.shake(6, 420);
+            mawSetBanner('THE MAW HUNGERS');
+        }
+
+        // Full teardown — shared by win / lose / exit-to-menu. Leaves mawSealed as-is
+        // (caller decides): a WIN latches it, a LOSE/EXIT leaves it so a fresh run resets.
+        function endMawFight() {
+            mawFightActive = false;
+            mawEntryPending = false;
+            mawWhiteoutDir = 0; mawWhiteout = 0;
+            if (maw) maw.dead = true;
+            maw = null;
+            mawArena = null;
+            mawBanner = null;
+            // summoned adds + their projectiles are fight-scoped
+            for (const e of enemies) e.dead = true;
+            enemyProjectiles.length = 0;
+            if (window.MUSIC && MUSIC.clearOverride) MUSIC.clearOverride(); // inert until ported
+        }
+
+        // ===== THE MAW =====
+        class TheMaw {
+            constructor(x, y) {
+                this.x = x; this.y = y;
+                this.radius = 100;
+                this.maxHp = MAW_HP;
+                this.hp = this.maxHp;
+                this.dead = false;
+                this.isBoss = true;
+                this.bossType = 'maw';
+                this.tint = null;
+                this.color = '#ff5522';
+                this.incomingDamage = 0;
+                this.orbHitCooldown = 0;
+                this.hitFlash = 0;
+                // status/knockback fields so weapons that call these never throw
+                this.poisonDamage = 0; this.poisonTicks = 0; this.poisonTickTimer = 0;
+                this.knockbackVelX = 0; this.knockbackVelY = 0;
+                // phase machine
+                this.phase = 1;
+                this.p3Start = 0;
+                this.contactCooldown = 0;
+                this.attackTimer = 1600;   // first attack shortly after entry
+                this.holdUntil = 0;        // anchor (stop floating) while casting
+                this.floatSpeed = 0.62;    // slow drift toward player
+                // active scripted effects
+                this.geysers = [];
+                this.meteors = [];
+                this.spokes = null;
+                this.lunge = null;
+                this.emberT = 0;
+                this._forced = null;       // harness override for next attack pick
+            }
+
+            applyPoison(damage) {
+                this.poisonDamage = damage;
+                this.poisonTicks = Math.round(5 * (player ? player.durationMultiplier : 1));
+                this.poisonTickTimer = 0;
+                spawnParticles(this.x, this.y, '#32cd32', 4);
+            }
+            applyKnockback() { /* The Maw is immovable — knockback is absorbed */ }
+
+            takeDamage(amount, isCrit = false) {
+                if (this.dead) return;
+                this.hp -= amount;
+                this.incomingDamage = Math.max(0, this.incomingDamage - amount);
+                this.hitFlash = 1;
+                spawnDamageNumber(this.x, this.y, Math.round(amount), isCrit);
+                if (this.hp <= 0 && !this.dead) this.die();
+            }
+
+            // ---- attack scripts (all telegraphed) ----
+            _pickAttack() {
+                let pool;
+                if (this.phase === 1) pool = ['geyser', 'lunge', 'wisps'];
+                else if (this.phase === 2) pool = ['geyser', 'lunge', 'wisps', 'spokes', 'meteors'];
+                else pool = ['geyser', 'lunge', 'wisps', 'spokes', 'meteors', 'grid', 'doubleLunge', 'splitters'];
+                let a = this._forced && pool.indexOf(this._forced) !== -1 ? this._forced : pool[Math.floor(Math.random() * pool.length)];
+                this._forced = null;
+                this._run(a);
+            }
+            _run(a) {
+                if (a === 'geyser') this._castGeysers(4);
+                else if (a === 'grid') this._castGeyserGrid();
+                else if (a === 'lunge') this._castLunge(1);
+                else if (a === 'doubleLunge') this._castLunge(2);
+                else if (a === 'spokes') this._castSpokes();
+                else if (a === 'meteors') this._castMeteors();
+                else if (a === 'wisps') this._castSummon('cinderWisp', 4);
+                else if (a === 'splitters') this._castSummon('splitter', 2);
+            }
+            _castGeysers(n) {
+                const now = mawNow();
+                for (let i = 0; i < n; i++) {
+                    const ang = Math.random() * Math.PI * 2;
+                    const d = 120 + Math.random() * (mawArena.radius - 220);
+                    const gx = player.x + Math.cos(ang) * (60 + Math.random() * 180);
+                    const gy = player.y + Math.sin(ang) * (60 + Math.random() * 180);
+                    const cx = mawArena.x, cy = mawArena.y;
+                    let px = gx, py = gy;
+                    const dd = Math.hypot(px - cx, py - cy);
+                    if (dd > mawArena.radius - 90) { px = cx + (px - cx) / dd * (mawArena.radius - 90); py = cy + (py - cy) / dd * (mawArena.radius - 90); }
+                    this.geysers.push({ x: px, y: py, r: 74, warn: now, fire: now + 1000, end: now + 1000 + 800, tick: 0 });
+                    mawTele('geyser', now, now + 1000);
+                }
+                this.holdUntil = gameTime + 0.6;
+            }
+            _castGeyserGrid() {
+                const now = mawNow();
+                const cx = mawArena.x, cy = mawArena.y, R = mawArena.radius;
+                const step = 150, r = 66;
+                for (let gx = cx - R; gx <= cx + R; gx += step) {
+                    for (let gy = cy - R; gy <= cy + R; gy += step) {
+                        // checkerboard: only fill one parity -> the other parity are the SAFE lanes
+                        const col = Math.round((gx - cx) / step), row = Math.round((gy - cy) / step);
+                        if (((col + row) & 1) !== 0) continue;
+                        if (Math.hypot(gx - cx, gy - cy) > R - 70) continue;
+                        this.geysers.push({ x: gx, y: gy, r: r, warn: now, fire: now + 1050, end: now + 1050 + 750, tick: 0 });
+                    }
+                }
+                mawTele('grid', now, now + 1050);
+                this.holdUntil = gameTime + 0.7;
+            }
+            _castLunge(count) {
+                const now = mawNow();
+                this.lunge = { state: 'aim', angle: Math.atan2(player.y - this.y, player.x - this.x), until: now + 800, remaining: count };
+                mawTele('lunge', now, now + 800);
+                this.holdUntil = gameTime + 10; // held until the lunge script releases it
+            }
+            _castSpokes() {
+                const now = mawNow();
+                // Beams radiate from the boss center; anchor the Maw for the whole sweep so the
+                // origin is stable and the "walk between the spokes" read is clean.
+                this.spokes = { start: Math.random() * Math.PI * 2, count: 3, half: 0.14, warn: now, ignite: now + 1000, end: now + 1000 + 6000, angVel: 0.25, ox: this.x, oy: this.y };
+                mawTele('spokes', now, now + 1000);
+                this.holdUntil = gameTime + 7.2; // hold through warn(1s)+rotate(6s)
+            }
+            _castMeteors() {
+                const now = mawNow();
+                const R = mawArena.radius;
+                for (let i = 0; i < 10; i++) {
+                    const ang = Math.random() * Math.PI * 2, d = Math.random() * (R - 90);
+                    const w = now + i * 300 + Math.random() * 120;
+                    this.meteors.push({ x: mawArena.x + Math.cos(ang) * d, y: mawArena.y + Math.sin(ang) * d, r: 62, warn: w, fire: w + 1000, done: false });
+                    mawTele('meteor', w, w + 1000);
+                }
+                this.holdUntil = gameTime + 0.4;
+            }
+            _castSummon(kind, n) {
+                let alive = 0; for (const e of enemies) if (!e.dead) alive++;
+                const cap = 16;
+                for (let i = 0; i < n && alive < cap; i++) {
+                    const ang = (i / n) * Math.PI * 2 + Math.random();
+                    let sx = this.x + Math.cos(ang) * 90, sy = this.y + Math.sin(ang) * 90;
+                    try { enemies.push(new Enemy(kind, sx, sy)); alive++; } catch (e) {}
+                }
+                spawnParticles(this.x, this.y, '#ff7733', 14);
+            }
+
+            update(dt) {
+                if (this.dead) return;
+                const now = mawNow();
+                if (this.hitFlash > 0) this.hitFlash = Math.max(0, this.hitFlash - dt / 120);
+
+                // Poison ticks (parity with the other bosses)
+                if (this.poisonTicks > 0) {
+                    this.poisonTickTimer += dt;
+                    if (this.poisonTickTimer >= 800) {
+                        this.poisonTickTimer = 0; this.poisonTicks--;
+                        this.hp -= this.poisonDamage;
+                        spawnDamageNumber(this.x, this.y, Math.round(this.poisonDamage), false);
+                        if (this.hp <= 0 && !this.dead) { this.die(); return; }
+                    }
+                }
+
+                // Phase transitions
+                const pct = this.hp / this.maxHp;
+                if (pct <= 0.33 && this.phase < 3) {
+                    this.phase = 3; this.p3Start = gameTime;
+                    mawRoar(); if (camera.shake) camera.shake(7, 480);
+                    spawnParticles(this.x, this.y, '#ff2200', 40);
+                    mawSetBanner('THE MAW CONSUMES');
+                } else if (pct <= 0.66 && this.phase < 2) {
+                    this.phase = 2;
+                    mawRoar(); if (camera.shake) camera.shake(6, 440);
+                    spawnParticles(this.x, this.y, '#ff5500', 32);
+                    mawSetBanner('THE MAW RAGES');
+                }
+
+                // P3 wall contraction: to 55% over 60s (40% floor past 5:00 fight time).
+                if (this.phase === 3 && mawArena) {
+                    const dur = gameTime - mawFightStart;
+                    const floorPct = dur > 300 ? 0.40 : 0.55;
+                    const tC = Math.min(1, (gameTime - this.p3Start) / 60);
+                    mawArena.radius = Math.max(mawArena.baseRadius * floorPct, mawArena.baseRadius * (1 - (1 - floorPct) * tC));
+                }
+
+                // Ember particles (cheap, via the shared particle system — no per-frame shadowBlur)
+                if (now - this.emberT > 90) {
+                    this.emberT = now;
+                    const a = Math.random() * Math.PI * 2;
+                    spawnParticles(this.x + Math.cos(a) * this.radius * 0.7, this.y + Math.sin(a) * this.radius * 0.7, Math.random() < 0.5 ? '#ff7722' : '#ffcc33', 1);
+                }
+
+                // ---- lunge script (blocking) ----
+                if (this.lunge) {
+                    const L = this.lunge;
+                    if (L.state === 'aim') {
+                        if (now >= L.until) { L.state = 'dash'; L.vx = Math.cos(L.angle); L.vy = Math.sin(L.angle); mawRoar(); }
+                    } else if (L.state === 'dash') {
+                        const sp = 13 * (dt / 16);
+                        this.x += L.vx * sp; this.y += L.vy * sp;
+                        // contact damage along the dash
+                        if (Math.hypot(player.x - this.x, player.y - this.y) < this.radius + player.radius) player.takeDamage(45, this);
+                        const dc = Math.hypot(this.x - mawArena.x, this.y - mawArena.y);
+                        if (dc >= mawArena.radius - this.radius) {
+                            this.x = mawArena.x + (this.x - mawArena.x) / dc * (mawArena.radius - this.radius);
+                            this.y = mawArena.y + (this.y - mawArena.y) / dc * (mawArena.radius - this.radius);
+                            if (camera.shake) camera.shake(5, 260);
+                            spawnParticles(this.x, this.y, '#ff5522', 22);
+                            L.remaining--;
+                            if (L.remaining > 0) { this._castLunge(1); this.lunge.remaining = L.remaining; }
+                            else { this.lunge = null; this.holdUntil = 0; this.attackTimer = this._gap(); }
+                        }
+                    }
+                } else {
+                    // ---- float toward the player unless anchored while casting ----
+                    if (gameTime >= this.holdUntil) {
+                        const dx = player.x - this.x, dy = player.y - this.y, d = Math.hypot(dx, dy);
+                        if (d > this.radius) { const sp = this.floatSpeed * (dt / 16); this.x += dx / d * sp; this.y += dy / d * sp; }
+                    }
+                    // keep the maw inside the arena
+                    if (mawArena) {
+                        const dc = Math.hypot(this.x - mawArena.x, this.y - mawArena.y);
+                        const lim = mawArena.radius - this.radius - 6;
+                        if (dc > lim && dc > 0) { this.x = mawArena.x + (this.x - mawArena.x) / dc * lim; this.y = mawArena.y + (this.y - mawArena.y) / dc * lim; }
+                    }
+                    // contact damage (i-frames gate multi-hit)
+                    if (Math.hypot(player.x - this.x, player.y - this.y) < this.radius + player.radius) player.takeDamage(45, this);
+                    // ---- attack cadence (no stacking while a spoke sweep is live) ----
+                    const spokesLive = this.spokes && mawNow() < this.spokes.end;
+                    this.attackTimer -= dt;
+                    if (this.attackTimer <= 0 && !spokesLive) { this._pickAttack(); if (!this.lunge) this.attackTimer = this._gap(); }
+                    else if (this.attackTimer <= 0) this.attackTimer = 400; // retry shortly after the sweep
+                }
+
+                this._tickEffects(now, dt);
+            }
+
+            _gap() { return this.phase === 3 ? 2000 : (this.phase === 2 ? 2400 : 2800); }
+
+            _tickEffects(now, dt) {
+                // Geysers: damage inside the column between fire..end (i-frames prevent spam)
+                for (const g of this.geysers) {
+                    if (now >= g.fire && now < g.end) {
+                        g.tick -= dt;
+                        if (g.tick <= 0) {
+                            g.tick = 220;
+                            if (Math.hypot(player.x - g.x, player.y - g.y) < g.r) player.takeDamage(26, null);
+                        }
+                    }
+                }
+                this.geysers = this.geysers.filter(g => now < g.end);
+                // Meteors: single impact hit on landing
+                for (const m of this.meteors) {
+                    if (!m.done && now >= m.fire) {
+                        m.done = true;
+                        if (camera.shake) camera.shake(3, 130);
+                        spawnParticles(m.x, m.y, '#ff7722', 12);
+                        if (Math.hypot(player.x - m.x, player.y - m.y) < m.r) player.takeDamage(30, null);
+                    }
+                }
+                this.meteors = this.meteors.filter(m => now < m.fire + 260);
+                // Spokes: rotating beams — damage while ignited & inside a beam sector
+                if (this.spokes) {
+                    const S = this.spokes;
+                    if (now >= S.end) { this.spokes = null; }
+                    else if (now >= S.ignite) {
+                        const elapsed = (now - S.ignite) / 1000;
+                        const base = S.start + elapsed * S.angVel;
+                        const pa = Math.atan2(player.y - S.oy, player.x - S.ox);
+                        const pd = Math.hypot(player.x - S.ox, player.y - S.oy);
+                        if (pd > 40) {
+                            for (let i = 0; i < S.count; i++) {
+                                let diff = Math.abs(((pa - (base + i / S.count * Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+                                if (diff < S.half) { player.takeDamage(24, null); break; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            die() {
+                if (this.dead) return;
+                this.dead = true;
+                onMawDefeated();
+            }
+
+            draw() {
+                if (!mawArena) return;
+                const sx = camera.screenX(this.x), sy = camera.screenY(this.y);
+                const r = camera.scale(this.radius);
+                const time = Date.now();
+                ctx.save();
+                // baked molten body (no per-frame shadowBlur)
+                const spr = _getMawSprite();
+                const floatY = Math.sin(time / 320) * camera.scale(6);
+                ctx.drawImage(spr, sx - r * 1.35, sy + floatY - r * 1.35, r * 2.7, r * 2.7);
+                // pulsing maw glow (cheap radial gradient, additive)
+                const glowPulse = 0.55 + Math.sin(time * 0.006) * 0.25 + (this.phase - 1) * 0.12;
+                ctx.globalCompositeOperation = 'lighter';
+                const gr = ctx.createRadialGradient(sx, sy + floatY, 0, sx, sy + floatY, r * 0.85);
+                gr.addColorStop(0, 'rgba(255,230,120,' + (0.5 * glowPulse) + ')');
+                gr.addColorStop(0.5, 'rgba(255,90,20,' + (0.32 * glowPulse) + ')');
+                gr.addColorStop(1, 'rgba(120,10,0,0)');
+                ctx.fillStyle = gr;
+                ctx.beginPath(); ctx.arc(sx, sy + floatY, r * 0.85, 0, Math.PI * 2); ctx.fill();
+                ctx.globalCompositeOperation = 'source-over';
+                // hit flash
+                if (this.hitFlash > 0) {
+                    ctx.globalAlpha = this.hitFlash * 0.5;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath(); ctx.arc(sx, sy + floatY, r, 0, Math.PI * 2); ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+                // HP bar + label (MajorBoss language)
+                ctx.shadowBlur = 0;
+                const barW = r * 2.6, barY = sy + floatY - r * 1.5 - 16;
+                ctx.fillStyle = '#331010'; ctx.fillRect(sx - barW / 2, barY, barW, 12);
+                const hpc = this.phase === 3 ? '#ff2200' : (this.phase === 2 ? '#ff7700' : '#ffb000');
+                ctx.fillStyle = hpc; ctx.fillRect(sx - barW / 2, barY, barW * Math.max(0, this.hp / this.maxHp), 12);
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(sx - barW / 2, barY, barW, 12);
+                ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+                ctx.font = 'bold ' + camera.scale(16) + 'px Oxanium, monospace';
+                ctx.fillText('THE MAW', sx, barY - 8);
+                ctx.restore();
+            }
+        }
+
+        // Baked molten-mass + hellmouth sprite (built once; drawn scaled every frame).
+        let _mawSpriteCache = null;
+        function _getMawSprite() {
+            if (_mawSpriteCache) return _mawSpriteCache;
+            const S = 300, c = document.createElement('canvas'); c.width = S; c.height = S;
+            const p = c.getContext('2d'); const cx = S / 2, cy = S / 2, R = S * 0.42;
+            // dark molten mass
+            const bg = p.createRadialGradient(cx, cy - R * 0.2, R * 0.1, cx, cy, R);
+            bg.addColorStop(0, '#3a0d07'); bg.addColorStop(0.6, '#210604'); bg.addColorStop(1, '#0d0201');
+            p.fillStyle = bg;
+            p.beginPath();
+            for (let a = 0; a <= Math.PI * 2 + 0.01; a += Math.PI / 14) {
+                const wob = R * (0.92 + 0.08 * Math.sin(a * 5));
+                const x = cx + Math.cos(a) * wob, y = cy + Math.sin(a) * wob;
+                if (a === 0) p.moveTo(x, y); else p.lineTo(x, y);
+            }
+            p.closePath(); p.fill();
+            // glowing cracks
+            p.strokeStyle = '#ff5a1a'; p.lineWidth = 3; p.globalAlpha = 0.8;
+            for (let i = 0; i < 7; i++) {
+                const a = (i / 7) * Math.PI * 2;
+                p.beginPath(); p.moveTo(cx, cy);
+                p.lineTo(cx + Math.cos(a) * R * 0.85, cy + Math.sin(a) * R * 0.85); p.stroke();
+            }
+            p.globalAlpha = 1;
+            // the huge glowing maw (mouth) — layered gradient rings + fang ring
+            const mg = p.createRadialGradient(cx, cy + R * 0.05, 2, cx, cy + R * 0.05, R * 0.62);
+            mg.addColorStop(0, '#fff3c0'); mg.addColorStop(0.35, '#ff8a1a'); mg.addColorStop(0.75, '#b81800'); mg.addColorStop(1, '#2a0400');
+            p.fillStyle = mg;
+            p.beginPath(); p.ellipse(cx, cy + R * 0.05, R * 0.6, R * 0.5, 0, 0, Math.PI * 2); p.fill();
+            p.fillStyle = '#120100';
+            p.beginPath(); p.ellipse(cx, cy + R * 0.08, R * 0.32, R * 0.26, 0, 0, Math.PI * 2); p.fill();
+            // jagged fangs around the maw
+            p.fillStyle = '#f2e2c0';
+            const fangs = 12, fr = R * 0.58;
+            for (let i = 0; i < fangs; i++) {
+                const a = (i / fangs) * Math.PI * 2;
+                const bx = cx + Math.cos(a) * fr, by = cy + R * 0.05 + Math.sin(a) * fr * 0.83;
+                const ix = cx + Math.cos(a) * fr * 0.72, iy = cy + R * 0.05 + Math.sin(a) * fr * 0.6;
+                const na = a + 0.14;
+                const ox = cx + Math.cos(na) * fr, oy = cy + R * 0.05 + Math.sin(na) * fr * 0.83;
+                p.beginPath(); p.moveTo(bx, by); p.lineTo(ix, iy); p.lineTo(ox, oy); p.closePath(); p.fill();
+            }
+            // two glowing eyes above the maw
+            p.fillStyle = '#ffd23a';
+            p.beginPath(); p.arc(cx - R * 0.34, cy - R * 0.5, R * 0.11, 0, Math.PI * 2); p.arc(cx + R * 0.34, cy - R * 0.5, R * 0.11, 0, Math.PI * 2); p.fill();
+            p.fillStyle = '#3a0000';
+            p.beginPath(); p.arc(cx - R * 0.34, cy - R * 0.5, R * 0.05, 0, Math.PI * 2); p.arc(cx + R * 0.34, cy - R * 0.5, R * 0.05, 0, Math.PI * 2); p.fill();
+            _mawSpriteCache = c;
+            return c;
+        }
+
+        // ===== THE MAW — world-space FX (portal, arena wall, telegraphs) =====
+        // Drawn inside the shake-translated world pass. No per-frame shadowBlur.
+        function drawMawWorld() {
+            // ---- portal (persists post-clear until sealed; hidden once inside the arena) ----
+            if (mawPortal && !mawSealed && !mawFightActive) {
+                const sx = camera.screenX(mawPortal.x), sy = camera.screenY(mawPortal.y);
+                const r = camera.scale(mawPortal.r);
+                if (camera.isVisible(mawPortal.x, mawPortal.y, mawPortal.r + 40)) {
+                    const rot = mawPortal.pulse;
+                    ctx.save();
+                    // baked rotating fire ring
+                    const spr = _getPortalSprite();
+                    ctx.translate(sx, sy); ctx.rotate(rot);
+                    const pulse = 1 + Math.sin(mawPortal.pulse * 2) * 0.05;
+                    ctx.drawImage(spr, -r * 1.4 * pulse, -r * 1.4 * pulse, r * 2.8 * pulse, r * 2.8 * pulse);
+                    ctx.rotate(-rot);
+                    // dark center
+                    const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.8);
+                    cg.addColorStop(0, '#000000'); cg.addColorStop(0.7, '#1a0300'); cg.addColorStop(1, 'rgba(40,6,0,0)');
+                    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, r * 0.8, 0, Math.PI * 2); ctx.fill();
+                    // channel arc-fill (like the shrine charge)
+                    if (mawPortal.channel > 0) {
+                        const frac = Math.min(1, mawPortal.channel / MAW_CHANNEL_REQUIRED);
+                        ctx.strokeStyle = '#ffd23a'; ctx.lineWidth = camera.scale(6); ctx.lineCap = 'round';
+                        ctx.beginPath(); ctx.arc(0, 0, r * 1.15, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+            }
+            if (!mawFightActive || !mawArena) return;
+
+            // ---- arena fire wall ----
+            {
+                const sx = camera.screenX(mawArena.x), sy = camera.screenY(mawArena.y);
+                const R = camera.scale(mawArena.radius);
+                const t = Date.now();
+                ctx.save();
+                ctx.globalCompositeOperation = 'lighter';
+                for (let i = 0; i < 3; i++) {
+                    const off = Math.sin(t * 0.004 + i) * camera.scale(6);
+                    ctx.strokeStyle = i === 0 ? 'rgba(255,80,10,0.9)' : (i === 1 ? 'rgba(255,160,40,0.6)' : 'rgba(255,220,120,0.4)');
+                    ctx.lineWidth = camera.scale(10 - i * 3);
+                    ctx.beginPath(); ctx.arc(sx, sy, R + off - i * camera.scale(4), 0, Math.PI * 2); ctx.stroke();
+                }
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.restore();
+            }
+
+            const now = mawNow();
+            // ---- geyser telegraphs + eruptions ----
+            for (const g of maw.geysers) {
+                const sx = camera.screenX(g.x), sy = camera.screenY(g.y), gr = camera.scale(g.r);
+                if (now < g.fire) {
+                    const frac = 1 - (g.fire - now) / (g.fire - g.warn);
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(255,90,20,0.85)'; ctx.lineWidth = 3;
+                    ctx.beginPath(); ctx.arc(sx, sy, gr, 0, Math.PI * 2); ctx.stroke();
+                    ctx.fillStyle = 'rgba(255,120,30,0.28)';
+                    ctx.beginPath(); ctx.arc(sx, sy, gr * frac, 0, Math.PI * 2); ctx.fill();
+                    ctx.restore();
+                } else {
+                    const p2 = 1 - (g.end - now) / (g.end - g.fire);
+                    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+                    const eg = ctx.createRadialGradient(sx, sy, 0, sx, sy, gr);
+                    eg.addColorStop(0, 'rgba(255,240,160,0.95)'); eg.addColorStop(0.5, 'rgba(255,110,20,0.75)'); eg.addColorStop(1, 'rgba(180,20,0,0)');
+                    ctx.fillStyle = eg;
+                    ctx.beginPath(); ctx.arc(sx, sy, gr * (0.7 + 0.3 * Math.sin(p2 * Math.PI)), 0, Math.PI * 2); ctx.fill();
+                    ctx.restore();
+                }
+            }
+            // ---- meteor landing rings ----
+            for (const m of maw.meteors) {
+                if (now < m.warn) continue; // not yet telegraphing (staggered over 4s)
+                const sx = camera.screenX(m.x), sy = camera.screenY(m.y), mr = camera.scale(m.r);
+                if (now < m.fire) {
+                    const frac = Math.max(0, Math.min(1, 1 - (m.fire - now) / (m.fire - m.warn)));
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(255,180,60,0.9)'; ctx.lineWidth = 2.5;
+                    ctx.beginPath(); ctx.arc(sx, sy, mr, 0, Math.PI * 2); ctx.stroke();
+                    ctx.strokeStyle = 'rgba(255,90,20,0.9)'; ctx.lineWidth = 3;
+                    ctx.beginPath(); ctx.arc(sx, sy, mr * frac, 0, Math.PI * 2); ctx.stroke();
+                    ctx.restore();
+                } else if (now < m.fire + 260) {
+                    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+                    ctx.fillStyle = 'rgba(255,220,120,0.8)';
+                    ctx.beginPath(); ctx.arc(sx, sy, mr * (1 - (now - m.fire) / 260), 0, Math.PI * 2); ctx.fill();
+                    ctx.restore();
+                }
+            }
+            // ---- rotating flame spokes ----
+            if (maw.spokes) {
+                const S = maw.spokes;
+                const sx = camera.screenX(S.ox), sy = camera.screenY(S.oy);
+                const R = camera.scale(mawArena.radius * 1.6); // reach past the far wall from an off-center origin
+                const ignited = now >= S.ignite;
+                const base = S.start + (ignited ? (now - S.ignite) / 1000 * S.angVel : 0);
+                ctx.save();
+                for (let i = 0; i < S.count; i++) {
+                    const a = base + i / S.count * Math.PI * 2;
+                    ctx.save(); ctx.translate(sx, sy); ctx.rotate(a);
+                    if (ignited) {
+                        ctx.globalCompositeOperation = 'lighter';
+                        const lg = ctx.createLinearGradient(0, 0, R, 0);
+                        lg.addColorStop(0, 'rgba(255,240,160,0.95)'); lg.addColorStop(1, 'rgba(255,80,10,0.4)');
+                        ctx.fillStyle = lg;
+                        const hw = Math.tan(S.half) * R;
+                        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(R, -hw); ctx.lineTo(R, hw); ctx.closePath(); ctx.fill();
+                    } else {
+                        ctx.fillStyle = 'rgba(255,120,40,0.22)';
+                        const hw = Math.tan(S.half) * R;
+                        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(R, -hw); ctx.lineTo(R, hw); ctx.closePath(); ctx.fill();
+                    }
+                    ctx.restore();
+                }
+                ctx.restore();
+            }
+            // ---- lunge aim line ----
+            if (maw.lunge && maw.lunge.state === 'aim') {
+                const sx = camera.screenX(maw.x), sy = camera.screenY(maw.y);
+                const len = camera.scale(mawArena.radius * 2);
+                const a = maw.lunge.angle;
+                const frac = 1 - (maw.lunge.until - now) / 800;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255,60,20,' + (0.4 + 0.5 * frac) + ')';
+                ctx.lineWidth = camera.scale(6); ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.cos(a) * len, sy + Math.sin(a) * len); ctx.stroke();
+                ctx.strokeStyle = 'rgba(255,220,120,0.9)'; ctx.lineWidth = camera.scale(2);
+                ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.cos(a) * len * frac, sy + Math.sin(a) * len * frac); ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        let _portalSpriteCache = null;
+        function _getPortalSprite() {
+            if (_portalSpriteCache) return _portalSpriteCache;
+            const S = 240, c = document.createElement('canvas'); c.width = S; c.height = S;
+            const p = c.getContext('2d'), cx = S / 2, cy = S / 2, R = S * 0.42;
+            const g = p.createRadialGradient(cx, cy, R * 0.5, cx, cy, R);
+            g.addColorStop(0, 'rgba(255,220,120,0)'); g.addColorStop(0.55, 'rgba(255,110,20,0.15)');
+            g.addColorStop(0.8, 'rgba(255,150,40,0.95)'); g.addColorStop(1, 'rgba(150,20,0,0)');
+            p.fillStyle = g; p.beginPath(); p.arc(cx, cy, R, 0, Math.PI * 2); p.fill();
+            // flame tongues around the ring
+            p.strokeStyle = '#ffd23a'; p.lineWidth = 4;
+            for (let i = 0; i < 20; i++) {
+                const a = (i / 20) * Math.PI * 2, len = R * (0.14 + (i % 3) * 0.05);
+                p.beginPath();
+                p.moveTo(cx + Math.cos(a) * R * 0.82, cy + Math.sin(a) * R * 0.82);
+                p.lineTo(cx + Math.cos(a) * (R * 0.82 + len), cy + Math.sin(a) * (R * 0.82 + len));
+                p.stroke();
+            }
+            _portalSpriteCache = c;
+            return c;
+        }
+
+        // ===== THE MAW — screen-fixed HUD (banner + compass to portal) =====
+        function drawMawHUD() {
+            // phase banner
+            if (mawBanner && gameTime < mawBanner.until) {
+                ctx.save();
+                ctx.globalAlpha = Math.min(1, (mawBanner.until - gameTime) / 0.6);
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#ff5522';
+                ctx.font = 'bold 34px Oxanium, monospace';
+                ctx.fillText(mawBanner.text, gameWidth / 2, gameHeight * 0.2);
+                ctx.restore();
+            }
+            // compass arrow to the portal (pre-entry only), directive-style
+            if (mawPortal && !mawFightActive && !mawSealed && player) {
+                const sx = camera.screenX(mawPortal.x), sy = camera.screenY(mawPortal.y);
+                const margin = 30;
+                const onScreen = sx >= margin && sx <= gameWidth - margin && sy >= margin && sy <= gameHeight - margin;
+                ctx.save();
+                ctx.fillStyle = '#ff6622'; ctx.strokeStyle = '#ffd23a';
+                if (!onScreen) {
+                    const cx = Math.max(margin, Math.min(gameWidth - margin, sx));
+                    const cy = Math.max(margin, Math.min(gameHeight - margin, sy));
+                    const ang = Math.atan2(sy - cy, sx - cx);
+                    ctx.translate(cx, cy); ctx.rotate(ang);
+                    ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-9, -9); ctx.lineTo(-3, 0); ctx.lineTo(-9, 9); ctx.closePath(); ctx.fill();
+                    ctx.lineWidth = 1.5; ctx.stroke();
+                    ctx.rotate(-ang);
+                    ctx.fillStyle = '#fff'; ctx.font = 'bold 10px Oxanium, monospace';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(Math.floor(Math.hypot(player.x - mawPortal.x, player.y - mawPortal.y)) + 'm', 0, 16);
+                }
+                ctx.restore();
+            }
+        }
+
+        // ===== WIN =====
+        function onMawDefeated() {
+            mawSealed = true;
+            mawWinFlash = 1;
+            if (camera.shake) camera.shake(9, 800);
+            mawRoar();
+            for (let i = 0; i < 8; i++) {
+                setTimeout(function () {
+                    if (!maw && !mawArena) return;
+                    const ax = mawArena ? mawArena.x + (Math.random() - 0.5) * 300 : player.x;
+                    const ay = mawArena ? mawArena.y + (Math.random() - 0.5) * 300 : player.y;
+                    spawnParticles(ax, ay, '#ffcc33', 24); spawnParticles(ax, ay, '#ff5522', 18);
+                }, i * 90);
+            }
+            const dur = Math.max(0, Math.floor(gameTime - mawFightStart));
+            mawPortal = null;
+            endMawFight(); // tears down arena/adds; leaves mawSealed latched
+            try { if (window.META) META.notify('mawSealed'); } catch (e) {}
+            showMawVictory(dur);
+        }
+
+        function showMawVictory(fightDurSec) {
+            if (!DOM.victoryOverlay) return;
+            gamePaused = true;
+            mawWin = true;
+            const titleEl = DOM.victoryOverlay.querySelector('.victory-title');
+            if (titleEl) titleEl.textContent = 'THE HELLMOUTH IS SEALED';
+            if (DOM.victorySubtitle) DOM.victorySubtitle.textContent = 'The Maw is vanquished';
+            const mm = Math.floor(fightDurSec / 60), ss = fightDurSec % 60;
+            if (DOM.victoryStats) {
+                DOM.victoryStats.innerHTML =
+                    'Survived: <span>' + Math.floor(gameTime / 60) + ':' + String(Math.floor(gameTime % 60)).padStart(2, '0') + '</span><br>' +
+                    'Kills: <span>' + kills + '</span><br>' +
+                    'Gold: <span>' + (typeof runGoldEarned === 'number' ? runGoldEarned : 0) + '</span><br>' +
+                    'Fight: <span>' + mm + ':' + String(ss).padStart(2, '0') + '</span>';
+            }
+            try { if (window.SFX && SFX.victoryFanfare) SFX.victoryFanfare(); } catch (e) {}
+            DOM.victoryOverlay.classList.add('active');
+            try { spawnVictoryConfetti(); } catch (e) {}
+        }
+
+        // Harness seam (mirrors window.__P4/__P5 pattern) — read state + drive the fight.
+        window.__MAW = {
+            get portal() { return mawPortal; },
+            get arena() { return mawArena; },
+            get maw() { return maw; },
+            get active() { return mawFightActive; },
+            get sealed() { return mawSealed; },
+            get telemetry() { return mawTelemetry.slice(); },
+            get phase() { return maw ? maw.phase : 0; },
+            spawnPortal() { spawnMawPortal(); return !!mawPortal; },
+            enter() { if (mawPortal && !mawFightActive) { mawEntryPending = false; enterMawArena(); } return mawFightActive; },
+            setHpPct(p) { if (maw) { maw.hp = Math.max(1, Math.round(maw.maxHp * p)); } return maw ? maw.hp : 0; },
+            damage(amount) { if (maw) maw.takeDamage(amount, false); return maw ? maw.hp : 0; },
+            force(name) { if (maw) { maw._forced = name; maw.attackTimer = 1; } },
+            kill() { if (maw) maw.takeDamage(maw.hp + 1, false); },
+            // ---- test seams (verification only; mirror META._warp / __P4) ----
+            _boot(level, weapon) { try { window.activeLevel = level || 'inferno'; selectedStartingWeapon = weapon || 'energyBolt'; startGame(); return gameRunning; } catch (e) { return String(e); } },
+            _clear() { try { triggerVictory(); return victoryFired; } catch (e) { return String(e); } },
+            _pauseOff() { try { gamePaused = false; return true; } catch (e) { return false; } },
+            _portalNearPlayer(off) { try { if (mawPortal && player) { mawPortal.x = player.x + (off || 150); mawPortal.y = player.y; } return mawPortal; } catch (e) { return null; } },
+            _mawToPlayer() { try { if (maw && player) { maw.x = player.x; maw.y = player.y - 40; } } catch (e) {} },
+            _parkMaw(dist) { try { if (maw && player) { maw.floatSpeed = 0; maw.attackTimer = 1e9; maw.x = player.x + (dist || 240); maw.y = player.y; } } catch (e) {} },
+            _healPlayer() { try { if (player) { player.hp = player.maxHp; } return player ? player.hp : 0; } catch (e) { return 0; } },
+            get paused() { try { return gamePaused; } catch (e) { return null; } },
+            _geyserHere() { try { if (maw && player) { const now = mawNow(); maw.geysers.push({ x: player.x, y: player.y, r: 74, warn: now, fire: now + 1000, end: now + 1000 + 800, tick: 0 }); } } catch (e) {} },
+            // measurement-only: approximate an endgame build (10 weapons at L15) for DPS tuning
+            _godBuild() { try { if (!player) return 0; const ws = ['energyBolt','plasmaOrbit','shotgun','beam','starField','pulseMine','iceShard','flameThrower','boomerang','toxicAura']; ws.forEach(w => { if (!player.weapons[w]) player.addWeapon(w); if (player.weapons[w]) player.weapons[w].level = 15; }); player.level = 30; player.applyPassives(); return Object.keys(player.weapons).length; } catch (e) { return String(e); } },
+            _exit() { try { exitToMenu(); return true; } catch (e) { return String(e); } },
+            _equipLegend(withHat) { try { selectedPlayerSprite = 'legend'; if (withHat) { playerHasCowboyHat = true; if (player) player.applyPassives(); } return selectedPlayerSprite; } catch (e) { return String(e); } },
+            _hurtPlayer(n) { try { if (player) { player.hp -= (n || 9999); if (player.hp <= 0) { player.hp = 0; if (typeof startDeathAnimation === 'function') startDeathAnimation(player.x, player.y); } } return player ? player.hp : 0; } catch (e) { return String(e); } },
+            get playerHp() { try { return player ? Math.round(player.hp) : 0; } catch (e) { return 0; } },
+            get counts() { try { return { enemies: enemies.length, bosses: bosses.length, projectiles: enemyProjectiles.length }; } catch (e) { return null; } }
+        };
+
         // Boss defeat message
         function showBossDefeatMessage(type) {
             const msg = document.createElement('div');
@@ -26146,6 +26923,7 @@
         window.levelSpawnPool = levelSpawnPool; // exposed for P3/P6 spawn-equivalence tests
 
         function spawnEnemies(dt) {
+            if (mawFightActive) return; // V1_409: horde suspended during the Maw fight
             spawnTimer += dt;
             
             // Spawn rate scales down over time (gentler curve)
@@ -26479,6 +27257,7 @@
         
         // ===== BOSS SPAWNING SYSTEM =====
         function updateBossSpawning(dt) {
+            if (mawFightActive) return; // V1_409: boss schedule suspended during the Maw fight
             // Boss schedule: 2.5 mins, 5 mins, 7.5 mins, 10 mins, etc.
             // Mini boss at odd intervals (2.5, 7.5, 12.5...)
             // Major boss at even intervals (5, 10, 15...)
@@ -26750,6 +27529,8 @@
             // Persist the clear NOW (unlock next level + its weapon achievement + toasts),
             // regardless of which button the player later picks (doc §3.4).
             if (window.META) { try { META.notify('levelClear', { level: lid }); } catch (e) {} }
+            // V1_409: on Hellmouth, clearing tears open THE MAW PORTAL (the true endgame).
+            if (lid === 'inferno' && !mawSealed) { try { spawnMawPortal(); } catch (e) {} }
             gamePaused = true;               // freeze gameplay; music low-pass ducks automatically (state stays 'game')
             updateSurvivalCountdownHUD();    // hide the countdown — we've cleared
             // V1_403: louder fanfare + follow-up chord (falls back to legendary if absent)
@@ -26763,13 +27544,16 @@
             const survivedSec = Math.floor(gameTime);
             const finalKills = kills;
             const finalGold = typeof runGoldEarned === 'number' ? runGoldEarned : 0;
+            { const _vt = DOM.victoryOverlay.querySelector('.victory-title'); if (_vt) _vt.textContent = 'LEVEL CLEARED'; } // V1_409: reset (maw win retitles it)
             if (DOM.victorySubtitle) DOM.victorySubtitle.textContent = lvl.name;
             if (DOM.victoryStats) {
                 // V1_403: spans get stable ids so animateVictoryStats() can count them up.
                 DOM.victoryStats.innerHTML =
                     'Survived: <span id="victoryStatTime">0:00</span><br>' +
                     'Kills: <span id="victoryStatKills">0</span><br>' +
-                    'Gold: <span id="victoryStatGold">0</span>';
+                    'Gold: <span id="victoryStatGold">0</span>' +
+                    // V1_409: Hellmouth clear announces the portal to The Maw.
+                    ((mawPortal && !mawSealed) ? '<br><span style="color:#ff7722">A portal has torn open. The Maw is waiting.</span>' : '');
             }
             DOM.victoryOverlay.classList.add('active');
             spawnVictoryConfetti();                                   // V1_403: gold particle burst
@@ -26825,6 +27609,7 @@
 
         function victoryKeepGoing() {
             if (DOM.victoryOverlay) DOM.victoryOverlay.classList.remove('active');
+            mawWin = false; // V1_409: consume Maw-win routing (portal gone, fight cannot recur)
             // Resume: horde keeps escalating exactly as today; victory can't re-fire
             // (victoryFired stays true), and the run can still end in a normal gameOver.
             if (gameRunning) gamePaused = false;
@@ -26833,7 +27618,8 @@
         function victoryFinishRun() {
             if (DOM.victoryOverlay) DOM.victoryOverlay.classList.remove('active');
             gamePaused = false;
-            victoryFinish = true;   // showGameOverMenu() → "VICTORY!" title
+            if (mawWin) { mawWin = false; mawFinish = true; } // V1_409: "SEALED!" retitle variant
+            victoryFinish = true;   // showGameOverMenu() → "VICTORY!" / "SEALED!" title
             gameOver(true);         // existing gameOver flow (score modal); not counted as a death
         }
 
@@ -28459,6 +29245,8 @@
             lastTime = timestamp;
             frameCount++; // Increment for optimization frame skipping
             camera.updateShake(dt); // Decay screen-shake on real dt (even when paused/time-stopped)
+            updateMawWhiteout(dt);  // V1_409: entry white-out advances on real dt
+            if (mawWinFlash > 0) mawWinFlash = Math.max(0, mawWinFlash - dt / 500); // V1_409: win flash decay
 
             if (gameRunning && !gamePaused && player) {
                 // Apply time slow effect (Temporal Shield)
@@ -28539,6 +29327,13 @@
                     playerVelX = playerVelX * 0.6 + rvx * 0.4;
                     playerVelY = playerVelY * 0.6 + rvy * 0.4;
                 }
+                // V1_409: soft pushback at the Maw arena fire wall (like pushOutOfLake).
+                if (mawFightActive && mawArena) {
+                    const _dx = player.x - mawArena.x, _dy = player.y - mawArena.y;
+                    const _d = Math.hypot(_dx, _dy);
+                    const _lim = mawArena.radius - player.radius;
+                    if (_d > _lim && _d > 0) { player.x = mawArena.x + _dx / _d * _lim; player.y = mawArena.y + _dy / _d * _lim; }
+                }
                 // V1_254: real countdown timer + cooldown ring. While out of charges the
                 // 💨 swaps to the seconds remaining; the ring sweeps down as it recharges.
                 const jb = document.getElementById('jumpBtn');
@@ -28563,6 +29358,7 @@
                 updateBossSpawning(dt);
                 updateVictoryCheck();   // V1_399: final-horde survival countdown + victory
                 updateDirectives(dt);   // V1_276: late-game directives
+                updateMawPortal(dt);    // V1_409: portal channel-to-enter (inferno post-clear)
 
                 // WP1: rebuild the shared spatial grid once per frame, right before enemy
                 // updates consume it (separation/cohesion queries in Enemy.update()).
@@ -29596,6 +30392,7 @@
 
         function updateDirectives(dt) {
             if (!gameRunning || gamePaused || !player) return;
+            if (mawFightActive) return; // V1_409: directives suspended during the Maw fight
             if (gameTime < DIRECTIVE_START_TIME) return;
 
             if (!directiveActive) {
@@ -30259,6 +31056,7 @@
                 if (!boss.dead) boss.draw();
             }
             drawDirectivesWorld();   // V1_276: directive marker/nameplate/vault (world space)
+            drawMawWorld();          // V1_409: portal, arena wall + attack telegraphs (world space)
 
             // Draw gravity wells (under player)
             if (player && player.weapons.gravityWell) {
@@ -30731,6 +31529,21 @@
             // Minimap (draws to its own canvas, then gets composited in drawTrackpad)
             drawMinimap();
             drawDirectivesHUD();   // V1_276: banner + compass, drawn on top of everything
+            drawMawHUD();          // V1_409: Maw banner + portal compass
+
+            // V1_409: entry white-out + victory white flash (screen-fixed, over everything)
+            if (mawWhiteout > 0) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(255,255,255,' + Math.min(1, mawWhiteout) + ')';
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
+                ctx.restore();
+            }
+            if (mawWinFlash > 0) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(255,240,200,' + (0.7 * mawWinFlash) + ')';
+                ctx.fillRect(0, 0, gameWidth, gameHeight);
+                ctx.restore();
+            }
         }
 
         // ===== MINIMAP =====
@@ -30842,6 +31655,23 @@
                 minimapCtx.fill();
             }
             
+            // V1_409: The Maw portal marker (pulsing fire diamond) — shown post-clear, pre-entry
+            if (mawPortal && !mawSealed && !mawFightActive) {
+                const pmx = mawPortal.x * scale, pmy = mawPortal.y * scale;
+                const pa = 0.55 + Math.sin(performance.now() / 260) * 0.45;
+                minimapCtx.save();
+                minimapCtx.globalAlpha = pa;
+                minimapCtx.fillStyle = '#ff6622';
+                minimapCtx.beginPath();
+                minimapCtx.moveTo(pmx, pmy - 5); minimapCtx.lineTo(pmx + 5, pmy);
+                minimapCtx.lineTo(pmx, pmy + 5); minimapCtx.lineTo(pmx - 5, pmy);
+                minimapCtx.closePath(); minimapCtx.fill();
+                minimapCtx.globalAlpha = 1;
+                minimapCtx.strokeStyle = '#ffd23a'; minimapCtx.lineWidth = 1;
+                minimapCtx.stroke();
+                minimapCtx.restore();
+            }
+
             // Treasure chests - only in explored areas
             for (const chest of chests) {
                 if (chest.dead || chest.opened) continue;
@@ -31338,9 +32168,79 @@
                     ctx.stroke();
                     ctx.restore();
                 }
+            },
+            // V1_409: reward for sealing the Hellmouth — a gold crown (hatless) sitting on the
+            // head with a soft radiant pulse ring; under the cowboy hat it becomes a floating
+            // golden HALO above the brim (overHat pass).
+            legend: {
+                name: 'Legend', emoji: '👑',
+                draw: function (ctx, sk) {
+                    const r = sk.r, topY = sk.sy - r * 0.66;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    // soft radiant pulse ring around the head (cheap stroke, no shadowBlur)
+                    const pulse = 0.5 + 0.5 * Math.sin(sk.time * 0.004);
+                    ctx.globalAlpha = 0.18 + 0.22 * pulse;
+                    ctx.strokeStyle = '#ffe066';
+                    ctx.lineWidth = Math.max(1.5, r * 0.12);
+                    ctx.beginPath();
+                    ctx.arc(sk.sx, sk.sy, r * (1.12 + 0.06 * pulse), 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                    // gold crown band with three points
+                    ctx.fillStyle = '#ffd23a';
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx - r * 0.5, topY + r * 0.24);
+                    ctx.lineTo(sk.sx - r * 0.5, topY - r * 0.02);
+                    ctx.lineTo(sk.sx - r * 0.28, topY + r * 0.14);
+                    ctx.lineTo(sk.sx - r * 0.06, topY - r * 0.22);
+                    ctx.lineTo(sk.sx + r * 0.06, topY - r * 0.22);
+                    ctx.lineTo(sk.sx + r * 0.28, topY + r * 0.14);
+                    ctx.lineTo(sk.sx + r * 0.5, topY - r * 0.02);
+                    ctx.lineTo(sk.sx + r * 0.5, topY + r * 0.24);
+                    ctx.closePath();
+                    ctx.fill();
+                    // jewel dots on the band
+                    ctx.fillStyle = '#ff3b6b';
+                    ctx.beginPath(); ctx.arc(sk.sx, topY + r * 0.12, r * 0.06, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = '#3ad1ff';
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - r * 0.32, topY + r * 0.16, r * 0.045, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.32, topY + r * 0.16, r * 0.045, 0, Math.PI * 2);
+                    ctx.fill();
+                    // point highlights
+                    ctx.fillStyle = '#fff6c0';
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - r * 0.06, topY - r * 0.22, r * 0.04, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.06, topY - r * 0.22, r * 0.04, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                },
+                overHat: function (ctx, oh) {
+                    const s = oh.s, sx = oh.sx, hy = oh.hatY, t = oh.time;
+                    const pulse = 0.5 + 0.5 * Math.sin(t * 0.004);
+                    const haloY = hy - s(24);
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    // outer soft glow ring
+                    ctx.globalAlpha = 0.35 + 0.25 * pulse;
+                    ctx.strokeStyle = '#ffe066';
+                    ctx.lineWidth = Math.max(1.5, s(2.4));
+                    ctx.beginPath();
+                    ctx.ellipse(sx, haloY, s(13 + pulse), s(4.4 + pulse * 0.5), 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    // bright inner halo
+                    ctx.globalAlpha = 0.85;
+                    ctx.strokeStyle = '#fff6c0';
+                    ctx.lineWidth = Math.max(1, s(1.4));
+                    ctx.beginPath();
+                    ctx.ellipse(sx, haloY, s(11), s(3.4), 0, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
             }
         };
-        const PLAYER_SPRITE_ORDER = ['classic', 'shades', 'mossy', 'skully', 'blazer', 'cosmic', 'captain', 'demon']; // V1_407: + Demon (8 cells, still fits the 4-per-row popover)
+        const PLAYER_SPRITE_ORDER = ['classic', 'shades', 'mossy', 'skully', 'blazer', 'cosmic', 'captain', 'demon', 'legend']; // V1_407: + Demon; V1_409: + Legend (9 cells, flex-wraps to 4+4+1)
 
         // Player color options (neon palette, cold to hot)
         const PLAYER_COLORS = [
@@ -33584,6 +34484,10 @@
             nextLeprechaunSpawn = 90000; // First spawn at 90s
             finalSwarmWarningShown = false; // Reset for new game
             victoryFired = false; victoryFinish = false; // V1_399: reset victory terminal state
+            // V1_409: pristine Maw state every fresh run
+            mawPortal = null; mawFightActive = false; maw = null; mawArena = null;
+            mawSealed = false; mawWhiteout = 0; mawWhiteoutDir = 0; mawEntryPending = false;
+            mawWinFlash = 0; mawBanner = null; mawWin = false; mawFinish = false; mawTelemetry.length = 0;
             { const _vc = document.getElementById('victoryCountdown'); if (_vc) _vc.style.display = 'none'; }
             if (DOM.victoryOverlay) DOM.victoryOverlay.classList.remove('active'); // V1_399: clear any lingering overlay
             magnetPulseActive = false;
@@ -33927,6 +34831,9 @@
 
         function gameOver(viaVictory) {
             gameRunning = false;
+            // V1_409: if the player perished mid-Maw-fight, tear the fight down cleanly
+            // (the level clear was already banked; this run simply ends normally).
+            if (mawFightActive || maw || mawArena) { try { endMawFight(); } catch (e) {} }
             setJumpButtonVisible(false); // V1_215
             SFX.gameover();
             if (window.MUSIC) MUSIC.setState('gameover'); // V1_386: Afterglow sting, then the title theme
@@ -33956,8 +34863,9 @@
             DOM.menuOverlay.classList.remove('hidden');
             // V1_399: a FINISH-RUN victory retitles the end screen (consume the flag).
             const _isVictory = victoryFinish; victoryFinish = false;
-            DOM.menuOverlay.querySelector('.game-title').textContent = _isVictory ? 'VICTORY!' : 'GAME OVER';
-            DOM.menuOverlay.querySelector('.game-subtitle').textContent = _isVictory ? 'Level cleared — the horde could not hold you.' : 'You have fallen...';
+            const _isMaw = mawFinish; mawFinish = false; // V1_409: sealed-the-Hellmouth variant
+            DOM.menuOverlay.querySelector('.game-title').textContent = _isMaw ? 'SEALED!' : (_isVictory ? 'VICTORY!' : 'GAME OVER');
+            DOM.menuOverlay.querySelector('.game-subtitle').textContent = _isMaw ? 'The Hellmouth is sealed. The Maw is no more.' : (_isVictory ? 'Level cleared — the horde could not hold you.' : 'You have fallen...');
             DOM.startBtn.textContent = 'TRY AGAIN';
             
             const stats = window.gameOverStats || { time: '—', level: '—', kills: '—', shrines: '—' }; // V1_405: armor — must never throw, or the retitle/nudge/meta-strip below never run
@@ -34323,6 +35231,10 @@
             gamePaused = false;
             // V1_399: defensively tear down any victory state so a fresh run isn't wedged
             if (DOM.victoryOverlay) DOM.victoryOverlay.classList.remove('active');
+            // V1_409: fully tear down any in-progress Maw fight so the next run is pristine
+            if (mawFightActive || maw || mawArena) { endMawFight(); }
+            mawPortal = null; mawSealed = false; mawWin = false; mawFinish = false;
+            mawWhiteout = 0; mawWhiteoutDir = 0; mawEntryPending = false; mawWinFlash = 0;
             victoryFired = false; victoryFinish = false;
             { const _vc = document.getElementById('victoryCountdown'); if (_vc) _vc.style.display = 'none'; }
             if (window.MUSIC) MUSIC.setState('menu'); // V1_386: back to the title theme
