@@ -7747,6 +7747,7 @@
             let state = 'off', track = null, stepIdx = 0, nextTime = 0, loopsDone = 0;
             let playlist = [], plIdx = 0, tickTimer = null, lastSiteCheck = 0;
             let echoWet = null, curKey = null; // V1_394: per-track echo depth handle + current key (parity with boo-music.js V1_390; key exposed via _dbg for tests)
+            let overrideKey = null; // V1_410: boss override (The Maw) — suspends rotation while set (port of boo-music.js V1_390 setOverride)
             let xfade = null; // V1_395: pending in-game rotation fade { key, at } — set while the old song fades out
             const LOOKAHEAD = 0.24, TICK_MS = 90, MASTER_LVL = 0.42;
             const ROT_FADEOUT = 1.4, ROT_GAP = 0.14, ROT_FADEIN = 1.1; // V1_395: smooth song-to-song fades (Kevin: rotation "abruptly" cut)
@@ -8128,6 +8129,36 @@
                         'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh',
                         'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.s.s.ssss']
             };
+            // -- V1_410: "The Maw" — boss battle theme. C harmonic minor, tritone-forward:
+            // doom-gallop menace (A), chromatic fury (B), screaming onslaught (C). Played
+            // ONLY via setOverride('maw') during the arena fight — never in the rotation.
+            const T_MAW = {
+                bpm: 152, bars: 24, v1: 0.105, v2: 0.05, vb: 0.20, d1: 0.25, d2: 0.125, echoWet: 0.15,
+                bass: ['C3 C2 C3 C2 C3 C2 F#2 G2', 'C3 C2 C3 C2 G#2 G2 F#2 G2', 'C3 C2 C3 C2 C3 C2 D#3 D3', 'C3 C2 C3 C2 B2 C3 F#2 G2',
+                       'C3 C2 C3 C2 C3 C2 F#2 G2', 'G#2 G#3 G#2 G#3 G#2 G#3 G2 F2', 'F2 F3 F2 F3 G2 G3 G#2 G#3', 'G2 G2 G2 G2 B2 B2 D3 B2',
+                       'D#3 D#2 D#3 D#2 D#3 D#2 D3 C3', 'D#3 D#2 D#3 D#2 F3 F2 G3 G2', 'F2 F3 F2 F3 F2 F3 F2 F3', 'F2 F3 F2 F3 G#2 A2 B2 C3',
+                       'G2 G3 G2 G3 G2 G3 G2 G3', 'G2 G3 G2 G3 F#2 F#3 G2 G3', 'G#2 G#3 G#2 G#3 A2 A3 B2 B3', 'C3 B2 A#2 A2 G#2 G2 F#2 G2',
+                       'C3 C2 C3 C2 C3 C2 F#2 G2', 'C3 C2 C3 C2 D#3 D3 C3 B2', 'G#2 G#3 G#2 G#3 G#2 G#3 G#2 G#3', 'G#2 G#3 G#2 G#3 B2 B1 B2 B1',
+                       'C3 C2 C3 C2 C3 C2 F#2 G2', 'F2 F3 F2 F3 F#2 F#3 G2 G3', 'G#2 G2 F#2 G2 G#2 G2 F#2 G2', 'C3:2 C2:2 C3:2 C2:2 G2:2 F#2:2 G2:2 B2:2'],
+                p1: ['C4:8 .:4 D#4:2 D4:2', 'C4:6 B3:2 C4:8', 'G4:4 F#4:4 G4:4 D#4:4', 'D4:4 B3:4 G3:8',
+                     'C4:2 D#4:2 G4:4 F#4:2 G4:2 C5:4', 'G#4:4 G4:2 D#4:2 C4:8', 'F4:2 G4:2 G#4:4 G4:2 F4:2 D#4:4', 'D4:2 D#4:2 D4:2 B3:2 G3:4 B3:2 D4:2',
+                     'D#5:4 D5:2 C5:2 A#4:4 G4:4', 'D#5:2 F5:2 G5:4 F5:2 D#5:2 D5:4', 'F5:4 D#5:2 C5:2 G#4:8', 'F4:2 G4:2 G#4:2 A4:2 B4:4 C5:4',
+                     'D5:2 B4:2 G4:4 B4:2 D5:2 G5:4', 'F#5:2 G5:2 F#5:2 D5:2 B4:4 G4:4', 'G#4:1 A4:1 A#4:1 B4:1 C5:2 D#5:2 F#5:4 D5:4', 'G5:4 F5:2 D5:2 B4:2 G4:2 D5:2 F5:2',
+                     'G5:2 C6:2 B5:2 C6:2 G5:2 D#5:2 C5:2 D#5:2', 'G5:1 G#5:1 G5:1 G#5:1 G5:2 D#5:2 C5:4 D#5:4', 'G#5:4 G5:2 D#5:2 C6:4 G#5:4', 'G5:2 F5:2 D5:4 F5:2 G5:2 B5:4',
+                     'C6:1 B5:1 C6:1 B5:1 C6:2 G5:2 D#5:2 C5:2 F#5:4', 'F5:2 G#5:2 C6:4 A#5:2 G#5:2 G5:4', 'D#5:1 E5:1 F5:1 F#5:1 G5:2 F#5:2 G5:2 B5:2 D5:2 G5:2', 'C6:4 G5:2 D#5:2 C5:4 B4:2 C5:2'],
+                p2: [V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('C4', 'D#4', 'F#4', 'C5'), V3_ARP('B3', 'D4', 'G4', 'B4'),
+                     V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('G#3', 'C4', 'D#4', 'G#4'), V3_ARP('F3', 'G#3', 'C4', 'F4'), V3_ARP('G3', 'B3', 'D4', 'G4'),
+                     V3_ARP('D#4', 'G4', 'A#4', 'D#5'), V3_ARP('D#4', 'G4', 'A#4', 'D#5'), V3_ARP('F3', 'G#3', 'C4', 'F4'), V3_ARP('F3', 'G#3', 'C4', 'F4'),
+                     V3_ARP('G3', 'B3', 'D4', 'G4'), V3_ARP('G3', 'B3', 'D4', 'G4'), V3_ARP('G#3', 'B3', 'D4', 'G#4'), V3_ARP('G3', 'B3', 'D4', 'F4'),
+                     V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('C4', 'D#4', 'G4', 'C5'), V3_ARP('G#3', 'C4', 'D#4', 'G#4'), V3_ARP('G#3', 'C4', 'D#4', 'G#4'),
+                     V3_ARP('C4', 'D#4', 'F#4', 'A4'), V3_ARP('F3', 'G#3', 'C4', 'F4'), V3_ARP('G3', 'B3', 'F4', 'G4'), 'C4:4 G3:4 D#4:4 C4:4'],
+                drums: ['k..k..s.k..k..s.', 'k..k..s.k..k..s.', 'k..k..s.k..k..s.', 'k..k..s.k.s.s.s.',
+                        'k..k..s.k..k..s.', 'k..k..s.k..k..s.', 'k..k..s.k..k..s.', 'k.k.k.k.s.s.ssss',
+                        'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.s.s.h.',
+                        'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.h.s.h.k.h.s.hh', 'k.s.k.s.k.s.ssss',
+                        'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.s.s.s.',
+                        'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.hk..s.k.hk..s.', 'k.s.k.s.s.s.ssss']
+            };
             const T_OVER = {
                 bpm: 84, bars: 4, v1: 0.10, v2: 0.05, vb: 0.17, d1: 0.5, d2: 0.25, once: true,
                 bass: ['A2:16', 'G2:16', 'F2:16', 'E2:16'],
@@ -8135,7 +8166,7 @@
                 p1: ['A5:8 E5:4 C5:4', 'B4:6 C5:2 D5:4 B4:4', 'C5:8 A4:8', 'G#4:12 E4:4'],
                 drums: ['k...............', 'k...............', 'k...............', '................']
             };
-            const TRACKS = { title: T_TITLE, rush: T_RUSH, drift: T_DRIFT, bloom: T_BLOOM, polter: T_POLTER, grave: T_GRAVE, banshee: T_BANSHEE, carnevale: T_CARNEVALE, stampede: T_STAMPEDE, seance: T_SEANCE, gallop: T_GALLOP, prism: T_PRISM, reaper: T_REAPER, over: T_OVER }; // V1_394: 12-song rotation (V1_391 was 6)
+            const TRACKS = { title: T_TITLE, rush: T_RUSH, drift: T_DRIFT, bloom: T_BLOOM, polter: T_POLTER, grave: T_GRAVE, banshee: T_BANSHEE, carnevale: T_CARNEVALE, stampede: T_STAMPEDE, seance: T_SEANCE, gallop: T_GALLOP, prism: T_PRISM, reaper: T_REAPER, maw: T_MAW, over: T_OVER }; // V1_394: 12-song rotation (V1_391 was 6); V1_410: maw = boss override only, never rotated
             // pre-index each track's events by step
             Object.keys(TRACKS).forEach(function (k) {
                 const t = TRACKS[k];
@@ -8343,7 +8374,7 @@
                             if (state === 'gameover') { state = 'menu'; switchTrack('title', { fade: 0, gap: 1.1, rise: 0.9 }); }
                             break;
                         }
-                        if (state === 'game' && loopsDone >= 2 && !xfade) { // rotate songs every 2 loops
+                        if (state === 'game' && loopsDone >= 2 && !xfade && !overrideKey) { // rotate songs every 2 loops (V1_410: never while a boss override holds — the override track just re-loops)
                             // V1_395: fade the current song OUT over real music — it keeps looping under the
                             // descending master ramp, so it's a true fade-out, not just an echo-tail decay —
                             // then a brief gap and fade the next one IN. Replaces the V1_387 beat-tight hard
@@ -8376,16 +8407,29 @@
                 setState: function (s, force) {
                     if (s === state && !force) return;
                     state = s;
+                    overrideKey = null; // V1_410: any state change ends a boss override
                     if (!a) { return; } // starts on unlock
                     if (s === 'menu') switchTrack('title', { fade: 0.22, gap: 0.15, rise: 0.35 });
                     else if (s === 'game') { shufflePlaylist(); switchTrack(playlist[0], { fade: 0.15, gap: 0.08 }); }
                     else if (s === 'gameover') switchTrack('over', { fade: 0.12, gap: 0.4 });
                     else { track = null; applyVol(0.1); }
                 },
+                // V1_410: boss override (The Maw). Suspends the rotation; the override track
+                // loops until cleared. Cleared automatically by any setState transition.
+                setOverride: function (key) {
+                    if (!TRACKS[key] || !a || state !== 'game') return;
+                    overrideKey = key;
+                    switchTrack(key, { fade: 0.25, gap: 0.12, rise: 0.35 });
+                },
+                clearOverride: function () {
+                    if (!overrideKey) return;
+                    overrideKey = null;
+                    if (state === 'game' && a) { shufflePlaylist(); switchTrack(playlist[0], { fade: 0.3, gap: 0.12, rise: 0.4 }); }
+                },
                 setMuted: function (m) { muted = !!m; applyVol(0.1); },
                 setVolume: function (v) { vol = Math.max(0, Math.min(1, v || 0)); applyVol(0.1); },
                 _tracks: TRACKS, // exposed for tests + future tuning
-                _dbg: function () { return { state: state, suppressed: suppressed, muted: muted, vol: vol, running: running, gain: master ? master.gain.value : null, bpm: track ? track.bpm : null, step: stepIdx, key: curKey, wet: echoWet ? echoWet.gain.value : null, playlist: playlist.slice() }; } // V1_394: key/wet/playlist for tests
+                _dbg: function () { return { state: state, suppressed: suppressed, muted: muted, vol: vol, running: running, gain: master ? master.gain.value : null, bpm: track ? track.bpm : null, step: stepIdx, key: curKey, wet: echoWet ? echoWet.gain.value : null, playlist: playlist.slice(), override: overrideKey }; } // V1_394: key/wet/playlist for tests; V1_410: override
             };
         })();
         window.MUSIC = MUSIC;
