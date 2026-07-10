@@ -9636,6 +9636,7 @@
         let player = null;
         let enemies = [];
         let projectiles = [];
+        let enemyProjectiles = []; // V1_400: first-class enemy projectile array (P4)
         let xpGems = [];
         let damageNumbers = [];
         let particles = [];
@@ -15035,7 +15036,20 @@
                         this.xpValue = 1;
                         break;
                 }
-                
+
+                // V1_400: registry-kind base stats. New kinds mirror the legacy switch — same
+                // speedScale/hpScale — so the shared scaling below (dmgScale, health/damage
+                // bonuses, per-level tuning, xp time-scale) treats them identically.
+                if (typeof ENEMY_KINDS !== 'undefined' && ENEMY_KINDS[type]) {
+                    const _st = ENEMY_KINDS[type].stats(gameTime, speedScale, hpScale);
+                    this.radius = _st.radius;
+                    this.speed = _st.speed;
+                    this.maxHp = _st.maxHp;
+                    this.baseDamage = _st.baseDamage;
+                    this.color = _st.color;
+                    this.xpValue = _st.xpValue;
+                }
+
                 // Apply damage scaling with difficulty bonus
                 this.damage = Math.floor(this.baseDamage * dmgScale * enemyDamageBonus * lateGameDamageMult(gameTime));
                 this.hp = Math.floor(this.maxHp * enemyHealthBonus * powerOffsetHpMult(gameTime) * earlyHpMult(gameTime) * levelingReliefHpMult(gameTime)); // V1_305 early cushion + V1_319 mid-game leveling relief
@@ -15077,6 +15091,10 @@
                     this.chargeRecoverFrames = 0;
                     this.chargeDirX = 0;
                     this.chargeDirY = 0;
+                }
+                // V1_400: seed per-kind AI/state fields for registry kinds.
+                if (typeof ENEMY_KINDS !== 'undefined' && ENEMY_KINDS[type] && ENEMY_KINDS[type].init) {
+                    ENEMY_KINDS[type].init(this);
                 }
 
                 // Combat-feel (render-only): hit-flash decay + spawn-in animation
@@ -15323,6 +15341,18 @@
                     }
                     // 'charging' state's movement is handled entirely by the dedicated
                     // branch below — it deliberately bypasses aim/extra/speedMult steering.
+                } else if (typeof ENEMY_KINDS !== 'undefined' && ENEMY_KINDS[this.type]) {
+                    // V1_400: registry-kind AI. Returns steering directives; the shared movement/
+                    // terrain-slide code below carries out the move exactly as for legacy types.
+                    // Kinds fire projectiles + manage telegraphs as side effects on `this`.
+                    const _r = ENEMY_KINDS[this.type].ai(this, dt, { dist, dx, dy, dtScale, inAiRange });
+                    if (_r) {
+                        if (_r.aimX !== undefined) aimX = _r.aimX;
+                        if (_r.aimY !== undefined) aimY = _r.aimY;
+                        if (_r.speedMult !== undefined) speedMult = _r.speedMult;
+                        if (_r.extraX) extraX += _r.extraX;
+                        if (_r.extraY) extraY += _r.extraY;
+                    }
                 }
 
                 // ===== WP1: stuck detection (all types) =====
@@ -15490,7 +15520,7 @@
                 }
                 
                 // Collision with player
-                if (dist < this.radius + player.radius) {
+                if (dist < this.radius + player.radius && !this.untargetable) { // V1_400: intangible wraith deals no contact dmg
                     player.takeDamage(this.damage, this);
                 }
                 
@@ -15499,6 +15529,7 @@
             }
 
             takeDamage(amount, isCrit = false) {
+                if (this.untargetable) return; // V1_400: wraith intangible phase — no collisions either way
                 this.hp -= amount;
                 // Reduce tracked incoming damage (projectile has hit)
                 this.incomingDamage = Math.max(0, this.incomingDamage - amount);
@@ -15580,6 +15611,11 @@
                     combustionChaining = false;
                 }
 
+                // V1_400: registry-kind death hooks (splitter split / gravecaller brood-pop).
+                if (typeof ENEMY_KINDS !== 'undefined' && ENEMY_KINDS[this.type] && ENEMY_KINDS[this.type].onDeath) {
+                    ENEMY_KINDS[this.type].onDeath(this);
+                }
+
                 // Power drop chance with diminishing returns
                 trySpawnPowerDrop(this.x, this.y);
             }
@@ -15606,6 +15642,9 @@
                     ctx.scale(ds, ds);
                     ctx.translate(-sx, -sy);
                 }
+
+                // V1_400: wraith intangible fade — draw the whole sprite ghostly (<35% alpha).
+                if (this._faded) ctx.globalAlpha *= 0.3;
 
                 // WP1: tank telegraphed-charge windup — UNMISTAKABLE grow + shake so the
                 // player reads "this is about to charge." Draw-only; this.radius is untouched.
@@ -15776,6 +15815,9 @@
                     ctx.beginPath();
                     ctx.arc(sx, mouthY - s * 0.05, s * 0.1, 0.2, Math.PI - 0.2);
                     ctx.stroke();
+                } else if (typeof ENEMY_KINDS !== 'undefined' && ENEMY_KINDS[this.type] && ENEMY_KINDS[this.type].face) {
+                    // V1_400: registry-kind face + telegraph swell + locked aim/charge lines.
+                    ENEMY_KINDS[this.type].face(ctx, this, { sx, ghostY, s, time, eyeY, eyeSpacing, eyeSize, mouthY });
                 } else {
                     // Normal/Basic: Classic cute ghost face (like favicon)
                     ctx.fillStyle = '#1a1a1a';
@@ -15908,6 +15950,498 @@
                 ctx.restore();
             }
         }
+
+        // ===== V1_400: ENEMY PROJECTILE SYSTEM (Phase 4) =====
+        // First-class, deliberately light. Doctrine (doc §3.2): every speed strictly below the
+        // player's base move speed (dodgeable by walking), every shot telegraphed, NO homing
+        // (velocity locked at fire), hard despawn (range + off-world + terrain), GLOBAL cap 24
+        // (oldest culled), baked-glow sprites (no per-frame shadowBlur), damage via the normal
+        // player.takeDamage() path (armor / shield / thorns all interop; the shooter is threaded
+        // as the attacker so Tome of Retribution can reflect).
+        const ENEMY_PROJ_CAP = 24;
+        const _enemyProjSprites = {};
+        function _getEnemyProjSprite(color) {
+            let spr = _enemyProjSprites[color];
+            if (spr) return spr;
+            const D = 40;
+            const oc = document.createElement('canvas');
+            oc.width = D; oc.height = D;
+            const octx = oc.getContext('2d');
+            const r = D / 2;
+            const g = octx.createRadialGradient(r, r, 0, r, r, r);
+            g.addColorStop(0, '#ffffff');
+            g.addColorStop(0.30, color);
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            octx.fillStyle = g;
+            octx.beginPath(); octx.arc(r, r, r, 0, Math.PI * 2); octx.fill();
+            spr = _enemyProjSprites[color] = oc;
+            return spr;
+        }
+        // Global-cap-respecting spawn. Projectiles MUST originate on-screen — otherwise dropped —
+        // so the player always sees a shot for well over 300ms before it can connect.
+        function spawnEnemyProjectile(p) {
+            if (!player) return;
+            if (!isInPlayerView(p.x, p.y, 30)) return;               // never fire from off-screen
+            if (enemyProjectiles.length >= ENEMY_PROJ_CAP) enemyProjectiles.shift(); // cull oldest
+            enemyProjectiles.push(p);
+        }
+        function updateEnemyProjectiles(dt) {
+            if (!enemyProjectiles.length) return;
+            const dtScale = dt / 16;
+            for (const p of enemyProjectiles) {
+                if (p.dead) continue;
+                if (p.kind === 'glob') {
+                    // Arcing lob: interpolate to a locked ground point, fake height via z.
+                    p.t += dt;
+                    const prog = p.dur > 0 ? Math.min(1, p.t / p.dur) : 1;
+                    p.x = p.x0 + (p.lx - p.x0) * prog;
+                    p.y = p.y0 + (p.ly - p.y0) * prog;
+                    p.z = Math.sin(prog * Math.PI) * p.arcH;
+                    if (prog >= 1) {
+                        addRing(p.lx, p.ly, p.aoe, p.color);          // landing ring + small AoE
+                        spawnParticles(p.lx, p.ly, p.color, 8);
+                        if (Math.hypot(player.x - p.lx, player.y - p.ly) < player.radius + p.aoe) {
+                            player.takeDamage(p.damage, (p.attacker && !p.attacker.dead) ? p.attacker : null);
+                        }
+                        p.dead = true;
+                    }
+                    continue;
+                }
+                // Straight travellers (bolt / orb) — locked velocity, no steering.
+                p.x += p.vx * dtScale;
+                p.y += p.vy * dtScale;
+                p.travel += Math.hypot(p.vx, p.vy) * dtScale;
+                if (Math.hypot(player.x - p.x, player.y - p.y) < player.radius + p.radius) {
+                    player.takeDamage(p.damage, (p.attacker && !p.attacker.dead) ? p.attacker : null);
+                    spawnParticles(p.x, p.y, p.color, 7);
+                    p.dead = true;
+                    continue;
+                }
+                if (p.travel > p.range || p.x < 0 || p.y < 0 || p.x > WORLD.width || p.y > WORLD.height || isInTerrain(p.x, p.y, p.radius)) {
+                    p.dead = true;
+                }
+            }
+            cleanupArray(enemyProjectiles, pr => pr.dead);
+        }
+        function drawEnemyProjectiles() {
+            if (!enemyProjectiles.length) return;
+            for (const p of enemyProjectiles) {
+                if (p.dead) continue;
+                if (p.kind === 'glob') {
+                    if (camera.isVisible(p.lx, p.ly, 60)) {
+                        // Landing-target ring telegraph — tightens/brightens as impact nears.
+                        const lsx = camera.screenX(p.lx), lsy = camera.screenY(p.ly);
+                        const prog = p.dur > 0 ? Math.min(1, p.t / p.dur) : 1;
+                        const rr = camera.scale(p.aoe);
+                        ctx.save();
+                        ctx.globalAlpha = 0.3 + 0.45 * prog;
+                        ctx.strokeStyle = p.color;
+                        ctx.lineWidth = Math.max(3, camera.scale(3));
+                        ctx.beginPath(); ctx.arc(lsx, lsy, rr * (0.45 + 0.55 * prog), 0, Math.PI * 2); ctx.stroke();
+                        ctx.restore();
+                    }
+                    if (camera.isVisible(p.x, p.y, 60)) {
+                        const gsx = camera.screenX(p.x), gsy = camera.screenY(p.y) - camera.scale(p.z);
+                        const spr = _getEnemyProjSprite(p.color);
+                        const d = Math.max(12, camera.scale(p.radius * 3.4));
+                        ctx.drawImage(spr, gsx - d / 2, gsy - d / 2, d, d);
+                    }
+                    continue;
+                }
+                if (!camera.isVisible(p.x, p.y, 40)) continue;
+                const sx = camera.screenX(p.x), sy = camera.screenY(p.y);
+                const spr = _getEnemyProjSprite(p.color);
+                const d = Math.max(12, camera.scale(p.radius * 3.4));
+                ctx.drawImage(spr, sx - d / 2, sy - d / 2, d, d);
+            }
+        }
+        window.enemyProjectiles = enemyProjectiles; // live ref (reset uses .length=0) — P4/P6 tests
+
+        // ===== V1_400: ENEMY_KINDS REGISTRY (Phase 4) =====
+        // New kinds live here; the Enemy ctor / update / draw / die all FALL THROUGH to these
+        // functions when the type isn't a legacy one (basic/fast/tank/swarm stay on their
+        // untouched switch + branches). A kind provides:
+        //   stats(gameTime, speedScale, hpScale) -> base {radius,speed,maxHp,baseDamage,color,xpValue}
+        //     — applies the SAME speedScale/hpScale the legacy switch does, so shared ctor code
+        //       (dmgScale, health/damage bonuses, per-level tuning, xp time-scale) treats new
+        //       kinds identically.
+        //   init(e)              — per-kind AI/state field seeding (optional)
+        //   ai(e, dt, info)      — returns {aimX,aimY,speedMult,extraX,extraY}; drives standoff/
+        //                          strafe/charge/lunge steering + fires projectiles + telegraphs.
+        //                          info = {dist,dx,dy,dtScale,inAiRange}. NEVER retreats.
+        //   face(ctx, e, R)      — silhouette/face + telegraph swell + aim/charge lines (screen space)
+        //   onDeath(e)           — split / brood-pop hooks (optional)
+        // Shared "aiming" token so no more than 2 void snipers telegraph at once.
+        let _voidSnipersAiming = 0;
+        // Shared telegraph swell + locked lines, drawn from a kind's face() (no shadowBlur — these
+        // are per-shooter, brief, and never run on the whole enemy set).
+        function _drawTelegraphFX(e, R) {
+            if (e._swellT > 0) {
+                const sw = Math.min(1, e._swellT);
+                ctx.save();
+                ctx.globalAlpha = 0.5 * sw;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = Math.max(3, camera.scale(2.5));
+                ctx.beginPath(); ctx.arc(R.sx, R.ghostY, R.s * (1.2 + 0.7 * sw), 0, Math.PI * 2); ctx.stroke();
+                ctx.globalAlpha = 0.35 * sw;
+                ctx.fillStyle = e.color;
+                ctx.beginPath(); ctx.arc(R.sx, R.ghostY, R.s * (0.5 + 0.5 * sw), 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+            if (e._groundLine) {
+                const tsx = camera.screenX(e._groundLine.tx), tsy = camera.screenY(e._groundLine.ty);
+                ctx.save();
+                ctx.globalAlpha = 0.6;
+                ctx.strokeStyle = e.color;
+                ctx.lineWidth = Math.max(3, camera.scale(4));
+                ctx.setLineDash([camera.scale(10), camera.scale(8)]);
+                ctx.beginPath(); ctx.moveTo(R.sx, R.ghostY); ctx.lineTo(tsx, tsy); ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+            if (e._aimLine) {
+                const tsx = camera.screenX(e._aimLine.tx), tsy = camera.screenY(e._aimLine.ty);
+                ctx.save();
+                ctx.globalAlpha = 0.45 + 0.45 * (e._swellT || 0);
+                ctx.strokeStyle = e.color;
+                ctx.lineWidth = Math.max(3, camera.scale(2.5));
+                ctx.beginPath(); ctx.moveTo(R.sx, R.ghostY); ctx.lineTo(tsx, tsy); ctx.stroke();
+                ctx.beginPath(); ctx.arc(tsx, tsy, Math.max(6, camera.scale(10)), 0, Math.PI * 2); ctx.stroke();
+                ctx.restore();
+            }
+        }
+        // Simple hollow-eye helper reused by several faces.
+        function _drawEyes(R, color, w, h) {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.ellipse(R.sx - R.eyeSpacing, R.eyeY, R.eyeSize * w, R.eyeSize * h, 0, 0, Math.PI * 2);
+            ctx.ellipse(R.sx + R.eyeSpacing, R.eyeY, R.eyeSize * w, R.eyeSize * h, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        const ENEMY_KINDS = {
+            // ---- SPITTER (Gloom Marsh) : stops 260-340px, 0.7s glow, lobbed AoE glob, cap 6 ----
+            spitter: {
+                stats(t, ss, hs) { return { radius: 13, speed: 0.95 * ss, maxHp: Math.floor(22 * hs), baseDamage: 14, color: '#33dd77', xpValue: 3 }; },
+                init(e) { e._standoff = 260 + Math.random() * 80; e._cool = 700 + Math.random() * 900; },
+                ai(e, dt, info) {
+                    const { dist, dx, dy } = info;
+                    const standoff = e._standoff;
+                    e._swellT = 0;
+                    if (e._cool > 0) e._cool -= dt;
+                    if (e._tele > 0) {
+                        e._teleT += dt;
+                        e._swellT = Math.min(1, e._teleT / 700);
+                        if (e._teleT >= 700) {
+                            let live = 0; for (const q of enemyProjectiles) if (!q.dead && q.kind === 'glob') live++;
+                            if (live < 6) {
+                                spawnEnemyProjectile({
+                                    kind: 'glob', x: e.x, y: e.y, x0: e.x, y0: e.y,
+                                    lx: player.x, ly: player.y, t: 0,
+                                    dur: Math.max(1000, (Math.hypot(dx, dy) / 1.9) * 16), arcH: 60, z: 0,
+                                    aoe: 40, radius: 8, spd: 1.9, damage: Math.round(e.damage), color: e.color, attacker: e
+                                });
+                            }
+                            e._tele = 0; e._teleT = 0; e._cool = 2200 + Math.random() * 800;
+                        }
+                    } else if (e._cool <= 0 && dist > 60 && dist < standoff + 120 && isInPlayerView(e.x, e.y, -10)) {
+                        e._tele = 1; e._teleT = 0;
+                    }
+                    let speedMult = dist <= standoff ? 0 : 1;
+                    if (e._tele > 0) speedMult = 0;
+                    return { aimX: player.x, aimY: player.y, speedMult };
+                },
+                face(ctx, e, R) {
+                    // Wide bog maw + two beady eyes.
+                    _drawEyes(R, '#0a1f12', 0.55, 0.7);
+                    ctx.fillStyle = '#0a1f12';
+                    ctx.beginPath(); ctx.ellipse(R.sx, R.mouthY + R.s * 0.05, R.s * 0.32, R.s * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+                    _drawTelegraphFX(e, R);
+                }
+            },
+            // ---- GRAVECALLER (Necropolis) : holds ~400px, raises 3 tinted swarm minions / 6s ----
+            gravecaller: {
+                stats(t, ss, hs) { return { radius: 15, speed: 0.85 * ss, maxHp: Math.floor(40 * hs), baseDamage: 16, color: '#b060ff', xpValue: 6 }; },
+                init(e) { e._brood = []; e._summonCd = 2500 + Math.random() * 1500; },
+                summon(e) {
+                    e._brood = (e._brood || []).filter(m => m && !m.dead);
+                    const room = 6 - e._brood.length;
+                    if (room <= 0) return;
+                    const n = Math.min(3, room);
+                    for (let i = 0; i < n; i++) {
+                        if (enemies.length >= LIMITS.enemies + 40) break;
+                        const a = Math.random() * Math.PI * 2;
+                        const mx = e.x + Math.cos(a) * (e.radius + 20);
+                        const my = e.y + Math.sin(a) * (e.radius + 20);
+                        const m = new Enemy('swarm', mx, my);
+                        m.color = e.color;       // tint to the caller (native swarm draw, just re-coloured)
+                        m._caller = e; m.spawnT = 0;
+                        e._brood.push(m); enemies.push(m);
+                        spawnParticles(mx, my, e.color, 6);
+                    }
+                },
+                ai(e, dt, info) {
+                    const { dist } = info;
+                    e._swellT = 0;
+                    if (e._summonTele > 0) {
+                        e._summonTele -= dt;
+                        e._swellT = Math.min(1, 1 - e._summonTele / 800);
+                        if (e._summonTele <= 0) { ENEMY_KINDS.gravecaller.summon(e); e._summonCd = 6000; }
+                        return { aimX: player.x, aimY: player.y, speedMult: 0 };
+                    }
+                    if (e._summonCd > 0) e._summonCd -= dt;
+                    if (e._summonCd <= 0 && isInPlayerView(e.x, e.y, -10)) { e._summonTele = 800; }
+                    const speedMult = dist <= 400 ? 0 : 0.9;
+                    return { aimX: player.x, aimY: player.y, speedMult };
+                },
+                onDeath(e) {
+                    if (!e._brood) return;
+                    for (const m of e._brood) {
+                        if (m && !m.dead) { spawnParticles(m.x, m.y, e.color, 8); addRing(m.x, m.y, m.radius * 1.6, e.color); m.die(); }
+                    }
+                    e._brood = [];
+                },
+                face(ctx, e, R) {
+                    // Hollow glowing sockets + a small floating crown of runes.
+                    _drawEyes(R, '#12002a', 0.75, 0.95);
+                    ctx.fillStyle = 'rgba(220,170,255,0.9)';
+                    ctx.beginPath();
+                    ctx.arc(R.sx - R.eyeSpacing, R.eyeY, R.eyeSize * 0.28, 0, Math.PI * 2);
+                    ctx.arc(R.sx + R.eyeSpacing, R.eyeY, R.eyeSize * 0.28, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(200,150,255,0.8)'; ctx.lineWidth = Math.max(1, camera.scale(1.5));
+                    for (let i = -1; i <= 1; i++) {
+                        ctx.beginPath();
+                        ctx.moveTo(R.sx + i * R.s * 0.4, R.ghostY - R.s * 1.05);
+                        ctx.lineTo(R.sx + i * R.s * 0.4, R.ghostY - R.s * 1.35);
+                        ctx.stroke();
+                    }
+                    _drawTelegraphFX(e, R);
+                }
+            },
+            // ---- WRAITH (Necropolis) : fade intangible -> drift close -> shimmer -> 2.2x lunge ----
+            wraith: {
+                stats(t, ss, hs) { return { radius: 13, speed: 1.0 * ss, maxHp: Math.floor(26 * hs), baseDamage: 20, color: '#bfe6ff', xpValue: 4 }; },
+                init(e) { e._wr = 'fade'; e._wrT = 0; },
+                ai(e, dt, info) {
+                    const { dist, dx, dy } = info;
+                    e._wrT += dt;
+                    e.untargetable = false; e._faded = false; e._swellT = 0;
+                    let speedMult = 1, aimX = player.x, aimY = player.y;
+                    const onScreen = isInPlayerView(e.x, e.y, -10);
+                    if (e._wr === 'fade') {
+                        // Intangible drift. Capped at 1200ms and ALWAYS followed by >=1200ms solid,
+                        // so intangibility can never exceed ~50% of the cycle.
+                        e.untargetable = true; e._faded = true; speedMult = 1.15;
+                        if (dist < 150 && onScreen) { e._wr = 'shimmer'; e._wrT = 0; }
+                        else if (e._wrT >= 1200) { e._wr = 'stalk'; e._wrT = 0; }
+                    } else if (e._wr === 'stalk') {
+                        speedMult = 0.9;
+                        if (e._wrT >= 1200) { e._wr = 'fade'; e._wrT = 0; }
+                    } else if (e._wr === 'shimmer') {
+                        speedMult = 0.2;
+                        e._swellT = Math.min(1, e._wrT / 500);
+                        if (e._wrT <= dt) { const d = Math.hypot(dx, dy) || 1; e._luX = dx / d; e._luY = dy / d; } // LOCK lunge vector
+                        if (e._wrT >= 500) { e._wr = 'lunge'; e._wrT = 0; }
+                    } else if (e._wr === 'lunge') {
+                        speedMult = 2.2;
+                        aimX = e.x + e._luX * 500; aimY = e.y + e._luY * 500;
+                        if (e._wrT >= 500) { e._wr = 'solid'; e._wrT = 0; }
+                    } else { // 'solid' — vulnerable window
+                        speedMult = 0.5;
+                        if (e._wrT >= 1200) { e._wr = 'fade'; e._wrT = 0; }
+                    }
+                    return { aimX, aimY, speedMult };
+                },
+                face(ctx, e, R) {
+                    // Two long hollow eyes, no mouth — a mournful shade.
+                    ctx.fillStyle = 'rgba(20,40,60,0.9)';
+                    ctx.beginPath();
+                    ctx.ellipse(R.sx - R.eyeSpacing, R.eyeY, R.eyeSize * 0.55, R.eyeSize * 1.25, 0, 0, Math.PI * 2);
+                    ctx.ellipse(R.sx + R.eyeSpacing, R.eyeY, R.eyeSize * 0.55, R.eyeSize * 1.25, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    _drawTelegraphFX(e, R);
+                }
+            },
+            // ---- CHARGER (Ember Wastes) : lighter tank charge, ground-line telegraph, ends on hit ----
+            charger: {
+                stats(t, ss, hs) { return { radius: 18, speed: 0.8 * ss, maxHp: Math.floor(34 * hs), baseDamage: 22, color: '#ff7722', xpValue: 4 }; },
+                init(e) { e._ch = 'idle'; e._chCd = 1200 + Math.random() * 1500; },
+                ai(e, dt, info) {
+                    const { dist, dx, dy, dtScale } = info;
+                    e._swellT = 0; e._groundLine = null;
+                    let speedMult = 1, aimX = player.x, aimY = player.y;
+                    if (e._chCd > 0) e._chCd -= dt;
+                    if (e._ch === 'idle') {
+                        if (e._chCd <= 0 && dist > 0 && dist <= 320 && isInPlayerView(e.x, e.y, -10)) {
+                            e._ch = 'windup'; e._chWind = 24;
+                            const d = Math.hypot(dx, dy) || 1; e._chDX = dx / d; e._chDY = dy / d; // LOCK charge vector
+                        }
+                    } else if (e._ch === 'windup') {
+                        speedMult = 0;
+                        e._chWind -= dtScale;
+                        e._swellT = Math.min(1, (24 - e._chWind) / 24);
+                        e._groundLine = { tx: e.x + e._chDX * 260, ty: e.y + e._chDY * 260 };
+                        if (e._chWind <= 0) { e._ch = 'charging'; e._chFrames = 34; }
+                    } else if (e._ch === 'charging') {
+                        speedMult = 3.0;
+                        aimX = e.x + e._chDX * 1000; aimY = e.y + e._chDY * 1000;
+                        e._groundLine = { tx: e.x + e._chDX * 120, ty: e.y + e._chDY * 120 };
+                        e._chFrames -= dtScale;
+                        const step = e.radius + 14;
+                        if (isInTerrain(e.x + e._chDX * step, e.y + e._chDY * step, e.radius) || e._chFrames <= 0) {
+                            e._ch = 'recover'; e._chRec = 40;
+                        }
+                    } else { // recover
+                        speedMult = 0.5;
+                        e._chRec -= dtScale;
+                        if (e._chRec <= 0) { e._ch = 'idle'; e._chCd = 2500 + Math.random() * 800; }
+                    }
+                    return { aimX, aimY, speedMult };
+                },
+                face(ctx, e, R) {
+                    // Angry brows + a hot gritted mouth (ember bruiser).
+                    _drawEyes(R, '#2a0e00', 0.85, 0.65);
+                    ctx.strokeStyle = '#2a0e00'; ctx.lineWidth = R.s * 0.1; ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(R.sx - R.eyeSpacing - R.eyeSize, R.eyeY - R.eyeSize);
+                    ctx.lineTo(R.sx - R.eyeSpacing + R.eyeSize, R.eyeY - R.eyeSize * 0.3);
+                    ctx.moveTo(R.sx + R.eyeSpacing + R.eyeSize, R.eyeY - R.eyeSize);
+                    ctx.lineTo(R.sx + R.eyeSpacing - R.eyeSize, R.eyeY - R.eyeSize * 0.3);
+                    ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(R.sx - R.s * 0.2, R.mouthY); ctx.lineTo(R.sx + R.s * 0.2, R.mouthY); ctx.stroke();
+                    _drawTelegraphFX(e, R);
+                }
+            },
+            // ---- CINDER WISP (Ember Wastes) : strafes ~300px, 0.6s glow, burst of 3 straight bolts ----
+            cinderWisp: {
+                stats(t, ss, hs) { return { radius: 11, speed: 1.05 * ss, maxHp: Math.floor(14 * hs), baseDamage: 10, color: '#ff5522', xpValue: 3 }; },
+                init(e) { e._strafeDir = Math.random() < 0.5 ? -1 : 1; e._cool = 800 + Math.random() * 900; },
+                ai(e, dt, info) {
+                    const { dist, dx, dy } = info;
+                    const orbitR = 300;
+                    e._swellT = 0;
+                    if (e._cool > 0) e._cool -= dt;
+                    if (e._burst > 0) {
+                        e._burstT -= dt;
+                        if (e._burstT <= 0) {
+                            spawnEnemyProjectile({ kind: 'bolt', x: e.x, y: e.y, vx: e._bDX * 1.9, vy: e._bDY * 1.9, spd: 1.9, radius: 7, travel: 0, range: 520, damage: Math.round(e.damage * 0.9), color: e.color, attacker: e });
+                            e._burst--; e._burstT = 180;
+                            if (e._burst <= 0) e._cool = 2600 + Math.random() * 600;
+                        }
+                    } else if (e._tele > 0) {
+                        e._teleT += dt;
+                        e._swellT = Math.min(1, e._teleT / 600);
+                        if (e._teleT >= 600) {
+                            const d = Math.hypot(dx, dy) || 1; e._bDX = dx / d; e._bDY = dy / d; // LOCK burst vector
+                            e._burst = 3; e._burstT = 0; e._tele = 0; e._teleT = 0;
+                        }
+                    } else if (e._cool <= 0 && dist < orbitR + 120 && isInPlayerView(e.x, e.y, -10)) {
+                        e._tele = 1; e._teleT = 0;
+                    }
+                    // Strafe tangentially; only pull inward when too far (retreat forbidden).
+                    const dd = dist || 1;
+                    const inX = dx / dd, inY = dy / dd;
+                    const perpX = -inY * e._strafeDir, perpY = inX * e._strafeDir;
+                    const radialPull = Math.max(0, dist - orbitR);
+                    const aimX = e.x + perpX * 90 + inX * radialPull * 0.5;
+                    const aimY = e.y + perpY * 90 + inY * radialPull * 0.5;
+                    let speedMult = 0.7;
+                    if (e._tele > 0 || e._burst > 0) speedMult = 0.15;
+                    return { aimX, aimY, speedMult };
+                },
+                face(ctx, e, R) {
+                    // Single cyclopean ember eye.
+                    ctx.fillStyle = '#2a0800';
+                    ctx.beginPath(); ctx.arc(R.sx, R.eyeY, R.eyeSize * 1.1, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = '#ffdd66';
+                    ctx.beginPath(); ctx.arc(R.sx, R.eyeY, R.eyeSize * 0.4, 0, Math.PI * 2); ctx.fill();
+                    _drawTelegraphFX(e, R);
+                }
+            },
+            // ---- SPLITTER (Void Rift) : on death splits ONCE into 2 minis (60%); minis don't split ----
+            splitter: {
+                stats(t, ss, hs) { return { radius: 14, speed: 1.0 * ss, maxHp: Math.floor(24 * hs), baseDamage: 16, color: '#9b5cff', xpValue: 3 }; },
+                ai(e, dt, info) { return { aimX: player.x, aimY: player.y, speedMult: 1 }; },
+                onDeath(e) {
+                    if (e._noSplit) return;
+                    for (let i = 0; i < 2; i++) {
+                        if (enemies.length >= LIMITS.enemies + 30) break;   // splits respect the cap
+                        const a = Math.random() * Math.PI * 2;
+                        const mx = e.x + Math.cos(a) * (e.radius + 6);
+                        const my = e.y + Math.sin(a) * (e.radius + 6);
+                        const m = new Enemy('splitter', mx, my);
+                        m._noSplit = true;                                   // minis never split again
+                        m.radius = Math.max(7, e.radius * 0.72);
+                        m.maxHp = Math.max(1, Math.floor(m.maxHp * 0.6));
+                        m.hp = m.maxHp;
+                        m.damage = Math.floor(m.damage * 0.6);
+                        m.baseSpeed *= 1.05; m.speed = m.baseSpeed;
+                        m.xpValue = Math.max(1, Math.floor(m.xpValue * 0.6));
+                        m.spawnT = 0;
+                        enemies.push(m);
+                        spawnParticles(mx, my, e.color, 6);
+                    }
+                    addRing(e.x, e.y, e.radius * 1.7, e.color);
+                },
+                face(ctx, e, R) {
+                    // Split face: a bright fault line down the middle + two eyes.
+                    _drawEyes(R, '#1a0033', 0.6, 0.8);
+                    ctx.strokeStyle = 'rgba(200,160,255,0.85)'; ctx.lineWidth = Math.max(1.5, camera.scale(2));
+                    ctx.beginPath(); ctx.moveTo(R.sx, R.ghostY - R.s * 0.9); ctx.lineTo(R.sx, R.ghostY + R.s * 0.7); ctx.stroke();
+                }
+            },
+            // ---- VOID SNIPER (Void Rift) : holds ~420px, 1.4s locked aim line, heavy slow orb, 5s cd ----
+            voidSniper: {
+                stats(t, ss, hs) { return { radius: 14, speed: 0.75 * ss, maxHp: Math.floor(44 * hs), baseDamage: 16, color: '#c060ff', xpValue: 7 }; },
+                init(e) { e._cool = 1500 + Math.random() * 2000; },
+                ai(e, dt, info) {
+                    const { dist } = info;
+                    const standoff = 420;
+                    e._swellT = 0; e._aimLine = null;
+                    if (e._cool > 0) e._cool -= dt;
+                    if (e._aiming) {
+                        e._aimT += dt;
+                        e._aimLine = { tx: e._aWX, ty: e._aWY };            // LOCKED — never tracks
+                        e._swellT = Math.min(1, e._aimT / 1400);
+                        if (e._aimT >= 1400) {
+                            const d = Math.hypot(e._aWX - e.x, e._aWY - e.y) || 1;
+                            const ux = (e._aWX - e.x) / d, uy = (e._aWY - e.y) / d;
+                            spawnEnemyProjectile({ kind: 'orb', x: e.x, y: e.y, vx: ux * 1.35, vy: uy * 1.35, spd: 1.35, radius: 12, travel: 0, range: 660, damage: Math.round(e.damage * 1.8), color: e.color, attacker: e });
+                            e._aiming = false; e._aimT = 0; e._cool = 5000;
+                            _voidSnipersAiming = Math.max(0, _voidSnipersAiming - 1);
+                        }
+                    } else if (e._cool <= 0 && dist > 80 && dist < standoff + 160 && isInPlayerView(e.x, e.y, -10) && _voidSnipersAiming < 2) {
+                        e._aiming = true; e._aimT = 0; e._aWX = player.x; e._aWY = player.y; // lock at telegraph start
+                        _voidSnipersAiming++;
+                    }
+                    let speedMult = dist <= standoff ? 0 : 0.85;
+                    if (e._aiming) speedMult = 0;
+                    return { aimX: player.x, aimY: player.y, speedMult };
+                },
+                onDeath(e) { if (e._aiming) _voidSnipersAiming = Math.max(0, _voidSnipersAiming - 1); },
+                face(ctx, e, R) {
+                    // Narrow targeting eye + crosshair brow.
+                    ctx.fillStyle = '#1a0033';
+                    ctx.beginPath(); ctx.ellipse(R.sx, R.eyeY, R.eyeSize * 1.3, R.eyeSize * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = '#ff4dff';
+                    ctx.beginPath(); ctx.arc(R.sx, R.eyeY, R.eyeSize * 0.3, 0, Math.PI * 2); ctx.fill();
+                    _drawTelegraphFX(e, R);
+                }
+            }
+        };
+        window.ENEMY_KINDS = ENEMY_KINDS; // exposed for P4/P6 probes
+        // V1_400: read-only accessors for headless verification (live getters; no behaviour change).
+        window.__P4 = {
+            get enemies() { return enemies; },
+            get enemyProjectiles() { return enemyProjectiles; },
+            get player() { return player; },
+            get gameTime() { return gameTime; },
+            get kills() { return kills; },
+            get voidSnipersAiming() { return _voidSnipersAiming; },
+            inView(x, y) { return isInPlayerView(x, y, 60); },
+            playerBaseSpeed() { return player ? player.baseSpeed : 0; },
+            spawnKind(kind, dx, dy) { if (!player) return false; const e = new Enemy(kind, player.x + dx, player.y + dy); enemies.push(e); return true; }
+        };
 
         // ===== LEPRECHAUN CLASS =====
         class Leprechaun {
@@ -24481,7 +25015,8 @@
             for (let i = 0; i < tbl.length; i++) {
                 const e = tbl[i];
                 if (t <= (e.fromSec || 0)) continue;               // strict > (matches legacy)
-                if (!SPAWNABLE_LEGACY_TYPES[e.type]) { _warnUnknownSpawnKind(e.type); continue; }
+                // V1_400: registry kinds are now spawnable; only genuinely unknown strings skip.
+                if (!SPAWNABLE_LEGACY_TYPES[e.type] && !(typeof ENEMY_KINDS !== 'undefined' && ENEMY_KINDS[e.type])) { _warnUnknownSpawnKind(e.type); continue; }
                 const w = e.weight || 1;
                 for (let k = 0; k < w; k++) pool.push(e.type);
             }
@@ -26866,7 +27401,8 @@
                     // Very distant enemies don't update (will catch up when closer)
                 }
                 for (const proj of projectiles) proj.update(dt);
-                
+                updateEnemyProjectiles(effectiveDt); // V1_400: enemy projectile system (time-stop aware)
+
                 // Batch XP gem updates - only update visible/nearby gems every frame
                 const gemUpdateRadius = 600;
                 for (const gem of xpGems) {
@@ -28480,6 +29016,7 @@
                 if (!lep.dead) lep.draw();
             }
             drawLeprechaunThrows(); // V1_341
+            drawEnemyProjectiles(); // V1_400
             for (const ghost of ghosts) {
                 if (!ghost.dead) ghost.draw();
             }
@@ -31303,6 +31840,8 @@
             beamLastActiveTime = 0;
             enemies = [];
             projectiles = [];
+            enemyProjectiles.length = 0; // V1_400: reset in place (keep window ref live for tests)
+            _voidSnipersAiming = 0;      // V1_400: reset shared sniper-aim token
             xpGems = [];
             particles = [];
             explosions = [];
