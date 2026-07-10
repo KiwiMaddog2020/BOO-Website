@@ -15418,6 +15418,42 @@
         let playerVelY = 0;
 
         // ===== ENEMY CLASS =====
+        // V1_411 perf: the enemy body used an always-on per-frame ctx.shadowBlur=12 (the single
+        // biggest crowd-scene hot path — one blurred fill per enemy per frame). Bake the colored
+        // glow halo into one offscreen radial-gradient sprite per enemy color (same per-color cache
+        // pattern as _getStormSentryOrbSprite) and drawImage it behind the crisp gradient body.
+        const _enemyGlowSprites = {};
+        function _getEnemyGlowSprite(color) {
+            let spr = _enemyGlowSprites[color];
+            if (spr) return spr;
+            const D = 96;
+            const oc = document.createElement('canvas');
+            oc.width = D; oc.height = D;
+            const octx = oc.getContext('2d');
+            const r = D / 2;
+            const g = octx.createRadialGradient(r, r, 0, r, r, r);
+            // Matches the soft outward bleed of the old shadowBlur=12 halo of `color`.
+            g.addColorStop(0, color);
+            g.addColorStop(0.42, color);
+            g.addColorStop(0.72, _hexA(color, 0.35));
+            g.addColorStop(1, _hexA(color, 0));
+            octx.fillStyle = g;
+            octx.beginPath();
+            octx.arc(r, r, r, 0, Math.PI * 2);
+            octx.fill();
+            spr = _enemyGlowSprites[color] = oc;
+            return spr;
+        }
+        // Small helper: return `color` (hex or rgb) with a forced alpha, for gradient stops.
+        function _hexA(color, a) {
+            if (typeof color === 'string' && color[0] === '#') {
+                let h = color.slice(1);
+                if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+                const n = parseInt(h, 16);
+                return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+            }
+            return color;
+        }
         class Enemy {
             constructor(type, x, y) {
                 this.x = x;
@@ -16036,6 +16072,7 @@
                 // Vengeful Spirits - spawn ghost on kill
                 if (legendaryEffects.ghostStrike.active) {
                     ghosts.push(new Ghost(this.x, this.y));
+                    enforceGhostCap(); // V1_411 soft cap ~12 live (oldest fades out)
                 }
 
                 // V1_325 Combustion: slain enemies erupt, dealing AoE damage to nearby foes.
@@ -16149,9 +16186,14 @@
                 ghostGrad.addColorStop(0, shadeHex(mainColor, 1.5));   // lit top-left
                 ghostGrad.addColorStop(0.5, mainColor);                 // body colour
                 ghostGrad.addColorStop(1, shadeHex(mainColor, 0.5));    // shaded far side
+                // V1_411: baked colored glow halo behind the body (replaces the always-on
+                // per-frame ctx.shadowBlur=12 — the biggest crowd-scene hot path).
+                {
+                    const glowR = s * 1.15 + 12;
+                    ctx.drawImage(_getEnemyGlowSprite(this.color), sx - glowR, ghostY - glowR, glowR * 2, glowR * 2);
+                }
                 ctx.fillStyle = ghostGrad;
-                ctx.shadowColor = this.color;
-                ctx.shadowBlur = 12;
+                ctx.shadowBlur = 0;
 
                 ctx.beginPath();
                 // Dome top (semicircle from left to right)
@@ -17569,6 +17611,48 @@
         }
 
         // ===== GHOST CLASS (Vengeful Spirits) =====
+        // V1_411 perf: the ghost body used a per-frame ctx.shadowBlur (hot path — a Vengeful
+        // Spirits proc under crowd pressure can spawn many at once). Bake the soft blue glow
+        // into one offscreen radial-gradient sprite (same pattern as _getStormSentryOrbSprite)
+        // and drawImage it behind the crisp body/eyes. Also a soft cap (GHOST_SOFT_CAP): the
+        // oldest excess ghost fades out over GHOST_FADE_MS instead of the array growing unbounded.
+        let _ghostGlowSprite = null;
+        function _getGhostGlowSprite() {
+            if (_ghostGlowSprite) return _ghostGlowSprite;
+            const D = 64;
+            const oc = document.createElement('canvas');
+            oc.width = D; oc.height = D;
+            const octx = oc.getContext('2d');
+            const r = D / 2;
+            const g = octx.createRadialGradient(r, r, 0, r, r, r);
+            g.addColorStop(0, 'rgba(170,204,255,0.55)');
+            g.addColorStop(0.35, 'rgba(170,204,255,0.34)');
+            g.addColorStop(0.7, 'rgba(170,204,255,0.12)');
+            g.addColorStop(1, 'rgba(170,204,255,0)');
+            octx.fillStyle = g;
+            octx.beginPath();
+            octx.arc(r, r, r, 0, Math.PI * 2);
+            octx.fill();
+            _ghostGlowSprite = oc;
+            return oc;
+        }
+        const GHOST_SOFT_CAP = 12;   // V1_411
+        const GHOST_FADE_MS = 300;   // V1_411
+        function enforceGhostCap() {
+            // Count live (not dead, not already fading) ghosts; fade the oldest excess out.
+            let live = 0;
+            for (const g of ghosts) if (!g.dead && !g.fading) live++;
+            while (live > GHOST_SOFT_CAP) {
+                let oldest = null;
+                for (const g of ghosts) {
+                    if (g.dead || g.fading) continue;
+                    if (!oldest || g.spawnTime < oldest.spawnTime) oldest = g;
+                }
+                if (!oldest) break;
+                oldest.startFade();
+                live--;
+            }
+        }
         class Ghost {
             constructor(x, y) {
                 this.x = x;
@@ -17581,9 +17665,21 @@
                 this.target = null;
                 this.lifetime = 5000; // 5 seconds max
                 this.spawnTime = Date.now();
-                
+                this.fading = false;       // V1_411 soft-cap early fade-out
+                this.fadeStart = 0;
+                this.fadeFrom = this.alpha;
+
                 // Find nearest enemy
                 this.acquireTarget();
+            }
+
+            // V1_411: begin a graceful 300ms fade-out (soft cap culls the oldest excess ghost,
+            // no pop). Keeps behaving (still moves/collides) until the fade completes.
+            startFade() {
+                if (this.fading || this.dead) return;
+                this.fading = true;
+                this.fadeStart = Date.now();
+                this.fadeFrom = this.alpha;
             }
             
             acquireTarget() {
@@ -17627,7 +17723,18 @@
                 
                 // Frame-rate independent
                 const dtScale = dt / 16;
-                
+
+                // V1_411 soft-cap fade-out
+                if (this.fading) {
+                    const fe = Date.now() - this.fadeStart;
+                    this.alpha = this.fadeFrom * (1 - fe / GHOST_FADE_MS);
+                    if (fe >= GHOST_FADE_MS) {
+                        this.dead = true;
+                        spawnParticles(this.x, this.y, '#aaccff', 6);
+                        return;
+                    }
+                }
+
                 // Check lifetime
                 if (Date.now() - this.spawnTime > this.lifetime) {
                     this.dead = true;
@@ -17676,32 +17783,32 @@
                 
                 ctx.save();
                 ctx.globalAlpha = this.alpha * (0.7 + Math.sin(Date.now() * 0.01) * 0.3);
-                
-                // Ghost body (translucent circle with wispy effect)
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#aaccff';
-                
-                // Wispy trail
+
+                // V1_411: baked soft-blue glow behind the body (was a per-frame ctx.shadowBlur).
+                // Halo radius ~= body radius + the old 15px blur spread, scaled with the camera.
                 const trail = Math.sin(Date.now() * 0.008) * camera.scale(3);
+                const glowR = r * 0.8 + camera.scale(15);
+                ctx.drawImage(_getGhostGlowSprite(), sx - glowR, sy + trail * 0.5 - glowR, glowR * 2, glowR * 2);
+
+                // Wispy trail
                 ctx.fillStyle = 'rgba(170, 204, 255, 0.3)';
                 ctx.beginPath();
                 ctx.ellipse(sx, sy + trail, r * 1.2, r * 0.8, 0, 0, Math.PI * 2);
                 ctx.fill();
-                
+
                 // Main body
                 ctx.fillStyle = '#aaccff';
                 ctx.beginPath();
                 ctx.arc(sx, sy, r * 0.8, 0, Math.PI * 2);
                 ctx.fill();
-                
+
                 // Eyes
                 ctx.fillStyle = '#ffffff';
-                ctx.shadowBlur = 5;
                 ctx.beginPath();
                 ctx.arc(sx - camera.scale(3), sy - camera.scale(2), camera.scale(2), 0, Math.PI * 2);
                 ctx.arc(sx + camera.scale(3), sy - camera.scale(2), camera.scale(2), 0, Math.PI * 2);
                 ctx.fill();
-                
+
                 ctx.restore();
             }
         }
