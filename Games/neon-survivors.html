@@ -2563,14 +2563,33 @@
             flex-direction: column; overflow-y: auto;
         }
         .victory-overlay.active { display: flex; }
-        .victory-content { text-align: center; max-width: 520px; width: 100%; box-sizing: border-box; padding: 30px 24px; margin: auto; }
+        .victory-content { position: relative; z-index: 1; text-align: center; max-width: 520px; width: 100%; box-sizing: border-box; padding: 30px 24px; margin: auto; }
+        /* V1_403: gold particle burst layer — sits behind .victory-content, fills the overlay.
+           transform/opacity-only keyframe (GPU-cheap); pieces are spawned + cleared by JS. */
+        .victory-confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+        .confetti-piece {
+            position: absolute; top: -12px; left: 0; width: 7px; height: 13px; border-radius: 1px;
+            opacity: 0; will-change: transform, opacity;
+            animation-name: confettiFall; animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            animation-fill-mode: forwards;
+        }
+        @keyframes confettiFall {
+            0% { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
+            8% { opacity: 1; }
+            100% { transform: translate3d(var(--dx, 0px), 360px, 0) rotate(var(--rot, 180deg)); opacity: 0; }
+        }
         .victory-title {
             font-family: 'Oxanium', sans-serif; font-size: 40px; font-weight: 800; color: #ffd700;
             letter-spacing: 5px; text-transform: uppercase;
             text-shadow: 0 0 24px rgba(255, 215, 0, 0.75), 0 0 48px rgba(0, 255, 170, 0.4);
-            animation: victoryPulse 1.4s ease-in-out infinite; margin-bottom: 6px;
+            animation: victoryPulse 1.4s ease-in-out infinite, victoryGlow 1.4s ease-in-out infinite; margin-bottom: 6px;
         }
         @keyframes victoryPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+        /* V1_403: title glow-pulse — text-shadow breathes in sync with the existing scale pulse */
+        @keyframes victoryGlow {
+            0%, 100% { text-shadow: 0 0 24px rgba(255, 215, 0, 0.75), 0 0 48px rgba(0, 255, 170, 0.4); }
+            50% { text-shadow: 0 0 38px rgba(255, 215, 0, 1), 0 0 66px rgba(0, 255, 170, 0.6); }
+        }
         .victory-subtitle { font-family: 'Oxanium', sans-serif; font-size: 20px; color: #0ff; letter-spacing: 2px; text-shadow: 0 0 14px rgba(0, 255, 255, 0.5); margin-bottom: 18px; }
         .victory-stats { font-family: 'Oxanium', sans-serif; font-size: 16px; color: #fff; line-height: 1.9; margin-bottom: 24px; }
         .victory-stats span { color: #ffd700; font-weight: 700; }
@@ -5184,6 +5203,25 @@
             font-weight: bold;
         }
 
+        /* V1_403: progression-pull nudge — closest-to-completion undone achievement,
+           shown under the final stats on the game-over / victory-finish menu. Subtle gold,
+           matches menu typography; hidden entirely once everything is unlocked. */
+        .final-stats .next-unlock {
+            display: block;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 215, 0, 0.25);
+            font-size: 13px;
+            line-height: 1.5;
+            color: #ffd700;
+            opacity: 0.85;
+            letter-spacing: 0.3px;
+        }
+        .final-stats .next-unlock .nu-progress {
+            color: #ffd700;
+            font-weight: bold;
+        }
+
         /* ========== UNIFIED TRACKPAD ZONE ========== */
         /* Contains: active buffs + spacer + instructions */
         /* Trackpad zone - invisible overlay for touch events (canvas renders UI) */
@@ -7229,6 +7267,7 @@
 
     <!-- V1_399: Victory (level-clear) terminal overlay — KEEP GOING vs FINISH RUN. -->
     <div class="victory-overlay" id="victoryOverlay">
+        <div class="victory-confetti" id="victoryConfetti" aria-hidden="true"></div>
         <div class="victory-content">
             <div class="victory-title">LEVEL CLEARED</div>
             <div class="victory-subtitle" id="victorySubtitle"></div>
@@ -7570,6 +7609,17 @@
                 gem:        function () { if (!gate('gem', 60)) return; tone(1046, 0.04, 'sine', 0.08, 1568); },
                 chest:      function () { tone(440, 0.10, 'triangle', 0.16, 880); setTimeout(function(){ tone(660, 0.12, 'triangle', 0.16, 1320); }, 120); },
                 legendary:  function () { tone(784, 0.12, 'square', 0.18, 1046); setTimeout(function(){ tone(1318, 0.18, 'square', 0.16); }, 150); },
+                // V1_403: level-clear victory sting — legendary's sting, louder, plus a
+                // triumphant follow-up triad chord. Does not touch the MUSIC engine.
+                victoryFanfare: function () {
+                    tone(784, 0.12, 'square', 0.20, 1046);
+                    setTimeout(function () { tone(1318, 0.20, 'square', 0.18); }, 150);
+                    setTimeout(function () {
+                        tone(523.25, 0.5, 'square', 0.20, 1046.5);
+                        tone(659.25, 0.45, 'triangle', 0.16, 1318.5);
+                        tone(783.99, 0.5, 'triangle', 0.16, 1567.98);
+                    }, 260);
+                },
                 bossWarn:   function () { tone(110, 0.4, 'sawtooth', 0.22, 70); },
                 powerup:    function () { tone(880, 0.10, 'square', 0.14, 1320); },
                 gameover:   function () { tone(440, 0.6, 'sawtooth', 0.22, 110); },
@@ -8114,7 +8164,21 @@
                 (t.iDr[s] || []).forEach(function (e) { vDrum(e[1], when); });
             }
             function shufflePlaylist() {
-                playlist = ['rush', 'drift', 'bloom', 'polter', 'grave', 'banshee', 'carnevale', 'stampede', 'seance', 'gallop', 'prism', 'reaper'].sort(function () { return Math.random() - 0.5; }); // V1_394: 12 songs, ~12min full cycle (Kevin: repetitive at 9min on the 6-song set) — reshuffles each cycle
+                const full = ['rush', 'drift', 'bloom', 'polter', 'grave', 'banshee', 'carnevale', 'stampede', 'seance', 'gallop', 'prism', 'reaper']; // V1_394: 12 songs, ~12min full cycle (Kevin: repetitive at 9min on the 6-song set)
+                // V1_403: per-level mood subset (getLevel().music). Read lazily + defensively —
+                // getLevel/LEVELS live further down the file and may not exist yet on very
+                // early calls; null/missing/too-short filters fall back to the full 12.
+                let pool = full;
+                try {
+                    if (typeof window !== 'undefined' && typeof window.getLevel === 'function') {
+                        const lvl = window.getLevel();
+                        if (lvl && Array.isArray(lvl.music) && lvl.music.length) {
+                            const filtered = full.filter(function (k) { return lvl.music.indexOf(k) !== -1; });
+                            if (filtered.length >= 2) pool = filtered;
+                        }
+                    }
+                } catch (e) {}
+                playlist = pool.slice().sort(function () { return Math.random() - 0.5; }); // reshuffles each cycle
                 plIdx = 0;
             }
             // V1_387: real transitions. fade = old song ramps to silence (its last
@@ -8594,6 +8658,7 @@
                 ],
                 tuning: { hpMult: 1.0, dmgMult: 1.0, speedMult: 1.0, spawnRateMult: 1.0 },
                 roster: [], // no new kinds
+                music: null, // V1_403: null = full 12-song rotation (unchanged)
                 finalWaveAt: 1800, clearHoldSeconds: 120, unlocks: 'marsh'
             },
             {
@@ -8621,6 +8686,7 @@
                 ],
                 tuning: { hpMult: 1.15, dmgMult: 1.0, speedMult: 0.92, spawnRateMult: 1.0 },
                 roster: [{ kind: 'spitter', fromSec: 120 }],
+                music: ['seance', 'drift', 'grave', 'bloom', 'carnevale', 'banshee'], // V1_403: per-level mood subset
                 finalWaveAt: 1800, clearHoldSeconds: 120, unlocks: 'necropolis'
             },
             {
@@ -8640,14 +8706,15 @@
                 obstacles: { lakes: 4, trees: 60, rocks: 40, bushes: 0, variants: 'necropolis' },
                 spawnTable: [
                     { type: 'basic',       weight: 1, fromSec: 0 },
-                    { type: 'swarm',       weight: 3, fromSec: 30 },   // swarm-heavy signature
+                    { type: 'swarm',       weight: 4, fromSec: 30 },   // V1_403: weight 3->4 (P6 remeasure: min2 pressure ran well under meadow, too empty) — swarm-heavy signature
                     { type: 'fast',        weight: 1, fromSec: 60 },
                     { type: 'tank',        weight: 1, fromSec: 90 },
-                    { type: 'gravecaller', weight: 1, fromSec: 180 },  // P4 kinds
+                    { type: 'gravecaller', weight: 1, fromSec: 120 },  // V1_403: 180->120s (P4 kinds)
                     { type: 'wraith',      weight: 1, fromSec: 360 }
                 ],
                 tuning: { hpMult: 1.0, dmgMult: 1.0, speedMult: 1.0, spawnRateMult: 1.1 },
-                roster: [{ kind: 'gravecaller', fromSec: 180 }, { kind: 'wraith', fromSec: 360 }],
+                roster: [{ kind: 'gravecaller', fromSec: 120 }, { kind: 'wraith', fromSec: 360 }], // V1_403: gravecaller 180->120 (kept in sync with spawnTable)
+                music: ['polter', 'grave', 'banshee', 'seance', 'carnevale', 'reaper'], // V1_403: per-level mood subset
                 finalWaveAt: 1800, clearHoldSeconds: 120, unlocks: 'ember'
             },
             {
@@ -8675,6 +8742,7 @@
                 ],
                 tuning: { hpMult: 0.9, dmgMult: 1.0, speedMult: 1.12, spawnRateMult: 1.0 }, // V1_402: 1.1->1.0 (P6 balance: min6 pressure ran ~49% over meadow, past the 35% guard; keeps fast-fragile identity — speed 1.12 / hp 0.9 untouched)
                 roster: [{ kind: 'cinderWisp', fromSec: 120 }, { kind: 'charger', fromSec: 240 }],
+                music: ['stampede', 'gallop', 'rush', 'reaper', 'polter', 'prism'], // V1_403: per-level mood subset
                 finalWaveAt: 1800, clearHoldSeconds: 120, unlocks: 'rift'
             },
             {
@@ -8704,6 +8772,7 @@
                 ],
                 tuning: { hpMult: 1.2, dmgMult: 1.1, speedMult: 1.0, spawnRateMult: 1.1 }, // V1_402: 1.15->1.1 (P6 balance: min12 pressure ran ~44% over meadow, past the 35% guard + over the doc's intended 15-25%; keeps elite identity — hp 1.2 / dmg 1.1 untouched)
                 roster: [{ kind: 'splitter', fromSec: 60 }, { kind: 'voidSniper', fromSec: 300 }, { kind: 'spitter', fromSec: 420 }, { kind: 'cinderWisp', fromSec: 480 }],
+                music: ['reaper', 'banshee', 'carnevale', 'stampede', 'gallop', 'polter'], // V1_403: per-level mood subset
                 finalWaveAt: 1800, clearHoldSeconds: 120, unlocks: null
             }
         ];
@@ -20257,11 +20326,21 @@
         };
 
         // Brief on-screen banner when a merchant appears.
+        // V1_403: notification-stacking guard (P6 flagged unlock toast + FINAL SWARM warning
+        // + merchant banner overlapping near 30:00). This banner is the "non-critical" one of
+        // the pair with the final-swarm warning, so it defers behind it; it also nudges down
+        // out of the unlock toast's way (the toast already queues itself internally).
+        let _merchantBannerActive = false;
         function showMerchantArrival() {
+            if (_finalSwarmWarningVisible) { setTimeout(showMerchantArrival, 2200); return; }
+            _merchantBannerActive = true;
+            const toastVisible = !!(DOM.unlockToast && DOM.unlockToast.classList.contains('show'));
+            const topPos = toastVisible ? '30%' : '16%';
             const n = document.createElement('div');
+            n.id = 'merchantArrivalBanner';
             n.innerHTML = `<div style="font-size:20px;">\u{1F6D2} Traveling Merchant</div>`
                 + `<div style="font-size:13px;opacity:0.85;">Half-price upgrade nearby!</div>`;
-            n.style.cssText = 'position:fixed;top:16%;left:50%;transform:translate(-50%,-50%);'
+            n.style.cssText = 'position:fixed;top:' + topPos + ';left:50%;transform:translate(-50%,-50%);'
                 + 'color:#ff66cc;text-shadow:0 0 16px #ff66cc;text-align:center;z-index:9000;'
                 + 'pointer-events:none;font-family:Oxanium,sans-serif;font-weight:bold;'
                 + 'animation:merchantToast 2.2s ease-out forwards;';
@@ -20274,7 +20353,7 @@
                 document.head.appendChild(st);
             }
             document.body.appendChild(n);
-            setTimeout(() => n.remove(), 2300);
+            setTimeout(() => { n.remove(); _merchantBannerActive = false; }, 2300);
         }
         
         // ===== COWBOY HAT PICKUP =====
@@ -22070,27 +22149,31 @@
 
                 // NECROPOLIS: dry cracked lakebed — no water motion at all, just a dusty
                 // violet basin with static crack lines. Cheapest of the four variants.
+                // V1_403: basin tone lifted a touch + cracks switched from near-black
+                // (invisible against an equally dark basin) to a pale dust-crust tone —
+                // keeps the "dead lakebed" mood via a muted, desaturated color rather than
+                // brightening the whole feature.
                 _drawDry: function(ctx, sx, sy, scale, time, obstacle) {
                     const radiusX = scale(obstacle.radiusX);
                     const radiusY = scale(obstacle.radiusY);
                     ctx.save();
-                    ctx.globalAlpha = 0.5;
+                    ctx.globalAlpha = 0.58;
                     const body = ctx.createRadialGradient(sx, sy, radiusX * 0.1, sx, sy, radiusX);
-                    body.addColorStop(0, '#241522');
-                    body.addColorStop(0.75, '#3a2038');
-                    body.addColorStop(1, '#4a2a48');
+                    body.addColorStop(0, '#2c1a2a');
+                    body.addColorStop(0.75, '#44263f');
+                    body.addColorStop(1, '#573159');
                     ctx.fillStyle = body;
                     ctx.beginPath();
                     ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
                     ctx.fill();
-                    ctx.globalAlpha = 0.45;
-                    ctx.strokeStyle = '#7a5a8a';
+                    ctx.globalAlpha = 0.5;
+                    ctx.strokeStyle = '#8a6a94';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
                     ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
                     ctx.stroke();
-                    ctx.globalAlpha = 0.35;
-                    ctx.strokeStyle = '#1a0f1a';
+                    ctx.globalAlpha = 0.42;
+                    ctx.strokeStyle = '#9a7ea8';
                     ctx.lineWidth = 1.4;
                     const cracks = 4 + (obstacle.variant % 3);
                     for (let i = 0; i < cracks; i++) {
@@ -22257,12 +22340,15 @@
                 _drawBareBranch: function(ctx, sx, sy, scale, time, obstacle, charred) {
                     const sway = Math.sin(time * 0.001 + obstacle.variant) * scale(1.2); // stiffer than live trees
                     const height = scale(55 + (obstacle.variant % 3) * 18);
-                    const trunkColor = charred ? '#1a1210' : '#4a4238';
-                    const branchColor = charred ? '#2a1c16' : '#5a5044';
+                    // V1_403: charred (Ember) trunk/branch lifted a shade + more opaque — the old
+                    // near-black (#1a1210/#2a1c16) all but vanished against Ember's own dark
+                    // charcoal/rust ground. charred=false (marsh/necropolis) path is untouched.
+                    const trunkColor = charred ? '#3c2418' : '#4a4238';
+                    const branchColor = charred ? '#4e2e1c' : '#5a5044';
                     const tipColor = charred ? '#ff6a2a' : null;
                     ctx.save();
                     ctx.strokeStyle = trunkColor;
-                    ctx.globalAlpha = 0.7;
+                    ctx.globalAlpha = charred ? 0.85 : 0.7;
                     ctx.lineWidth = scale(3.2);
                     ctx.lineCap = 'round';
                     ctx.beginPath();
@@ -22280,7 +22366,7 @@
                         const blen = scale(10 + ((obstacle.variant * i) % 12));
                         const ex = bx + Math.sin(ang) * blen;
                         const ey = by - Math.cos(ang) * blen * 0.7;
-                        ctx.globalAlpha = 0.6;
+                        ctx.globalAlpha = charred ? 0.75 : 0.6; // V1_403: charred branches a touch more opaque
                         ctx.beginPath();
                         ctx.moveTo(bx, by);
                         ctx.lineTo(ex, ey);
@@ -22407,11 +22493,12 @@
 
                 // EMBER: obsidian rock — near-black body, thin bright specular streak
                 // instead of the plain rock's grey highlight ellipse.
+                // V1_403: added a full warm rim stroke around the silhouette (was just the
+                // diagonal specular streak, so the near-black body all but vanished against
+                // Ember's own dark charcoal/rust ground) + a touch lighter fill.
                 _drawObsidian: function(ctx, sx, sy, scale, time, obstacle) {
                     const r = scale(obstacle.radius);
                     ctx.save();
-                    ctx.globalAlpha = 0.8;
-                    ctx.fillStyle = '#150c0a';
                     ctx.beginPath();
                     const points = 5 + (obstacle.variant % 3);
                     for (let i = 0; i < points; i++) {
@@ -22423,7 +22510,13 @@
                         else ctx.lineTo(px, py);
                     }
                     ctx.closePath();
+                    ctx.globalAlpha = 0.85;
+                    ctx.fillStyle = '#1c1210';
                     ctx.fill();
+                    ctx.strokeStyle = '#ff8844';
+                    ctx.lineWidth = 1.4;
+                    ctx.globalAlpha = 0.5;
+                    ctx.stroke();
                     ctx.strokeStyle = '#ff7733';
                     ctx.lineWidth = 1.4;
                     ctx.globalAlpha = 0.5 + 0.2 * Math.sin(time * 0.001 + obstacle.variant);
@@ -22435,28 +22528,47 @@
                 },
 
                 // RIFT: angular crystal shard cluster, cyan-edged.
+                // V1_403: brighter fill + a real per-shard cyan rim stroke (was a dark-on-dark
+                // fill with only a faint bounding-circle ring, tracing none of the shard edges
+                // — nearly invisible against the void ground at gameplay zoom).
                 _drawCrystalShard: function(ctx, sx, sy, scale, time, obstacle) {
                     const r = scale(obstacle.radius);
-                    const shimmer = 0.5 + Math.sin(time * 0.0015 + obstacle.variant) * 0.25;
+                    const shimmer = 0.55 + Math.sin(time * 0.0015 + obstacle.variant) * 0.25;
                     ctx.save();
-                    ctx.globalAlpha = 0.65;
-                    ctx.fillStyle = '#1c1440';
+                    ctx.globalAlpha = 0.82;
+                    ctx.fillStyle = '#4a3aa0';
                     const shards = 3 + (obstacle.variant % 2);
+                    const facets = [];
                     for (let i = 0; i < shards; i++) {
                         const ang = (i / shards) * Math.PI * 2 + obstacle.variant * 0.5;
                         const len = r * (0.6 + ((obstacle.variant * (i + 1)) % 40) / 100);
                         const bx = sx + Math.cos(ang) * r * 0.25;
                         const by = sy + Math.sin(ang) * r * 0.25 * 0.7;
+                        const tipX = bx + Math.cos(ang - 0.3) * len, tipY = by - Math.sin(ang + 0.3) * len * 0.7;
+                        const midX = bx + Math.cos(ang + 0.3) * len * 0.7, midY = by - Math.sin(ang - 0.3) * len * 0.5;
+                        facets.push([bx, by, tipX, tipY, midX, midY]);
                         ctx.beginPath();
                         ctx.moveTo(bx, by);
-                        ctx.lineTo(bx + Math.cos(ang - 0.3) * len, by - Math.sin(ang + 0.3) * len * 0.7);
-                        ctx.lineTo(bx + Math.cos(ang + 0.3) * len * 0.7, by - Math.sin(ang - 0.3) * len * 0.5);
+                        ctx.lineTo(tipX, tipY);
+                        ctx.lineTo(midX, midY);
                         ctx.closePath();
                         ctx.fill();
                     }
+                    ctx.strokeStyle = '#aef6ff';
+                    ctx.lineWidth = 1.6;
+                    ctx.globalAlpha = 0.85;
+                    for (let i = 0; i < facets.length; i++) {
+                        const f = facets[i];
+                        ctx.beginPath();
+                        ctx.moveTo(f[0], f[1]);
+                        ctx.lineTo(f[2], f[3]);
+                        ctx.lineTo(f[4], f[5]);
+                        ctx.closePath();
+                        ctx.stroke();
+                    }
                     ctx.strokeStyle = '#8ff0ff';
                     ctx.lineWidth = 1.3;
-                    ctx.globalAlpha = shimmer;
+                    ctx.globalAlpha = shimmer * 0.6;
                     ctx.beginPath();
                     ctx.arc(sx, sy, r * 0.7, 0, Math.PI * 2);
                     ctx.stroke();
@@ -22544,6 +22656,9 @@
                 },
 
                 // MARSH: thin reed cluster instead of a round bush — same radius/collision.
+                // V1_403: thicker blades + bigger seed heads + a soft glow halo behind each
+                // seed head (two stacked circles, no shadowBlur) — more visual weight vs. the
+                // ambient grass tufts (~1.2px stroke) so reeds read as a distinct feature.
                 _drawReed: function(ctx, sx, sy, scale, time, obstacle) {
                     const r = scale(obstacle.radius);
                     const sway = Math.sin(time * 0.0012 + obstacle.variant) * scale(2.5);
@@ -22560,17 +22675,23 @@
                         const bh = r * (1.1 + ((obstacle.variant * i) % 30) / 100);
                         const lean = sway * (0.6 + t * 0.6);
                         const shade = ((obstacle.variant + i * 7) % 100) / 100;
+                        const tipX = bx + lean, tipY = sy - bh;
                         ctx.strokeStyle = `rgb(${Math.floor(10 + shade * 12)}, ${Math.floor(60 + shade * 60)}, ${Math.floor(45 + shade * 35)})`;
-                        ctx.lineWidth = Math.max(1, r * 0.09);
-                        ctx.globalAlpha = 0.75;
+                        ctx.lineWidth = Math.max(1.6, r * 0.13);
+                        ctx.globalAlpha = 0.85;
                         ctx.beginPath();
                         ctx.moveTo(bx, sy + r * 0.25);
-                        ctx.quadraticCurveTo(bx + lean * 0.6, sy - bh * 0.5, bx + lean, sy - bh);
+                        ctx.quadraticCurveTo(bx + lean * 0.6, sy - bh * 0.5, tipX, tipY);
                         ctx.stroke();
-                        ctx.fillStyle = '#d8e88a';
-                        ctx.globalAlpha = 0.55;
+                        ctx.fillStyle = '#e8ffb0';
+                        ctx.globalAlpha = 0.18;
                         ctx.beginPath();
-                        ctx.arc(bx + lean, sy - bh, Math.max(1, r * 0.08), 0, Math.PI * 2);
+                        ctx.arc(tipX, tipY, Math.max(2, r * 0.16), 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#d8e88a';
+                        ctx.globalAlpha = 0.7;
+                        ctx.beginPath();
+                        ctx.arc(tipX, tipY, Math.max(1.4, r * 0.11), 0, Math.PI * 2);
                         ctx.fill();
                     }
                     ctx.restore();
@@ -26101,6 +26222,9 @@
 
         // ===== FINAL HORDE WARNING =====
         let finalSwarmWarningShown = false;
+        // V1_403: transient "currently on screen" flag (distinct from the once-ever
+        // finalSwarmWarningShown gate above) — lets showMerchantArrival() defer behind it.
+        let _finalSwarmWarningVisible = false;
         // V1_399: victory (level-clear) terminal state — fires at most once per run.
         let victoryFired = false;   // set the instant the survival hold completes
         let victoryFinish = false;  // routes showGameOverMenu() to the "VICTORY!" retitle
@@ -26108,12 +26232,17 @@
         function showFinalSwarmWarning() {
             if (finalSwarmWarningShown) return;
             finalSwarmWarningShown = true;
-            
+            _finalSwarmWarningVisible = true;
+
+            // V1_403: if an unlock toast is currently showing, nudge the giant centered text
+            // down a touch so it doesn't creep up under/behind it (visual-only).
+            const toastVisible = !!(DOM.unlockToast && DOM.unlockToast.classList.contains('show'));
+
             // Create warning overlay
             const warning = document.createElement('div');
             warning.id = 'finalSwarmWarning';
             warning.innerHTML = `
-                <div class="warning-text">FINAL HORDE</div>
+                <div class="warning-text"${toastVisible ? ' style="margin-top:90px;"' : ''}>FINAL HORDE</div>
                 <div class="warning-subtext">THE FINAL SWARM APPROACHES</div>
                 <div class="warning-desc">Enemy spawns will now double every minute!</div>
             `;
@@ -26172,7 +26301,7 @@
             setTimeout(() => {
                 warning.style.transition = 'opacity 0.5s';
                 warning.style.opacity = '0';
-                setTimeout(() => warning.remove(), 500);
+                setTimeout(() => { warning.remove(); _finalSwarmWarningVisible = false; }, 500);
             }, 2500);
         }
 
@@ -26211,23 +26340,75 @@
             if (window.META) { try { META.notify('levelClear', { level: lid }); } catch (e) {} }
             gamePaused = true;               // freeze gameplay; music low-pass ducks automatically (state stays 'game')
             updateSurvivalCountdownHUD();    // hide the countdown — we've cleared
-            try { if (window.SFX && SFX.legendary) SFX.legendary(); } catch (e) {}
+            // V1_403: louder fanfare + follow-up chord (falls back to legendary if absent)
+            try { if (window.SFX && SFX.victoryFanfare) SFX.victoryFanfare(); else if (window.SFX && SFX.legendary) SFX.legendary(); } catch (e) {}
             showVictoryOverlay();
         }
 
         function showVictoryOverlay() {
             if (!DOM.victoryOverlay) return;
             const lvl = getLevel();
-            const m = Math.floor(gameTime / 60);
-            const s = Math.floor(gameTime % 60);
+            const survivedSec = Math.floor(gameTime);
+            const finalKills = kills;
+            const finalGold = typeof runGoldEarned === 'number' ? runGoldEarned : 0;
             if (DOM.victorySubtitle) DOM.victorySubtitle.textContent = lvl.name;
             if (DOM.victoryStats) {
+                // V1_403: spans get stable ids so animateVictoryStats() can count them up.
                 DOM.victoryStats.innerHTML =
-                    'Survived: <span>' + m + ':' + String(s).padStart(2, '0') + '</span><br>' +
-                    'Kills: <span>' + kills + '</span><br>' +
-                    'Gold: <span>' + (typeof runGoldEarned === 'number' ? runGoldEarned : 0) + '</span>';
+                    'Survived: <span id="victoryStatTime">0:00</span><br>' +
+                    'Kills: <span id="victoryStatKills">0</span><br>' +
+                    'Gold: <span id="victoryStatGold">0</span>';
             }
             DOM.victoryOverlay.classList.add('active');
+            spawnVictoryConfetti();                                   // V1_403: gold particle burst
+            animateVictoryStats(survivedSec, finalKills, finalGold);  // V1_403: 0 -> final over ~0.8s
+        }
+
+        // V1_403: lightweight DOM confetti burst (transform/opacity-only CSS animation,
+        // GPU-cheap) — scoped to the victory overlay only.
+        function spawnVictoryConfetti() {
+            const host = document.getElementById('victoryConfetti');
+            if (!host) return;
+            host.innerHTML = '';
+            const colors = ['#ffd700', '#ffe680', '#fff2b0', '#e8ff9e'];
+            const count = 26;
+            for (let i = 0; i < count; i++) {
+                const p = document.createElement('span');
+                p.className = 'confetti-piece';
+                const dx = Math.round((Math.random() * 2 - 1) * 150);
+                const rot = Math.round((Math.random() * 2 - 1) * 280);
+                const dur = (1.1 + Math.random() * 0.9).toFixed(2);
+                const delay = (Math.random() * 0.3).toFixed(2);
+                p.style.left = (8 + Math.random() * 84) + '%';
+                p.style.background = colors[i % colors.length];
+                p.style.setProperty('--dx', dx + 'px');
+                p.style.setProperty('--rot', rot + 'deg');
+                p.style.animationDuration = dur + 's';
+                p.style.animationDelay = delay + 's';
+                host.appendChild(p);
+            }
+            setTimeout(function () { if (host) host.innerHTML = ''; }, 2600);
+        }
+
+        // V1_403: counts the three victory stats up from 0 over ~0.8s (ease-out cubic).
+        function animateVictoryStats(finalSec, finalKills, finalGold) {
+            const timeEl = document.getElementById('victoryStatTime');
+            const killsEl = document.getElementById('victoryStatKills');
+            const goldEl = document.getElementById('victoryStatGold');
+            if (!timeEl && !killsEl && !goldEl) return;
+            const dur = 800;
+            const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+            function fmtTime(sec) { const mm = Math.floor(sec / 60), ss = Math.floor(sec % 60); return mm + ':' + String(ss).padStart(2, '0'); }
+            function step() {
+                const now = (window.performance && performance.now) ? performance.now() : Date.now();
+                const p = Math.min(1, (now - t0) / dur);
+                const ease = 1 - Math.pow(1 - p, 3);
+                if (timeEl) timeEl.textContent = fmtTime(finalSec * ease);
+                if (killsEl) killsEl.textContent = Math.round(finalKills * ease);
+                if (goldEl) goldEl.textContent = Math.round(finalGold * ease);
+                if (p < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
         }
 
         function victoryKeepGoing() {
@@ -32893,14 +33074,55 @@
             DOM.startBtn.textContent = 'TRY AGAIN';
             
             const stats = window.gameOverStats;
-            DOM.finalStats.innerHTML = `
+            let statsHtml = `
                 Survived: <span>${stats.time}</span><br>
                 Level: <span>${stats.level}</span><br>
                 Kills: <span>${stats.kills}</span><br>
                 Shrines: <span>${stats.shrines}</span>
             `;
+            // V1_403: progression pull — surface the closest undone achievement.
+            const nu = _computeNextUnlock();
+            if (nu) {
+                statsHtml += '<div class="next-unlock">NEXT UNLOCK: ' + nu.name + ' '
+                    + '<span class="nu-progress">' + nu.p + '/' + nu.target + '</span>'
+                    + ' → ' + nu.unlockName + '</div>';
+            }
+            DOM.finalStats.innerHTML = statsHtml;
             DOM.finalStats.style.display = 'block';
             updateMenuMetaStrip(); // V1_398: refresh after META.endOfRun banked this run
+        }
+
+        // V1_403: highest p/target ratio among undone, non-event achievements (ties -> lower
+        // target first). Returns null when none qualify (hides the line) or META is absent.
+        function _computeNextUnlock() {
+            if (!window.META) return null;
+            try {
+                const st = META.getState();
+                const ids = Object.keys(META.ACHIEVEMENTS);
+                let best = null, bestRatio = -1;
+                for (let i = 0; i < ids.length; i++) {
+                    const id = ids[i];
+                    const a = META.ACHIEVEMENTS[id];
+                    if (a.kind === 'event') continue; // no meaningful numeric progress to show
+                    const rec = st.ach[id];
+                    if (rec && rec.done) continue;
+                    const target = a.target || 1;
+                    const p = Math.min((rec && rec.p) || 0, target);
+                    const ratio = p / target;
+                    if (ratio > bestRatio || (ratio === bestRatio && best && target < best.target)) {
+                        bestRatio = ratio;
+                        best = { name: a.name, p: p, target: target, unlocks: a.unlocks };
+                    }
+                }
+                if (!best) return null;
+                let unlockName = best.unlocks ? (best.unlocks.weapon || best.unlocks.tome || best.unlocks.level || '') : '';
+                try {
+                    if (best.unlocks && best.unlocks.weapon && typeof WEAPONS !== 'undefined' && WEAPONS[best.unlocks.weapon]) unlockName = WEAPONS[best.unlocks.weapon].name;
+                    else if (best.unlocks && best.unlocks.tome && typeof TOMES !== 'undefined' && TOMES[best.unlocks.tome]) unlockName = TOMES[best.unlocks.tome].name;
+                    else if (best.unlocks && best.unlocks.level) unlockName = META.LEVEL_NAMES[best.unlocks.level] || best.unlocks.level;
+                } catch (e) {}
+                return { name: best.name, p: best.p, target: best.target, unlockName: unlockName };
+            } catch (e) { return null; }
         }
 
         // ============================================================
