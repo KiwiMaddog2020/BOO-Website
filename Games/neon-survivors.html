@@ -7704,6 +7704,325 @@
             window.addEventListener(ev, function () { MUSIC.unlock(); }, { once: true, passive: true });
         });
 
+        // ========== V1_397: META-PROGRESSION ENGINE (Phase 1) ==========
+        // Persistent unlock / achievement layer. Lives in the MAIN game script so it
+        // shares scope with WEAPONS/TOMES/offer builders (all declared LATER — every
+        // registry read here is lazy / at-call-time, never at module init, so there is
+        // no temporal-dead-zone hazard). Storage is guarded like the Settings module +
+        // disabledWeapons loader (iOS WebView / private-mode safe).
+        const META = (function () {
+            'use strict';
+            const KEY = 'survivors_meta';
+            const SCHEMA_V = 1;
+
+            // Fresh-save rosters (doc 1.4)
+            const STARTER_WEAPONS = ['energyBolt', 'plasmaOrbit', 'shotgun', 'beam', 'starField', 'pulseMine', 'iceShard', 'flameThrower', 'boomerang', 'toxicAura'];
+            const STARTER_TOMES = ['powerTome', 'vitalityTome', 'speedTome', 'attackSpeedTome', 'armorTome', 'xpTome', 'critTome', 'regenTome'];
+            const STARTER_LEVELS = ['meadow'];
+            const LEVEL_IDS = ['meadow', 'marsh', 'necropolis', 'ember', 'rift'];
+            const LEVEL_NAMES = { meadow: 'Neon Meadow', marsh: 'Gloom Marsh', necropolis: 'Neon Necropolis', ember: 'Ember Wastes', rift: 'Void Rift' };
+            // Clearing level N unlocks N+1 (doc 2); rift is terminal.
+            const NEXT_LEVEL = { meadow: 'marsh', marsh: 'necropolis', necropolis: 'ember', ember: 'rift' };
+            // Which achievement each level-clear event fires (doc 1.5 rows 12-15).
+            const LEVEL_CLEAR_ACH = { marsh: 'marshCleared', necropolis: 'necroCleared', ember: 'emberCleared', rift: 'riftCleared' };
+
+            // Achievements (doc 1.5 — ids / conditions / unlocks are exact; display names are ours).
+            // kind: 'runStat' = threshold on a per-run stat; 'lifetime' = threshold on a life
+            // aggregate; 'event' = fired only by notify(). desc = the player-facing condition text.
+            const ACHIEVEMENTS = {
+                firstBlood:    { name: 'First Blood',   desc: '150 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 150,  unlocks: { weapon: 'spiritOrbs' } },
+                survivor10:    { name: 'Survivor',      desc: 'Survive 10:00 in one run',       kind: 'runStat',  stat: 'time',       target: 600,  unlocks: { weapon: 'voidDaggers' } },
+                bigSpender:    { name: 'Big Spender',   desc: 'Earn 2,000 gold in one run',     kind: 'runStat',  stat: 'gold',       target: 2000, unlocks: { weapon: 'ricochetDisc' } },
+                bossDown:      { name: 'Boss Down',     desc: 'Kill 5 bosses lifetime',         kind: 'lifetime', stat: 'bosses',     target: 5,    unlocks: { weapon: 'thunderStrike' } },
+                packHunter:    { name: 'Pack Hunter',   desc: '500 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 500,  unlocks: { weapon: 'blackSquirrel' } },
+                exterminator:  { name: 'Exterminator',  desc: '2,500 kills lifetime',           kind: 'lifetime', stat: 'kills',      target: 2500, unlocks: { weapon: 'chainLightning' } },
+                taskmaster:    { name: 'Taskmaster',    desc: 'Complete 3 directives in one run', kind: 'runStat', stat: 'directives', target: 3,   unlocks: { weapon: 'spectralArrows' } },
+                survivor20:    { name: 'Endurance',     desc: 'Survive 20:00 in one run',       kind: 'runStat',  stat: 'time',       target: 1200, unlocks: { weapon: 'gravityWell' } },
+                keeper:        { name: 'Keeper',        desc: 'Activate 3 shrines in one run',   kind: 'runStat',  stat: 'shrines',    target: 3,    unlocks: { weapon: 'lighthouse' } },
+                highScaler:    { name: 'High Scaler',   desc: 'Reach player level 25 in one run', kind: 'runStat', stat: 'level',      target: 25,   unlocks: { weapon: 'boomBox' } },
+                perfectionist: { name: 'Perfectionist', desc: 'Max any weapon (level 20)',      kind: 'event',                                       unlocks: { weapon: 'photonScythe' } },
+                marshCleared:  { name: 'Marsh Cleared', desc: 'Clear Gloom Marsh',              kind: 'event',                                       unlocks: { weapon: 'meteorStrike' } },
+                necroCleared:  { name: 'Necropolis Cleared', desc: 'Clear Neon Necropolis',     kind: 'event',                                       unlocks: { weapon: 'stormSentry' } },
+                emberCleared:  { name: 'Ember Cleared', desc: 'Clear Ember Wastes',             kind: 'event',                                       unlocks: { weapon: 'encore' } },
+                riftCleared:   { name: 'Rift Cleared',  desc: 'Clear the Void Rift',            kind: 'event',                                       unlocks: { weapon: 'voidRailgun' } },
+                lucky:         { name: 'Lucky',         desc: 'Open 10 chests lifetime',        kind: 'lifetime', stat: 'chests',     target: 10,   unlocks: { tome: 'luckTome' } },
+                bossSlayer:    { name: 'Boss Slayer',   desc: 'Kill 12 bosses lifetime',        kind: 'lifetime', stat: 'bosses',     target: 12,   unlocks: { tome: 'critDamageTome' } },
+                survivor15:    { name: 'Long Haul',     desc: 'Survive 15:00 in one run',       kind: 'runStat',  stat: 'time',       target: 900,  unlocks: { tome: 'lifestealTome' } },
+                highLevel15:   { name: 'Ascendant',     desc: 'Reach level 15 in one run',      kind: 'runStat',  stat: 'level',      target: 15,   unlocks: { tome: 'sizeTome' } },
+                survivor25:    { name: 'Unbreakable',   desc: 'Survive 25:00 in one run',       kind: 'runStat',  stat: 'time',       target: 1500, unlocks: { tome: 'persistTome' } },
+                slaughter300:  { name: 'Slaughter',     desc: '300 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 300,  unlocks: { tome: 'velocityTome' } },
+                tycoon:        { name: 'Tycoon',        desc: 'Earn 5,000 gold lifetime',       kind: 'lifetime', stat: 'gold',       target: 5000, unlocks: { tome: 'midasTome' } },
+                phoenix:       { name: 'Phoenix',       desc: 'Perish 5 times',                 kind: 'lifetime', stat: 'deaths',     target: 5,    unlocks: { tome: 'retributionTome' } }
+            };
+
+            function canUseStorage() {
+                try { localStorage.setItem('__meta_t__', '1'); localStorage.removeItem('__meta_t__'); return true; } catch (e) { return false; }
+            }
+
+            function _defaults() {
+                return {
+                    v: SCHEMA_V,
+                    ach: {},
+                    unlocked: { weapons: STARTER_WEAPONS.slice(), tomes: STARTER_TOMES.slice(), levels: STARTER_LEVELS.slice() },
+                    life: { kills: 0, gold: 0, runs: 0, bosses: 0, directives: 0, chests: 0, deaths: 0, best: {}, clears: {} }
+                };
+            }
+
+            // merge-with-defaults: additive only, unlocks are UNIONed with starters (never re-lock).
+            function _merge(saved) {
+                const d = _defaults();
+                if (!saved || typeof saved !== 'object') return d;
+                if (saved.ach && typeof saved.ach === 'object') {
+                    for (const id in saved.ach) {
+                        const a = saved.ach[id];
+                        if (a && typeof a === 'object') d.ach[id] = { p: +a.p || 0, done: !!a.done, ts: +a.ts || 0 };
+                    }
+                }
+                function union(base, extra) {
+                    if (!Array.isArray(extra)) return base;
+                    for (let i = 0; i < extra.length; i++) if (typeof extra[i] === 'string' && base.indexOf(extra[i]) === -1) base.push(extra[i]);
+                    return base;
+                }
+                if (saved.unlocked && typeof saved.unlocked === 'object') {
+                    union(d.unlocked.weapons, saved.unlocked.weapons);
+                    union(d.unlocked.tomes, saved.unlocked.tomes);
+                    union(d.unlocked.levels, saved.unlocked.levels);
+                }
+                if (saved.life && typeof saved.life === 'object') {
+                    const L = saved.life;
+                    ['kills', 'gold', 'runs', 'bosses', 'directives', 'chests', 'deaths'].forEach(function (k) { if (typeof L[k] === 'number') d.life[k] = L[k]; });
+                    if (L.best && typeof L.best === 'object') for (const k in L.best) if (typeof L.best[k] === 'number') d.life.best[k] = L.best[k];
+                    if (L.clears && typeof L.clears === 'object') for (const k in L.clears) if (typeof L.clears[k] === 'number') d.life.clears[k] = L.clears[k];
+                }
+                return d;
+            }
+
+            let state = _defaults();
+            (function load() {
+                try {
+                    if (!canUseStorage()) return;
+                    const raw = localStorage.getItem(KEY);
+                    if (raw) state = _merge(JSON.parse(raw));
+                } catch (e) { state = _defaults(); }
+            })();
+
+            // Runtime-only (never persisted)
+            let _pruned = false;
+            let _runActive = false;
+            let _lastPollSec = -1;
+            let _simOverride = null;      // test seam (globals are `let`, not window-settable)
+            const _subs = [];             // onUnlock subscribers
+            const pendingToasts = [];     // Phase 2 drains this
+
+            function _registriesReady() {
+                try { return !!WEAPONS && !!TOMES; } catch (e) { return false; } // swallow TDZ if called super-early
+            }
+
+            // Prune stale ids — deferred until registries exist (they're declared after this module).
+            function _ensurePruned() {
+                if (_pruned || !_registriesReady()) return;
+                _pruned = true;
+                try {
+                    state.unlocked.weapons = state.unlocked.weapons.filter(function (id) { return WEAPONS.hasOwnProperty(id); });
+                    state.unlocked.tomes = state.unlocked.tomes.filter(function (id) { return TOMES.hasOwnProperty(id); });
+                    state.unlocked.levels = state.unlocked.levels.filter(function (id) { return LEVEL_IDS.indexOf(id) !== -1; });
+                    Object.keys(state.ach).forEach(function (id) { if (!ACHIEVEMENTS[id]) delete state.ach[id]; });
+                    _saveNow();
+                } catch (e) {}
+            }
+
+            let _saveTimer = 0;
+            function _saveNow() {
+                if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = 0; }
+                try { if (canUseStorage()) localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+            }
+            function _saveDebounced() {
+                if (_saveTimer) return;
+                _saveTimer = setTimeout(function () { _saveTimer = 0; _saveNow(); }, 1200);
+            }
+
+            function ensureAch(id) { if (!state.ach[id]) state.ach[id] = { p: 0, done: false, ts: 0 }; }
+
+            function _displayName(kind, id) {
+                try {
+                    if (kind === 'weapon' && _registriesReady() && WEAPONS[id]) return WEAPONS[id].name;
+                    if (kind === 'tome' && _registriesReady() && TOMES[id]) return TOMES[id].name;
+                    if (kind === 'level') return LEVEL_NAMES[id] || id;
+                } catch (e) {}
+                return id;
+            }
+            function _hintFor(kind, id) {
+                const keys = Object.keys(ACHIEVEMENTS);
+                for (let i = 0; i < keys.length; i++) { const a = ACHIEVEMENTS[keys[i]]; if (a.unlocks && a.unlocks[kind] === id) return a.desc; }
+                return '';
+            }
+
+            function _fireUnlock(payload) {
+                pendingToasts.push(payload);
+                for (let i = 0; i < _subs.length; i++) { try { _subs[i](payload); } catch (e) {} }
+                try { console.log('[META] 🔓 UNLOCKED — ' + payload.name + ' (' + payload.achName + ')'); } catch (e) {}
+            }
+
+            function _unlock(bucket, kind, id, achName) {
+                if (!id) return;
+                if (state.unlocked[bucket].indexOf(id) === -1) {
+                    state.unlocked[bucket].push(id);
+                    _fireUnlock({ type: kind, id: id, name: _displayName(kind, id), achName: achName || '' });
+                }
+            }
+
+            function award(id) {
+                const a = ACHIEVEMENTS[id];
+                if (!a) return;
+                ensureAch(id);
+                if (state.ach[id].done) return;
+                state.ach[id].done = true;
+                state.ach[id].ts = Date.now();
+                state.ach[id].p = a.target || 1;
+                const u = a.unlocks || {};
+                if (u.weapon) _unlock('weapons', 'weapon', u.weapon, a.name);
+                if (u.tome) _unlock('tomes', 'tome', u.tome, a.name);
+                if (u.level) _unlock('levels', 'level', u.level, a.name);
+                _saveNow();
+            }
+
+            function _safe(fn) { try { const v = fn(); return typeof v === 'number' ? v : 0; } catch (e) { return 0; } }
+            function _runSnapshot() {
+                const snap = {
+                    kills:      _safe(function () { return kills; }),
+                    time:       _safe(function () { return gameTime; }),
+                    gold:       _safe(function () { return runGoldEarned; }),
+                    level:      _safe(function () { return player ? player.level : 0; }),
+                    directives: _safe(function () { return runDirectives; }),
+                    shrines:    _safe(function () { return shrinesActivatedTotal; })
+                };
+                if (_simOverride) for (const k in _simOverride) snap[k] = _simOverride[k];
+                return snap;
+            }
+            // lifetime value: bosses/chests/deaths bank live via notify/endOfRun (no run add);
+            // kills/gold bank at endOfRun, so mid-run we add the current run accumulator.
+            function _lifetimeValue(stat, snap) {
+                if (stat === 'kills') return state.life.kills + (snap ? snap.kills : 0);
+                if (stat === 'gold') return state.life.gold + (snap ? snap.gold : 0);
+                if (stat === 'bosses') return state.life.bosses;
+                if (stat === 'chests') return state.life.chests;
+                if (stat === 'deaths') return state.life.deaths;
+                return 0;
+            }
+            // Evaluate every threshold achievement; award the moment a condition is met.
+            function _scan(snap) {
+                let progressed = false;
+                Object.keys(ACHIEVEMENTS).forEach(function (id) {
+                    const a = ACHIEVEMENTS[id];
+                    if (a.kind === 'event') return;
+                    ensureAch(id);
+                    if (state.ach[id].done) return;
+                    const cur = (a.kind === 'lifetime') ? _lifetimeValue(a.stat, snap) : (snap ? (snap[a.stat] || 0) : 0);
+                    const np = Math.min(cur, a.target);
+                    if (np !== state.ach[id].p) { state.ach[id].p = np; progressed = true; }
+                    if (cur >= a.target) award(id);
+                });
+                if (progressed) _saveDebounced();
+            }
+
+            const api = {
+                ACHIEVEMENTS: ACHIEVEMENTS,
+                LEVEL_IDS: LEVEL_IDS.slice(),
+                LEVEL_NAMES: LEVEL_NAMES,
+                pendingToasts: pendingToasts,
+
+                weaponUnlocked: function (id) {
+                    try {
+                        _ensurePruned();
+                        if (!id) return true;
+                        if (_registriesReady() && !WEAPONS.hasOwnProperty(id)) return true; // unknown id => allow (defensive)
+                        return state.unlocked.weapons.indexOf(id) !== -1;
+                    } catch (e) { return true; }
+                },
+                tomeUnlocked: function (id) {
+                    try {
+                        _ensurePruned();
+                        if (!id) return true;
+                        if (_registriesReady() && !TOMES.hasOwnProperty(id)) return true;
+                        return state.unlocked.tomes.indexOf(id) !== -1;
+                    } catch (e) { return true; }
+                },
+                levelUnlocked: function (id) {
+                    try { _ensurePruned(); if (!id) return true; return state.unlocked.levels.indexOf(id) !== -1; } catch (e) { return true; }
+                },
+                unlockHint: function (kind, id) { try { return _hintFor(kind, id); } catch (e) { return ''; } },
+
+                onUnlock: function (cb) { if (typeof cb === 'function') _subs.push(cb); },
+
+                startRun: function () { _runActive = true; _lastPollSec = -1; _simOverride = null; },
+
+                // 1 Hz threshold scan (self-throttled by whole-second, run-only).
+                poll: function () {
+                    try {
+                        if (!_runActive) return;
+                        const sec = _safe(function () { return Math.floor(gameTime); });
+                        if (sec === _lastPollSec) return;
+                        _lastPollSec = sec;
+                        _scan(_runSnapshot());
+                    } catch (e) {}
+                },
+
+                // One-liner shims fire here.
+                notify: function (evt, data) {
+                    try {
+                        if (evt === 'bossKill') { state.life.bosses++; _scan(_runSnapshot()); _saveNow(); }
+                        else if (evt === 'chest') { state.life.chests++; _scan(_runSnapshot()); _saveNow(); }
+                        else if (evt === 'directive' || evt === 'shrine') { _scan(_runSnapshot()); }
+                        else if (evt === 'weaponMaxed') { award('perfectionist'); }
+                        else if (evt === 'levelClear') {
+                            const lvl = data && data.level;
+                            if (!lvl) return;
+                            state.life.clears[lvl] = (state.life.clears[lvl] || 0) + 1;
+                            const nxt = NEXT_LEVEL[lvl];
+                            if (nxt) _unlock('levels', 'level', nxt, 'Cleared ' + (LEVEL_NAMES[lvl] || lvl));
+                            const achId = LEVEL_CLEAR_ACH[lvl];
+                            if (achId) award(achId); // unlocks the level's weapon
+                            _saveNow();
+                        }
+                    } catch (e) {}
+                },
+
+                endOfRun: function (summary) {
+                    try {
+                        summary = summary || {};
+                        _scan(_runSnapshot());               // catch last-second run-stat / mid-run lifetime crossings
+                        const s = _runSnapshot();
+                        state.life.kills += s.kills;
+                        state.life.gold += s.gold;
+                        state.life.directives += s.directives;
+                        state.life.runs += 1;
+                        if (summary.died) state.life.deaths += 1;
+                        let lid = 'meadow';
+                        try { if (typeof window !== 'undefined' && window.activeLevel) lid = window.activeLevel; } catch (e) {}
+                        const t = Math.floor(typeof summary.time === 'number' ? summary.time : s.time);
+                        if (!state.life.best[lid] || t > state.life.best[lid]) state.life.best[lid] = t;
+                        _scan(null);                         // lifetime now includes this run (exterminator/tycoon/phoenix at the buzzer)
+                        _runActive = false;
+                        _simOverride = null;
+                        _saveNow();
+                    } catch (e) {}
+                },
+
+                getAvailable: function () {
+                    _ensurePruned();
+                    return { weapons: state.unlocked.weapons.slice(), tomes: state.unlocked.tomes.slice(), levels: state.unlocked.levels.slice() };
+                },
+                getState: function () { _ensurePruned(); return JSON.parse(JSON.stringify(state)); },
+
+                // --- test seams (Phase 1 verification only) ---
+                _sim: function (obj) { _runActive = true; _simOverride = Object.assign(_simOverride || {}, obj || {}); _scan(_runSnapshot()); },
+                _reset: function () { state = _defaults(); _pruned = false; _saveNow(); },
+                _dbg: function () { return { v: state.v, runs: state.life.runs, deaths: state.life.deaths, bosses: state.life.bosses, chests: state.life.chests, weapons: state.unlocked.weapons.length, tomes: state.unlocked.tomes.length, levels: state.unlocked.levels.slice(), pending: pendingToasts.length }; }
+            };
+            return api;
+        })();
+        window.META = META;
+
         // ========== CANVAS-ONLY LAYOUT ==========
         // All UI rendered on single canvas for zoom independence
         const BASE_WIDTH = 800;
@@ -8700,6 +9019,9 @@
         }
         let shrines = [];
         let shrinesActivatedTotal = 0; // V1_263: count activations so activated (inert) shrines can be pruned without losing the stat
+        // V1_397: per-run meta accumulators (reset in startGame). runKills = global `kills`,
+        // runShrines = `shrinesActivatedTotal`; these three are new.
+        let runGoldEarned = 0, runDirectives = 0, runChests = 0;
         let magnetPulseActive = false; // Is magnet pulse currently active
         
         // Startup message
@@ -9571,9 +9893,19 @@
         }
         // Tome-offer gate, applied by both level-up offer builders.
         function tomeOfferAllowed(id) {
+            if (!tomeUnlocked(id)) return false; // V1_397: meta-gate — locked tomes never enter any offer pool
             if (id === 'velocityTome') return playerHasAnyWeapon(PROJSPEED_WEAPONS);
             if (id === 'persistTome') return playerHasAnyWeapon(PERSIST_WEAPONS);
             return true;
+        }
+        // V1_397: meta-unlock gating helpers. weaponUnlocked/tomeUnlocked default to TRUE
+        // when META is unavailable or the id is unknown (defensive — never over-block).
+        // weaponOfferAllowed is the single gate every weapon OFFER pool now runs through:
+        // meta-unlocked AND not user-disabled AND not banished-this-run.
+        function weaponUnlocked(id) { return window.META ? META.weaponUnlocked(id) : true; }
+        function tomeUnlocked(id) { return window.META ? META.tomeUnlocked(id) : true; }
+        function weaponOfferAllowed(id) {
+            return weaponUnlocked(id) && !disabledWeapons.has(id) && !banishedWeapons.has(id);
         }
 
         // ===== PLAYER CLASS =====
@@ -9702,6 +10034,7 @@
                     };
                 } else {
                     this.weapons[weaponId].level = Math.min(this.weapons[weaponId].level + 1, 20);
+                    if (this.weapons[weaponId].level >= 20 && window.META) META.notify('weaponMaxed', { id: weaponId }); // V1_397: perfectionist
                     // V1_253: accumulate this pick's rarity bonus (uncapped, on top of base level)
                     this.weapons[weaponId].bonusLevel = (this.weapons[weaponId].bonusLevel || 0) + (WEAPON_RARITY_BONUS[rarity] || 0);
                 }
@@ -15173,6 +15506,7 @@
                 
                 // Drop some gold
                 playerGold += Math.round(25 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                runGoldEarned += Math.round(25 * (player.goldMultiplier || 1)); // V1_397: per-run gold earned
                 updateGoldDisplay();
             }
 
@@ -15387,8 +15721,9 @@
                 
                 // Give 50 gold
                 playerGold += Math.round(50 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                runGoldEarned += Math.round(50 * (player.goldMultiplier || 1)); // V1_397: per-run gold earned
                 updateGoldDisplay();
-                
+
                 // Show pot reward sequence (3 chest offers)
                 showPotOfGoldReward();
                 
@@ -16294,6 +16629,7 @@
                 if (this.dead) return;
                 this.dead = true;
                 kills += 10;
+                if (window.META) META.notify('bossKill'); // V1_397: mini-boss -> lifetime boss counter
                 const killEl = document.getElementById('killCount'); if (killEl) killEl.textContent = kills;
                 if (camera.shake) camera.shake(3.5, 180); // BIG event: mini boss death
 
@@ -16312,6 +16648,7 @@
                 
                 // Drop lots of gold and XP
                 playerGold += Math.round(100 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                runGoldEarned += Math.round(100 * (player.goldMultiplier || 1)); // V1_397: per-run gold earned
                 updateGoldDisplay();
                 
                 for (let i = 0; i < 8; i++) {
@@ -16748,6 +17085,7 @@
                 if (this.dead) return;
                 this.dead = true;
                 kills += 25;
+                if (window.META) META.notify('bossKill'); // V1_397: major-boss -> lifetime boss counter
                 const killEl = document.getElementById('killCount'); if (killEl) killEl.textContent = kills;
                 if (camera.shake) camera.shake(4, 260); // BIG event: major boss death
 
@@ -16772,6 +17110,7 @@
                 
                 // Drop lots of gold and XP
                 playerGold += Math.round(250 * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                runGoldEarned += Math.round(250 * (player.goldMultiplier || 1)); // V1_397: per-run gold earned
                 updateGoldDisplay();
                 
                 for (let i = 0; i < 15; i++) {
@@ -17942,6 +18281,11 @@
                     }
                 }
             }
+
+            // V1_397: chest open committed (past the affordability guard; pot/directive
+            // rewards already returned above) -> lucky (10 chests lifetime).
+            runChests++;
+            if (window.META) META.notify('chest');
 
             // Render-only: one-shot in-world pop at the chest, fired only once
             // the open is committed (after the affordability guard). Ties the DOM
@@ -21296,6 +21640,9 @@
             for (const [id, def] of Object.entries(WEAPONS)) {
                 // Skip starting weapon
                 if (id === selectedStartingWeapon) continue;
+                // V1_397: gate locked/disabled/banished here too — this pool historically
+                // skipped even the disabled/banished filters (the pick-3 leak).
+                if (!weaponOfferAllowed(id)) continue;
 
                 // V1_253: weapons roll their own rarity per card (like tomes).
                 const rarity = rollRarity();
@@ -22853,6 +23200,7 @@
                     // Gold from collecting orbs (based on XP value)
                     const goldDrop = Math.max(1, Math.floor(this.value / 2));
                     playerGold += Math.round(goldDrop * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                    runGoldEarned += Math.round(goldDrop * (player.goldMultiplier || 1)); // V1_397: per-run gold earned
                     updateGoldDisplay();
                     
                     this.dead = true;
@@ -22943,6 +23291,7 @@
             activate() {
                 this.activated = true;
                 shrinesActivatedTotal++; // V1_263: counted here; activated shrines are pruned from the array each frame
+                if (window.META) META.notify('shrine'); // V1_397: keeper (3 shrines in one run)
                 DOM.shrineChargeBar.classList.remove('active');
                 
                 // Burst particles
@@ -24043,11 +24392,9 @@
             // Add weapon upgrades (max 4 unique weapons, each can level to 20)
             const uniqueWeaponCount = player.getUniqueWeaponCount();
             for (const [id, def] of Object.entries(WEAPONS)) {
-                // Skip disabled weapons (from weapon select edit mode)
-                if (disabledWeapons.has(id)) continue;
-                // Skip banished weapons (from current run)
-                if (banishedWeapons.has(id)) continue;
-                
+                // V1_397: single gate — meta-unlocked AND not disabled (edit mode) AND not banished (this run)
+                if (!weaponOfferAllowed(id)) continue;
+
                 const level = player.weapons[id]?.level || 0;
                 
                 // Can only get new weapons if under 4 unique, or can upgrade existing
@@ -25654,7 +26001,8 @@
                 }
                 
                 gameTime += dt / 1000;
-                
+                if (window.META) META.poll(); // V1_397: 1 Hz threshold-achievement scan (self-throttled per whole second)
+
                 // Legendary XP Magnet - 30 second pulse
                 if (legendaryEffects.xpMagnet.active && player) {
                     const timeSinceLastPulse = gameTime - legendaryEffects.xpMagnet.lastPulse;
@@ -26598,6 +26946,8 @@
         }
 
         function directiveReward(x, y, color) {
+            runDirectives++; // V1_397: per-run directive count (taskmaster: 3 in one run)
+            if (window.META) META.notify('directive'); // immediate threshold check
             spawnParticles(x, y, color, 36);
             spawnParticles(x, y, COLORS.gold, 24);
             addRing(x, y, 120, color);
@@ -26614,6 +26964,7 @@
                 directivesSinceLegendary = 0;
                 const gold = Math.floor(60 + gameTime / 8);   // scales gently with run length
                 playerGold += Math.round(gold * (player.goldMultiplier || 1)); // WP8: Tome of Midas
+                runGoldEarned += Math.round(gold * (player.goldMultiplier || 1)); // V1_397: per-run gold earned
                 updateGoldDisplay();
                 directiveBanner = { text: 'DIRECTIVE COMPLETE', sub: '✦ Legendary  +Gold', color: '#00ffaa', until: gameTime + 4 };
                 try { if (typeof SFX !== 'undefined' && SFX.legendary) SFX.legendary(); } catch (e) {}
@@ -26669,6 +27020,7 @@
             // Kevin: gold = half the player's CURRENT chest cost, announced on exit
             const gold = Math.max(1, Math.round((nextChestCost / 2) * (player.goldMultiplier || 1)));
             playerGold += gold;
+            runGoldEarned += gold; // V1_397: per-run gold earned
             updateGoldDisplay();
             directiveBanner = { text: `+${gold} GOLD`, sub: 'Directive reward', color: '#00ffaa', until: gameTime + 3.5 };
             try { if (typeof SFX !== 'undefined' && SFX.chest) SFX.chest(); } catch (e) {}
@@ -29590,7 +29942,15 @@
                 }
                 card.dataset.weaponId = weaponId;
                 card.style.borderColor = weapon.color + '66';
-                
+                // V1_397: meta-locked weapons stay visible but unpickable (Phase 2 styles the lock;
+                // opacity here is a stopgap). Hint = the unlocking achievement's condition text.
+                if (window.META && !META.weaponUnlocked(weaponId)) {
+                    card.dataset.locked = '1';
+                    card.classList.add('locked-weapon');
+                    card.dataset.unlockHint = META.unlockHint('weapon', weaponId) || 'Locked';
+                    card.style.opacity = '0.35';
+                }
+
                 // V1_287: live effect preview where available; else custom SVG; else emoji
                 let iconContent = weapon.icon;
                 if (WEAPON_PREVIEWS[weaponId]) {
@@ -29755,6 +30115,12 @@
         }
         
         function handleWeaponCardClick(weaponId) {
+            // V1_397: locked weapons show their unlock hint and can neither be selected nor toggled
+            if (window.META && !META.weaponUnlocked(weaponId)) {
+                const h = META.unlockHint('weapon', weaponId);
+                setWsdMessage(h ? ('🔒 ' + h) : 'Weapon locked', '#ffcc00');
+                return;
+            }
             if (weaponEditMode) {
                 toggleWeaponDisabled(weaponId);
             } else {
@@ -29818,7 +30184,14 @@
                 }
                 card.dataset.tomeId = tomeId;
                 card.style.borderColor = tome.color + '66';
-                
+                // V1_397: meta-locked tomes stay visible but can't be toggled (Phase 2 styles the lock)
+                if (window.META && !META.tomeUnlocked(tomeId)) {
+                    card.dataset.locked = '1';
+                    card.classList.add('locked-tome');
+                    card.dataset.unlockHint = META.unlockHint('tome', tomeId) || 'Locked';
+                    card.style.opacity = '0.35';
+                }
+
                 // V1_355: live tome animation when available, else the 📖 + emoji fallback.
                 const tomeIconHtml = TOME_PREVIEWS[tomeId]
                     ? `<canvas class="tome-preview-canvas" data-tome="${tomeId}" aria-hidden="true"></canvas>`
@@ -29910,6 +30283,12 @@
         }
         
         function handleTomeCardClick(tomeId) {
+            // V1_397: locked tomes show their unlock hint; never toggled or info-selected
+            if (window.META && !META.tomeUnlocked(tomeId)) {
+                const h = META.unlockHint('tome', tomeId);
+                DOM.tomeEditorDesc.innerHTML = h ? ('🔒 <span style="color:#ffcc00;">' + h + '</span>') : '🔒 Tome locked';
+                return;
+            }
             if (tomeEditorMode === 'info') {
                 showTomeInfo(tomeId);
             } else {
@@ -29988,12 +30367,18 @@
         }
         
         function highlightWeapon(weaponId) {
+            // V1_397: hard-block locked weapons (defense in depth alongside handleWeaponCardClick)
+            if (window.META && !META.weaponUnlocked(weaponId)) {
+                const h = META.unlockHint('weapon', weaponId);
+                setWsdMessage(h ? ('🔒 ' + h) : 'Weapon locked', '#ffcc00');
+                return;
+            }
             // Cannot select disabled weapons as starter
             if (disabledWeapons.has(weaponId)) {
                 setWsdMessage('This weapon is disabled', '#ff4444');
                 return;
             }
-            
+
             pendingWeaponSelect = weaponId;
             const weapon = WEAPONS[weaponId];
             
@@ -30014,6 +30399,7 @@
             if (!pendingWeaponSelect) return;
             // Safety check - don't allow disabled weapons
             if (disabledWeapons.has(pendingWeaponSelect)) return;
+            if (window.META && !META.weaponUnlocked(pendingWeaponSelect)) return; // V1_397: never start with a locked weapon
             selectedStartingWeapon = pendingWeaponSelect;
             DOM.weaponSelectOverlay.classList.remove('active');
             startGame();
@@ -30048,6 +30434,7 @@
         }
         
         function selectWeapon(weaponId) {
+            if (window.META && !META.weaponUnlocked(weaponId)) return; // V1_397: legacy path — block locked weapons
             selectedStartingWeapon = weaponId;
             DOM.weaponSelectOverlay.classList.remove('active');
             startGame();
@@ -30068,6 +30455,8 @@
             damageNumbers = [];
             shrines = [];
             shrinesActivatedTotal = 0; // V1_263
+            runGoldEarned = 0; runDirectives = 0; runChests = 0; // V1_397: reset per-run meta accumulators
+            if (window.META) META.startRun(); // V1_397: begin achievement tracking for this run
             leprechauns = [];
             leprechaunThrows = []; // V1_341
             resetDirectives(); // V1_276
@@ -30438,7 +30827,10 @@
                 kills: kills,
                 shrines: shrinesActivated
             };
-            
+
+            // V1_397: bank run into meta (lifetime aggregates, deaths/runs, best time, final award sweep)
+            if (window.META) META.endOfRun({ time: gameTime, kills: kills, level: player.level, gold: runGoldEarned, directives: runDirectives, shrines: shrinesActivated, died: true });
+
             // Show score modal for leaderboard submission (pass time instead of level)
             showScoreModal(kills, timeString);
         }
