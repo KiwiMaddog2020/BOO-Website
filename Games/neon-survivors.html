@@ -19736,6 +19736,18 @@
                     const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.8);
                     cg.addColorStop(0, '#000000'); cg.addColorStop(0.7, '#1a0300'); cg.addColorStop(1, 'rgba(40,6,0,0)');
                     ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, r * 0.8, 0, Math.PI * 2); ctx.fill();
+                    // V1_412: swirling inner vortex — baked spiral-arm sprite (rotation of a cached
+                    // sprite is cheap; no per-frame shadowBlur), counter-rotated FASTER than the
+                    // outer fire ring so it reads as being pulled into the hole rather than just
+                    // spinning with it. Clipped to the dark disc so it never bleeds past the ring.
+                    ctx.save();
+                    ctx.beginPath(); ctx.arc(0, 0, r * 0.8, 0, Math.PI * 2); ctx.clip();
+                    ctx.globalCompositeOperation = 'lighter';
+                    ctx.globalAlpha = 0.8;
+                    ctx.rotate(-rot * 2.3);
+                    const vspr = _getMawVortexSprite();
+                    ctx.drawImage(vspr, -r * 0.86, -r * 0.86, r * 1.72, r * 1.72);
+                    ctx.restore();
                     // channel arc-fill (like the shrine charge)
                     if (mawPortal.channel > 0) {
                         const frac = Math.min(1, mawPortal.channel / MAW_CHANNEL_REQUIRED);
@@ -19798,10 +19810,45 @@
                     ctx.strokeStyle = 'rgba(255,90,20,0.9)'; ctx.lineWidth = 3;
                     ctx.beginPath(); ctx.arc(sx, sy, mr * frac, 0, Math.PI * 2); ctx.stroke();
                     ctx.restore();
+                    // V1_412: falling streak in the final ~350ms — bright head + tapering trail
+                    // angling onto the ring (the ring stays the telegraph; this just sells the
+                    // "it's actually falling" read). Fixed direction so the whole rain reads as
+                    // one consistent downpour rather than random darts.
+                    const remain = m.fire - now;
+                    if (remain <= 350) {
+                        const sfrac = 1 - remain / 350; // 0 at streak start -> 1 at impact
+                        const ux = -0.55, uy = -0.83; // unit vector back toward the streak's origin
+                        const dist = camera.scale(150) * (1 - sfrac);
+                        const hx = sx + ux * dist, hy = sy + uy * dist;
+                        const trailLen = camera.scale(60);
+                        const tx = hx + ux * trailLen, ty = hy + uy * trailLen;
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        const lg = ctx.createLinearGradient(tx, ty, hx, hy);
+                        lg.addColorStop(0, 'rgba(255,110,20,0)');
+                        lg.addColorStop(1, 'rgba(255,240,180,0.95)');
+                        ctx.strokeStyle = lg; ctx.lineWidth = camera.scale(3.5); ctx.lineCap = 'round';
+                        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(hx, hy); ctx.stroke();
+                        ctx.fillStyle = 'rgba(255,250,224,0.95)';
+                        ctx.beginPath(); ctx.arc(hx, hy, camera.scale(4.5), 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                    }
                 } else if (now < m.fire + 260) {
+                    const t = now - m.fire;
                     ctx.save(); ctx.globalCompositeOperation = 'lighter';
+                    // V1_412: bright white-hot impact flash at the instant of landing (quick burst,
+                    // separate from the slower implosion fill below).
+                    if (t < 140) {
+                        const ifrac = 1 - t / 140;
+                        const fg = ctx.createRadialGradient(sx, sy, 0, sx, sy, mr * 0.55);
+                        fg.addColorStop(0, 'rgba(255,255,240,' + (0.9 * ifrac) + ')');
+                        fg.addColorStop(0.55, 'rgba(255,200,100,' + (0.55 * ifrac) + ')');
+                        fg.addColorStop(1, 'rgba(255,120,30,0)');
+                        ctx.fillStyle = fg;
+                        ctx.beginPath(); ctx.arc(sx, sy, mr * 0.55, 0, Math.PI * 2); ctx.fill();
+                    }
                     ctx.fillStyle = 'rgba(255,220,120,0.8)';
-                    ctx.beginPath(); ctx.arc(sx, sy, mr * (1 - (now - m.fire) / 260), 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(sx, sy, mr * (1 - t / 260), 0, Math.PI * 2); ctx.fill();
                     ctx.restore();
                 }
             }
@@ -19870,16 +19917,58 @@
             return c;
         }
 
+        // V1_412: baked spiral-arm streak sprite for the portal's inner vortex — 4 arms
+        // spiraling from the rim to a bright point at the center (radial gradient stroke,
+        // so each arm tapers in brightness at both ends without per-segment work). Rotated
+        // live via ctx.rotate against the cached sprite — no per-frame gradient/shadowBlur.
+        let _mawVortexSpriteCache = null;
+        function _getMawVortexSprite() {
+            if (_mawVortexSpriteCache) return _mawVortexSpriteCache;
+            const S = 200, c = document.createElement('canvas'); c.width = S; c.height = S;
+            const p = c.getContext('2d'), cx = S / 2, cy = S / 2, R = S * 0.48;
+            const armGrad = p.createRadialGradient(cx, cy, R * 0.05, cx, cy, R);
+            armGrad.addColorStop(0, 'rgba(255,246,200,0)');
+            armGrad.addColorStop(0.18, 'rgba(255,220,120,0.95)');
+            armGrad.addColorStop(0.55, 'rgba(255,120,30,0.6)');
+            armGrad.addColorStop(1, 'rgba(255,80,10,0)');
+            const arms = 4, turns = 1.4, steps = 36;
+            for (let a = 0; a < arms; a++) {
+                const offset = (a / arms) * Math.PI * 2;
+                // glow pass (wide, dim) + core pass (thin, bright) — same technique as the
+                // house glow-halo sprites, just traced along a spiral instead of a circle.
+                for (const pass of [{ w: 7, alpha: 0.5 }, { w: 2.4, alpha: 1 }]) {
+                    p.beginPath();
+                    for (let i = 0; i <= steps; i++) {
+                        const t = i / steps; // 0 = outer rim, 1 = center
+                        const ang = offset + t * turns * Math.PI * 2;
+                        const rad = R * (1 - t * 0.96);
+                        const x = cx + Math.cos(ang) * rad, y = cy + Math.sin(ang) * rad;
+                        if (i === 0) p.moveTo(x, y); else p.lineTo(x, y);
+                    }
+                    p.strokeStyle = armGrad; p.lineWidth = pass.w; p.globalAlpha = pass.alpha; p.lineCap = 'round';
+                    p.stroke();
+                }
+            }
+            p.globalAlpha = 1;
+            _mawVortexSpriteCache = c;
+            return c;
+        }
+
         // ===== THE MAW — screen-fixed HUD (banner + compass to portal) =====
         function drawMawHUD() {
             // phase banner
             if (mawBanner && gameTime < mawBanner.until) {
+                // V1_412: 412px sweep caught the banner landing directly under the unlock toast
+                // (both "THE MAW RAGES"-style text and "WEAPON UNLOCKED" want the top of the
+                // screen) — same toastVisible nudge pattern already used for the FINAL HORDE
+                // warning (V1_403), applied here since this banner is canvas-drawn, not DOM.
+                const toastVisible = !!(DOM.unlockToast && DOM.unlockToast.classList.contains('show'));
                 ctx.save();
                 ctx.globalAlpha = Math.min(1, (mawBanner.until - gameTime) / 0.6);
                 ctx.textAlign = 'center';
                 ctx.fillStyle = '#ff5522';
                 ctx.font = 'bold 34px Oxanium, monospace';
-                ctx.fillText(mawBanner.text, gameWidth / 2, gameHeight * 0.2);
+                ctx.fillText(mawBanner.text, gameWidth / 2, gameHeight * (toastVisible ? 0.32 : 0.2));
                 ctx.restore();
             }
             // compass arrow to the portal (pre-entry only), directive-style
@@ -23288,14 +23377,17 @@
                 // keeps the "dead lakebed" mood via a muted, desaturated color rather than
                 // brightening the whole feature.
                 _drawDry: function(ctx, sx, sy, scale, time, obstacle) {
+                    // V1_412: one more contrast step — deeper basin shadow at the core + brighter,
+                    // wider crack dust (flagged modest/borderline; keeps the dead-basin mood, no
+                    // hue change).
                     const radiusX = scale(obstacle.radiusX);
                     const radiusY = scale(obstacle.radiusY);
                     ctx.save();
-                    ctx.globalAlpha = 0.58;
+                    ctx.globalAlpha = 0.6; // was 0.58
                     const body = ctx.createRadialGradient(sx, sy, radiusX * 0.1, sx, sy, radiusX);
-                    body.addColorStop(0, '#2c1a2a');
+                    body.addColorStop(0, '#190d18'); // was #2c1a2a — deeper basin shadow at the core
                     body.addColorStop(0.75, '#44263f');
-                    body.addColorStop(1, '#573159');
+                    body.addColorStop(1, '#5c3462'); // was #573159 — rim lifted a touch to keep the falloff readable
                     ctx.fillStyle = body;
                     ctx.beginPath();
                     ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
@@ -23306,9 +23398,9 @@
                     ctx.beginPath();
                     ctx.ellipse(sx, sy, radiusX, radiusY, 0, 0, Math.PI * 2);
                     ctx.stroke();
-                    ctx.globalAlpha = 0.42;
-                    ctx.strokeStyle = '#9a7ea8';
-                    ctx.lineWidth = 1.4;
+                    ctx.globalAlpha = 0.6; // was 0.42 — brighter crack dust
+                    ctx.strokeStyle = '#c9a8d8'; // was #9a7ea8 — paler, more visible dust tone
+                    ctx.lineWidth = 1.8; // was 1.4
                     const cracks = 4 + (obstacle.variant % 3);
                     for (let i = 0; i < cracks; i++) {
                         const ang = (i / cracks) * Math.PI * 2 + obstacle.variant * 0.4;
@@ -23611,13 +23703,15 @@
                 // time term, so it never needs recomputing) with glowing orange crack
                 // lines and a warm rim, distinct from Rift's cyan crystal geometry.
                 _drawDemonSpike: function(ctx, sx, sy, scale, time, obstacle) {
+                    // V1_412: thicker silhouette + stronger crack glow — flagged as the most
+                    // subtle of the four Hellmouth deco pieces (too thin/flat against the ground).
                     const height = scale(65 + (obstacle.variant % 3) * 24);
-                    const width = scale(9 + (obstacle.variant % 3) * 3);
+                    const width = scale(13 + (obstacle.variant % 3) * 4); // was 9 + *3 (~40% thicker)
                     const twist = Math.sin(obstacle.variant * 1.7) * width * 0.4;
-                    const glow = 0.5 + Math.sin(time * 0.0015 + obstacle.variant) * 0.25;
+                    const glow = 0.65 + Math.sin(time * 0.0015 + obstacle.variant) * 0.3; // was 0.5 +/- 0.25
                     ctx.save();
                     ctx.fillStyle = '#0c0808';
-                    ctx.globalAlpha = 0.88;
+                    ctx.globalAlpha = 0.9;
                     ctx.beginPath();
                     ctx.moveTo(sx, sy - height);
                     ctx.lineTo(sx + width + twist, sy - height * 0.45);
@@ -23626,8 +23720,21 @@
                     ctx.lineTo(sx - width - twist * 0.6, sy - height * 0.4);
                     ctx.closePath();
                     ctx.fill();
+                    // wide additive underglow behind the crack lines (no shadowBlur) — sells the
+                    // "cracked open, heat leaking out" read at a glance instead of on close inspection
+                    ctx.save();
+                    ctx.globalCompositeOperation = 'lighter';
+                    ctx.strokeStyle = '#ff7733'; ctx.lineWidth = 4.2; ctx.globalAlpha = glow * 0.35;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy - height * 0.9);
+                    ctx.lineTo(sx + twist * 0.3, sy - height * 0.5);
+                    ctx.lineTo(sx - width * 0.2, sy - height * 0.2);
+                    ctx.moveTo(sx - width * 0.3, sy - height * 0.55);
+                    ctx.lineTo(sx + width * 0.15, sy - height * 0.25);
+                    ctx.stroke();
+                    ctx.restore();
                     ctx.strokeStyle = '#ff5a1a'; // glowing crack lines
-                    ctx.lineWidth = 1.4;
+                    ctx.lineWidth = 2.1; // was 1.4
                     ctx.globalAlpha = glow;
                     ctx.beginPath();
                     ctx.moveTo(sx, sy - height * 0.9);
@@ -23636,9 +23743,9 @@
                     ctx.moveTo(sx - width * 0.3, sy - height * 0.55);
                     ctx.lineTo(sx + width * 0.15, sy - height * 0.25);
                     ctx.stroke();
-                    ctx.strokeStyle = '#ff8844'; // warm rim
-                    ctx.lineWidth = 1.2;
-                    ctx.globalAlpha = 0.4;
+                    ctx.strokeStyle = '#ffaa66'; // warm rim, brighter than before
+                    ctx.lineWidth = 1.6; // was 1.2
+                    ctx.globalAlpha = 0.55; // was 0.4
                     ctx.beginPath();
                     ctx.moveTo(sx, sy - height);
                     ctx.lineTo(sx + width + twist, sy - height * 0.45);
@@ -23987,36 +24094,45 @@
                 // V1_407 INFERNO: smoldering coal cluster — dark rounded lumps with a
                 // pulsing ember-glow crack between them. Same radius/collision as a plain bush.
                 _drawCinder: function(ctx, sx, sy, scale, time, obstacle) {
-                    const r = scale(obstacle.radius);
-                    const pulse = 0.5 + Math.sin(time * 0.002 + obstacle.variant) * 0.3;
+                    // V1_412: enlarged cluster + brighter pulsing embers — flagged alongside the
+                    // demon spike as the most subtle of the four Hellmouth deco pieces.
+                    const r = scale(obstacle.radius) * 1.18; // was bare scale(radius) — ~18% bigger
+                    const pulse = 0.55 + Math.sin(time * 0.002 + obstacle.variant) * 0.35; // was 0.5 +/- 0.3
                     ctx.save();
-                    ctx.globalAlpha = 0.3;
+                    ctx.globalAlpha = 0.32;
                     ctx.fillStyle = 'rgba(10, 2, 2, 0.5)';
                     ctx.beginPath();
                     ctx.ellipse(sx, sy + r * 0.3, r * 0.85, r * 0.28, 0, 0, Math.PI * 2);
                     ctx.fill();
                     const lumps = 3 + (obstacle.variant % 2);
                     ctx.fillStyle = '#1c1614';
-                    ctx.globalAlpha = 0.85;
+                    ctx.globalAlpha = 0.88;
                     ctx.beginPath();
                     for (let i = 0; i < lumps; i++) {
                         const ang = (i / lumps) * Math.PI * 2 + obstacle.variant;
-                        const lr = r * (0.42 + ((obstacle.variant * i) % 20) / 100);
+                        const lr = r * (0.44 + ((obstacle.variant * i) % 20) / 100); // was 0.42
                         const lx = sx + Math.cos(ang) * r * 0.32;
                         const ly = sy + Math.sin(ang) * r * 0.22;
                         ctx.moveTo(lx + lr, ly);
                         ctx.arc(lx, ly, lr, 0, Math.PI * 2);
                     }
                     ctx.fill();
-                    ctx.fillStyle = '#ffaa33'; // pulsing ember glow between lumps
-                    ctx.globalAlpha = pulse * 0.85;
+                    // brighter, larger pulsing embers — warm additive halo + hot white-gold core
+                    // (was a single flat-tone dot, easy to miss against the lump silhouettes)
                     for (let i = 0; i < lumps; i++) {
                         const ang = (i / lumps) * Math.PI * 2 + obstacle.variant + 0.6;
                         const gx = sx + Math.cos(ang) * r * 0.28;
                         const gy = sy + Math.sin(ang) * r * 0.2;
-                        ctx.beginPath();
-                        ctx.arc(gx, gy, Math.max(1.2, r * 0.12), 0, Math.PI * 2);
-                        ctx.fill();
+                        const er = Math.max(1.6, r * 0.15); // was r * 0.12
+                        ctx.save();
+                        ctx.globalCompositeOperation = 'lighter';
+                        ctx.fillStyle = '#ff8800'; ctx.globalAlpha = pulse * 0.9;
+                        ctx.beginPath(); ctx.arc(gx, gy, er * 1.6, 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = '#ffcc55'; ctx.globalAlpha = pulse * 0.95;
+                        ctx.beginPath(); ctx.arc(gx, gy, er, 0, Math.PI * 2); ctx.fill();
+                        ctx.fillStyle = '#fff6d8'; ctx.globalAlpha = Math.min(1, pulse * 1.1);
+                        ctx.beginPath(); ctx.arc(gx, gy, er * 0.45, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
                     }
                     ctx.restore();
                 }
@@ -32338,32 +32454,40 @@
                     ctx.arc(sk.sx, sk.sy, r * (1.12 + 0.06 * pulse), 0, Math.PI * 2);
                     ctx.stroke();
                     ctx.globalAlpha = 1;
-                    // gold crown band with three points
-                    ctx.fillStyle = '#ffd23a';
+                    // V1_412: bigger/bolder crown silhouette (was reading a touch subtle hatless) —
+                    // scaled 1.35x on the same point layout, gradient fill (was flat) for brighter
+                    // gold, plus a dark outline stroke to sharpen the read against bright backdrops.
+                    // Radiant pulse ring above is UNCHANGED per spec; overHat halo path untouched.
+                    const k = 1.35;
+                    const crownGrad = ctx.createLinearGradient(sk.sx, topY - r * 0.22 * k, sk.sx, topY + r * 0.24 * k);
+                    crownGrad.addColorStop(0, '#fff8d0'); crownGrad.addColorStop(0.45, '#ffd23a'); crownGrad.addColorStop(1, '#e8a300');
+                    ctx.fillStyle = crownGrad;
+                    ctx.strokeStyle = '#8a5600'; ctx.lineWidth = Math.max(1, r * 0.045); ctx.lineJoin = 'round';
                     ctx.beginPath();
-                    ctx.moveTo(sk.sx - r * 0.5, topY + r * 0.24);
-                    ctx.lineTo(sk.sx - r * 0.5, topY - r * 0.02);
-                    ctx.lineTo(sk.sx - r * 0.28, topY + r * 0.14);
-                    ctx.lineTo(sk.sx - r * 0.06, topY - r * 0.22);
-                    ctx.lineTo(sk.sx + r * 0.06, topY - r * 0.22);
-                    ctx.lineTo(sk.sx + r * 0.28, topY + r * 0.14);
-                    ctx.lineTo(sk.sx + r * 0.5, topY - r * 0.02);
-                    ctx.lineTo(sk.sx + r * 0.5, topY + r * 0.24);
+                    ctx.moveTo(sk.sx - r * 0.5 * k, topY + r * 0.24 * k);
+                    ctx.lineTo(sk.sx - r * 0.5 * k, topY - r * 0.02 * k);
+                    ctx.lineTo(sk.sx - r * 0.28 * k, topY + r * 0.14 * k);
+                    ctx.lineTo(sk.sx - r * 0.06 * k, topY - r * 0.22 * k);
+                    ctx.lineTo(sk.sx + r * 0.06 * k, topY - r * 0.22 * k);
+                    ctx.lineTo(sk.sx + r * 0.28 * k, topY + r * 0.14 * k);
+                    ctx.lineTo(sk.sx + r * 0.5 * k, topY - r * 0.02 * k);
+                    ctx.lineTo(sk.sx + r * 0.5 * k, topY + r * 0.24 * k);
                     ctx.closePath();
                     ctx.fill();
-                    // jewel dots on the band
+                    ctx.stroke();
+                    // jewel dots on the band (scaled with the band)
                     ctx.fillStyle = '#ff3b6b';
-                    ctx.beginPath(); ctx.arc(sk.sx, topY + r * 0.12, r * 0.06, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(sk.sx, topY + r * 0.12 * k, r * 0.07, 0, Math.PI * 2); ctx.fill();
                     ctx.fillStyle = '#3ad1ff';
                     ctx.beginPath();
-                    ctx.arc(sk.sx - r * 0.32, topY + r * 0.16, r * 0.045, 0, Math.PI * 2);
-                    ctx.arc(sk.sx + r * 0.32, topY + r * 0.16, r * 0.045, 0, Math.PI * 2);
+                    ctx.arc(sk.sx - r * 0.32 * k, topY + r * 0.16 * k, r * 0.052, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.32 * k, topY + r * 0.16 * k, r * 0.052, 0, Math.PI * 2);
                     ctx.fill();
                     // point highlights
                     ctx.fillStyle = '#fff6c0';
                     ctx.beginPath();
-                    ctx.arc(sk.sx - r * 0.06, topY - r * 0.22, r * 0.04, 0, Math.PI * 2);
-                    ctx.arc(sk.sx + r * 0.06, topY - r * 0.22, r * 0.04, 0, Math.PI * 2);
+                    ctx.arc(sk.sx - r * 0.06 * k, topY - r * 0.22 * k, r * 0.048, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.06 * k, topY - r * 0.22 * k, r * 0.048, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.restore();
                 },
