@@ -203,5 +203,39 @@ gaps become the next iteration's worklist.
 
 ## 7. Out of scope (parked)
 Per-level Firebase leaderboards (needs firestore.rules change — flag to Kevin),
-per-level music subsets (cheap later: playlist filter), COLORS-level neon re-theming,
-grandfathering existing players' unlocks.
+COLORS-level neon re-theming, grandfathering existing players' unlocks.
+Next depth levers, in priority order (gap analysis vs VS/Megabonk, Kevin-reviewed):
+**weapon evolutions** (max weapon + matching tome → evolved form), **meta gold shop**,
+gameplay-stat characters layered on the sprite system, arcanas/run modifiers.
+
+---
+
+## 8. Post-85 addendum — how the design actually evolved (V1_403 → V1_412)
+
+This doc was written for the 5-level 85-target arc; everything below extended it.
+CLAUDE.md carries the always-current summary; registries in-file are the truth.
+
+- **Per-level music subsets** (V1_403): shipped — `LEVELS[].music` filters the 12-song
+  rotation; meadow = all 12. (Un-parks the §7 item.)
+- **Per-run achievement high-water marks + themed boss identities** (V1_404):
+  `BOSS_IDENTITY` per level; runStat progress is a persisted best, never zeroed.
+- **10-step tutorial rewrite + z-fix** (V1_405): tutorial overlay must stay ABOVE the
+  menu (10001 vs 2000) — it silently opened underneath for a long time.
+- **Unlockable player sprites** (V1_406/V1_408): `PLAYER_SPRITES` registry, 9 skins,
+  drawn inside the squash/lean transform; the V1_408 `overHat(ctx, oh)` pass draws
+  through/around the cowboy hat inside its tilt transform (horns/halo/flames/moss).
+- **Hellmouth** (V1_407): 6th level `inferno`, hardest tuning, PIT FIEND/THE ARCHFIEND,
+  demon sprite via `infernoCleared` (24th achievement).
+- **THE MAW** (V1_409/V1_410): true final boss behind a post-clear portal on Hellmouth
+  ONLY (Kevin: portal unlocks after the 2:00 clear; reward = Legend sprite, 25th
+  achievement `mawSealed`). 3 phases on 66%/33% gates, telegraph law instrumented
+  (`__MAW.telemetry`, min 800ms). Music override: `MUSIC.setOverride('maw')` /
+  `clearOverride` (V1_410 engine port; rotation suppressed while set; any setState
+  clears). `MAW_HP` = reasoned estimate — live-device tuning input wanted.
+- **Perf law enforcement** (V1_411): enemy body glow baked (−54% crowd draw pass),
+  ghost glow baked + soft cap 12. Deferred with reasoning: `Projectile.draw` bake
+  (up to 300/frame — #1 remaining perf item, needs a per-weapon look-parity cycle),
+  XP-gem bake (measured REGRESSION in-harness — do not redo without GPU measurement).
+- **Target raised to 90+** (Kevin): iterations = perf (A, V1_411) → art/UX flags
+  (B, V1_412) → balance depth (C). Fun & balance is the gating category; past ~C the
+  honest next point comes from live play on Kevin's device, not more headless proxies.
