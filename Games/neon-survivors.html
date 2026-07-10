@@ -7072,7 +7072,9 @@
             let state = 'off', track = null, stepIdx = 0, nextTime = 0, loopsDone = 0;
             let playlist = [], plIdx = 0, tickTimer = null, lastSiteCheck = 0;
             let echoWet = null, curKey = null; // V1_394: per-track echo depth handle + current key (parity with boo-music.js V1_390; key exposed via _dbg for tests)
+            let xfade = null; // V1_395: pending in-game rotation fade { key, at } — set while the old song fades out
             const LOOKAHEAD = 0.24, TICK_MS = 90, MASTER_LVL = 0.42;
+            const ROT_FADEOUT = 1.4, ROT_GAP = 0.14, ROT_FADEIN = 1.1; // V1_395: smooth song-to-song fades (Kevin: rotation "abruptly" cut)
 
             // --- note helpers ---
             const SEMI = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
@@ -7580,6 +7582,7 @@
                 opts = opts || {};
                 const fade = opts.fade === undefined ? 0.18 : opts.fade;
                 const gap = opts.gap === undefined ? 0.10 : opts.gap;
+                xfade = null; // V1_395: an explicit switch (state change) cancels any pending rotation fade
                 const t = a.currentTime;
                 master.gain.cancelScheduledValues(t);
                 master.gain.setValueAtTime(master.gain.value, t);
@@ -7631,6 +7634,18 @@
                 if (suppressed || muted || !track || a.state !== 'running') return;
                 const stepDur = spb(track);
                 while (nextTime < a.currentTime + LOOKAHEAD) {
+                    // V1_395: pending rotation fade-in — at the crossover, swap to the next song and
+                    // swell it up from silence (the old song was ramped down during ROT_FADEOUT).
+                    if (xfade && nextTime >= xfade.at) {
+                        track = TRACKS[xfade.key];
+                        curKey = xfade.key;
+                        if (echoWet) { echoWet.gain.cancelScheduledValues(xfade.at); echoWet.gain.setValueAtTime(track.echoWet !== undefined ? track.echoWet : 0.14, xfade.at); }
+                        master.gain.cancelScheduledValues(xfade.at);
+                        master.gain.setValueAtTime(0.0001, xfade.at);
+                        master.gain.linearRampToValueAtTime(effVol(), xfade.at + ROT_FADEIN);
+                        stepIdx = 0; loopsDone = 0; nextTime = xfade.at;
+                        xfade = null;
+                    }
                     scheduleStep(track, stepIdx, nextTime);
                     stepIdx++; nextTime += stepDur;
                     if (stepIdx >= track.steps) {
@@ -7639,10 +7654,18 @@
                             if (state === 'gameover') { state = 'menu'; switchTrack('title', { fade: 0, gap: 1.1, rise: 0.9 }); }
                             break;
                         }
-                        if (state === 'game' && loopsDone >= 2) { // rotate songs every 2 loops
+                        if (state === 'game' && loopsDone >= 2 && !xfade) { // rotate songs every 2 loops
+                            // V1_395: fade the current song OUT over real music — it keeps looping under the
+                            // descending master ramp, so it's a true fade-out, not just an echo-tail decay —
+                            // then a brief gap and fade the next one IN. Replaces the V1_387 beat-tight hard
+                            // cut (Kevin: songs "just abruptly stop"). No break: keep scheduling the OLD track.
                             plIdx = (plIdx + 1) % playlist.length;
-                            switchTrack(playlist[plIdx], { fade: 0, gap: 0.12 }); // fill -> next downbeat, beat-tight
-                            break;
+                            const ft = a.currentTime;
+                            master.gain.cancelScheduledValues(ft);
+                            master.gain.setValueAtTime(master.gain.value, ft);
+                            master.gain.linearRampToValueAtTime(0.0001, ft + ROT_FADEOUT);
+                            xfade = { key: playlist[plIdx], at: ft + ROT_FADEOUT + ROT_GAP };
+                            loopsDone = 0; // hold off re-triggering until the fade completes
                         }
                     }
                 }
