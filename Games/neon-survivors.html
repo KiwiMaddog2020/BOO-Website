@@ -14001,6 +14001,17 @@
                     ctx.fillStyle = '#ffd700';
                     ctx.fillRect(sx - s(2), hatY - s(3), s(4), s(3));
 
+                    // V1_408: skins with an overHat pass draw through/around the hat so their
+                    // identity survives the pickup (Kevin: designs must work WITH the hat).
+                    // Runs inside the hat's tilt transform so horns/flames/moss track the lean.
+                    if (!eyesHidden) {
+                        const _skinOH = PLAYER_SPRITES[selectedPlayerSprite];
+                        if (_skinOH && _skinOH.overHat) {
+                            ctx.shadowBlur = 0;
+                            try { _skinOH.overHat(ctx, { sx: sx, hatY: hatY, s: s, r: r, color: baseColor, time: time }); } catch (e) {}
+                        }
+                    }
+
                     ctx.restore();
                     ctx.shadowBlur = 0;
                 }
@@ -31077,6 +31088,24 @@
                     ctx.arc(sk.sx + r * 0.05, sk.sy + r * 0.5, r * 0.055, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.restore();
+                },
+                // V1_408: the crown vanishes under the hat — moss instead drapes from the
+                // brim's underside edges so the green identity survives the pickup.
+                overHat: function (ctx, oh) {
+                    const s = oh.s, sx = oh.sx, hy = oh.hatY;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#2f8f4e';
+                    ctx.beginPath();
+                    ctx.ellipse(sx - s(19), hy + s(3), s(6), s(3.4), 0.5, 0, Math.PI * 2);
+                    ctx.ellipse(sx + s(19), hy + s(3), s(6), s(3.4), -0.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#6fd98a'; // highlight tufts
+                    ctx.beginPath();
+                    ctx.arc(sx - s(21), hy + s(4.5), s(1.7), 0, Math.PI * 2);
+                    ctx.arc(sx + s(17), hy + s(5), s(1.5), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
                 }
             },
             // Subtle skull face-paint: bone nose + stitched grin (kept low-alpha so it reads
@@ -31137,6 +31166,28 @@
                         _blazerEmberT = sk.time;
                         try { spawnParticles(sk.px, sk.py, '#ff6a00', 1); } catch (e) {}
                     }
+                },
+                // V1_408: the crest hides under the hat — so the hat itself catches fire:
+                // three flame licks rising from the crown top (hy - s(16)), flickering.
+                overHat: function (ctx, oh) {
+                    const s = oh.s, sx = oh.sx, hy = oh.hatY, t = oh.time;
+                    const fl = (ox, h, ph) => {
+                        const w = 0.6 + 0.4 * Math.sin(t * 0.011 + ph); // flicker
+                        ctx.beginPath();
+                        ctx.moveTo(sx + s(ox - 3), hy - s(14));
+                        ctx.quadraticCurveTo(sx + s(ox - 2.4), hy - s(14 + h * 0.6 * w), sx + s(ox + h * 0.22), hy - s(14 + h * w));
+                        ctx.quadraticCurveTo(sx + s(ox + 2.4), hy - s(14 + h * 0.5 * w), sx + s(ox + 3), hy - s(14));
+                        ctx.closePath();
+                        ctx.fill();
+                    };
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#ff6a00';
+                    fl(-6, 7, 0); fl(0, 11, 2.1); fl(6, 8, 4.2);
+                    ctx.fillStyle = '#ffcc33'; // hot inner tongues
+                    ctx.globalAlpha = 0.9;
+                    fl(-6, 4, 1.0); fl(0, 6.5, 3.1); fl(6, 4.5, 5.2);
+                    ctx.restore();
                 }
             },
             // Starfield-speckle body + one tiny star orbiting the head.
@@ -31239,6 +31290,15 @@
                     ctx.arc(sk.sx - eyeOffX, eyeY, r * 0.22, 0, Math.PI * 2);
                     ctx.arc(sk.sx + eyeOffX, eyeY, r * 0.22, 0, Math.PI * 2);
                     ctx.fill();
+                    // V1_408: solid ember pupils — the haze alone washed out under the hat's
+                    // brim shadow, leaving a featureless face (Kevin's hat-compose report).
+                    ctx.fillStyle = '#ff5a1a';
+                    ctx.globalAlpha = 0.95;
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - eyeOffX, eyeY, r * 0.09, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + eyeOffX, eyeY, r * 0.09, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
                     // Small pointed tail tip peeking out at the body base — tints with sk.color.
                     const tailSway = Math.sin(sk.time * 0.0035) * r * 0.12;
                     ctx.fillStyle = sk.color;
@@ -31249,6 +31309,33 @@
                     ctx.quadraticCurveTo(sk.sx + r * 0.44 + tailSway * 0.6, sk.sy + r * 0.8, sk.sx + r * 0.22, sk.sy + r * 0.78);
                     ctx.closePath();
                     ctx.fill();
+                    ctx.restore();
+                },
+                // V1_408: horns punch THROUGH the hat — devil-cowboy. Drawn in the hat's
+                // tilted frame (oh = {sx, hatY, s, r, color, time}), flanking the crown
+                // (crown base spans ±s(10)), bases tucked behind the brim line.
+                overHat: function (ctx, oh) {
+                    const s = oh.s, sx = oh.sx, hy = oh.hatY;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#5a0e0a';
+                    ctx.beginPath();
+                    ctx.moveTo(sx - s(9), hy + s(1));
+                    ctx.quadraticCurveTo(sx - s(19), hy - s(6), sx - s(16), hy - s(15));
+                    ctx.quadraticCurveTo(sx - s(13), hy - s(6), sx - s(6), hy - s(1));
+                    ctx.closePath();
+                    ctx.moveTo(sx + s(9), hy + s(1));
+                    ctx.quadraticCurveTo(sx + s(19), hy - s(6), sx + s(16), hy - s(15));
+                    ctx.quadraticCurveTo(sx + s(13), hy - s(6), sx + s(6), hy - s(1));
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = '#ff5a1a'; // warm rim so the horns read against the crown
+                    ctx.lineWidth = Math.max(1, s(1.2));
+                    ctx.globalAlpha = 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(sx - s(16), hy - s(15)); ctx.lineTo(sx - s(11), hy - s(3));
+                    ctx.moveTo(sx + s(16), hy - s(15)); ctx.lineTo(sx + s(11), hy - s(3));
+                    ctx.stroke();
                     ctx.restore();
                 }
             }
