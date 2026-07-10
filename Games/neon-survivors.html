@@ -11804,6 +11804,29 @@
             return weaponUnlocked(id) && !disabledWeapons.has(id) && !banishedWeapons.has(id);
         }
 
+        // ===== V1_416: BLENDED POWER-CEILING (two-lane diminishing returns) =====
+        // Kevin's directive: strong builds should still feel strong, but the multiplicative
+        // crit x crit-damage x attack-speed stack was reaching ~7.5x mid single-target DPS
+        // and deleting the Maw in seconds. These knees give PERMANENT power (tome stacks,
+        // shrine PERMANENT blessings, base stats) gentle diminishing returns ABOVE generous
+        // thresholds, while TEMPORARY effects (Deadeye and any future timed buff) stack AFTER
+        // the curve at full strength so burst "feel powerful" moments are preserved.
+        //
+        // These four numbers are the ONLY balance dials for this system — Kevin-tunable:
+        //   PERM_AS_KNEE   permanent attack-speed BONUS (e.g. +0.80 = +80%) below which nothing
+        //                  is softened; the portion above is scaled by PERM_AS_FACTOR.
+        //   PERM_CRIT_KNEE permanent expected-crit factor F = 1 + critChance*(critMult-1) below
+        //                  which crit is untouched; excess above is scaled by PERM_CRIT_FACTOR
+        //                  (applied by softening the permanent crit-CHANCE contribution only —
+        //                  the roll and the crit-DAMAGE cap are left alone).
+        // Lower a KNEE or lower a FACTOR => harder ceiling. Raise them => closer to pure power
+        // fantasy. Both curves are monotonic: more investment is always MORE power, just less
+        // steeply (verified by 20-point sample in the balance harness).
+        const PERM_AS_KNEE   = 0.80; // +80% permanent attack speed before softening kicks in
+        const PERM_AS_FACTOR = 0.50; // permanent attack-speed bonus above the knee counts half
+        const PERM_CRIT_KNEE = 2.6;  // permanent expected-crit factor before softening kicks in
+        const PERM_CRIT_FACTOR = 0.45; // permanent crit factor above the knee counts at 0.45
+
         // ===== PLAYER CLASS =====
         class Player {
             constructor() {
@@ -12018,13 +12041,38 @@
                 if (this.boostCharges > this.boostMaxCharges) this.boostCharges = this.boostMaxCharges;
                 
                 // Attack speed from shrine + tome
-                this.attackSpeedMultiplier = Math.min(2.6, 0.9 + this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus); // V1_258: cap ~2.6x fire rate
+                // V1_416: blended power-ceiling — the PERMANENT attack-speed bonus (shrine + tome)
+                // above PERM_AS_KNEE is softened by PERM_AS_FACTOR. Temporary attack-speed buffs
+                // (none today; reserved) would be applied AFTER this, unscaled. Cap unchanged.
+                const permAtkSpeedBonus = this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus;
+                const softAtkSpeedBonus = permAtkSpeedBonus > PERM_AS_KNEE
+                    ? PERM_AS_KNEE + (permAtkSpeedBonus - PERM_AS_KNEE) * PERM_AS_FACTOR
+                    : permAtkSpeedBonus;
+                this.attackSpeedMultiplier = Math.min(2.6, 0.9 + softAtkSpeedBonus); // V1_258: cap ~2.6x fire rate
                 
                 // Crit stats (base + shrine + tome + V1_325 Deadeye legendary)
                 // WP7: crit chance is uncapped — past 100% it now buys guaranteed overcrit
                 // tiers instead of doing nothing (see calcDamage). critMultiplier keeps its cap.
-                this.critChance = 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance + (legendaryEffects.deadeye.active ? 0.20 : 0);
-                this.critMultiplier = Math.min(5.0, 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0) + (legendaryEffects.deadeye.active ? 0.75 : 0)); // V1_258: cap 5x
+                //
+                // V1_416: blended power-ceiling. Compute the PERMANENT expected-crit factor
+                // F = 1 + critChance*(critMult-1) from base+shrine+tome only. Above PERM_CRIT_KNEE
+                // the excess is softened by PERM_CRIT_FACTOR; we realise that by scaling the
+                // permanent crit-CHANCE down to the value that reproduces the softened F (cleaner
+                // than touching the tiered roll, and it keeps the crit-DAMAGE cap intact). The
+                // Deadeye legendary is TEMPORARY burst — it stacks AFTER the curve, unscaled, so
+                // popping it on a capped build still delivers its full +20% chance / +0.75x damage.
+                const permCritMultiplier = Math.min(5.0, 2.0 + this.shrineBonuses.critMultiplier + (this.tomeBonuses.critMultiplierBonus || 0)); // V1_258: cap 5x
+                let permCritChance = 0.05 + this.shrineBonuses.critChance + this.tomeBonuses.critChance;
+                if (permCritMultiplier > 1) {
+                    const permF = 1 + permCritChance * (permCritMultiplier - 1);
+                    if (permF > PERM_CRIT_KNEE) {
+                        const softF = PERM_CRIT_KNEE + (permF - PERM_CRIT_KNEE) * PERM_CRIT_FACTOR;
+                        permCritChance = (softF - 1) / (permCritMultiplier - 1);
+                    }
+                }
+                const deadeyeActive = legendaryEffects.deadeye.active;
+                this.critChance = permCritChance + (deadeyeActive ? 0.20 : 0);
+                this.critMultiplier = Math.min(5.0, permCritMultiplier + (deadeyeActive ? 0.75 : 0)); // V1_258: cap 5x
                 
                 // Luck from tome + shrine (affects various RNG) - 0.5 effectiveness rate for tomes
                 this.luck = (this.tomeBonuses.luck || 0) * 0.5 + (this.shrineBonuses.luck || 0);
