@@ -2860,6 +2860,53 @@
         .color-pick-pop .color-selector-title { font-size: 11px; letter-spacing: 2px; }
         .color-pick-pop .color-selector-grid { gap: 9px; width: 186px; justify-content: center; }
 
+        /* V1_406: sprite picker (mirrors the color picker) */
+        .sprite-pick-wrap { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
+        .sprite-pick-btn {
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.55);
+            background: rgba(6, 10, 20, 0.9);
+            cursor: pointer; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+            transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+        }
+        .sprite-pick-btn:hover { transform: scale(1.12); border-color: #fff; }
+        .sprite-pick-btn canvas { width: 100%; height: 100%; display: block; }
+        .sprite-pick-pop { border-color: rgba(155, 48, 255, 0.5); }
+        .sprite-strip { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 208px; } /* 4 per row (46*4 + 8*3 = 208) */
+        .sprite-cell {
+            position: relative; width: 46px; height: 46px; border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.18);
+            background: rgba(0,0,0,0.45);
+            cursor: pointer; overflow: hidden;
+            transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+        }
+        .sprite-cell canvas { width: 100%; height: 100%; display: block; }
+        .sprite-cell:hover { transform: scale(1.08); border-color: rgba(255,255,255,0.55); }
+        .sprite-cell.selected { border-color: #0ff; box-shadow: 0 0 12px rgba(0,255,255,0.55); }
+        .sprite-cell.locked { cursor: help; }
+        .sprite-cell.locked canvas { opacity: 0.28; filter: grayscale(0.6); }
+        .sprite-cell .sprite-lock {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            font-size: 18px; text-shadow: 0 0 6px #000; pointer-events: none;
+        }
+        .sprite-hint {
+            font-size: 9px; letter-spacing: 0.5px; color: rgba(255,215,120,0.9);
+            min-height: 12px; max-width: 216px; text-align: center; line-height: 1.3;
+        }
+        /* V1_406: keep the 4-item footer (BACK · color · sprite · CONFIRM) on one row at 412px
+           by tightening the gap and swapping the two long picker captions for short forms. */
+        @media (max-width: 480px) {
+            .weapon-select-buttons { gap: 12px !important; }
+            .color-pick-label { font-size: 0 !important; }
+            #colorPickLabel::after { content: 'COLOR'; font-size: 8px; letter-spacing: 1px; }
+            #spritePickLabel::after { content: 'SPRITE'; font-size: 8px; letter-spacing: 1px; }
+            .sprite-pick-btn, .color-pick-btn { width: 34px; height: 34px; }
+            /* nudge the sprite popover left so it doesn't clip the right screen edge */
+            .sprite-pick-pop { left: auto; right: -8px; transform: none; }
+            .sprite-pick-pop::after { left: auto; right: 20px; }
+        }
+
         /* Player Color Selector */
         .color-selector {
             margin-top: 12px;
@@ -7204,6 +7251,16 @@
                         <div class="color-selector-grid" id="colorSelectorGrid"></div>
                     </div>
                 </div>
+                <!-- V1_406: sprite picker — mirrors the color picker (swatch + popover strip) -->
+                <div class="sprite-pick-wrap">
+                    <div class="sprite-pick-btn" id="spritePickBtn" title="Player Sprite" aria-label="Player sprite"></div>
+                    <div class="color-pick-label" id="spritePickLabel">CHOOSE SPRITE</div>
+                    <div class="color-pick-pop sprite-pick-pop" id="spritePickPop">
+                        <div class="color-selector-title">Player Sprite</div>
+                        <div class="sprite-strip" id="spriteStrip"></div>
+                        <div class="sprite-hint" id="spriteHint"></div>
+                    </div>
+                </div>
                 <div class="weapon-select-btn btn-confirm" id="weaponConfirmBtn">CONFIRM →</div>
             </div>
         </div>
@@ -8359,20 +8416,20 @@
             // aggregate; 'event' = fired only by notify(). desc = the player-facing condition text.
             const ACHIEVEMENTS = {
                 firstBlood:    { name: 'First Blood',   desc: '150 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 150,  unlocks: { weapon: 'spiritOrbs' } },
-                survivor10:    { name: 'Survivor',      desc: 'Survive 10:00 in one run',       kind: 'runStat',  stat: 'time',       target: 600,  unlocks: { weapon: 'voidDaggers' } },
+                survivor10:    { name: 'Survivor',      desc: 'Survive 10:00 in one run',       kind: 'runStat',  stat: 'time',       target: 600,  unlocks: { weapon: 'voidDaggers', sprite: 'shades' } }, // V1_406: + Shades sprite
                 bigSpender:    { name: 'Big Spender',   desc: 'Earn 2,000 gold in one run',     kind: 'runStat',  stat: 'gold',       target: 2000, unlocks: { weapon: 'ricochetDisc' } },
                 bossDown:      { name: 'Boss Down',     desc: 'Kill 5 bosses lifetime',         kind: 'lifetime', stat: 'bosses',     target: 5,    unlocks: { weapon: 'thunderStrike' } },
                 packHunter:    { name: 'Pack Hunter',   desc: '500 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 500,  unlocks: { weapon: 'blackSquirrel' } },
-                exterminator:  { name: 'Exterminator',  desc: '2,500 kills lifetime',           kind: 'lifetime', stat: 'kills',      target: 2500, unlocks: { weapon: 'chainLightning' } },
+                exterminator:  { name: 'Exterminator',  desc: '2,500 kills lifetime',           kind: 'lifetime', stat: 'kills',      target: 2500, unlocks: { weapon: 'chainLightning', sprite: 'captain' } }, // V1_406: + Captain sprite
                 taskmaster:    { name: 'Taskmaster',    desc: 'Complete 3 directives in one run', kind: 'runStat', stat: 'directives', target: 3,   unlocks: { weapon: 'spectralArrows' } },
                 survivor20:    { name: 'Endurance',     desc: 'Survive 20:00 in one run',       kind: 'runStat',  stat: 'time',       target: 1200, unlocks: { weapon: 'gravityWell' } },
                 keeper:        { name: 'Keeper',        desc: 'Activate 3 shrines in one run',   kind: 'runStat',  stat: 'shrines',    target: 3,    unlocks: { weapon: 'lighthouse' } },
                 highScaler:    { name: 'High Scaler',   desc: 'Reach player level 25 in one run', kind: 'runStat', stat: 'level',      target: 25,   unlocks: { weapon: 'boomBox' } },
                 perfectionist: { name: 'Perfectionist', desc: 'Max any weapon (level 20)',      kind: 'event',                                       unlocks: { weapon: 'photonScythe' } },
-                marshCleared:  { name: 'Marsh Cleared', desc: 'Clear Gloom Marsh',              kind: 'event',                                       unlocks: { weapon: 'meteorStrike' } },
-                necroCleared:  { name: 'Necropolis Cleared', desc: 'Clear Neon Necropolis',     kind: 'event',                                       unlocks: { weapon: 'stormSentry' } },
-                emberCleared:  { name: 'Ember Cleared', desc: 'Clear Ember Wastes',             kind: 'event',                                       unlocks: { weapon: 'encore' } },
-                riftCleared:   { name: 'Rift Cleared',  desc: 'Clear the Void Rift',            kind: 'event',                                       unlocks: { weapon: 'voidRailgun' } },
+                marshCleared:  { name: 'Marsh Cleared', desc: 'Clear Gloom Marsh',              kind: 'event',                                       unlocks: { weapon: 'meteorStrike', sprite: 'mossy' } }, // V1_406: + Mossy sprite
+                necroCleared:  { name: 'Necropolis Cleared', desc: 'Clear Neon Necropolis',     kind: 'event',                                       unlocks: { weapon: 'stormSentry', sprite: 'skully' } }, // V1_406: + Skully sprite
+                emberCleared:  { name: 'Ember Cleared', desc: 'Clear Ember Wastes',             kind: 'event',                                       unlocks: { weapon: 'encore', sprite: 'blazer' } }, // V1_406: + Blazer sprite
+                riftCleared:   { name: 'Rift Cleared',  desc: 'Clear the Void Rift',            kind: 'event',                                       unlocks: { weapon: 'voidRailgun', sprite: 'cosmic' } }, // V1_406: + Cosmic sprite
                 lucky:         { name: 'Lucky',         desc: 'Open 10 chests lifetime',        kind: 'lifetime', stat: 'chests',     target: 10,   unlocks: { tome: 'luckTome' } },
                 bossSlayer:    { name: 'Boss Slayer',   desc: 'Kill 12 bosses lifetime',        kind: 'lifetime', stat: 'bosses',     target: 12,   unlocks: { tome: 'critDamageTome' } },
                 survivor15:    { name: 'Long Haul',     desc: 'Survive 15:00 in one run',       kind: 'runStat',  stat: 'time',       target: 900,  unlocks: { tome: 'lifestealTome' } },
@@ -8391,7 +8448,8 @@
                 return {
                     v: SCHEMA_V,
                     ach: {},
-                    unlocked: { weapons: STARTER_WEAPONS.slice(), tomes: STARTER_TOMES.slice(), levels: STARTER_LEVELS.slice() },
+                    unlocked: { weapons: STARTER_WEAPONS.slice(), tomes: STARTER_TOMES.slice(), levels: STARTER_LEVELS.slice(), sprites: ['classic'] }, // V1_406: sprite unlocks (classic always present)
+                    selectedSprite: 'classic', // V1_406: persisted picker choice
                     life: { kills: 0, gold: 0, runs: 0, bosses: 0, directives: 0, chests: 0, deaths: 0, best: {}, clears: {} }
                 };
             }
@@ -8415,7 +8473,9 @@
                     union(d.unlocked.weapons, saved.unlocked.weapons);
                     union(d.unlocked.tomes, saved.unlocked.tomes);
                     union(d.unlocked.levels, saved.unlocked.levels);
+                    union(d.unlocked.sprites, saved.unlocked.sprites); // V1_406: defensive migration — absent => stays ['classic']
                 }
+                if (typeof saved.selectedSprite === 'string' && saved.selectedSprite) d.selectedSprite = saved.selectedSprite; // V1_406
                 if (saved.life && typeof saved.life === 'object') {
                     const L = saved.life;
                     ['kills', 'gold', 'runs', 'bosses', 'directives', 'chests', 'deaths'].forEach(function (k) { if (typeof L[k] === 'number') d.life[k] = L[k]; });
@@ -8476,6 +8536,7 @@
                     if (kind === 'weapon' && _registriesReady() && WEAPONS[id]) return WEAPONS[id].name;
                     if (kind === 'tome' && _registriesReady() && TOMES[id]) return TOMES[id].name;
                     if (kind === 'level') return LEVEL_NAMES[id] || id;
+                    if (kind === 'sprite') { try { return (typeof PLAYER_SPRITES !== 'undefined' && PLAYER_SPRITES[id]) ? PLAYER_SPRITES[id].name : id; } catch (e) { return id; } } // V1_406
                 } catch (e) {}
                 return id;
             }
@@ -8511,6 +8572,7 @@
                 if (u.weapon) _unlock('weapons', 'weapon', u.weapon, a.name);
                 if (u.tome) _unlock('tomes', 'tome', u.tome, a.name);
                 if (u.level) _unlock('levels', 'level', u.level, a.name);
+                if (u.sprite) _unlock('sprites', 'sprite', u.sprite, a.name); // V1_406: secondary sprite reward
                 _saveNow();
             }
 
@@ -8587,6 +8649,12 @@
                 levelUnlocked: function (id) {
                     try { _ensurePruned(); if (!id) return true; return state.unlocked.levels.indexOf(id) !== -1; } catch (e) { return true; }
                 },
+                // V1_406: sprite unlock/selection. 'classic' is always unlocked.
+                spriteUnlocked: function (id) {
+                    try { if (!id || id === 'classic') return true; return state.unlocked.sprites.indexOf(id) !== -1; } catch (e) { return false; }
+                },
+                getSprite: function () { try { return state.selectedSprite || 'classic'; } catch (e) { return 'classic'; } },
+                setSprite: function (id) { try { if (typeof id === 'string' && id) { state.selectedSprite = id; _saveNow(); } } catch (e) {} },
                 unlockHint: function (kind, id) { try { return _hintFor(kind, id); } catch (e) { return ''; } },
 
                 onUnlock: function (cb) { if (typeof cb === 'function') _subs.push(cb); },
@@ -8647,7 +8715,7 @@
 
                 getAvailable: function () {
                     _ensurePruned();
-                    return { weapons: state.unlocked.weapons.slice(), tomes: state.unlocked.tomes.slice(), levels: state.unlocked.levels.slice() };
+                    return { weapons: state.unlocked.weapons.slice(), tomes: state.unlocked.tomes.slice(), levels: state.unlocked.levels.slice(), sprites: state.unlocked.sprites.slice() }; // V1_406
                 },
                 getState: function () { _ensurePruned(); return JSON.parse(JSON.stringify(state)); },
 
@@ -13799,6 +13867,23 @@
                     ctx.arc(sx - eyeOffX + pupX, eyeY + pupY, r * 0.11, 0, Math.PI * 2);
                     ctx.arc(sx + eyeOffX + pupX, eyeY + pupY, r * 0.11, 0, Math.PI * 2);
                     ctx.fill();
+                }
+
+                // ===== V1_406: UNLOCKABLE SKIN OVERLAY =====
+                // Drawn inside the squash/lean transform so it leans/squashes with the body,
+                // and skipped on invincibility blink frames (matches the eyes). The cowboy hat
+                // is drawn AFTER this block (outside the transform) so it always sits on top.
+                if (!eyesHidden) {
+                    const _skin = PLAYER_SPRITES[selectedPlayerSprite] || PLAYER_SPRITES.classic;
+                    if (_skin && _skin.draw) {
+                        try {
+                            _skin.draw(ctx, {
+                                sx: sx, sy: sy, r: r, color: baseColor, time: time,
+                                angle: this.moveAngle, blend: this.moveBlend, moving: moving,
+                                px: this.x, py: this.y
+                            });
+                        } catch (e) {}
+                    }
                 }
 
                 // Close the orb-body transform (squash/lean) opened before "Main glow".
@@ -30686,6 +30771,211 @@
             'photonScythe', 'encore', 'voidRailgun'
         ];
         
+        // ============================================================
+        // V1_406: UNLOCKABLE PLAYER SPRITES
+        // Each skin is the SAME ghost orb (identical silhouette / bounds / hat anchor /
+        // squash-bob-lean-boost-death animations) with a cheap drawn-on variation.
+        // draw(ctx, sk) is invoked from Player.draw() INSIDE the squash/lean transform,
+        // AFTER the eyes and BEFORE the cowboy hat (so the hat always sits on top). It is
+        // ALSO reused by the weapon-select mini previews. Contract for sk:
+        //   { sx, sy, r, color, time, angle, blend, moving, px, py }
+        //   sx/sy = body centre (screen), r = body radius (screen px), color = the player's
+        //   chosen colour (so skins tint with the existing colour selector; it is pink while
+        //   invincible/boosting, exactly like the body), time = Date.now(), angle = moveAngle,
+        //   blend = moveBlend (0 idle → 1 moving), moving = is-moving bool, px/py = world pos
+        //   (only blazer uses px/py, for its world-space ember trail).
+        // House rules honoured: shadowBlur forced 0 (no per-frame blur), <= ~12 canvas ops
+        // each, every skin fully isolated in save()/restore(). 'classic' draws nothing.
+        let _blazerEmberT = 0; // throttle for blazer's ember trail (module-scope, render-only)
+        const PLAYER_SPRITES = {
+            classic: {
+                name: 'Classic', emoji: '👻',
+                draw: function () { /* current look — intentionally zero overdraw */ }
+            },
+            // Neon sunglasses over the eyes (cool-guy ghost). Lenses tint with player colour.
+            shades: {
+                name: 'Shades', emoji: '🕶️',
+                draw: function (ctx, sk) {
+                    // V1_406b: one wide visor band, not two circles — separate lenses read as
+                    // "darker eyes" at gameplay zoom (~24px). The band + arms sell it small.
+                    const r = sk.r, eyeY = sk.sy - r * 0.18;
+                    const vw = r * 0.82, vh = r * 0.3;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = sk.color; ctx.lineWidth = Math.max(1.5, r * 0.1); // arms out to the head edge
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx - r * 0.95, eyeY - vh * 0.4); ctx.lineTo(sk.sx - vw, eyeY - vh * 0.2);
+                    ctx.moveTo(sk.sx + r * 0.95, eyeY - vh * 0.4); ctx.lineTo(sk.sx + vw, eyeY - vh * 0.2);
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(6,8,16,0.95)'; // the visor
+                    ctx.beginPath();
+                    if (ctx.roundRect) ctx.roundRect(sk.sx - vw, eyeY - vh, vw * 2, vh * 2, vh);
+                    else ctx.rect(sk.sx - vw, eyeY - vh, vw * 2, vh * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = sk.color; ctx.lineWidth = Math.max(1.5, r * 0.11); // neon rim
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(255,255,255,0.9)'; // one wide reflective streak
+                    ctx.beginPath();
+                    ctx.ellipse(sk.sx - vw * 0.45, eyeY - vh * 0.3, vw * 0.3, vh * 0.22, -0.18, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            },
+            // Marsh-moss crown along the head + freckle spores on the body.
+            mossy: {
+                name: 'Mossy', emoji: '🍄',
+                draw: function (ctx, sk) {
+                    const r = sk.r, topY = sk.sy - r * 0.72;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#2f8f4e'; // moss crown (scalloped arc)
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx - r * 0.7, topY + r * 0.25);
+                    ctx.quadraticCurveTo(sk.sx - r * 0.5, topY - r * 0.28, sk.sx - r * 0.22, topY + r * 0.02);
+                    ctx.quadraticCurveTo(sk.sx, topY - r * 0.34, sk.sx + r * 0.22, topY + r * 0.02);
+                    ctx.quadraticCurveTo(sk.sx + r * 0.5, topY - r * 0.28, sk.sx + r * 0.7, topY + r * 0.25);
+                    ctx.quadraticCurveTo(sk.sx, topY + r * 0.42, sk.sx - r * 0.7, topY + r * 0.25);
+                    ctx.fill();
+                    ctx.fillStyle = '#6fd98a'; // highlight tufts
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - r * 0.34, topY - r * 0.02, r * 0.08, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.3, topY - r * 0.05, r * 0.07, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(120,220,140,0.85)'; // freckle spores on the body
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - r * 0.4, sk.sy + r * 0.34, r * 0.06, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.36, sk.sy + r * 0.28, r * 0.05, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.05, sk.sy + r * 0.5, r * 0.055, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            },
+            // Subtle skull face-paint: bone nose + stitched grin (kept low-alpha so it reads
+            // at gameplay zoom without fighting the eyes).
+            skully: {
+                name: 'Skully', emoji: '💀',
+                draw: function (ctx, sk) {
+                    const r = sk.r;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.globalAlpha = 0.82;
+                    ctx.fillStyle = '#0a0a12'; // nose cavity (inverted heart-ish triangle)
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx, sk.sy + r * 0.14);
+                    ctx.lineTo(sk.sx - r * 0.11, sk.sy - r * 0.04);
+                    ctx.lineTo(sk.sx + r * 0.11, sk.sy - r * 0.04);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(235,235,245,0.9)'; // stitched grin
+                    ctx.lineWidth = Math.max(1, r * 0.07);
+                    const gy = sk.sy + r * 0.44;
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx - r * 0.42, gy);
+                    ctx.lineTo(sk.sx + r * 0.42, gy);
+                    ctx.moveTo(sk.sx - r * 0.28, gy - r * 0.12); ctx.lineTo(sk.sx - r * 0.28, gy + r * 0.12);
+                    ctx.moveTo(sk.sx - r * 0.09, gy - r * 0.12); ctx.lineTo(sk.sx - r * 0.09, gy + r * 0.12);
+                    ctx.moveTo(sk.sx + r * 0.1, gy - r * 0.12);  ctx.lineTo(sk.sx + r * 0.1, gy + r * 0.12);
+                    ctx.moveTo(sk.sx + r * 0.29, gy - r * 0.12); ctx.lineTo(sk.sx + r * 0.29, gy + r * 0.12);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            },
+            // Flame-lick crest along the head + ember fleck trail while moving.
+            blazer: {
+                name: 'Blazer', emoji: '🔥',
+                draw: function (ctx, sk) {
+                    const r = sk.r, topY = sk.sy - r * 0.7;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    const flick = Math.sin(sk.time * 0.012) * r * 0.12;
+                    ctx.fillStyle = '#ff5510'; // outer flame tongues
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx - r * 0.5, topY + r * 0.3);
+                    ctx.quadraticCurveTo(sk.sx - r * 0.42, topY - r * 0.5 + flick, sk.sx - r * 0.16, topY - r * 0.15);
+                    ctx.quadraticCurveTo(sk.sx, topY - r * 0.85 - flick, sk.sx + r * 0.16, topY - r * 0.15);
+                    ctx.quadraticCurveTo(sk.sx + r * 0.42, topY - r * 0.5 + flick, sk.sx + r * 0.5, topY + r * 0.3);
+                    ctx.quadraticCurveTo(sk.sx, topY + r * 0.2, sk.sx - r * 0.5, topY + r * 0.3);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffd23a'; // inner hot core
+                    ctx.beginPath();
+                    ctx.moveTo(sk.sx - r * 0.22, topY + r * 0.18);
+                    ctx.quadraticCurveTo(sk.sx, topY - r * 0.5 - flick, sk.sx + r * 0.22, topY + r * 0.18);
+                    ctx.quadraticCurveTo(sk.sx, topY + r * 0.05, sk.sx - r * 0.22, topY + r * 0.18);
+                    ctx.fill();
+                    ctx.restore();
+                    // Ember trail (world-space, sparing) — only while actually moving.
+                    if (sk.moving && typeof sk.px === 'number' && (sk.time - _blazerEmberT) > 80) {
+                        _blazerEmberT = sk.time;
+                        try { spawnParticles(sk.px, sk.py, '#ff6a00', 1); } catch (e) {}
+                    }
+                }
+            },
+            // Starfield-speckle body + one tiny star orbiting the head.
+            cosmic: {
+                name: 'Cosmic', emoji: '🌌',
+                draw: function (ctx, sk) {
+                    const r = sk.r;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    // V1_406b: speckles enlarged + twinkle, star bigger w/ white core — the
+                    // original star tinted body-color and vanished into the glow at 24px.
+                    const tw = 0.75 + 0.25 * Math.sin(sk.time * 0.006); // shared twinkle
+                    ctx.fillStyle = 'rgba(255,255,255,' + (0.75 + 0.2 * tw) + ')';
+                    const spk = [[-0.45, 0.35], [0.4, 0.42], [-0.2, 0.55], [0.15, 0.28], [0.5, -0.1]];
+                    ctx.beginPath();
+                    for (let i = 0; i < spk.length; i++) {
+                        const sr = r * (i % 2 ? 0.07 : 0.09);
+                        ctx.moveTo(sk.sx + spk[i][0] * r + sr, sk.sy + spk[i][1] * r);
+                        ctx.arc(sk.sx + spk[i][0] * r, sk.sy + spk[i][1] * r, sr, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                    const a = sk.time * 0.0022; // orbiting star
+                    const ox = sk.sx + Math.cos(a) * r * 1.45;
+                    const oy = sk.sy - r * 0.5 + Math.sin(a) * r * 0.55;
+                    const ss = r * 0.32 * (0.85 + 0.15 * tw);
+                    ctx.fillStyle = sk.color; // colored halo diamond
+                    ctx.beginPath();
+                    ctx.moveTo(ox, oy - ss); ctx.lineTo(ox + ss * 0.32, oy - ss * 0.22);
+                    ctx.lineTo(ox + ss, oy); ctx.lineTo(ox + ss * 0.32, oy + ss * 0.22);
+                    ctx.lineTo(ox, oy + ss); ctx.lineTo(ox - ss * 0.32, oy + ss * 0.22);
+                    ctx.lineTo(ox - ss, oy); ctx.lineTo(ox - ss * 0.32, oy - ss * 0.22);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255,255,255,0.95)'; // white core sells it at any zoom
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, ss * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            },
+            // Gold captain trim: a lower-body gold rim crescent + a pair of epaulette dots.
+            captain: {
+                name: 'Captain', emoji: '⚓',
+                draw: function (ctx, sk) {
+                    const r = sk.r;
+                    ctx.save();
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = '#ffd700'; // gold rim along the lower body
+                    ctx.lineWidth = Math.max(1.2, r * 0.12);
+                    ctx.beginPath();
+                    ctx.arc(sk.sx, sk.sy, r * 0.9, Math.PI * 0.16, Math.PI * 0.84);
+                    ctx.stroke();
+                    ctx.fillStyle = '#ffd700'; // epaulette dot pair on the shoulders
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - r * 0.6, sk.sy + r * 0.12, r * 0.13, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.6, sk.sy + r * 0.12, r * 0.13, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#fff6c0'; // tiny highlight pips
+                    ctx.beginPath();
+                    ctx.arc(sk.sx - r * 0.63, sk.sy + r * 0.08, r * 0.05, 0, Math.PI * 2);
+                    ctx.arc(sk.sx + r * 0.57, sk.sy + r * 0.08, r * 0.05, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+        };
+        const PLAYER_SPRITE_ORDER = ['classic', 'shades', 'mossy', 'skully', 'blazer', 'cosmic', 'captain'];
+
         // Player color options (neon palette, cold to hot)
         const PLAYER_COLORS = [
             '#0055ff', // Blue (coolest)
@@ -30698,7 +30988,16 @@
             '#ff00ff'  // Magenta (hottest)
         ];
         let selectedPlayerColor = PLAYER_COLORS[2]; // Default to Cyan
-        
+        // V1_406: current sprite — restored from META, validated against the registry AND the
+        // unlocked set (falls back to 'classic' if a saved id is unknown or somehow re-locked).
+        let selectedPlayerSprite = (function () {
+            try {
+                const id = (window.META && META.getSprite) ? META.getSprite() : 'classic';
+                if (PLAYER_SPRITES[id] && (id === 'classic' || !window.META || META.spriteUnlocked(id))) return id;
+            } catch (e) {}
+            return 'classic';
+        })();
+
         // ============================================================
         // V1_288: WEAPON-SELECT LIVE PREVIEWS — full set (all 20 weapons)
         // Each card swaps its emoji/SVG for a tiny looping canvas of the weapon's
@@ -32307,6 +32606,9 @@
                     document.addEventListener('touchend', outside);
                 }
             }
+
+            // V1_406: sprite picker (built alongside the color picker each time the screen opens)
+            buildSpritePicker();
         }
 
         // V1_373: keep the footer swatch in sync with the chosen color
@@ -32315,6 +32617,138 @@
             if (!b) return;
             b.style.background = selectedPlayerColor;
             b.style.boxShadow = `0 0 14px ${selectedPlayerColor}`;
+        }
+
+        // ============================================================
+        // V1_406: SPRITE PICKER — strip of real mini-canvas previews next to the color swatch
+        // ============================================================
+        // Paint a ghost orb + the chosen skin into a canvas (reuses the SAME skin.draw fns as
+        // gameplay, so previews are truthful). Blend/moving are 0/false so the preview is calm;
+        // cosmic's orbiting star + blazer's flame render statically. No world spawns here
+        // (blazer's ember trail is gated on moving === false).
+        function renderSpritePreview(canvas, spriteId, color) {
+            const pctx = canvas.getContext('2d');
+            const W = canvas.width, H = canvas.height;
+            const cx = W / 2, cy = H / 2 + H * 0.04, r = Math.min(W, H) * 0.3;
+            pctx.clearRect(0, 0, W, H);
+            pctx.save();
+            // body — lit sphere (mirrors the gameplay gradient, cheaply)
+            const g = pctx.createRadialGradient(cx - r * 0.32, cy - r * 0.34, r * 0.08, cx, cy, r * 1.12);
+            g.addColorStop(0, '#ffffff');
+            g.addColorStop(0.14, color);
+            g.addColorStop(0.7, color);
+            g.addColorStop(1, color + '33');
+            pctx.fillStyle = g;
+            pctx.beginPath(); pctx.arc(cx, cy, r, 0, Math.PI * 2); pctx.fill();
+            // eyes
+            pctx.fillStyle = '#fff';
+            pctx.beginPath();
+            pctx.ellipse(cx - r * 0.32, cy - r * 0.18, r * 0.2, r * 0.26, 0, 0, Math.PI * 2);
+            pctx.ellipse(cx + r * 0.32, cy - r * 0.18, r * 0.2, r * 0.26, 0, 0, Math.PI * 2);
+            pctx.fill();
+            pctx.fillStyle = '#101015';
+            pctx.beginPath();
+            pctx.arc(cx - r * 0.32, cy - r * 0.18, r * 0.11, 0, Math.PI * 2);
+            pctx.arc(cx + r * 0.32, cy - r * 0.18, r * 0.11, 0, Math.PI * 2);
+            pctx.fill();
+            // skin overlay
+            const skin = PLAYER_SPRITES[spriteId] || PLAYER_SPRITES.classic;
+            if (skin && skin.draw) {
+                try { skin.draw(pctx, { sx: cx, sy: cy, r: r, color: color, time: Date.now(), angle: 0, blend: 0, moving: false }); } catch (e) {}
+            }
+            pctx.restore();
+        }
+
+        function syncSpritePickBtn() {
+            const b = document.getElementById('spritePickBtn');
+            if (!b) return;
+            let cv = b.querySelector('canvas');
+            if (!cv) { cv = document.createElement('canvas'); cv.width = 40; cv.height = 40; b.appendChild(cv); }
+            renderSpritePreview(cv, selectedPlayerSprite, selectedPlayerColor);
+            b.style.boxShadow = `0 0 12px ${selectedPlayerColor}`;
+        }
+
+        function buildSpritePicker() {
+            const strip = document.getElementById('spriteStrip');
+            const hint = document.getElementById('spriteHint');
+            if (!strip) return;
+            strip.innerHTML = '';
+            if (hint) hint.textContent = '';
+            PLAYER_SPRITE_ORDER.forEach(function (id) {
+                const skin = PLAYER_SPRITES[id];
+                if (!skin) return;
+                const unlocked = !window.META || (window.META.spriteUnlocked && META.spriteUnlocked(id));
+                const cell = document.createElement('div');
+                cell.className = 'sprite-cell' + (id === selectedPlayerSprite ? ' selected' : '') + (unlocked ? '' : ' locked');
+                cell.dataset.sprite = id;
+                cell.title = skin.name + (unlocked ? '' : ' (locked)');
+                const cv = document.createElement('canvas');
+                cv.width = 46; cv.height = 46;
+                cell.appendChild(cv);
+                renderSpritePreview(cv, id, selectedPlayerColor);
+                if (!unlocked) {
+                    const lock = document.createElement('div');
+                    lock.className = 'sprite-lock';
+                    lock.textContent = '🔒';
+                    cell.appendChild(lock);
+                }
+                const onPick = function (e) {
+                    if (e) { e.preventDefault(); e.stopPropagation(); }
+                    if (!unlocked) {
+                        // dossier-style hint: how to earn this sprite
+                        let h = '';
+                        try { h = (window.META && META.unlockHint) ? META.unlockHint('sprite', id) : ''; } catch (err) {}
+                        if (hint) hint.textContent = skin.name + ' — ' + (h || 'Locked');
+                        return;
+                    }
+                    selectPlayerSprite(id);
+                };
+                cell.addEventListener('click', onPick);
+                cell.addEventListener('touchend', onPick);
+                strip.appendChild(cell);
+            });
+            syncSpritePickBtn();
+
+            // popover toggle (mirrors the color picker)
+            const sBtn = document.getElementById('spritePickBtn');
+            const sPop = document.getElementById('spritePickPop');
+            const sLbl = document.getElementById('spritePickLabel');
+            if (sBtn && sPop) {
+                const toggle = (e) => { e.stopPropagation(); sPop.classList.toggle('open'); };
+                sBtn.onclick = toggle;
+                sBtn.ontouchend = (e) => { e.preventDefault(); toggle(e); };
+                if (sLbl) {
+                    sLbl.onclick = toggle;
+                    sLbl.ontouchend = (e) => { e.preventDefault(); toggle(e); };
+                }
+                if (!window._spOutsideBound) {
+                    window._spOutsideBound = true;
+                    const outside = (ev) => {
+                        const pop = document.getElementById('spritePickPop');
+                        const btn = document.getElementById('spritePickBtn');
+                        const lbl = document.getElementById('spritePickLabel');
+                        if (!pop || !pop.classList.contains('open')) return;
+                        if (!pop.contains(ev.target) && ev.target !== btn && ev.target !== lbl) pop.classList.remove('open');
+                    };
+                    document.addEventListener('click', outside);
+                    document.addEventListener('touchend', outside);
+                }
+            }
+        }
+
+        function selectPlayerSprite(id) {
+            if (!PLAYER_SPRITES[id]) return;
+            if (window.META && META.spriteUnlocked && !META.spriteUnlocked(id)) return; // never select a locked skin
+            selectedPlayerSprite = id;
+            try { if (window.META && META.setSprite) META.setSprite(id); } catch (e) {}
+            // update selected ring
+            const strip = document.getElementById('spriteStrip');
+            if (strip) strip.querySelectorAll('.sprite-cell').forEach(function (c) {
+                c.classList.toggle('selected', c.dataset.sprite === id);
+            });
+            syncSpritePickBtn();
+            const pop = document.getElementById('spritePickPop');
+            if (pop) setTimeout(() => pop.classList.remove('open'), 120);
         }
         
         let pendingWeaponSelect = null;
@@ -33243,6 +33677,11 @@
                     } else if (a.unlocks && a.unlocks.level) {
                         unlockLine = 'Unlocks: ' + (META.LEVEL_NAMES[a.unlocks.level] || a.unlocks.level);
                     }
+                    // V1_406: sprite reward rides as a secondary line item on its host achievement.
+                    if (a.unlocks && a.unlocks.sprite && typeof PLAYER_SPRITES !== 'undefined' && PLAYER_SPRITES[a.unlocks.sprite]) {
+                        const sp = PLAYER_SPRITES[a.unlocks.sprite];
+                        unlockLine += (unlockLine ? ' + ' : 'Unlocks: ') + sp.name + ' ' + sp.emoji;
+                    }
                 } catch (e) {}
 
                 const condText = isEvent ? a.desc : (a.desc + ' (' + p + '/' + target + ')');
@@ -33305,12 +33744,14 @@
             const payload = _toastQueue.shift();
             const kickerText = payload.type === 'tome' ? '🔓 TOME UNLOCKED'
                 : payload.type === 'level' ? '🔓 LEVEL UNLOCKED'
+                : payload.type === 'sprite' ? '🔓 SPRITE UNLOCKED' // V1_406
                 : '🔓 WEAPON UNLOCKED';
             let icon = '🏆';
             try {
                 if (payload.type === 'weapon' && typeof WEAPONS !== 'undefined' && WEAPONS[payload.id]) icon = WEAPONS[payload.id].icon;
                 else if (payload.type === 'tome' && typeof TOMES !== 'undefined' && TOMES[payload.id]) icon = TOMES[payload.id].icon;
                 else if (payload.type === 'level') icon = '🗺️';
+                else if (payload.type === 'sprite') icon = (typeof PLAYER_SPRITES !== 'undefined' && PLAYER_SPRITES[payload.id]) ? PLAYER_SPRITES[payload.id].emoji : '👻'; // V1_406
             } catch (e) {}
             if (DOM.unlockToastKicker) DOM.unlockToastKicker.textContent = kickerText;
             if (DOM.unlockToastIcon) DOM.unlockToastIcon.textContent = icon;
@@ -33331,6 +33772,10 @@
                 queueUnlockToast(payload);
                 updateMenuMetaStrip();
                 if (DOM.achievementsOverlay && DOM.achievementsOverlay.classList.contains('active')) renderAchievementsGrid();
+                // V1_406: if a sprite unlocks while the weapon-select is open, refresh the strip live.
+                if (payload.type === 'sprite' && DOM.weaponSelectOverlay && DOM.weaponSelectOverlay.classList.contains('active')) {
+                    try { buildSpritePicker(); } catch (e) {}
+                }
             });
             // Defensive: catch anything that fired before this subscription existed.
             while (META.pendingToasts.length) queueUnlockToast(META.pendingToasts.shift());
