@@ -13044,11 +13044,17 @@
         // shop) draws from this instead of Object.keys(SHRINE_POWERUPS) directly.
         function shrinePowerupPool() {
             return Object.keys(SHRINE_POWERUPS).filter(id => {
-                // V1_434 (§5b): the V1_377 shrine +1-projectile roll is removed from EVERY
-                // offer surface (shrine/pot/shop). Projectiles are now chest-sourced via the
-                // Platinum Record relic (Phase 2). The bonusProjectiles stat + its +2 clamp in
-                // applyPassives + VOLLEY_WEAPONS stay put for that relic to reuse.
-                if (id === 'projectiles') return false; // V1_434
+                // V1_441 (Kevin): projectiles RESTORED to the shrine-family pool — supersedes the
+                // V1_434 (§5b) "chest-only via Platinum Record" call (the architect flags this in the
+                // commit). Restored the EXACT pre-RELICS V1_384 build-aware gate: only offer when the
+                // player owns a VOLLEY weapon (else it's a dead stat), and stop once shrine
+                // +projectiles has itself reached the +2 cap. Platinum Record ALSO feeds
+                // bonusProjectiles; the Math.min(2, shrine + relic) clamp in applyPassives (~line 13608)
+                // is the hard safety so the two sources together can never exceed +2.
+                if (id === 'projectiles') {
+                    if (!playerHasAnyWeapon(VOLLEY_WEAPONS)) return false; // no volley weapon — dead stat
+                    if (player && (player.shrineBonuses.bonusProjectiles || 0) >= 2) return false; // already at the +2 cap
+                }
                 return true;
             });
         }
@@ -29907,26 +29913,62 @@
 
         // ===== SHRINE POWER-UP SYSTEM =====
         let shrineSlotResults = [];
-        
+
+        // V1_441 (Kevin): shrine activation rewards now roll the OLD PRE-RELICS CHEST MENU exactly.
+        // This pure helper is the legendary-vs-stat decision, lifted VERBATIM from the pre-RELICS
+        // Chest.rollContents (formula V1_325 <2:00 gate + V1_418 one-of-each unowned filter). It reuses
+        // the LIVE legendary state (guaranteedLegendaryNext / legendaryCount / MAX_LEGENDARIES /
+        // playerHasLegendary) — no forked copies. Returns {type:'legendary'} or {type:'stat', id}.
+        // Exposed via window.__SHRINE for distribution verification.
+        function rollShrineRewardKind() {
+            let legendaryChance = 0.02 + (gameTime / 60) * 0.005;
+            legendaryChance = Math.min(legendaryChance, 0.15);
+            if (guaranteedLegendaryNext && legendaryCount < MAX_LEGENDARIES) legendaryChance = 1.0; // bad-luck protection
+            if (legendaryCount >= MAX_LEGENDARIES) legendaryChance = 0;                              // good-luck protection
+            if (gameTime < 120) legendaryChance = 0;                                                 // V1_325: no legendary in the first 2:00 (overrides protections)
+            const unownedLeg = Object.keys(LEGENDARY_UPGRADES).filter(id => !playerHasLegendary(id));
+            if (unownedLeg.length && Math.random() < legendaryChance) return { type: 'legendary' };
+            const pool = shrinePowerupPool(); // V1_384/V1_441 build-aware pool (projectiles restored)
+            return { type: 'stat', id: pool[Math.floor(Math.random() * pool.length)] };
+        }
+        // V1_441: verification seam (mirrors __LEG / __RELICS). Verification only.
+        window.__SHRINE = {
+            rollKind() { try { return rollShrineRewardKind(); } catch (e) { return String(e); } },
+            pool() { try { return shrinePowerupPool(); } catch (e) { return String(e); } }
+        };
+
         function showShrinePowerups() {
             gamePaused = true;
-            
+
+            // V1_441 (Kevin): roll the old chest menu. A legendary hit routes through the EXISTING
+            // showLegendaryUpgrade() chokepoint (V1_418 one-of-each law lives there) — bookkeeping
+            // (legendaryCount++ / lastLegendaryTime / guaranteedLegendaryNext=false) mirrors the old
+            // chest reveal site. Otherwise fall through to the existing 3-card shrine stat presentation.
+            const kind = rollShrineRewardKind();
+            if (kind.type === 'legendary') {
+                legendaryCount++;
+                lastLegendaryTime = gameTime;
+                guaranteedLegendaryNext = false;
+                showLegendaryUpgrade(); // one-of-each unowned filter + all-owned blessing fallback live here
+                return;
+            }
+
             // Create flash effect
             const flash = document.createElement('div');
             flash.className = 'shrine-flash';
             document.body.appendChild(flash);
             setTimeout(() => flash.remove(), 600);
-            
+
             DOM.shrineOverlay.classList.add('active');
             DOM.slotMachine.innerHTML = '';
             DOM.slotMachine.style.display = 'none';
             DOM.shrineOptions.innerHTML = '';
-            
+
             // Pick 3 random powerups
             const powerupKeys = shrinePowerupPool(); // V1_384: build-aware pool
             const shuffled = powerupKeys.sort(() => Math.random() - 0.5).slice(0, 3);
             shrineSlotResults = shuffled.map(key => ({ key, ...SHRINE_POWERUPS[key] }));
-            
+
             // Skip slot animation, show cards directly
             showShrineCards();
         }
@@ -30008,7 +30050,7 @@
         // ===== SHRINE SPAWNING =====
         const SHRINE_CONFIG = {
             maxActive: 8,           // Max shrines active at once (scaled for 4x area)
-            spawnInterval: 12000,   // Spawn new shrine every 12 seconds
+            spawnInterval: 6600,    // V1_441 (Kevin): ~1.8x more frequent — 12000 -> 6600 (x0.55, "almost twice as frequent"). Spawn a new shrine every 6.6s. maxActive (concurrent-on-map cap, not a per-run total) left at 8; no per-run cap exists to scale.
             initialDelay: 5000,     // Wait 5 seconds before first shrine
             minDist: 900,           // Minimum distance between shrines (scaled)
             idealDist: 2000,        // Ideal distance between shrines (scaled)
