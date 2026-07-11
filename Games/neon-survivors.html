@@ -5672,6 +5672,49 @@
             font-weight: bold;
         }
 
+        /* ============================================================
+           V1_432: RUN RESULTS SCREEN — Kevin: "one screen displaying the
+           stats from the round and the plasm earned that the player clicks
+           through to get to the screen with the rest, this way we don't
+           condense too much info into one place." Sits between the score
+           modal and the existing game-over menu (screen 2). Reuses the
+           .menu-overlay skeleton (safe-center + overflow-y:auto — the
+           documented V1_422 recipe for short, non-grid content) so it is
+           bounded/scrollable at any viewport the same way the menu already
+           is. Left/right padding added here (base .menu-overlay has none)
+           for extra breathing room on narrow phones. CONTINUE is the only
+           exit — no backdrop tap / ✕ (see the JS wiring for why). */
+        .results-overlay {
+            /* V1_432 fix: an early pass used a radial-gradient background whose alpha
+               dipped as low as 0.55 near center for a Goldmine-style wash — that let the
+               game canvas's cyan border/glow (.game-container) bleed through at some
+               viewports (spotted at 412x720). .menu-overlay's flat rgba(0,0,0,0.95) fully
+               masks it, so the wash is now a SEPARATE tint layer painted on top of an
+               opaque base (background-color), never reducing overall coverage. */
+            background-color: rgba(0, 0, 0, 0.96);
+            background-image: radial-gradient(circle at 50% 38%, rgba(90, 0, 170, 0.4), transparent 70%);
+            padding: 20px 24px;
+        }
+        /* Reuses .game-title/.game-subtitle typography (same classes — JS never queries
+           them un-scoped, see wireMasterCode(), so the secret 7-tap listener that's bound
+           to #menuOverlay's title cannot fire from this screen). Deltas only below. */
+        .results-overlay .game-title { margin-bottom: 14px; }
+        .results-overlay .game-subtitle { margin-bottom: 34px; }
+        .results-overlay .final-stats {
+            font-size: 20px;
+            line-height: 2.3;
+            margin: 8px 0 36px;
+        }
+        .results-continue-btn {
+            width: 200px;
+            padding: 13px 20px;
+            font-size: 14px;
+        }
+        @media (max-width: 500px) {
+            .results-overlay .game-subtitle { margin-bottom: 24px; }
+            .results-overlay .final-stats { font-size: 16px; margin: 6px 0 26px; }
+        }
+
         /* ========== UNIFIED TRACKPAD ZONE ========== */
         /* Contains: active buffs + spacer + instructions */
         /* Trackpad zone - invisible overlay for touch events (canvas renders UI) */
@@ -7605,9 +7648,25 @@
             <button class="menu-btn btn-achievements" id="achievementsBtn">ACHIEVEMENTS</button>
             <button class="menu-btn btn-shop" id="shopBtn">UPGRADES</button> <!-- V1_427: menu entry renamed UPGRADES (Kevin: clean home-page presentation); plasm stays the currency -->
         </div>
-        <div class="final-stats" id="finalStats" style="display: none;"></div>
+        <!-- V1_432: #finalStats moved off this screen onto its own results screen
+             (#resultsOverlay below) — see showResultsScreen()/showGameOverMenu(). -->
     </div>
-    
+
+    <!-- V1_432: RUN RESULTS SCREEN — shown after the score modal (or immediately if it's
+         skipped/not applicable), before the menu screen above. Kevin: one screen for the
+         round's stats + plasm haul, a separate click-through to the menu buttons, "so we
+         don't condense too much info into one place." CONTINUE is the only exit — this is
+         a one-way doorway (2s of ceremony), not a dismissible popup: no backdrop-tap / ✕,
+         though Escape also triggers CONTINUE (see the global Escape router). -->
+    <div class="menu-overlay results-overlay hidden" id="resultsOverlay">
+        <div class="game-title" id="resultsTitle">GAME OVER</div>
+        <div class="game-subtitle" id="resultsSubtitle">You have fallen...</div>
+        <div class="final-stats" id="resultsStats"></div>
+        <div class="menu-buttons">
+            <button class="menu-btn results-continue-btn" id="resultsContinueBtn">CONTINUE</button>
+        </div>
+    </div>
+
     <!-- Settings Overlay -->
     <div class="settings-overlay" id="settingsOverlay">
         <div class="settings-overlay-title">Settings</div>
@@ -31724,7 +31783,13 @@
             modalTake: document.getElementById('modalTake'),
             modalLeave: document.getElementById('modalLeave'),
             menuOverlay: document.getElementById('menuOverlay'),
-            finalStats: document.getElementById('finalStats'),
+            // V1_432: #finalStats moved onto its own results screen (was a direct child of
+            // #menuOverlay) — DOM.finalStats intentionally removed; the two guarded
+            // `if (DOM.finalStats)` no-ops in startGame()/exitToMenu() now just resolve
+            // undefined and stay harmless.
+            resultsOverlay: document.getElementById('resultsOverlay'),
+            resultsStats: document.getElementById('resultsStats'),
+            resultsContinueBtn: document.getElementById('resultsContinueBtn'),
             startBtn: document.getElementById('startBtn'),
             weaponsDisplay: document.getElementById('weaponsDisplay'),
             tomesDisplay: document.getElementById('tomesDisplay'),
@@ -37839,16 +37904,24 @@
             showScoreModal(kills, timeString);
         }
         
-        function showGameOverMenu() {
-            DOM.menuOverlay.classList.remove('hidden');
+        // V1_432: RUN RESULTS SCREEN — shown first (after the score modal), owns the
+        // title/subtitle flavor text + the stats/plasm/next-unlock block that used to live
+        // on the game-over menu. Consumes victoryFinish/mawFinish HERE (moved from
+        // showGameOverMenu, which now runs second, on CONTINUE) — see that function's
+        // comment for why it still carries a defensive copy of this same read.
+        function showResultsScreen() {
+            if (!DOM.resultsOverlay) { showGameOverMenu(); return; } // defensive fallback — never strand the player mid-flow
+            DOM.resultsOverlay.classList.remove('hidden');
+
             // V1_399: a FINISH-RUN victory retitles the end screen (consume the flag).
             const _isVictory = victoryFinish; victoryFinish = false;
             const _isMaw = mawFinish; mawFinish = false; // V1_409: sealed-the-Hellmouth variant
-            DOM.menuOverlay.querySelector('.game-title').textContent = _isMaw ? 'SEALED!' : (_isVictory ? 'VICTORY!' : 'GAME OVER');
-            DOM.menuOverlay.querySelector('.game-subtitle').textContent = _isMaw ? 'The Hellmouth is sealed. The Maw is no more.' : (_isVictory ? 'Level cleared — the horde could not hold you.' : 'You have fallen...');
-            DOM.startBtn.textContent = 'TRY AGAIN';
-            
-            const stats = window.gameOverStats || { time: '—', level: '—', kills: '—', shrines: '—', plasm: 0 }; // V1_405: armor — must never throw, or the retitle/nudge/meta-strip below never run
+            const titleEl = document.getElementById('resultsTitle');
+            const subEl = document.getElementById('resultsSubtitle');
+            if (titleEl) titleEl.textContent = _isMaw ? 'SEALED!' : (_isVictory ? 'VICTORY!' : 'GAME OVER');
+            if (subEl) subEl.textContent = _isMaw ? 'The Hellmouth is sealed. The Maw is no more.' : (_isVictory ? 'Level cleared — the horde could not hold you.' : 'You have fallen...');
+
+            const stats = window.gameOverStats || { time: '—', level: '—', kills: '—', shrines: '—', plasm: 0 }; // V1_405: armor — must never throw, or the retitle above never runs
             let statsHtml = `
                 Survived: <span>${stats.time}</span><br>
                 Level: <span>${stats.level}</span><br>
@@ -37866,8 +37939,32 @@
                     + '<span class="nu-progress">' + nu.p + '/' + nu.target + '</span>'
                     + ' → ' + nu.unlockName + '</div>';
             }
-            DOM.finalStats.innerHTML = statsHtml;
-            DOM.finalStats.style.display = 'block';
+            if (DOM.resultsStats) DOM.resultsStats.innerHTML = statsHtml;
+        }
+
+        // V1_432: CONTINUE — the results screen's only exit. Hands off to the existing
+        // game-over menu (screen 2), unchanged apart from losing the stats block.
+        function continueFromResults() {
+            if (DOM.resultsOverlay) DOM.resultsOverlay.classList.add('hidden');
+            showGameOverMenu();
+        }
+
+        function showGameOverMenu() {
+            DOM.menuOverlay.classList.remove('hidden');
+            // V1_399: a FINISH-RUN victory retitles the end screen (consume the flag).
+            // V1_432: normally already consumed by showResultsScreen() (screen 1) by the
+            // time we get here, so in the real flow this always resolves to plain
+            // GAME OVER / empty subtitle on screen 2 (Kevin: "title on screen 2 can stay
+            // GAME OVER"). Kept as-is (not hardcoded) as a defensive fallback for the
+            // should-never-happen case where showResultsScreen()'s own DOM.resultsOverlay
+            // guard sends us straight here without the flags having been consumed yet.
+            const _isVictory = victoryFinish; victoryFinish = false;
+            const _isMaw = mawFinish; mawFinish = false; // V1_409: sealed-the-Hellmouth variant
+            DOM.menuOverlay.querySelector('.game-title').textContent = _isMaw ? 'SEALED!' : (_isVictory ? 'VICTORY!' : 'GAME OVER');
+            // V1_432: subtitle text (+ the stats block) moved to the results screen — don't
+            // repeat "You have fallen..." here; the meta strip below is screen 2's subtitle line.
+            DOM.menuOverlay.querySelector('.game-subtitle').textContent = '';
+            DOM.startBtn.textContent = 'TRY AGAIN';
             updateMenuMetaStrip(); // V1_398: refresh after META.endOfRun banked this run
         }
 
@@ -38177,6 +38274,14 @@
         }
 
         // ---- wiring ----
+        // V1_432: RESULTS SCREEN wiring — CONTINUE is the only exit (deliberate: this
+        // screen is a one-way doorway to the game-over menu, not a dismissible popup).
+        // No backdrop-tap / ✕ handler is added on purpose; Escape also routes to CONTINUE
+        // (see the global Escape router further below).
+        if (DOM.resultsContinueBtn) {
+            DOM.resultsContinueBtn.addEventListener('click', continueFromResults);
+            DOM.resultsContinueBtn.addEventListener('touchend', function (e) { e.preventDefault(); continueFromResults(); });
+        }
         if (DOM.achievementsBtn) {
             DOM.achievementsBtn.addEventListener('click', showAchievementsPanel);
             DOM.achievementsBtn.addEventListener('touchend', function (e) { e.preventDefault(); showAchievementsPanel(); });
@@ -38535,6 +38640,13 @@
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 const t = e.target;
                 if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return; // don't pause while typing
+                // V1_432: Escape on the results screen = CONTINUE (its only exit — see the
+                // screen's own comments for why there's no backdrop-tap / ✕ dismiss).
+                if (e.key === 'Escape' && DOM.resultsOverlay && !DOM.resultsOverlay.classList.contains('hidden')) {
+                    e.preventDefault();
+                    continueFromResults();
+                    return;
+                }
                 // V1_399: Escape on the victory overlay = KEEP GOING (non-destructive close).
                 if (e.key === 'Escape' && DOM.victoryOverlay && DOM.victoryOverlay.classList.contains('active')) {
                     e.preventDefault();
@@ -38748,7 +38860,7 @@
         function hideScoreModal() {
             scoreModal.classList.remove('active');
             usernameInput.blur();
-            showGameOverMenu();
+            showResultsScreen(); // V1_432: results screen (stats + plasm) now comes first; CONTINUE there hands off to the game-over menu
         }
         
         async function submitScore() {
