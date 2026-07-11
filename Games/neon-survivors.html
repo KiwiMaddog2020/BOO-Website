@@ -1218,7 +1218,24 @@
         .weapon-tutorial-text p:last-child {
             margin-bottom: 0;
         }
-        
+        /* V1_417: evolution recipe list inside the Info popup */
+        .evolution-recipes {
+            margin-top: 12px;
+            max-height: 34vh;
+            overflow-y: auto;
+            text-align: left;
+            border-top: 1px solid rgba(255, 204, 51, 0.25);
+            padding-top: 10px;
+        }
+        .evo-recipe-line {
+            font-size: 12px;
+            line-height: 1.45;
+            padding: 3px 0;
+        }
+        .evo-recipe-line .evo-base { color: rgba(255,255,255,0.85); }
+        .evo-recipe-line .evo-arrow { color: #ffcc33; }
+        .evo-recipe-line .evo-req { color: rgba(255,255,255,0.5); }
+
         .weapon-tutorial-btn {
             background: transparent;
             border: 2px solid #0ff;
@@ -7277,6 +7294,8 @@
                     <p><strong>Starter Weapon:</strong> Choose your first weapon to begin. Each has unique abilities and playstyles!</p>
                     <p><strong>Upgrades:</strong> Level up to unlock random <span style="color: #ff9977; text-shadow: 0 0 6px rgba(255, 136, 102, 0.5);">weapons</span> to deal damage and <span style="color: #77ccff; text-shadow: 0 0 6px rgba(102, 204, 255, 0.5);">tomes</span> to boost your stats. You can hold up to 4 of each.</p>
                     <p><strong>Edit:</strong> Use the edit buttons to disable items you don't want offered as upgrades during your round.</p>
+                    <p><strong>Evolutions:</strong> Max a weapon (Lv 20) while holding its paired tome, then open a chest to <span style="color:#ffcc33; text-shadow:0 0 6px rgba(255,204,51,0.5);">EVOLVE</span> it into a stronger final form.</p>
+                    <div id="evolutionRecipes" class="evolution-recipes"></div>
                 </div>
                 <button class="weapon-tutorial-btn" id="weaponTutorialBtn">Got it!</button>
             </div>
@@ -9338,7 +9357,8 @@
                 slaughter300:  { name: 'Slaughter',     desc: '300 kills in one run',           kind: 'runStat',  stat: 'kills',      target: 300,  unlocks: { tome: 'velocityTome' } },
                 tycoon:        { name: 'Tycoon',        desc: 'Earn 5,000 gold lifetime',       kind: 'lifetime', stat: 'gold',       target: 5000, unlocks: { tome: 'midasTome' } },
                 phoenix:       { name: 'Phoenix',       desc: 'Perish 5 times',                 kind: 'lifetime', stat: 'deaths',     target: 5,    unlocks: { tome: 'retributionTome' } },
-                mawSealed:     { name: 'Sealed the Hellmouth', desc: 'Defeat The Maw',           kind: 'event',                                       unlocks: { sprite: 'legend' } } // V1_409: 25th achievement — unlocks the 9th sprite (legend / gold crown + halo)
+                mawSealed:     { name: 'Sealed the Hellmouth', desc: 'Defeat The Maw',           kind: 'event',                                       unlocks: { sprite: 'legend' } }, // V1_409: 25th achievement — unlocks the 9th sprite (legend / gold crown + halo)
+                firstEvolution:{ name: 'Transcendent',  desc: 'Evolve a weapon',                kind: 'event' } // V1_417: 26th — first pure-badge achievement (no unlock payload; panel hides the "Unlocks:" line)
             };
 
             function canUseStorage() {
@@ -9580,6 +9600,7 @@
                         else if (evt === 'chest') { state.life.chests++; _scan(_runSnapshot()); _saveNow(); }
                         else if (evt === 'directive' || evt === 'shrine') { _scan(_runSnapshot()); }
                         else if (evt === 'weaponMaxed') { award('perfectionist'); }
+                        else if (evt === 'firstEvolution') { award('firstEvolution'); } // V1_417: idempotent — first evolution ever
                         else if (evt === 'mawSealed') { award('mawSealed'); } // V1_409: defeat The Maw -> legend sprite
                         else if (evt === 'levelClear') {
                             const lvl = data && data.level;
@@ -11588,6 +11609,101 @@
             }
         };
 
+        // ============================================================
+        // V1_417: WEAPON EVOLUTIONS (Wave 1 — 8 of the eventual 25)
+        // Registry shape scales to all 25 weapons: { [baseId]: { tome, evolvedId } }.
+        // Wave 2+ slots in by adding rows here + one WEAPONS.<evolvedId> def below
+        // (spread the base, override identity + tuning, flag evolved:true). Every
+        // offer surface already runs through weaponOfferAllowed(), which excludes
+        // evolved:true AND any base already evolved this run — so new rows inherit
+        // the leak protection with zero extra wiring.
+        const EVOLUTIONS = {
+            energyBolt:   { tome: 'powerTome',       evolvedId: 'novaLance' },
+            plasmaOrbit:  { tome: 'sizeTome',        evolvedId: 'ringOfRuin' },
+            shotgun:      { tome: 'attackSpeedTome', evolvedId: 'hellscatter' },
+            flameThrower: { tome: 'persistTome',     evolvedId: 'dragonsBreath' },
+            iceShard:     { tome: 'velocityTome',    evolvedId: 'glacierLance' },
+            starField:    { tome: 'luckTome',        evolvedId: 'constellation' },
+            beam:         { tome: 'critTome',        evolvedId: 'deathray' },
+            boomerang:    { tome: 'midasTome',       evolvedId: 'goldReaver' }
+        };
+
+        // Evolved defs = base def (inherits type + all firing fields) with an evolved
+        // identity, a re-tuned baseDamage (weapon base numbers are NOT under the DR
+        // curve — these are the control), and behavior flags the shared fire fns branch on.
+        // baseDamage multipliers chosen so raw single-target DPS + the added mechanic
+        // land each form in the 1.5–1.8x L20-base band (bench table in the V1_417 report).
+        WEAPONS.novaLance    = Object.assign({}, WEAPONS.energyBolt, { name: 'Nova Lance',     icon: '🌟', color: '#c9f7ff', desc: 'Piercing energy lances', baseDamage: 14.88, novaPierceBonus: 3, evolved: true, evoBase: 'energyBolt' }); // energyBolt +55% dmg, pierce +3
+        WEAPONS.ringOfRuin   = Object.assign({}, WEAPONS.plasmaOrbit, { name: 'Ring of Ruin',   icon: '💠', color: '#88aaff', desc: 'Twin counter-rotating orb rings', evolvedRing: true, evolved: true, evoBase: 'plasmaOrbit' }); // 2nd ring @1.4x, orbs +30%
+        WEAPONS.hellscatter  = Object.assign({}, WEAPONS.shotgun,     { name: 'Hellscatter',    icon: '💥', color: '#ff5522', desc: 'Double-barrel, +2 pellets', hellscatter: true, evolved: true, evoBase: 'shotgun' }); // 2nd volley +150ms, +2 pellets
+        WEAPONS.dragonsBreath= Object.assign({}, WEAPONS.flameThrower,{ name: "Dragon's Breath", icon: '🐉', color: '#ff8800', desc: 'Cone lays burning ground', dragonsBreath: true, evolved: true, evoBase: 'flameThrower' }); // + ~2.5s fire patches
+        WEAPONS.glacierLance = Object.assign({}, WEAPONS.iceShard,    { name: 'Glacier Lance',  icon: '🧊', color: '#66ffff', desc: 'Shards shatter into a freeze burst', baseDamage: 8.86, glacierShatter: true, shatterRadius: 44, evolved: true, evoBase: 'iceShard' }); // iceShard +15% dmg + 44px shatter
+        WEAPONS.constellation= Object.assign({}, WEAPONS.starField,   { name: 'Constellation',  icon: '✨', color: '#ffe066', desc: 'Critical stars that drop XP', baseDamage: 4.8, constellation: true, evolved: true, evoBase: 'starField' }); // starField +50% dmg + XP motes
+        WEAPONS.deathray     = Object.assign({}, WEAPONS.beam,        { name: 'Deathray',       icon: '🔆', color: '#ff66cc', desc: 'Wider beam, periodic white-hot crits', baseDamage: 10.4, evolvedBeam: true, evolved: true, evoBase: 'beam' }); // beam +30% dmg, +40% width, crit spikes
+        WEAPONS.goldReaver   = Object.assign({}, WEAPONS.boomerang,   { name: 'Gold Reaver',    icon: '🥇', color: '#ffd700', desc: 'Gold glaive, pierces all, mints gold', baseDamage: 13.12, goldReaver: true, evolved: true, evoBase: 'boomerang' }); // boomerang +60% dmg + gold on hit
+
+        // Base ids evolved THIS run (reset each run). A base id here is excluded from
+        // every offer pool so the just-evolved slot's original weapon can't be re-rolled.
+        let evolvedWeapons = new Set();
+        // V1_417: burning-ground patches dropped by Dragon's Breath (module-scope DoT zones).
+        let flameGroundPatches = [];
+        let _goldReaverSecond = 0;   // gold minted by Gold Reaver in the current second
+        let _goldReaverWindow = 0;   // start of the current 1s gold-cap window
+
+        // V1_417: Gold Reaver mints +1 gold per hit, hard-capped at 8 gold/sec (respects the
+        // V1_397 runGoldEarned accounting). Returns nothing — mutates the run's gold totals.
+        function goldReaverMint() {
+            const now = Date.now();
+            if (now - _goldReaverWindow >= 1000) { _goldReaverWindow = now; _goldReaverSecond = 0; }
+            if (_goldReaverSecond >= 8) return;
+            _goldReaverSecond++;
+            const g = Math.round(1 * ((player && player.goldMultiplier) || 1));
+            playerGold += g;
+            runGoldEarned += g;
+            if (typeof updateGoldDisplay === 'function') updateGoldDisplay();
+        }
+
+        // V1_417: Dragon's Breath burning ground — tick DoT to anything standing in a patch,
+        // expire by lifetime. No per-frame shadowBlur (baked radial-gradient fill in draw).
+        function updateFlameGroundPatches(now) {
+            if (!flameGroundPatches.length) return;
+            for (let i = flameGroundPatches.length - 1; i >= 0; i--) {
+                const p = flameGroundPatches[i];
+                if (now - p.born > p.life) { flameGroundPatches.splice(i, 1); continue; }
+                if (now - p.lastTick >= 300) {
+                    p.lastTick = now;
+                    const hit = (arr, boss) => {
+                        for (const e of arr) {
+                            if (e.dead) continue;
+                            if (Math.hypot(e.x - p.x, e.y - p.y) < p.radius + e.radius) {
+                                const { damage, isCrit } = player.calcDamage(p.dmg);
+                                e.takeDamage(damage, isCrit); player.onDealDamage(damage);
+                            }
+                        }
+                    };
+                    hit(enemies); hit(bosses); hit(leprechauns);
+                }
+            }
+        }
+        function drawFlameGroundPatches(now) {
+            if (!flameGroundPatches.length) return;
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            for (const p of flameGroundPatches) {
+                if (!camera.isVisible(p.x, p.y)) continue;
+                const age = (now - p.born) / p.life;
+                const a = (1 - age) * 0.55 * (0.7 + 0.3 * Math.sin(now * 0.02 + p.x));
+                const sx = camera.screenX(p.x), sy = camera.screenY(p.y), r = camera.scale(p.radius);
+                const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+                grad.addColorStop(0, 'rgba(255,180,60,' + a + ')');
+                grad.addColorStop(0.6, 'rgba(255,90,20,' + (a * 0.7) + ')');
+                grad.addColorStop(1, 'rgba(120,20,0,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.restore();
+        }
+
         // ===== PASSIVE UPGRADES =====
         const PASSIVES = {
             speed: { name: 'Speed Boost', icon: '👟', color: COLORS.teal, desc: '+12% move speed' },
@@ -11801,6 +11917,10 @@
         function weaponUnlocked(id) { return window.META ? META.weaponUnlocked(id) : true; }
         function tomeUnlocked(id) { return window.META ? META.tomeUnlocked(id) : true; }
         function weaponOfferAllowed(id) {
+            // V1_417: evolved forms are FINAL — never offered anywhere (no acquire, no level-up).
+            // A base already evolved this run is likewise dropped so its old form can't re-roll.
+            if (WEAPONS[id] && WEAPONS[id].evolved) return false;
+            if (typeof evolvedWeapons !== 'undefined' && evolvedWeapons.has(id)) return false;
             return weaponUnlocked(id) && !disabledWeapons.has(id) && !banishedWeapons.has(id);
         }
 
@@ -12563,7 +12683,8 @@
 
                 state.lastFire = now;
                 SFX.wEnergyBolt();
-                const pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
+                let pierce = 1 + Math.floor(level / 3); // +1 pierce per 3 levels
+                if (def.novaPierceBonus) pierce += def.novaPierceBonus; // V1_417: Nova Lance pierces deeper
 
                 const aim = predictAim(this.x, this.y, target, 4.4); // V1_357: lead moving targets
                 const angle = Math.atan2(aim.y - this.y, aim.x - this.x);
@@ -12571,9 +12692,11 @@
 
                 for (let i = 0; i < projectileCount; i++) {
                     const a = angle + (i - (projectileCount - 1) / 2) * spread;
-                    projectiles.push(new Projectile(
-                        this.x, this.y, a, 4.4 * this.projSpeedMultiplier, baseDamage, def.color, 'bolt', pierce, sizeScale
-                    ));
+                    const boltProj = new Projectile(
+                        this.x, this.y, a, 4.4 * this.projSpeedMultiplier, baseDamage, def.color, 'bolt', pierce, sizeScale * (def.evolved ? 1.35 : 1)
+                    );
+                    if (def.evolved) boltProj.novaLance = true; // V1_417: elongated baked trail glow
+                    projectiles.push(boltProj);
                 }
             }
 
@@ -12610,7 +12733,8 @@
                 
                 // Active orbs based on charges
                 const activeOrbs = Math.min(orbCount, state.shieldCharges);
-                
+                const orbHitR = 14 * (def.evolvedRing ? 1.3 : 1); // V1_417: Ring of Ruin +30% orb size on BOTH rings
+
                 for (let i = 0; i < activeOrbs; i++) {
                     const angle = state.angle + (Math.PI * 2 / orbCount) * i;
                     const ox = player.x + Math.cos(angle) * radius;
@@ -12620,7 +12744,7 @@
                     for (const enemy of enemies) {
                         if (enemy.dead) continue;
                         const dist = Math.hypot(enemy.x - ox, enemy.y - oy);
-                        if (dist < enemy.radius + 14 && enemy.orbHitCooldown <= 0) {
+                        if (dist < enemy.radius + orbHitR && enemy.orbHitCooldown <= 0) {
                             const { damage, isCrit } = player.calcDamage(baseDamage);
                             enemy.takeDamage(damage, isCrit);
                             player.onDealDamage(damage);
@@ -12642,7 +12766,7 @@
                     for (const lep of leprechauns) {
                         if (lep.dead) continue;
                         const dist = Math.hypot(lep.x - ox, lep.y - oy);
-                        if (dist < lep.radius + 14 && lep.orbHitCooldown <= 0) {
+                        if (dist < lep.radius + orbHitR && lep.orbHitCooldown <= 0) {
                             const { damage, isCrit } = player.calcDamage(baseDamage);
                             lep.takeDamage(damage, isCrit);
                             player.onDealDamage(damage);
@@ -12662,7 +12786,7 @@
                     for (const boss of bosses) {
                         if (boss.dead) continue;
                         const dist = Math.hypot(boss.x - ox, boss.y - oy);
-                        if (dist < boss.radius + 14 && boss.orbHitCooldown <= 0) {
+                        if (dist < boss.radius + orbHitR && boss.orbHitCooldown <= 0) {
                             const { damage, isCrit } = player.calcDamage(baseDamage);
                             boss.takeDamage(damage, isCrit);
                             player.onDealDamage(damage);
@@ -12679,6 +12803,49 @@
                     }
                 }
                 
+                // V1_417: Ring of Ruin — a second COUNTER-rotating ring at 1.4x radius,
+                // orbs +30% hit size. Same charge budget; reuses the per-orb hit logic in a
+                // compact sweep so we don't fork the whole updateOrbit.
+                if (def.evolvedRing) {
+                    const r2 = radius * 1.4;
+                    const hitR2 = 14 * 1.3;
+                    const outerDmg = baseDamage * 1.6; // V1_417: the outer "ruin" ring hits harder — lands the form in band (sparse orbs on the big circle otherwise under-contribute)
+                    const hitOrb2 = (ox, oy) => {
+                        for (const enemy of enemies) {
+                            if (enemy.dead) continue;
+                            if (Math.hypot(enemy.x - ox, enemy.y - oy) < enemy.radius + hitR2 && enemy.orbHitCooldown <= 0) {
+                                const { damage, isCrit } = player.calcDamage(outerDmg);
+                                enemy.takeDamage(damage, isCrit); player.onDealDamage(damage); applyStatusEffects(enemy, damage);
+                                enemy.orbHitCooldown = 250;
+                                if (def.knockbackForce) enemy.applyKnockback(Math.atan2(enemy.y - oy, enemy.x - ox), def.knockbackForce);
+                                spawnParticles(ox, oy, def.color, 5);
+                            }
+                        }
+                        for (const lep of leprechauns) {
+                            if (lep.dead) continue;
+                            if (Math.hypot(lep.x - ox, lep.y - oy) < lep.radius + hitR2 && lep.orbHitCooldown <= 0) {
+                                const { damage, isCrit } = player.calcDamage(outerDmg);
+                                lep.takeDamage(damage, isCrit); player.onDealDamage(damage); lep.orbHitCooldown = 250;
+                                spawnParticles(ox, oy, COLORS.gold, 5);
+                            }
+                        }
+                        for (const boss of bosses) {
+                            if (boss.dead) continue;
+                            if (Math.hypot(boss.x - ox, boss.y - oy) < boss.radius + hitR2 && boss.orbHitCooldown <= 0) {
+                                const { damage, isCrit } = player.calcDamage(outerDmg);
+                                boss.takeDamage(damage, isCrit); player.onDealDamage(damage); boss.orbHitCooldown = 250;
+                                if (def.knockbackForce) boss.applyKnockback(Math.atan2(boss.y - oy, boss.x - ox), def.knockbackForce * 0.3);
+                                spawnParticles(ox, oy, boss.color, 5);
+                            }
+                        }
+                    };
+                    for (let i = 0; i < activeOrbs; i++) {
+                        const a = -state.angle + (Math.PI * 2 / orbCount) * i + Math.PI / orbCount; // counter-spin, phase-offset
+                        hitOrb2(player.x + Math.cos(a) * r2, player.y + Math.sin(a) * r2);
+                    }
+                    state.outerRadius = r2;
+                }
+
                 // Store for rendering
                 state.orbCount = orbCount;
                 state.activeOrbs = activeOrbs;
@@ -12912,6 +13079,15 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05);
                 const splashRadius = (45 + level * 3) * this.sizeMultiplier; // AOE radius around target // WP7 fix: Tome of Magnitude was missing here
                 const splashDamageMult = 0.35; // 35% damage to nearby enemies
+
+                // V1_417: Deathray — every 3.0s the beam goes white-hot for 0.8s with
+                // GUARANTEED crits (a weapon-behavior spike; allowed under the two-lane rule).
+                let whiteHot = false;
+                if (def.evolvedBeam) {
+                    if (!state.nextSpike) state.nextSpike = now + 3000;
+                    if (now >= state.nextSpike) { state.whiteHotUntil = now + 800; state.nextSpike = now + 3000; }
+                    whiteHot = now < (state.whiteHotUntil || 0);
+                }
                 
                 for (const beam of state.beams) {
                     const isAcquiring = now - beam.retargetTime < acquireTime;
@@ -12932,8 +13108,11 @@
                         SFX.wBeam();
 
                         const tickDamage = baseDamage * beam.ramp * 0.1; // DPS / 10 ticks per second
-                        
-                        const { damage, isCrit } = this.calcDamage(tickDamage);
+
+                        // V1_417: forced crit during the Deathray white-hot window.
+                        const { damage, isCrit } = (def.evolvedBeam && whiteHot)
+                            ? { damage: tickDamage * this.damageMultiplier * this.critMultiplier, isCrit: 1 }
+                            : this.calcDamage(tickDamage);
                         beam.target.takeDamage(damage, isCrit);
                         this.onDealDamage(damage);
                         
@@ -13216,7 +13395,25 @@
                 state.flameRange = range;
                 state.flameCone = coneAngle;
                 state.flameActive = now;
-                
+
+                // V1_417: Dragon's Breath — lay ~2.5s burning patches along the cone arc.
+                // Throttled to ~5/s so the cone (fires every ~140ms) doesn't carpet the map.
+                if (def.dragonsBreath && now - (state.lastPatch || 0) > 200 && flameGroundPatches.length < 60) {
+                    state.lastPatch = now;
+                    const patchDmg = baseDamage * 1.3; // per-tick DoT (V1_417: tuned so the ground is a real upgrade)
+                    const arcN = 4;
+                    for (let k = 0; k < arcN; k++) {
+                        const t = arcN > 1 ? (k / (arcN - 1) - 0.5) : 0;
+                        const a = facing + t * coneAngle * 0.9;
+                        const d = range * (0.3 + Math.random() * 0.5); // near-to-mid cone — where approaching enemies actually stand
+                        flameGroundPatches.push({
+                            x: this.x + Math.cos(a) * d, y: this.y + Math.sin(a) * d,
+                            radius: 32 * this.sizeMultiplier, born: now,
+                            life: 2500 * this.durationMultiplier, lastTick: now, dmg: patchDmg
+                        });
+                    }
+                }
+
                 // Damage enemies in cone
                 for (const enemy of enemies) {
                     if (enemy.dead) continue;
@@ -13291,7 +13488,8 @@
                     const angle = boomBaseAngle + angleOffset;
 
                     // Create boomerang projectile (slower speed)
-                    const boom = new Projectile(this.x, this.y, angle, 3.5 * this.projSpeedMultiplier, baseDamage, def.color, 'boomerang', 999, sizeScale);
+                    const boom = new Projectile(this.x, this.y, angle, 3.5 * this.projSpeedMultiplier, baseDamage, def.color, 'boomerang', 999, sizeScale * (def.goldReaver ? 1.35 : 1));
+                    if (def.goldReaver) boom.goldReaver = true; // V1_417: pierces all + mints gold
                     boom.startX = this.x;
                     boom.startY = this.y;
                     boom.maxDist = Math.min(181 + level * 12, ONSCREEN_RANGE_CAP); // V1_322: -15% start reach (213->181) // V1_303: keep the boomerang's apex on-screen; V1_305: -15% start reach (250->213) — also edited in the meta range.fn
@@ -13454,6 +13652,15 @@
                     }
                 }
                 
+                // V1_417: Constellation — stars occasionally mint a bonus XP mote (luck-scaled).
+                if (def.constellation && xpGems.length < LIMITS.xpGems) {
+                    const chance = 0.04 + (this.luck || 0) * 0.5; // ~4% base, scales with Fortune
+                    if (Math.random() < chance) {
+                        const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * radius;
+                        xpGems.push(new XPGem(this.x + Math.cos(a) * d, this.y + Math.sin(a) * d, 2));
+                    }
+                }
+
                 // Cleanup old stars
                 state.fallingStars = state.fallingStars.filter(s => now - s.startTime < s.duration + 200);
             }
@@ -13475,7 +13682,8 @@
 
                 state.lastFire = now;
                 SFX.wIce();
-                const pierce = 1 + Math.floor(level / 4); // +1 pierce per 4 levels
+                // V1_417: Glacier Lance detonates on its FIRST hit into a shatter AoE (pierce 1).
+                const pierce = def.glacierShatter ? 1 : (1 + Math.floor(level / 4)); // +1 pierce per 4 levels
 
                 const angle = Math.atan2(target.y - this.y, target.x - this.x);
                 const spread = countTargetsInRange(this.x, this.y, SHARED_TARGETING_RANGE) < 2 ? 0.25 * 0.35 : 0.25; // WP4: converge volley on a lone target
@@ -13486,6 +13694,7 @@
                     proj.slowAmount = def.slowAmount;
                     proj.slowDuration = def.slowDuration * this.durationMultiplier; // WP3: Tome of Persistence
                     proj.iceTarget = target; // Store initial target for homing
+                    if (def.glacierShatter) { proj.glacierShatter = true; proj.shatterRadius = def.shatterRadius || 44; proj.shatterDmg = baseDamage * 0.35; } // V1_417: AoE at 35% keeps crowd DPS in band
                     projectiles.push(proj);
                 }
             }
@@ -14132,6 +14341,7 @@
 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05); // V1_298: gentler damage scaling (was 0.06)
                 let pelletCount = def.pelletCount + Math.floor(level / 3);
+                if (def.hellscatter) pelletCount += 2; // V1_417: Hellscatter — extra pellets per barrel
                 if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) pelletCount += 2; // WP8: shotgun gets +2 per spec
                 pelletCount += 2 * (this.bonusProjectiles || 0); // V1_377: Barrage blessing — mirrors the +2-pellet rule
                 const spreadAngle = def.spreadAngle + level * 0.02;
@@ -14178,10 +14388,35 @@
                 
                 // Screen shake for shotgun feel
                 if (camera.shake) camera.shake(3, 80);
+
+                // V1_417: Hellscatter double-barrel — queue an auto second volley 150ms later,
+                // reusing the exact pellet params (knockback already baked per-pellet).
+                if (def.hellscatter) {
+                    state.secondVolley = { at: now + 150, baseAngle, pelletCount, spreadAngle, baseDamage, maxRange, knockback, sizeMult: this.sizeMultiplier, projMult: this.projSpeedMultiplier };
+                }
             }
-            
+
             // Update shotgun pellets (called from main update)
             updateShotgunPellets(state, def, level, now, dt) {
+                // V1_417: fire the queued Hellscatter second barrel when its 150ms lands.
+                if (state.secondVolley && now >= state.secondVolley.at) {
+                    const v = state.secondVolley;
+                    state.secondVolley = null;
+                    if (!state.pellets) state.pellets = [];
+                    for (let i = 0; i < v.pelletCount; i++) {
+                        const offsetAngle = (i - (v.pelletCount - 1) / 2) * (v.spreadAngle / v.pelletCount);
+                        const pelletAngle = v.baseAngle + offsetAngle + (Math.random() - 0.5) * 0.1;
+                        const speed = (12 + Math.random() * 3) * v.projMult;
+                        state.pellets.push({
+                            x: this.x, y: this.y,
+                            vx: Math.cos(pelletAngle) * speed, vy: Math.sin(pelletAngle) * speed,
+                            damage: v.baseDamage, maxRange: v.maxRange, knockback: v.knockback,
+                            distTraveled: 0, startTime: now, hit: false, sizeMult: v.sizeMult
+                        });
+                    }
+                    SFX.wShotgun();
+                    if (camera.shake) camera.shake(2, 60);
+                }
                 if (!state.pellets) return;
 
                 const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: matches fire-time cap
@@ -14980,6 +15215,7 @@
                         // Draw orbs (active ones are bright, inactive are dim)
                         ctx.shadowColor = def.color;
                         ctx.shadowBlur = 15;
+                        const orbSz = camera.scale(def.evolvedRing ? 15.6 : 12); // V1_417: +30% orbs
                         for (let i = 0; i < state.orbCount; i++) {
                             const angle = state.angle + (Math.PI * 2 / state.orbCount) * i;
                             const ox = sx + Math.cos(angle) * orbitR;
@@ -14990,7 +15226,7 @@
                             ctx.globalAlpha = isActive ? 1 : 0.25;
                             ctx.fillStyle = isActive ? def.color : '#444';
                             ctx.beginPath();
-                            ctx.arc(ox, oy, camera.scale(12), 0, Math.PI * 2);
+                            ctx.arc(ox, oy, orbSz, 0, Math.PI * 2);
                             ctx.fill();
 
                             // Inner bright core (only on active)
@@ -14999,6 +15235,20 @@
                                 ctx.beginPath();
                                 ctx.arc(ox, oy, camera.scale(4), 0, Math.PI * 2);
                                 ctx.fill();
+                            }
+                        }
+                        // V1_417: Ring of Ruin — outer counter-rotating ring (shares the shadow state)
+                        if (def.evolvedRing && state.outerRadius) {
+                            const outR = camera.scale(state.outerRadius);
+                            ctx.strokeStyle = def.color; ctx.lineWidth = 1; ctx.globalAlpha = 0.25;
+                            ctx.beginPath(); ctx.arc(sx, sy, outR, 0, Math.PI * 2); ctx.stroke();
+                            for (let i = 0; i < activeOrbs; i++) {
+                                const a = -state.angle + (Math.PI * 2 / state.orbCount) * i + Math.PI / state.orbCount;
+                                const ox = sx + Math.cos(a) * outR, oy = sy + Math.sin(a) * outR;
+                                ctx.globalAlpha = 1; ctx.fillStyle = def.color;
+                                ctx.beginPath(); ctx.arc(ox, oy, orbSz * 0.92, 0, Math.PI * 2); ctx.fill();
+                                ctx.fillStyle = '#fff';
+                                ctx.beginPath(); ctx.arc(ox, oy, camera.scale(3.6), 0, Math.PI * 2); ctx.fill();
                             }
                         }
                         ctx.globalAlpha = 1;
@@ -15913,15 +16163,19 @@
                                 const ramp = beam.ramp || 1;
                                 const beamPulse = 0.8 + Math.sin(now / 40) * 0.2;
                                 const thickness = Math.min(ramp, 6);
-                                
+                                // V1_417: Deathray — +40% width, white-hot tint during the crit spike.
+                                const evoW = def.evolvedBeam ? 1.4 : 1;
+                                const hot = def.evolvedBeam && Date.now() < (state.whiteHotUntil || 0);
+                                const beamCol = hot ? '#ffffff' : def.color;
+
                                 // V1_376 perf: beam layers were the last per-frame shadowBlur hot path
                                 // (3 blurred strokes/beam/frame tanked fps on beam builds). Baked glow:
                                 // one extra wide faint halo stroke replaces the blur; 'lighter' blend
                                 // keeps the white-hot core look.
                                 // Halo (replaces shadowBlur glow)
-                                ctx.strokeStyle = def.color;
-                                ctx.globalAlpha = 0.12;
-                                ctx.lineWidth = camera.scale((10 + thickness * 2.5) * beamPulse);
+                                ctx.strokeStyle = beamCol;
+                                ctx.globalAlpha = hot ? 0.2 : 0.12;
+                                ctx.lineWidth = camera.scale((10 + thickness * 2.5) * beamPulse) * evoW;
                                 ctx.beginPath();
                                 ctx.moveTo(sx, sy);
                                 ctx.lineTo(tx, ty);
@@ -15929,7 +16183,7 @@
 
                                 // Outer glow beam
                                 ctx.globalAlpha = 0.3;
-                                ctx.lineWidth = camera.scale((4 + thickness * 1.5) * beamPulse);
+                                ctx.lineWidth = camera.scale((4 + thickness * 1.5) * beamPulse) * evoW;
                                 ctx.beginPath();
                                 ctx.moveTo(sx, sy);
                                 ctx.lineTo(tx, ty);
@@ -15937,7 +16191,7 @@
 
                                 // Middle beam
                                 ctx.globalAlpha = 0.6;
-                                ctx.lineWidth = camera.scale((2 + thickness * 0.8) * beamPulse);
+                                ctx.lineWidth = camera.scale((2 + thickness * 0.8) * beamPulse) * evoW;
                                 ctx.beginPath();
                                 ctx.moveTo(sx, sy);
                                 ctx.lineTo(tx, ty);
@@ -20963,6 +21217,75 @@
             get counts() { try { return { enemies: enemies.length, bosses: bosses.length, projectiles: enemyProjectiles.length }; } catch (e) { return null; } }
         };
 
+        // V1_417: evolution test seam — eligibility + forced-evolve for verification.
+        window.__EVO = {
+            eligible() { try { return getEligibleEvolution(); } catch (e) { return String(e); } },
+            setup(baseId) {
+                try {
+                    if (!player) return 'no player';
+                    const rec = EVOLUTIONS[baseId]; if (!rec) return 'no evo for ' + baseId;
+                    if (!player.weapons[baseId]) player.addWeapon(baseId);
+                    player.weapons[baseId].level = 20;
+                    if (!player.tomes[rec.tome]) player.addTome(rec.tome);
+                    return { baseId, level: player.weapons[baseId].level, tome: rec.tome, hasTome: !!player.tomes[rec.tome], eligible: !!getEligibleEvolution() };
+                } catch (e) { return String(e); }
+            },
+            force(baseId) {
+                try {
+                    this.setup(baseId);
+                    const rec = EVOLUTIONS[baseId];
+                    applyEvolution({ baseId, evolvedId: rec.evolvedId, tome: rec.tome });
+                    return Object.keys(player.weapons);
+                } catch (e) { return String(e); }
+            },
+            only(baseId) {
+                try {
+                    if (!player) return 'no player';
+                    player.weapons = {};
+                    player.addWeapon(baseId);
+                    player.weapons[baseId].level = 20;
+                    const rec = EVOLUTIONS[baseId];
+                    if (!player.tomes[rec.tome]) player.addTome(rec.tome);
+                    applyEvolution({ baseId, evolvedId: rec.evolvedId, tome: rec.tome });
+                    player.applyPassives();
+                    return Object.keys(player.weapons);
+                } catch (e) { return String(e); }
+            },
+            list() { try { return Object.keys(player.weapons); } catch (e) { return String(e); } },
+            equipBase(baseId) { try { player.weapons = {}; player.tomes = {}; player.addWeapon(baseId); player.weapons[baseId].level = 20; const rec = EVOLUTIONS[baseId]; player.addTome(rec.tome); player.applyPassives(); return Object.keys(player.weapons); } catch (e) { return String(e); } },
+            evolveNow(baseId) { try { const rec = EVOLUTIONS[baseId]; applyEvolution({ baseId, evolvedId: rec.evolvedId, tome: rec.tome }); return Object.keys(player.weapons); } catch (e) { return String(e); } },
+            benchSetup(n, hp) {
+                try {
+                    n = n || 24; hp = hp || 5e6;
+                    player.maxHp = 1e9; player.hp = 1e9; player.critChance = 0; // deterministic ledger, no crit variance
+                    enemies.length = 0; bosses.length = 0; leprechauns.length = 0; projectiles.length = 0; flameGroundPatches.length = 0;
+                    // Filled disk 30..250px — a surrounding swarm at ALL distances so orbit rings,
+                    // cones, beams and projectiles all engage. Golden-angle for even coverage.
+                    for (let i = 0; i < n; i++) {
+                        const a = i * 2.399963; // golden angle
+                        const rr = 30 + (250 - 30) * Math.sqrt((i + 0.5) / n);
+                        const e = new Enemy('tank', player.x + Math.cos(a) * rr, player.y + Math.sin(a) * rr);
+                        e.hp = e.maxHp = hp; e.speed = 0; e._bench = true;
+                        if ('contactDamage' in e) e.contactDamage = 0; e.damage = 0;
+                        enemies.push(e);
+                    }
+                    return enemies.filter(x => x._bench).length;
+                } catch (e) { return String(e); }
+            },
+            benchHP() { try { let s = 0; for (const e of enemies) if (e._bench) s += Math.max(0, e.hp); return s; } catch (e) { return -1; } },
+            reveal(baseId) {
+                try {
+                    this.setup(baseId);
+                    const c = new TreasureChest(player.x, player.y);
+                    c.isFree = true; c.cost = 0;
+                    c.showOffer();
+                    return { visible: DOM.chestModal.classList.contains('visible'), isEvolution: !!c.isEvolution, title: DOM.modalTitle.textContent };
+                } catch (e) { return String(e); }
+            },
+            patches() { try { return flameGroundPatches.length; } catch (e) { return -1; } },
+            gold() { try { return { playerGold: playerGold, runGoldEarned: runGoldEarned }; } catch (e) { return String(e); } }
+        };
+
         // Boss defeat message
         function showBossDefeatMessage(type) {
             const msg = document.createElement('div');
@@ -21077,7 +21400,18 @@
                 this.opened = true;
                 gamePaused = true;
                 pendingChest = this;
-                
+
+                // V1_417: if the player is evolution-eligible, this chest becomes an EVOLUTION
+                // reveal instead of the usual reel (one evolution per chest; cost/flow unchanged).
+                const _evo = getEligibleEvolution();
+                if (_evo && (this.isFree || playerGold >= this.cost)) {
+                    this.isEvolution = true;
+                    this.evoData = _evo;
+                    spawnParticles(this.x, this.y, this.isFree ? COLORS.gold : '#c0c0c0', 15);
+                    showEvolutionReveal(this, _evo);
+                    return;
+                }
+
                 const color = this.isFree ? COLORS.gold : '#c0c0c0';
                 spawnParticles(this.x, this.y, color, 15);
                 
@@ -21776,8 +22110,97 @@
         }
         
         // Accept chest offer
+        // ===== V1_417: WEAPON EVOLUTION (chest-triggered) =====
+        // Eligibility (VS-canonical): an equipped BASE weapon at max level (20) whose paired
+        // tome is owned (any level) and which hasn't evolved this run.
+        function getEligibleEvolution() {
+            if (!player || !player.weapons) return null;
+            for (const baseId in EVOLUTIONS) {
+                if (evolvedWeapons.has(baseId)) continue;
+                const w = player.weapons[baseId];
+                if (!w || w.level < 20) continue;
+                const rec = EVOLUTIONS[baseId];
+                if (!player.tomes[rec.tome]) continue;
+                return { baseId, evolvedId: rec.evolvedId, tome: rec.tome };
+            }
+            return null;
+        }
+
+        // Transform the base weapon's slot IN PLACE into its evolved form at full power.
+        function applyEvolution(evo) {
+            const st = player.weapons[evo.baseId];
+            if (!st) return;
+            delete player.weapons[evo.baseId];
+            st.evolved = true;
+            player.weapons[evo.evolvedId] = st; // keep slot + level (20) + bonusLevel + transient state
+            evolvedWeapons.add(evo.baseId);
+            if (window.META) META.notify('firstEvolution'); // V1_417: 'Transcendent' achievement (idempotent)
+            const def = WEAPONS[evo.evolvedId];
+            spawnParticles(player.x, player.y, def.color, 30);
+            addRing(player.x, player.y, 60, def.color);
+            if (camera.shake) camera.shake(4, 220);
+            updateWeaponsDisplay();
+        }
+
+        // Dramatic reveal: reuse the chest modal — big banner, evolved card, one EVOLVE button.
+        function showEvolutionReveal(chest, evo) {
+            const def = WEAPONS[evo.evolvedId];
+            SFX.legendary(); // reuse the legendary sting family
+            spawnParticles(chest.x, chest.y, def.color, 20);
+
+            DOM.modalTitle.textContent = '⚡ EVOLUTION — ' + def.name.toUpperCase();
+            DOM.modalTitle.style.color = def.color;
+            DOM.modalTitle.style.textShadow = '0 0 24px ' + def.color;
+
+            if (chest.isFree) {
+                DOM.modalCost.style.display = 'none';
+            } else {
+                DOM.modalCost.style.display = '';
+                DOM.modalCost.innerHTML = 'Cost: 🪙 ' + chest.cost + ' <span style="color:#888;">(You have: ' + playerGold + ')</span>';
+                DOM.modalCost.style.color = '#ffd700';
+            }
+
+            // Hide the reel, show the card straight away.
+            if (DOM.chestSlotReel) DOM.chestSlotReel.style.display = 'none';
+            DOM.modalCard.style.display = '';
+            DOM.modalCard.classList.remove('legendary');
+            DOM.modalCard.style.borderColor = def.color;
+            DOM.modalCard.style.boxShadow = '0 0 26px ' + def.color + '99';
+            DOM.modalType.textContent = 'EVOLUTION';
+            DOM.modalType.style.color = def.color;
+            DOM.modalName.style.color = def.color;
+            setChestRewardIcon('weapon', evo.evolvedId, def.icon);
+            DOM.modalName.textContent = def.name;
+            DOM.modalDesc.textContent = def.desc;
+
+            DOM.modalTake.textContent = chest.isFree ? 'EVOLVE!' : 'EVOLVE! (' + chest.cost + ')';
+            DOM.modalTake.classList.remove('disabled');
+            DOM.modalTake.parentElement.style.display = '';
+            DOM.modalLeave.style.display = ''; // player may still decline a paid chest
+
+            DOM.chestModal.classList.add('visible');
+        }
+
         function acceptChestOffer() {
             if (!pendingChest) return;
+            // V1_417: evolution reveal — deduct cost like a normal take, then transform.
+            if (pendingChest.isEvolution) {
+                const chest = pendingChest;
+                if (!chest.isFree) {
+                    if (playerGold < chest.cost) return;
+                    playerGold -= chest.cost;
+                    updateGoldDisplay();
+                    nextChestCost = nextChestCost < 1000 ? nextChestCost * 2 : Math.floor(nextChestCost * 1.5);
+                    for (const c of chests) { if (!c.dead && !c.isFree) c.cost = nextChestCost; }
+                }
+                runChests++;
+                if (window.META) META.notify('chest');
+                applyEvolution(chest.evoData);
+                closeChestModal();
+                chest.dead = true;
+                pendingChest = null;
+                return;
+            }
             
             // Handle pot of gold rewards differently
             if (pendingChest.isPotReward) {
@@ -26838,8 +27261,10 @@
                         }
                         
                         this.pierce--;
+                        if (this.goldReaver) goldReaverMint(); // V1_417
+                        if (this.glacierShatter && !this.shattered) this.glacierDetonate(); // V1_417
                         spawnParticles(this.x, this.y, this.color, 3);
-                        
+
                         // Squirrel scratch effect - lime green claw marks
                         if (this.isSquirrel) {
                             for (let i = 0; i < 4; i++) {
@@ -26928,6 +27353,8 @@
                         leprechaun.takeDamage(damage, isCrit);
                         player.onDealDamage(damage);
                         this.pierce--;
+                        if (this.goldReaver) goldReaverMint(); // V1_417
+                        if (this.glacierShatter && !this.shattered) this.glacierDetonate(); // V1_417
                         spawnParticles(this.x, this.y, COLORS.gold, 3);
                         if (this.pierce <= 0) {
                             this.dead = true;
@@ -26935,7 +27362,7 @@
                         }
                     }
                 }
-                
+
                 // Check collision with bosses
                 for (const boss of bosses) {
                     if (boss.dead || this.hitEnemies.has(boss)) continue;
@@ -26948,6 +27375,8 @@
                         boss.takeDamage(damage, isCrit);
                         player.onDealDamage(damage);
                         this.pierce--;
+                        if (this.goldReaver) goldReaverMint(); // V1_417
+                        if (this.glacierShatter && !this.shattered) this.glacierDetonate(); // V1_417
                         spawnParticles(this.x, this.y, boss.color, 3);
                         if (this.pierce <= 0) {
                             this.dead = true;
@@ -26955,7 +27384,7 @@
                         }
                     }
                 }
-                
+
                 // Out of bounds (world) - except boomerangs, squirrels, and gravity wells which have special handling
                 if (this.type !== 'boomerang' && !this.isSquirrel && !this.isGravityWell) {
                     if (this.x < -20 || this.x > WORLD.width + 20 ||
@@ -26992,6 +27421,26 @@
                         this.dead = true;
                     }
                 }
+            }
+
+            // V1_417: Glacier Lance shatter — one AoE freeze-burst on first contact.
+            glacierDetonate() {
+                this.shattered = true;
+                const R = this.shatterRadius || 44;
+                const dmg = this.shatterDmg || this.damage;
+                const burst = (arr) => {
+                    for (const e of arr) {
+                        if (e.dead || this.hitEnemies.has(e)) continue;
+                        if (Math.hypot(e.x - this.x, e.y - this.y) < R + e.radius) {
+                            const { damage, isCrit } = player.calcDamage(dmg);
+                            e.takeDamage(damage, isCrit); player.onDealDamage(damage);
+                            if (e.slowMult !== undefined) { e.slowMult = 0.25; e.slowUntil = Date.now() + 900; } // short freeze
+                        }
+                    }
+                };
+                burst(enemies); burst(bosses); burst(leprechauns);
+                addRing(this.x, this.y, R, this.color);
+                spawnParticles(this.x, this.y, '#bffcff', 10);
             }
 
             draw() {
@@ -27049,7 +27498,27 @@
                     ctx.beginPath();
                     ctx.arc(sx, sy, r, 0, Math.PI * 2);
                     ctx.fill();
-                    
+
+                    // V1_417: Nova Lance — elongated white-hot lance streak along heading (baked).
+                    if (this.novaLance) {
+                        const la = Math.atan2(this.vy, this.vx);
+                        ctx.save();
+                        ctx.translate(sx, sy);
+                        ctx.rotate(la);
+                        ctx.fillStyle = '#fff';
+                        ctx.globalAlpha = 0.9 * this.alpha;
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, r * 2.6, r * 0.55, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = this.color;
+                        ctx.globalAlpha = 0.6 * this.alpha;
+                        ctx.beginPath();
+                        ctx.ellipse(-r * 1.4, 0, r * 2.2, r * 0.32, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                        ctx.globalAlpha = this.alpha;
+                    }
+
                     // Electric sparks
                     ctx.strokeStyle = '#fff';
                     ctx.lineWidth = 1;
@@ -30554,6 +31023,7 @@
                 }
                 for (const proj of projectiles) proj.update(dt);
                 updateEnemyProjectiles(effectiveDt); // V1_400: enemy projectile system (time-stop aware)
+                updateFlameGroundPatches(Date.now()); // V1_417: Dragon's Breath burning ground
 
                 // Batch XP gem updates - only update visible/nearby gems every frame
                 const gemUpdateRadius = 600;
@@ -32457,6 +32927,9 @@
                 }
             }
             
+            // V1_417: burning ground under projectiles
+            drawFlameGroundPatches(Date.now());
+
             // Draw projectiles (under player)
             for (const proj of projectiles) proj.draw();
 
@@ -34842,6 +35315,7 @@
             // Show tutorial popup on first visit
             if (!weaponSelectTutorialShown) {
                 weaponSelectTutorialShown = true;
+                renderEvolutionRecipes();
                 DOM.weaponTutorialPopup.classList.add('active');
             }
             
@@ -34873,6 +35347,7 @@
             document.getElementById('editPoolBtn').onclick = toggleEditMode;
             document.getElementById('editTomesBtn').onclick = showTomeEditor;
             document.getElementById('weaponInfoBtn').onclick = () => {
+                renderEvolutionRecipes();
                 DOM.weaponTutorialPopup.classList.add('active');
             };
             
@@ -35628,6 +36103,9 @@
             beamLastActiveTime = 0;
             enemies = [];
             projectiles = [];
+            evolvedWeapons = new Set();     // V1_417: fresh evolution state each run
+            flameGroundPatches.length = 0;  // V1_417: clear burning ground
+            _goldReaverSecond = 0; _goldReaverWindow = 0; // V1_417: reset gold-cap window
             enemyProjectiles.length = 0; // V1_400: reset in place (keep window ref live for tests)
             _voidSnipersAiming = 0;      // V1_400: reset shared sniper-aim token
             xpGems = [];
@@ -36095,6 +36573,26 @@
         // ============================================================
 
         // ---- ACHIEVEMENTS PANEL ----
+        // V1_417: fill the Info popup with one recipe line per base weapon (aspirational —
+        // locked-tome names are shown per house policy).
+        function renderEvolutionRecipes() {
+            const host = document.getElementById('evolutionRecipes');
+            if (!host) return;
+            let html = '';
+            for (const baseId in EVOLUTIONS) {
+                const base = WEAPONS[baseId];
+                const rec = EVOLUTIONS[baseId];
+                const evo = WEAPONS[rec.evolvedId];
+                const tome = TOMES[rec.tome];
+                if (!base || !evo || !tome) continue;
+                html += '<div class="evo-recipe-line"><span class="evo-base">' + base.icon + ' ' + base.name + '</span>'
+                    + ' <span class="evo-arrow">→</span> '
+                    + '<span class="evo-into" style="color:' + evo.color + ';">' + evo.icon + ' ' + evo.name + '</span>'
+                    + '<span class="evo-req"> — max level + ' + tome.name + '</span></div>';
+            }
+            host.innerHTML = html;
+        }
+
         function renderAchievementsGrid() {
             if (!window.META || !DOM.achievementsGrid) return;
             const st = META.getState();
@@ -36318,7 +36816,8 @@
                 const ic = resolveRewardPreview(type, id)
                     ? `<canvas class="pl-preview-canvas" aria-hidden="true"></canvas>`
                     : def.icon;
-                return `<div class="pl-item" data-name="${def.name}" data-level="${lvl}" data-color="${def.color || '#0ff'}" data-type="${type}" data-id="${id}"><span class="pl-ic">${ic}</span><span class="pl-lv">${lvl}</span></div>`;
+                const lvlDisp = def.evolved ? 'EVO' : lvl; // V1_417: evolved weapons are final
+                return `<div class="pl-item" data-name="${def.name}" data-level="${lvlDisp}" data-color="${def.color || '#0ff'}" data-type="${type}" data-id="${id}"><span class="pl-ic">${ic}</span><span class="pl-lv">${lvlDisp}</span></div>`;
             };
             const wEl = document.getElementById('plWeapons');
             if (wEl) wEl.innerHTML = Object.entries(player.weapons).map(([id, st]) => { const d = WEAPONS[id]; return d ? item('weapon', id, d, st.level) : ''; }).join('');
