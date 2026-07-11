@@ -11523,6 +11523,7 @@
                     arcadeFrame.src = gameSrc;
                     arcadeFrame.title = gameTitle;
                     arcadeGameContainer.classList.remove('pane-ready'); // V1_276: new game must re-handshake before pane controls show
+                    if (typeof resyncPaneFs === 'function') resyncPaneFs(true); // V1_424: re-hand fullscreen state to the incoming game (kills duplicate pause/mute)
                     
                     // Recalculate size (desktop only)
                     enforceGameAspectRatio();
@@ -11571,6 +11572,28 @@
         }
         if (panePauseBtn) panePauseBtn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); sendToGame('toggle-pause'); });
         if (paneMuteBtn) paneMuteBtn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); sendToGame('toggle-mute'); });
+        // V1_424: a swapped-in game boots without body.parent-fs, and the transition guard
+        // above would swallow the re-send — so while fullscreen, switching games left BOTH
+        // the pane pair and the new game's own pause/mute visible (Kevin's duplicate-buttons
+        // report). Re-sync on iframe load AND with a timed retry burst after each switch:
+        // the games' bridge script sits at the document tail behind synchronous network
+        // scripts, so a single early message can land before its listener exists. fs-enter/
+        // fs-exit are idempotent, and each retry recomputes the live fullscreen state.
+        function resyncPaneFs(burst) {
+            function fire() {
+                const fsNow = !!(document.fullscreenElement || document.webkitFullscreenElement ||
+                                 document.mozFullScreenElement || document.msFullscreenElement ||
+                                 (arcadeGameContainerFS && arcadeGameContainerFS.classList.contains('pseudo-fullscreen')));
+                _paneFsState = null;   // state unknown to the (possibly new) document — bypass the guard
+                notifyGameFullscreen(fsNow);
+            }
+            fire();
+            if (burst) [1000, 3000, 7000, 12000].forEach(function (ms) { setTimeout(fire, ms); });
+        }
+        (function () {
+            const f = document.getElementById('arcadeFrame');
+            if (f) f.addEventListener('load', function () { resyncPaneFs(true); });
+        })();
 
         if (fullscreenBtn && arcadeGameContainerFS) {
             // Update button icon and scale game based on fullscreen state
