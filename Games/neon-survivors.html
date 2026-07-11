@@ -501,6 +501,28 @@
         .pl-item .pl-preview-canvas { width: 48px; height: 20px; display: block; }
         .pl-item .pl-lv { color: rgba(255, 255, 255, 0.5); font-size: 10px; font-weight: 600; }
         .pl-items:empty::after { content: 'None yet'; color: rgba(255, 255, 255, 0.3); font-size: 11px; }
+        /* V1_436: RELICS strip — same icon-pill footprint as .pl-item (WEAPONS/TOMES/LEGENDARIES)
+           but its OWN class + click handler (not the shared hover-tooltip system that already
+           serves .pl-item) so a tap here drives the dedicated .relics-detail-line instead of
+           double-firing a floating tooltip too. Rarity color rides the inline border-color set
+           by renderPauseLoadout() (RELIC_RARITY_COLOR — matches the reveal-ceremony palette). */
+        .pl-relic-chip {
+            display: inline-flex; align-items: center; gap: 3px;
+            border-radius: 6px; padding: 3px 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            cursor: pointer; user-select: none; -webkit-user-select: none;
+        }
+        .pl-relic-chip .pl-ic { font-size: 15px; line-height: 1; display: inline-flex; align-items: center; }
+        .pl-relic-chip .pl-lv { color: rgba(255, 255, 255, 0.55); font-size: 9px; font-weight: 700; }
+        .relics-detail-line {
+            width: 100%;
+            min-height: 14px;
+            text-align: center;
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-top: 2px;
+        }
         @media (max-width: 560px) {
             .pl-stats-row { gap: 14px; }
             /* V1_329: weapons/tomes centering is now the base style (applies everywhere). */
@@ -4316,7 +4338,41 @@
             color: rgba(255, 255, 255, 0.7);
             flex-grow: 1;
         }
-        
+
+        /* V1_436: RELICS Phase 3 — reveal-card flavor line + stack indicator. Card
+           border/glow + TYPE badge color already ride the existing inline contents.color
+           (= RELIC_RARITY_COLOR[rarity], V1_434/435); this adds the two new text rows. */
+        #chestModal .modal-card .card-flavor {
+            font-size: 11px;
+            font-style: italic;
+            color: rgba(255, 255, 255, 0.45);
+            margin-top: -4px;
+        }
+        #chestModal .modal-card .card-flavor:empty { display: none; }
+        #chestModal .modal-card .card-stack {
+            font-size: 11px;
+            font-weight: bold;
+            color: rgba(255, 255, 255, 0.65);
+            letter-spacing: 0.5px;
+        }
+        #chestModal .modal-card .card-stack:empty { display: none; }
+
+        /* V1_436: epic/legendary relic reveals get a brief entrance pulse (DOM box-shadow +
+           icon scale — NOT ctx.shadowBlur). One shared keyframe tinted per-card via the
+           --relic-glow custom property (set inline in showOffer()'s card-content setup). */
+        #chestModal .modal-card.relic-legendary,
+        #chestModal .modal-card.relic-epic {
+            animation: chestCardEnter 0.4s ease-out 0.3s forwards, relicRarityPulse 1.7s ease-in-out 0.7s infinite;
+        }
+        #chestModal .modal-card.relic-legendary .card-icon,
+        #chestModal .modal-card.relic-epic .card-icon {
+            animation: legendaryIconPulse 1.5s ease-in-out infinite;
+        }
+        @keyframes relicRarityPulse {
+            0%, 100% { box-shadow: 0 0 20px var(--relic-glow, rgba(255, 215, 0, 0.5)), 0 0 38px var(--relic-glow, rgba(255, 215, 0, 0.25)); }
+            50%      { box-shadow: 0 0 36px var(--relic-glow, rgba(255, 215, 0, 0.85)), 0 0 62px var(--relic-glow, rgba(255, 215, 0, 0.5)); }
+        }
+
         #chestModal .modal-buttons {
             display: flex;
             flex-direction: column;
@@ -7363,6 +7419,12 @@
             #chestModal .modal-card .card-desc {
                 font-size: 10px;
             }
+            #chestModal .modal-card .card-flavor {
+                font-size: 9px;
+            }
+            #chestModal .modal-card .card-stack {
+                font-size: 9px;
+            }
             #chestModal .modal-btn {
                 padding: 8px 16px;
                 font-size: 12px;
@@ -7589,7 +7651,10 @@
             <div class="card-type" id="modalType">BLESSING</div>
             <div class="card-icon" id="modalIcon"></div>
             <div class="card-name" id="modalName"></div>
+            <!-- V1_436: relic reveal ceremony — flavor line + stack indicator (relic branch only; empty/hidden otherwise) -->
+            <div class="card-flavor" id="modalFlavor"></div>
             <div class="card-desc" id="modalDesc"></div>
+            <div class="card-stack" id="modalStack"></div>
         </div>
         <div class="modal-buttons" style="touch-action: auto;">
             <div id="modalTake" class="modal-btn btn-take" onclick="window.chestTake();" ontouchstart="event.stopPropagation();" ontouchend="event.preventDefault(); event.stopPropagation(); window.chestTake();">TAKE</div>
@@ -7773,6 +7838,8 @@
                     <p><strong>Upgrades:</strong> Level up to unlock random <span style="color: #ff9977; text-shadow: 0 0 6px rgba(255, 136, 102, 0.5);">weapons</span> to deal damage and <span style="color: #77ccff; text-shadow: 0 0 6px rgba(102, 204, 255, 0.5);">tomes</span> to boost your stats. You can hold up to 4 of each.</p>
                     <p><strong>Edit:</strong> Use the edit buttons to disable items you don't want offered as upgrades during your round.</p>
                     <p><strong>Evolutions:</strong> Max a weapon (Lv 20) while holding its paired tome, then open a chest to <span style="color:#ffcc33; text-shadow:0 0 6px rgba(255,204,51,0.5);">EVOLVE</span> it into a stronger final form.</p>
+                    <!-- V1_436: RELICS Phase 3 — short explainer paragraph in the pinned-layout popup -->
+                    <p><strong>Relics:</strong> Chests also drop <span style="color:#ffd700; text-shadow:0 0 6px rgba(255,215,0,0.5);">relics</span> — run-local treasures (common/rare/epic/legendary) that stack and reset every run. Higher LUCK improves your odds of rare+ pulls. Evolutions still take priority when a chest opens.</p>
                     <div id="evolutionRecipes" class="evolution-recipes"></div>
                 </div>
                 <button class="weapon-tutorial-btn" id="weaponTutorialBtn">Got it!</button>
@@ -7911,6 +7978,14 @@
                 <div class="pl-group" id="plLegendariesGroup" style="display:none;">
                     <div class="pl-group-title">LEGENDARIES</div>
                     <div class="pl-items" id="plLegendaries"></div>
+                </div>
+                <!-- V1_436: RELICS strip (§6) — always visible (like WEAPONS/TOMES), 'None yet'
+                     empty state via the existing .pl-items:empty CSS rule. Tap/click a chip for
+                     a one-line "name — effect" detail in the fixed line below the strip. -->
+                <div class="pl-group" id="plRelicsGroup">
+                    <div class="pl-group-title">RELICS</div>
+                    <div class="pl-items" id="plRelics"></div>
+                    <div class="relics-detail-line" id="relicsDetailLine"></div>
                 </div>
             </div>
         </div>
@@ -12789,6 +12864,7 @@
         let relicState = new Map();  // id -> stacks (run-local; cleared at startGame)
         let relicCommonStreak = 0;   // consecutive common rolls, for soft pity
         let _bassDropLast = 0;       // V1_435: Bass Drop last-pulse timestamp in gameTime seconds (paused-safe)
+        let runRelicsCollected = 0;  // V1_436: total stacks granted this run (results-screen "Relics collected: N" line)
 
         function relicRollLuck(override) {
             if (typeof override === 'number') return Math.max(0, override);
@@ -12837,6 +12913,7 @@
             const cur = relicState.get(id) || 0;
             const next = Math.min(RELICS[id].maxStacks, cur + (n == null ? 1 : n));
             relicState.set(id, next);
+            runRelicsCollected += Math.max(0, next - cur); // V1_436: results-screen counter — only counts stacks actually added (0 if already maxed)
             if (player) player.applyPassives();
             return next;
         }
@@ -12888,10 +12965,11 @@
         window.__RELICS = {
             grant(id, n) { try { return grantRelic(id, n); } catch (e) { return String(e); } },
             list() { try { const o = {}; for (const [id, s] of relicState) o[id] = s; return o; } catch (e) { return String(e); } },
-            reset() { try { relicState = new Map(); relicCommonStreak = 0; if (player) player.applyPassives(); return true; } catch (e) { return String(e); } },
+            reset() { try { relicState = new Map(); relicCommonStreak = 0; runRelicsCollected = 0; if (player) player.applyPassives(); return true; } catch (e) { return String(e); } }, // V1_436: also clears the results-screen counter
             totals() { try { return relicStatTotals(); } catch (e) { return String(e); } },
             roll(luckOverride) { try { return rollRelic(luckOverride); } catch (e) { return String(e); } },
             _streak() { return relicCommonStreak; },
+            _collected() { return runRelicsCollected; }, // V1_436: test seam for the results-screen "Relics collected: N" line
         };
 
         // ===== V1_416: BLENDED POWER-CEILING (two-lane diminishing returns) =====
@@ -19852,17 +19930,20 @@
             
             DOM.modalCard.style.borderColor = '#22cc22';
             DOM.modalCard.style.boxShadow = '0 0 20px rgba(34, 204, 34, 0.4)';
-            
-            DOM.modalCard.classList.remove('legendary');
+
+            DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary'); // V1_436: also clear any residual relic reveal styling
+            DOM.modalCard.style.removeProperty('--relic-glow');
             DOM.modalName.style.color = '#fff';
-            
+
             // Set type badge
             DOM.modalType.textContent = 'BLESSING';
             DOM.modalType.style.color = '#22cc22';
-            
+
             setChestRewardIcon(reward.type, reward.id, reward.icon);
             DOM.modalName.textContent = reward.name;
             DOM.modalDesc.textContent = reward.desc;
+            if (DOM.modalFlavor) DOM.modalFlavor.textContent = ''; // V1_436: pot rewards carry no flavor line
+            if (DOM.modalStack) DOM.modalStack.textContent = '';
             
             DOM.modalTake.classList.remove('disabled');
             DOM.modalTake.textContent = potRewardIndex < 2 ? 'TAKE & NEXT' : 'TAKE';
@@ -19892,7 +19973,7 @@
             
             potRewardIndex++;
             DOM.chestModal.classList.remove('visible');
-            DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
+            DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary'); // Reset legendary/relic styling (V1_436)
             
             // Small delay before next reward
             setTimeout(() => {
@@ -22645,6 +22726,14 @@
                     DOM.modalTitle.textContent = '⭐ LEGENDARY FOUND! ⭐';
                     DOM.modalTitle.style.color = '#ffa500';
                     DOM.modalTitle.style.textShadow = '0 0 20px #ffa500';
+                } else if (this.contents.type === 'relic' && this.contents.rarity !== 'common') {
+                    // V1_436: rarity-tinted title for rare+ relics (§6 ceremony); commons keep
+                    // the generic TREASURE FOUND title below.
+                    const _rc = RELIC_RARITY_COLOR[this.contents.rarity] || '#ffd700';
+                    DOM.modalTitle.textContent = this.contents.rarity === 'legendary' ? '⭐ LEGENDARY RELIC! ⭐'
+                        : this.contents.rarity === 'epic' ? '💜 EPIC RELIC! 💜' : '🔷 RARE RELIC! 🔷';
+                    DOM.modalTitle.style.color = _rc;
+                    DOM.modalTitle.style.textShadow = '0 0 20px ' + _rc;
                 } else {
                     DOM.modalTitle.textContent = this.isFree ? '💎 FREE TREASURE! 💎' : '💎 TREASURE FOUND! 💎';
                     DOM.modalTitle.style.color = '#ffd700';
@@ -22689,7 +22778,10 @@
                 
                 // Show modal with slot spinning
                 DOM.chestModal.classList.add('visible');
-                SFX.chest();
+                // V1_436: rare+ relics get the legendary sting family (SFX.legendary takes no
+                // args, so per-tier scaling isn't trivially parameterizable — reused as-is);
+                // commons and every other content type keep the standard chest sound.
+                if (this.contents.type === 'relic' && this.contents.rarity !== 'common') SFX.legendary(); else SFX.chest();
 
                 // Store contents for reveal
                 const contents = this.contents;
@@ -22733,10 +22825,13 @@
                         // Set up card content
                         DOM.modalCard.style.borderColor = contents.color || chestColor;
                         DOM.modalCard.style.boxShadow = `0 0 20px ${contents.color || chestColor}40`;
-                        
-                        DOM.modalCard.classList.remove('legendary');
+
+                        // V1_436: clear any residual relic reveal-ceremony styling from a prior
+                        // card (pulse class + glow tint var) before possibly re-applying it below.
+                        DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary');
+                        DOM.modalCard.style.removeProperty('--relic-glow');
                         DOM.modalName.style.color = '#fff';
-                        
+
                         // Set type badge based on contents type
                         let typeBadge = 'ITEM';
                         let typeColor = contents.color || chestColor;
@@ -22755,11 +22850,40 @@
                         }
                         DOM.modalType.textContent = typeBadge;
                         DOM.modalType.style.color = typeColor;
-                        
+
                         setChestRewardIcon(contents.type, contents.id, contents.icon);
                         DOM.modalName.textContent = contents.name;
+                        DOM.modalName.style.color = (contents.type === 'relic') ? (contents.color || '#fff') : '#fff'; // V1_436: name tinted to rarity color on the relic branch only
                         DOM.modalDesc.textContent = contents.desc;
-                        
+
+                        // V1_436: RELICS Phase 3 reveal ceremony — flavor line, stack indicator,
+                        // and an epic/legendary entrance pulse (relic branch only; every other
+                        // content type clears these two new fields so nothing bleeds over).
+                        if (contents.type === 'relic') {
+                            if (DOM.modalFlavor) DOM.modalFlavor.textContent = contents.flavor || '';
+                            const relicId = contents.relicId || contents.id;
+                            const def = RELICS[relicId];
+                            const curStacks = relicState.get(relicId) || 0;
+                            if (DOM.modalStack) {
+                                if (curStacks > 0 && def) {
+                                    const nextStacks = Math.min(def.maxStacks, curStacks + 1);
+                                    // Guarded display only — a dupe of an already-maxed relic reroll
+                                    // upstream in rollRelic()/rollContents(), so 'MAX' should never
+                                    // actually reach here, but never show a no-op 'xN -> xN' either.
+                                    DOM.modalStack.textContent = curStacks >= def.maxStacks ? `MAX ×${curStacks}` : `×${curStacks} → ×${nextStacks}`;
+                                } else {
+                                    DOM.modalStack.textContent = '';
+                                }
+                            }
+                            if (contents.rarity === 'epic' || contents.rarity === 'legendary') {
+                                DOM.modalCard.classList.add('relic-' + contents.rarity);
+                                DOM.modalCard.style.setProperty('--relic-glow', contents.rarity === 'legendary' ? 'rgba(255,215,0,0.55)' : 'rgba(176,96,255,0.5)');
+                            }
+                        } else {
+                            if (DOM.modalFlavor) DOM.modalFlavor.textContent = '';
+                            if (DOM.modalStack) DOM.modalStack.textContent = '';
+                        }
+
                         // Update take button
                         DOM.modalTake.textContent = isFree ? 'TAKE' : (canAfford ? `BUY (${cost})` : 'NOT ENOUGH GOLD');
                         DOM.modalTake.classList.toggle('disabled', !canAfford);
@@ -23375,7 +23499,8 @@
             // Hide the reel, show the card straight away.
             if (DOM.chestSlotReel) DOM.chestSlotReel.style.display = 'none';
             DOM.modalCard.style.display = '';
-            DOM.modalCard.classList.remove('legendary');
+            DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary'); // V1_436: also clear any residual relic reveal styling
+            DOM.modalCard.style.removeProperty('--relic-glow');
             DOM.modalCard.style.borderColor = def.color;
             DOM.modalCard.style.boxShadow = '0 0 26px ' + def.color + '99';
             DOM.modalType.textContent = 'EVOLUTION';
@@ -23384,6 +23509,8 @@
             setChestRewardIcon('weapon', evo.evolvedId, def.icon);
             DOM.modalName.textContent = def.name;
             DOM.modalDesc.textContent = def.desc;
+            if (DOM.modalFlavor) DOM.modalFlavor.textContent = ''; // V1_436: evolution ceremony carries no flavor line
+            if (DOM.modalStack) DOM.modalStack.textContent = '';
 
             DOM.modalTake.textContent = chest.isFree ? 'EVOLVE!' : 'EVOLVE! (' + chest.cost + ')';
             DOM.modalTake.classList.remove('disabled');
@@ -23504,7 +23631,8 @@
         function closeChestModal() {
             DOM.chestModal.classList.remove('visible');
             _modalPreviewItems = []; // V1_318: stop the reward-preview RAF
-            DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
+            DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary'); // Reset legendary/relic styling (V1_436)
+            DOM.modalCard.style.removeProperty('--relic-glow'); // V1_436
             DOM.modalLeave.style.display = ''; // Restore leave button
             // Reset slot reel for next chest
             if (DOM.chestSlotReel) {
@@ -31751,6 +31879,26 @@
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupPauseLoadoutTips);
         else setupPauseLoadoutTips();
 
+        // V1_436: RELICS strip — tap/click a .pl-relic-chip -> one-line "name — effect" detail
+        // in the dedicated .relics-detail-line under the strip. A separate delegated listener
+        // (not the shared .pl-item hover tooltip above) so the two systems never double-fire on
+        // the same chip. Plain 'click' covers both mouse and touch taps (no preventDefault needed
+        // — relic chips aren't inside a scrollable touch-cancel zone).
+        function setupRelicChipDetail() {
+            document.addEventListener('click', (e) => {
+                const chip = e.target.closest && e.target.closest('.pl-relic-chip');
+                if (!chip) return;
+                const line = document.getElementById('relicsDetailLine');
+                if (!line) return;
+                const name = chip.getAttribute('data-name') || '';
+                const desc = chip.getAttribute('data-desc') || '';
+                const color = chip.getAttribute('data-color') || '#8fd6e6';
+                line.innerHTML = `<span style="color:${color};">${name}</span> — ${desc}`;
+            });
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupRelicChipDetail);
+        else setupRelicChipDetail();
+
         // ===== INPUT HANDLING =====
         const input = {
             left: false, right: false, up: false, down: false,
@@ -31992,7 +32140,9 @@
             modalType: document.getElementById('modalType'),
             modalIcon: document.getElementById('modalIcon'),
             modalName: document.getElementById('modalName'),
+            modalFlavor: document.getElementById('modalFlavor'), // V1_436
             modalDesc: document.getElementById('modalDesc'),
+            modalStack: document.getElementById('modalStack'), // V1_436
             modalTake: document.getElementById('modalTake'),
             modalLeave: document.getElementById('modalLeave'),
             menuOverlay: document.getElementById('menuOverlay'),
@@ -33503,13 +33653,16 @@
             DOM.modalCost.style.display = 'none';
             DOM.modalCard.style.borderColor = '#00ffaa';
             DOM.modalCard.style.boxShadow = '0 0 20px rgba(0, 255, 170, 0.4)';
-            DOM.modalCard.classList.remove('legendary');
+            DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary'); // V1_436: also clear any residual relic reveal styling
+            DOM.modalCard.style.removeProperty('--relic-glow');
             DOM.modalName.style.color = '#fff';
             DOM.modalType.textContent = 'BLESSING';
             DOM.modalType.style.color = '#00ffaa';
             setChestRewardIcon('shrine', id, powerup.icon);
             DOM.modalName.textContent = powerup.name;
             DOM.modalDesc.textContent = powerup.desc;
+            if (DOM.modalFlavor) DOM.modalFlavor.textContent = ''; // V1_436: directive blessing carries no flavor line
+            if (DOM.modalStack) DOM.modalStack.textContent = '';
             DOM.modalTake.classList.remove('disabled');
             DOM.modalTake.textContent = 'TAKE';
             DOM.modalLeave.style.display = 'none'; // forced accept, like pot rewards
@@ -33529,7 +33682,7 @@
             directiveBanner = { text: `+${gold} GOLD`, sub: 'Directive reward', color: '#00ffaa', until: gameTime + 3.5 };
             try { if (typeof SFX !== 'undefined' && SFX.chest) SFX.chest(); } catch (e) {}
             DOM.chestModal.classList.remove('visible');
-            DOM.modalCard.classList.remove('legendary');
+            DOM.modalCard.classList.remove('legendary', 'relic-common', 'relic-rare', 'relic-epic', 'relic-legendary'); // V1_436
             DOM.modalLeave.style.display = '';
             pendingChest = null;
             gamePaused = false;
@@ -37806,6 +37959,7 @@
             // V1_434: relics are run-local — wipe stacks + pity streak every fresh run.
             relicState = new Map();
             relicCommonStreak = 0;
+            runRelicsCollected = 0; // V1_436: results-screen "Relics collected: N" counter
             _bassDropLast = 0; // V1_435: first Bass Drop pulse lands at 12s of gameTime
             updateGoldDisplay();
             
@@ -38154,6 +38308,10 @@
             // V1_421: run's plasm haul (armored — absent/zero => hidden, never throws).
             if (stats.plasm && stats.plasm > 0) {
                 statsHtml += `<br><span style="color:#d67aff; text-shadow:0 0 6px #c04dff;">🔮 +${stats.plasm} PLASM</span>`;
+            }
+            // V1_436: relics collected this run (dim one-liner; armored — absent/zero => hidden, never throws).
+            if (typeof runRelicsCollected === 'number' && runRelicsCollected > 0) {
+                statsHtml += `<br><span style="color: rgba(255,255,255,0.5); font-weight: normal; text-shadow: none;">Relics collected: ${runRelicsCollected}</span>`;
             }
             // V1_403: progression pull — surface the closest undone achievement.
             const nu = _computeNextUnlock();
@@ -38740,6 +38898,21 @@
                     ? `<div class="pl-item" data-name="+${hiddenLeg.length} more" data-color="#ffd700" data-desc="${hiddenLeg.map(id => LEGENDARY_UPGRADES[id].name).join(', ')}"><span class="pl-lv">+${hiddenLeg.length}</span></div>`
                     : '');
             }
+            // V1_436: RELICS strip — icon + xN stack badge (only shown for stacks > 1),
+            // rarity-colored border (RELIC_RARITY_COLOR, same palette as the reveal ceremony).
+            // Always visible (unlike LEGENDARIES): .pl-items:empty shows 'None yet' already.
+            const rEl = document.getElementById('plRelics');
+            if (rEl) {
+                rEl.innerHTML = Array.from(relicState.entries()).filter(([id, n]) => n > 0).map(([id, n]) => {
+                    const d = RELICS[id];
+                    if (!d) return '';
+                    const rc = RELIC_RARITY_COLOR[d.rarity] || RELIC_RARITY_COLOR.common;
+                    return `<div class="pl-relic-chip" style="border-color:${rc};" data-name="${d.name}" data-color="${rc}" data-desc="${d.desc}"><span class="pl-ic">${d.icon}</span>${n > 1 ? `<span class="pl-lv">×${n}</span>` : ''}</div>`;
+                }).join('');
+            }
+            // Fresh detail line each time the pause menu opens (cleared until a chip is tapped).
+            const rDetail = document.getElementById('relicsDetailLine');
+            if (rDetail) rDetail.textContent = '';
         }
 
         // V1_350: does the player currently own this legendary? (chance-based or active flag)
