@@ -12703,10 +12703,11 @@
         // shop) draws from this instead of Object.keys(SHRINE_POWERUPS) directly.
         function shrinePowerupPool() {
             return Object.keys(SHRINE_POWERUPS).filter(id => {
-                if (id === 'projectiles') {
-                    if (!playerHasAnyWeapon(VOLLEY_WEAPONS)) return false; // no volley weapon — dead stat
-                    if (player && (player.shrineBonuses.bonusProjectiles || 0) >= 2) return false; // already at the +2 cap
-                }
+                // V1_434 (§5b): the V1_377 shrine +1-projectile roll is removed from EVERY
+                // offer surface (shrine/pot/shop). Projectiles are now chest-sourced via the
+                // Platinum Record relic (Phase 2). The bonusProjectiles stat + its +2 clamp in
+                // applyPassives + VOLLEY_WEAPONS stay put for that relic to reuse.
+                if (id === 'projectiles') return false; // V1_434
                 return true;
             });
         }
@@ -12731,6 +12732,105 @@
             if (typeof evolvedWeapons !== 'undefined' && evolvedWeapons.has(id)) return false;
             return weaponUnlocked(id) && !disabledWeapons.has(id) && !banishedWeapons.has(id);
         }
+
+        // ===== V1_434: RELICS — Megabonk-style run-local item system (Phase 1 CORE) =====
+        // Run-local passive items dropped by chests (RELICS_DESIGN.md). They reset every run
+        // (relicState cleared at startGame); the meta layer (plasm shop, achievements) is
+        // untouched. Phase 1 ships the 10 COMMONS + the roll/pity engine + a single stat
+        // collector folded into Player.applyPassives. rare+ rarities roll but have no content
+        // yet, so they FALL THROUGH to consolation gold (Phase 2 adds their registry entries
+        // right here). Stat relics NEVER take a second stat pathway — one collector only.
+        const RELICS = {
+            // COMMON (10) — §5. Stack caps 5–8.
+            moldySandwich:    { name: 'Moldy Green Room Sandwich', icon: '🥪', rarity: 'common', flavor: 'Week three. Still edible. Probably.', desc: '+6 Max HP',            maxStacks: 8, stats: { maxHp: 6 } },
+            crackedDrumstick: { name: 'Cracked Drumstick',         icon: '🥁', rarity: 'common', flavor: 'Snapped mid-fill. Still keeps time.',  desc: '+2% Attack Speed',     maxStacks: 6, stats: { atkSpeed: 0.02 } },
+            blownAmp:         { name: 'Blown Amp',                 icon: '🔊', rarity: 'common', flavor: 'Distortion was not a choice.',         desc: '+3% Damage',           maxStacks: 6, stats: { damage: 0.03 } },
+            frayedCable:      { name: 'Frayed Cable',              icon: '🔌', rarity: 'common', flavor: 'Wiggle it and it works. Mostly.',      desc: '+4% Projectile Speed', maxStacks: 6, stats: { projSpeed: 0.04 } },
+            setlistScrap:     { name: 'Setlist Scrap',             icon: '📝', rarity: 'common', flavor: 'Beer-stained. Song three is illegible.', desc: '+3% XP Gain',        maxStacks: 5, stats: { xpGain: 0.03 } },
+            guitarPick:       { name: 'Guitar Pick',               icon: '🎸', rarity: 'common', flavor: 'Found one. There are 900 more.',        desc: '+2% Crit Chance',      maxStacks: 6, stats: { critChance: 0.02 } },
+            ductTape:         { name: 'Duct Tape',                 icon: '🩹', rarity: 'common', flavor: 'Holds the whole tour together.',        desc: '+1 Armor',             maxStacks: 5, stats: { armor: 1 } },
+            merchCoin:        { name: 'Merch Table Coin',          icon: '🪙', rarity: 'common', flavor: 'Change from a $20 shirt sale.',         desc: '+4% Gold Gain',        maxStacks: 6, stats: { goldGain: 0.04 } },
+            stageLightGel:    { name: 'Stage Light Gel',           icon: '🎨', rarity: 'common', flavor: 'Melted magenta. Smells like ozone.',    desc: '+4% Pickup Range',     maxStacks: 6, stats: { pickup: 0.04 } },
+            wornTourShirt:    { name: 'Worn Tour Shirt',           icon: '👕', rarity: 'common', flavor: 'Washed in a gas-station sink.',         desc: '+0.2/s Regen',         maxStacks: 5, stats: { regen: 0.2 } },
+        };
+        const RELIC_BASE_WEIGHTS = { common: 58, rare: 27, epic: 12, legendary: 3 };
+        // Reveal border/glow per rarity (§6): common gray-cyan / rare blue / epic violet / legendary gold.
+        const RELIC_RARITY_COLOR = { common: '#8fd6e6', rare: '#4a9eff', epic: '#b060ff', legendary: '#ffd700' };
+        let relicState = new Map();  // id -> stacks (run-local; cleared at startGame)
+        let relicCommonStreak = 0;   // consecutive common rolls, for soft pity
+
+        function relicRollLuck(override) {
+            if (typeof override === 'number') return Math.max(0, override);
+            return (player && typeof player.luck === 'number') ? Math.max(0, player.luck) : 0;
+        }
+        // Rarity roll: base weights modulated by LIVE luck L. rare×(1+L), epic×(1+1.5L),
+        // legendary×(1+2L); common absorbs the remainder after renormalize. Soft pity forces
+        // rare+ once the common streak reaches threshold = max(2, 4 - floor(L/0.15)).
+        function rollRelicRarity(L) {
+            const sR = RELIC_BASE_WEIGHTS.rare      * (1 + L);
+            const sE = RELIC_BASE_WEIGHTS.epic      * (1 + 1.5 * L);
+            const sL = RELIC_BASE_WEIGHTS.legendary * (1 + 2 * L);
+            let sC = 100 - (sR + sE + sL);
+            if (sC < 0) sC = 0; // extreme luck can eat all of common's share
+            const threshold = Math.max(2, 4 - Math.floor(L / 0.15));
+            if (relicCommonStreak >= threshold) {
+                // pity: force rare+ weighted by the scaled rare/epic/legendary weights
+                const tot = sR + sE + sL, r = Math.random() * tot;
+                return r < sR ? 'rare' : r < sR + sE ? 'epic' : 'legendary';
+            }
+            const total = sC + sR + sE + sL, r = Math.random() * total;
+            return r < sC ? 'common' : r < sC + sR ? 'rare' : r < sC + sR + sE ? 'epic' : 'legendary';
+        }
+        // Full relic roll → { rarity, id|null, gold }. Commons resolve to a relic; a dupe of a
+        // MAX-STACKED pick rerolls once, then falls back to consolation gold (40 + 10*minute).
+        // rare+ have no shipped content this phase → consolation gold (Phase 2 slots content here).
+        function rollRelic(luckOverride) {
+            const L = relicRollLuck(luckOverride);
+            const minute = Math.max(0, Math.floor((typeof gameTime === 'number' ? gameTime : 0) / 60));
+            const consolation = () => 40 + 10 * minute;
+            const rarity = rollRelicRarity(L);
+            if (rarity === 'common') relicCommonStreak++; else relicCommonStreak = 0;
+            if (rarity === 'common') {
+                const commons = Object.keys(RELICS).filter(id => RELICS[id].rarity === 'common');
+                const maxed = id => (relicState.get(id) || 0) >= RELICS[id].maxStacks;
+                const pick = () => commons[Math.floor(Math.random() * commons.length)];
+                let id = pick();
+                if (maxed(id)) { id = pick(); if (maxed(id)) return { rarity, id: null, gold: consolation() }; } // reroll once, then gold
+                return { rarity, id, gold: 0 };
+            }
+            return { rarity, id: null, gold: consolation() };
+        }
+        // Grant n stacks of a relic (clamped to maxStacks); recomputes passives. Returns new count.
+        function grantRelic(id, n) {
+            if (!RELICS[id]) return 0;
+            const cur = relicState.get(id) || 0;
+            const next = Math.min(RELICS[id].maxStacks, cur + (n == null ? 1 : n));
+            relicState.set(id, next);
+            if (player) player.applyPassives();
+            return next;
+        }
+        // Fold every owned relic's stat contributions (stacks × per-stack value) into ONE totals
+        // object, consumed at the single extension point in Player.applyPassives. Guarded stats
+        // (atkSpeed here; crit-damage later) enter the V1_416 permanent lane there; the rest are
+        // linear like tome passives. Never a second stat pathway.
+        function relicStatTotals() {
+            const t = {};
+            for (const [id, stacks] of relicState) {
+                const def = RELICS[id];
+                if (!def || !def.stats || !stacks) continue;
+                for (const k in def.stats) t[k] = (t[k] || 0) + def.stats[k] * stacks;
+            }
+            return t;
+        }
+        // Test / later-phase seam.
+        window.__RELICS = {
+            grant(id, n) { try { return grantRelic(id, n); } catch (e) { return String(e); } },
+            list() { try { const o = {}; for (const [id, s] of relicState) o[id] = s; return o; } catch (e) { return String(e); } },
+            reset() { try { relicState = new Map(); relicCommonStreak = 0; if (player) player.applyPassives(); return true; } catch (e) { return String(e); } },
+            totals() { try { return relicStatTotals(); } catch (e) { return String(e); } },
+            roll(luckOverride) { try { return rollRelic(luckOverride); } catch (e) { return String(e); } },
+            _streak() { return relicCommonStreak; },
+        };
 
         // ===== V1_416: BLENDED POWER-CEILING (two-lane diminishing returns) =====
         // Kevin's directive: strong builds should still feel strong, but the multiplicative
@@ -12954,6 +13054,10 @@
                 // lane, so it folds into permAtkSpeedBonus BELOW the knee softening (like tome/shrine
                 // attack speed). The rest are outside the knees — flat/multiplier, exactly as before.
                 const _sr = this.shopRanks || {};
+                // V1_434: single relic stat-collector extension point. Guarded stats (atkSpeed;
+                // crit-damage later) enter the V1_416 permanent lane below; the rest fold in
+                // linearly like tome passives. One pathway — never read relicState elsewhere.
+                const R = relicStatTotals();
                 const shopDmg    = _sr.damage      || 0;
                 const shopHp     = _sr.maxHp       || 0;
                 const shopAtk    = _sr.attackSpeed || 0;
@@ -12974,18 +13078,18 @@
                 this.speed = this.baseSpeed * baseSpeedMult * shrineSpeedMult * tomeSpeedMult * hatSpeedMult * dropSpeedMult * windSpeedMult * (1 + shopMove * 0.008); // V1_421: +0.8%/rank move speed
 
                 // Max HP from base + passives + tomes + shrines
-                this.maxHp = (120 + (this.passives.maxHp || 0) * 25 + (this.tomeBonuses.maxHpBonus || 0) + (this.shrineBonuses.maxHpBonus || 0) + (legendaryEffects.holyBook.maxHpBonus || 0)) * (1 + shopHp * 0.02); // V1_265: holyBook persists; V1_421: +2%/rank max HP
+                this.maxHp = (120 + (this.passives.maxHp || 0) * 25 + (this.tomeBonuses.maxHpBonus || 0) + (this.shrineBonuses.maxHpBonus || 0) + (legendaryEffects.holyBook.maxHpBonus || 0) + (R.maxHp || 0)) * (1 + shopHp * 0.02); // V1_265: holyBook persists; V1_421: +2%/rank max HP; V1_434: +relic maxHp (flat)
                 this.hp = Math.min(this.hp, this.maxHp);
 
                 // Damage multiplier combines passive, shrine, and tome bonuses
                 const baseDamageMult = 1 + (this.passives.damage || 0) * 0.12;  // 12% per level
-                this.damageMultiplier = baseDamageMult * (1 + this.shrineBonuses.damageBonus) * (1 + this.tomeBonuses.damageBonus) * 0.918 * (1 + shopDmg * 0.01); // V1_300: -10% global; V1_377: Kevin +2% (0.90 -> 0.918); V1_421: +1%/rank damage
+                this.damageMultiplier = baseDamageMult * (1 + this.shrineBonuses.damageBonus) * (1 + this.tomeBonuses.damageBonus) * (1 + (R.damage || 0)) * 0.918 * (1 + shopDmg * 0.01); // V1_300: -10% global; V1_377: Kevin +2% (0.90 -> 0.918); V1_421: +1%/rank damage; V1_434: ×(1+relic damage)
 
                 // Pickup range from passives + tomes + shrines
-                this.pickupRange = 50 * (1 + (this.passives.pickupRange || 0) * 0.30 + (this.tomeBonuses.pickupBonus || 0) + (this.shrineBonuses.pickupBonus || 0)) * (1 + shopPickup * 0.03); // V1_421: +3%/rank pickup range
+                this.pickupRange = 50 * (1 + (this.passives.pickupRange || 0) * 0.30 + (this.tomeBonuses.pickupBonus || 0) + (this.shrineBonuses.pickupBonus || 0) + (R.pickup || 0)) * (1 + shopPickup * 0.03); // V1_421: +3%/rank pickup range; V1_434: +relic pickup
 
                 // Regen from base + passives + shrine + tome
-                this.regenRate = Math.min(15, 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0) + (legendaryEffects.holyBook.regenBonus || 0) + shopRegen * 0.1); // V1_258: cap 15 HP/s; V1_265: + holyBook; V1_421: +0.1/s per rank
+                this.regenRate = Math.min(15, 1.5 + (this.passives.regen || 0) * 1.5 + this.shrineBonuses.regenBonus + (this.tomeBonuses.regenBonus || 0) + (legendaryEffects.holyBook.regenBonus || 0) + shopRegen * 0.1 + (R.regen || 0)); // V1_258: cap 15 HP/s; V1_265: + holyBook; V1_421: +0.1/s per rank; V1_434: +relic regen
 
                 // Boost upgrades (V1_233) — granted via mini-boss/boss rewards (later phase).
                 // V1_359: Windrunner legendary adds +2 dash charges (raises the cap so they aren't
@@ -13001,7 +13105,7 @@
                 // V1_416: blended power-ceiling — the PERMANENT attack-speed bonus (shrine + tome)
                 // above PERM_AS_KNEE is softened by PERM_AS_FACTOR. Temporary attack-speed buffs
                 // (none today; reserved) would be applied AFTER this, unscaled. Cap unchanged.
-                const permAtkSpeedBonus = this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus + shopAtk * 0.01; // V1_421: shop AS enters the V1_416 DR lane below the knee
+                const permAtkSpeedBonus = this.shrineBonuses.attackSpeedBonus + this.tomeBonuses.attackSpeedBonus + shopAtk * 0.01 + (R.atkSpeed || 0); // V1_421: shop AS enters the V1_416 DR lane below the knee; V1_434: relic atkSpeed joins the SAME permanent lane (guarded stat)
                 const softAtkSpeedBonus = permAtkSpeedBonus > PERM_AS_KNEE
                     ? PERM_AS_KNEE + (permAtkSpeedBonus - PERM_AS_KNEE) * PERM_AS_FACTOR
                     : permAtkSpeedBonus;
@@ -13028,14 +13132,14 @@
                     }
                 }
                 const deadeyeActive = legendaryEffects.deadeye.active;
-                this.critChance = permCritChance + (deadeyeActive ? 0.20 : 0);
+                this.critChance = permCritChance + (R.critChance || 0) + (deadeyeActive ? 0.20 : 0); // V1_434: relic crit CHANCE is a linear (unguarded) add, after the perm-crit knee — only crit-DAMAGE would enter the lane
                 this.critMultiplier = Math.min(5.0, permCritMultiplier + (deadeyeActive ? 0.75 : 0)); // V1_258: cap 5x
                 
                 // Luck from tome + shrine (affects various RNG) - 0.5 effectiveness rate for tomes
                 this.luck = (this.tomeBonuses.luck || 0) * 0.5 + (this.shrineBonuses.luck || 0) + shopLuck * 0.01; // V1_421: +1%/rank luck
                 
                 // XP bonus from tome + shrine
-                this.xpBonusMult = 1 + (this.tomeBonuses.xpBonus || 0) + (this.shrineBonuses.xpBonus || 0);
+                this.xpBonusMult = 1 + (this.tomeBonuses.xpBonus || 0) + (this.shrineBonuses.xpBonus || 0) + (R.xpGain || 0); // V1_434: +relic xpGain
                 
                 // Lifesteal from shrine + tome
                 this.lifesteal = Math.min(0.5, this.shrineBonuses.lifesteal + (this.tomeBonuses.lifestealBonus || 0)); // V1_258: cap 50%
@@ -13044,7 +13148,7 @@
                 // incoming damage (take 0.5^armor). Smooth, no dead-zone, asymptotes to but
                 // never reaches 100% on its own — WP7: removed the 0.90 hard clamp since the
                 // asymptote already is the safety net (rawArmor=4 -> ~93.75%, never >= 100%).
-                const rawArmor = this.shrineBonuses.armor + (this.tomeBonuses.armorBonus || 0) + shopArmor; // V1_421: +1 flat armor/rank
+                const rawArmor = this.shrineBonuses.armor + (this.tomeBonuses.armorBonus || 0) + shopArmor + (R.armor || 0); // V1_421: +1 flat armor/rank; V1_434: +relic armor (flat, same DR curve)
                 this.armor = 1 - Math.pow(0.5, rawArmor);
 
                 // Weapon size from Tome of Magnitude (V1_369: WP2 pickup-tome swap)
@@ -13054,9 +13158,9 @@
                 this.durationMultiplier = 1 + Math.min(1.0, this.tomeBonuses.durationBonus || 0);
 
                 // WP8: Tome of Velocity — projectile speed (applied at each weapon-fire site)
-                this.projSpeedMultiplier = 1 + Math.min(0.6, this.tomeBonuses.projSpeedBonus || 0);
+                this.projSpeedMultiplier = 1 + Math.min(0.6, this.tomeBonuses.projSpeedBonus || 0) + (R.projSpeed || 0); // V1_434: +relic projSpeed (linear, outside the tome cap)
                 // WP8: Tome of Midas — gold gain (applied at each gameplay gold-reward site)
-                this.goldMultiplier = (1 + (this.tomeBonuses.goldBonus || 0)) * (1 + shopGold * 0.02); // V1_421: +2%/rank gold gain
+                this.goldMultiplier = (1 + (this.tomeBonuses.goldBonus || 0) + (R.goldGain || 0)) * (1 + shopGold * 0.02); // V1_421: +2%/rank gold gain; V1_434: +relic goldGain
                 // WP8: Tome of Retribution — % of incoming contact damage reflected to the attacker
                 this.thornsPct = Math.min(1.2, this.tomeBonuses.thornsBonus || 0);
                 // V1_377: Barrage shrine blessing — flat +N projectiles for volley weapons,
@@ -19004,6 +19108,7 @@
         window.__P4 = {
             get enemies() { return enemies; },
             get enemyProjectiles() { return enemyProjectiles; },
+            get chests() { return chests; },        // V1_434: read-only chest list (verification seam)
             get player() { return player; },
             get gameTime() { return gameTime; },
             get kills() { return kills; },
@@ -22377,8 +22482,10 @@
                 this.isFree = Math.random() < 0.10;
                 this.cost = this.isFree ? 0 : nextChestCost;
                 
-                // Pre-roll contents
-                this.contents = this.rollContents();
+                // V1_434: contents are rolled LAZILY at open (showOffer). Chests spawn in bulk
+                // at game start (40–60 at once); rolling relics at construction would advance the
+                // pity streak dozens of times and freeze luck at spawn. Rolled when opened instead.
+                this.contents = null;
             }
             
             update(dt) {
@@ -22419,6 +22526,9 @@
                     showEvolutionReveal(this, _evo);
                     return;
                 }
+
+                // V1_434: roll the RELIC reward now, at open — live luck + correct pity streak.
+                this.contents = this.rollContents();
 
                 const color = this.isFree ? COLORS.gold : '#c0c0c0';
                 spawnParticles(this.x, this.y, color, 15);
@@ -22531,6 +22641,10 @@
                             typeBadge = 'LEGENDARY';
                         } else if (contents.type === 'buff') {
                             typeBadge = 'BUFF';
+                        } else if (contents.type === 'relic') {
+                            typeBadge = (contents.rarity || 'common').toUpperCase(); // V1_434: TYPE line = rarity (§6)
+                        } else if (contents.type === 'gold') {
+                            typeBadge = 'GOLD'; // V1_434: consolation
                         }
                         DOM.modalType.textContent = typeBadge;
                         DOM.modalType.style.color = typeColor;
@@ -22552,55 +22666,36 @@
             }
             
             rollContents() {
-                // Calculate legendary chance
-                let legendaryChance = 0.02 + (gameTime / 60) * 0.005;
-                legendaryChance = Math.min(legendaryChance, 0.15);
-                
-                // Bad luck protection
-                if (guaranteedLegendaryNext && legendaryCount < MAX_LEGENDARIES) {
-                    legendaryChance = 1.0;
-                }
-                
-                // Good luck protection
-                if (legendaryCount >= MAX_LEGENDARIES) {
-                    legendaryChance = 0;
-                }
-
-                // V1_325: no legendary drops in the first 2 minutes — early game stays
-                // weapon/tome-focused (gameTime is in seconds). Overrides luck protection.
-                if (gameTime < 120) {
-                    legendaryChance = 0;
-                }
-
-                // V1_418: only preview UNOWNED legendaries (one-of-each). If somehow all are
-                // owned, fall through to a shrine powerup instead of previewing a dupe.
-                const unownedLeg = Object.keys(LEGENDARY_UPGRADES).filter(id => !playerHasLegendary(id));
-                if (unownedLeg.length && Math.random() < legendaryChance) {
-                    // Pick a random UNOWNED legendary for preview
-                    const randomKey = unownedLeg[Math.floor(Math.random() * unownedLeg.length)];
-                    const legendary = LEGENDARY_UPGRADES[randomKey];
+                // V1_434: chests now roll a RELIC (was: chest-sourced shrine powerup / legendary
+                // roll — both removed here; legendary upgrades keep their non-chest sources: pot of
+                // gold, boss/directive grants, the __LEG seam). Evolution / pot / directive-blessing
+                // precedence is decided UPSTREAM (showOffer / acceptChestOffer) and never reaches here.
+                const r = rollRelic(); // live luck + pity; rare+ have no content yet → consolation gold
+                if (r.id && RELICS[r.id]) {
+                    const def = RELICS[r.id];
                     return {
-                        type: 'legendary',
-                        id: randomKey,
-                        icon: legendary.icon,
-                        name: legendary.name,
-                        desc: legendary.desc,
-                        color: legendary.color
-                    };
-                } else {
-                    // Random shrine powerup
-                    const powerupIds = shrinePowerupPool(); // V1_384: build-aware pool
-                    const randomId = powerupIds[Math.floor(Math.random() * powerupIds.length)];
-                    const powerup = SHRINE_POWERUPS[randomId];
-                    return { 
-                        type: 'shrine', 
-                        id: randomId,
-                        icon: powerup.icon,
-                        name: powerup.name,
-                        desc: powerup.desc,
-                        color: powerup.color
+                        type: 'relic',
+                        id: r.id,          // reward-preview lookup key (no preview → emoji fallback)
+                        relicId: r.id,
+                        rarity: r.rarity,
+                        icon: def.icon,
+                        name: def.name,
+                        desc: def.desc,
+                        flavor: def.flavor,
+                        color: RELIC_RARITY_COLOR[def.rarity] || RELIC_RARITY_COLOR.common
                     };
                 }
+                // Consolation gold: a dupe of a max-stacked relic (rerolled once) or a rare+
+                // roll with no shipped content this phase (Phase 2 replaces this fall-through).
+                return {
+                    type: 'gold',
+                    id: 'gold',
+                    amount: r.gold,
+                    icon: '🪙',
+                    name: `${r.gold} Gold`,
+                    desc: 'A little something for the road.',
+                    color: COLORS.gold
+                };
             }
             
             draw() {
@@ -23258,18 +23353,20 @@
             spawnParticles(chest.x, chest.y, burstColor, 20);
             addRing(chest.x, chest.y, chest.radius || 30, burstColor);
 
-            // Apply contents
-            if (chest.contents.type === 'legendary') {
-                legendaryCount++;
-                lastLegendaryTime = gameTime;
-                guaranteedLegendaryNext = false;
-                DOM.chestModal.classList.remove('visible');
-                DOM.modalCard.classList.remove('legendary'); // Reset legendary styling
-                showLegendaryUpgrade();
-            } else {
-                const powerup = SHRINE_POWERUPS[chest.contents.id];
-                player.addShrineBonus(powerup.stat, powerup.value);
+            // Apply contents — V1_434: chests grant a RELIC (or consolation gold). The
+            // chest-sourced legendary branch is gone; legendary upgrades keep their other sources.
+            if (chest.contents.type === 'relic') {
+                grantRelic(chest.contents.relicId || chest.contents.id, 1); // recomputes passives internally
                 updateBuffsBar();
+                closeChestModal();
+            } else if (chest.contents.type === 'gold') {
+                playerGold += (chest.contents.amount || 0);
+                updateGoldDisplay();
+                closeChestModal();
+            } else {
+                // Legacy safety (shrine powerup) — unreachable post-V1_434, kept defensive.
+                const powerup = SHRINE_POWERUPS[chest.contents.id];
+                if (powerup) { player.addShrineBonus(powerup.stat, powerup.value); updateBuffsBar(); }
                 closeChestModal();
             }
             
@@ -37584,6 +37681,9 @@
             try { if (window.META) playerGold += (META.getRank('startGold') || 0) * 20; } catch (e) {}
             nextChestCost = 5;
             pendingChest = null;
+            // V1_434: relics are run-local — wipe stacks + pity streak every fresh run.
+            relicState = new Map();
+            relicCommonStreak = 0;
             updateGoldDisplay();
             
             // Reset upgrade variety tracking
