@@ -239,3 +239,56 @@ CLAUDE.md carries the always-current summary; registries in-file are the truth.
 - **Target raised to 90+** (Kevin): iterations = perf (A, V1_411) → art/UX flags
   (B, V1_412) → balance depth (C). Fun & balance is the gating category; past ~C the
   honest next point comes from live play on Kevin's device, not more headless proxies.
+
+---
+
+## 9. Depth addendum — V1_413 → V1_422 (Maw tuning, music, economy, drip-feed)
+
+CLAUDE.md carries the always-current summary; in-file registries are the truth.
+
+- **Maw HP measured** (V1_413): 130k estimate re-based against benched mid-build DPS
+  (1,890 measured) → `MAW_HP` 220k (mid ≈ 180–260s real at 45–65% dodge uptime).
+  Live dodge-uptime on Kevin's device remains the open tuning input.
+- **Per-level music** (V1_414/V1_415): 15 new 32-bar tracks (5 per new level, themed);
+  `shufflePlaylist` semantic change — `LEVELS[].music` is now the POOL ITSELF validated
+  against `TRACKS` (fallback full-12 if <2 valid), un-trapping brand-new track keys the
+  old filter-over-meadow-12 silently dropped. V1_415 extended the 12 meadow originals
+  to the same 32-bar form (EXTENSIONS merge; shipped bars byte-identical).
+- **Power ceiling** (V1_416): two-lane DR in `Player.applyPassives` — PERMANENT
+  stacking passes knees (`PERM_AS_KNEE` 0.80/0.50, `PERM_CRIT_KNEE` 2.6/0.45);
+  temporary spikes (deadeye etc.) stack after, unscaled. Strong/mid spread measured
+  7.5× → 4.05×, monotonic; UI shows effective values.
+- **Evolutions wave 1** (V1_417): `EVOLUTIONS` registry (base L20 + paired tome →
+  chest becomes EVOLVE reveal; in-place slot transform; evolved is final — never
+  levels, never offered). 8 of 25 shipped; `firstEvolution` badge. Remaining 17 are
+  a content backlog, not new architecture.
+- **Legendary rework** (V1_418): splitFire removed everywhere; +soulHarvest /
+  spectralEcho / phantomStride / guardianWisp (pool 17). ONE-OF-EACH per run enforced
+  at the `showLegendaryUpgrade()` chokepoint + chest preview; all-owned → V1_385
+  blessing fallback. xpMagnet display renamed "Soul Siphon" (name collision).
+- **Live-play UI batches** (V1_419): combined APPEARANCE picker (color+sprite, one
+  popover), HUD glyph clamp, trackpad tooltips fixed (dead since V1_314 —
+  #trackpadZone swallowed mousemove), overhead HP-bar fade with hysteresis, unified
+  1.5× objective arrows w/ scale-aware corner margins, SURVIVE countdown → pause-safe
+  shrink-to-chip.
+- **Unlock pacing revamp** (V1_420): 28 achievements; session 1 = exactly 3 unlocks;
+  raised thresholds spread meadow mastery over sessions 2–6; NEW level-conditional
+  runStat plumbing (optional `level:` tag — progress only counts on the matching
+  world): Marsh Endurance 15:00 → lifesteal, Grave Vigil 25:00 necro → persistence,
+  Forged in Fire L30 ember → Boom Box, Hellwalker badge; meadowCleared parity event.
+  Migration law held: legacy sims keep every unlock (union merge, prune-only).
+- **PLASM economy** (V1_421): second currency, Megabonk split (gold = in-run only).
+  Sources: mini-boss 2 / boss 5 (field shards, magnetized), level clear 25 (+25
+  first), Maw seal 100, survival floor(min/2) on death AND victory. Menu PLASM SHOP:
+  10 permanent stats × 5 ranks, costs 10/20/35/55/80 (2,000 full board ≈ 25
+  clear-runs), FULL REFUND; bonuses apply at `startGame` through the V1_416 permanent
+  lane (verified: +5% shop atk-speed compresses to +2.5% past the knee). META adds
+  `plasm`/`plasmLifetime`/`shop` (additive; legacy-safe).
+- **Viewport-cutoff law** (V1_422): Kevin-reported (Info popup unreachable GOT IT!).
+  Every surface must bound height to the viewport with inner scroll + pinned
+  header/exit. 36 surfaces × 5 viewports audited to 0 fails. Gotchas found:
+  `backdrop-filter` makes an overlay the containing block for fixed children (pin
+  broke on the shop ✕ — blur moved to a `::before` layer); absolute-positioned
+  corner buttons inside scrollable overlays scroll away (gear → fixed); decorative
+  oversized `::after` layers (legendary god-rays) turn `overflow-y:auto` into bogus
+  scroll — that overlay is intentionally left unhardened, documented in place.
