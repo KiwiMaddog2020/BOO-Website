@@ -51,16 +51,22 @@ const RELICS = {
 
 ## 4. Rarities, weights, pity
 
-| Rarity | Weight | Launch count | Stack caps |
+| Rarity | Base weight | Launch count | Stack caps |
 |---|---|---|---|
 | Common | 58% | 10 | 5–8 |
 | Rare | 27% | 8 | 2–5 |
 | Epic | 12% | 6 | 1–2 |
-| Legendary | 3% | 4 | 1, never re-offered once owned |
+| Legendary | 3% | 4 | 1–2, never re-offered at max |
 
-Soft pity: 4 consecutive commons force the next roll rare+. Duplicate rolls of a
-max-stacked relic reroll once, then fall back to gold (VS-style consolation:
-`40 + 10*minute` gold).
+**LUCK drives rarity (Kevin, Megabonk-style):** with luck L (the player's live luck
+stat, e.g. 0.30 for +30%): rare ×(1+L), epic ×(1+1.5L), legendary ×(1+2L), common
+absorbs the remainder after renormalizing. Pity tightens with luck: threshold
+`4 − floor(L/0.15)` (min 2) consecutive commons force rare+. ACCEPTANCE: 400-roll
+distribution at L=0 vs L=0.30 shows a statistically visible shift (epic+legendary
+share up by ≥40% relative), or it doesn't ship.
+
+Duplicate rolls of a max-stacked relic reroll once, then fall back to gold
+(VS-style consolation: `40 + 10*minute` gold).
 
 ## 5. Launch set (28)
 
@@ -82,10 +88,19 @@ Pads (+20% move speed 2s after taking a hit, cap 1), Bootleg Recording (+1 card 
 level-up offers, cap 1 — wires into the offer builder beside V1_431 consumables),
 Golden Kazoo (10% of gold pickups also drop an XP gem, cap 1).
 
-**Legendary (4, run-defining):** Platinum Record (+1 projectile — respects the
-existing bonusProjectiles +2 clamp; flag if it needs raising), Encore Flare (revive
-once at 50% HP), Master Tape (evolved weapons +12% damage — V1_417 synergy),
-Tour Bus (+12% move speed AND +1 boost charge — plays with windRunner pips).
+**Legendary (4, run-defining):** Platinum Record (+1 projectile, **maxStacks 2** —
+exactly the existing bonusProjectiles +2 clamp; chests become the ONLY projectile
+source, see §5b), Encore Flare (revive once at 50% HP), Master Tape (evolved
+weapons +12% damage — V1_417 synergy), Tour Bus (+12% move speed AND +1 boost
+charge — plays with windRunner pips).
+
+### 5b. Shrine projectile roll moves here (Kevin)
+
+The V1_377 shrine reward that granted flat +1 `bonusProjectiles` is REMOVED from
+the shrine pool (shrines keep every other reward; pool weights renormalize).
+Projectiles are now chest-sourced via Platinum Record only. The `bonusProjectiles`
+stat, its +2 clamp in `applyPassives`, and the shrine system itself are otherwise
+untouched. Migration: run-local stat — nothing persists, nothing to migrate.
 
 ## 6. Ceremony + inventory UX
 
