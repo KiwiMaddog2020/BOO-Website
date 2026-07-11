@@ -147,3 +147,20 @@ untouched. Migration: run-local stat — nothing persists, nothing to migrate.
 | Ceremony + inventory UX | 15 | rarity-styled reveal, flavor text, pause inventory, zero cutoff |
 | Integration/balance | 10 | ceiling holds, evolution ceremony intact, economy sane |
 | Stability/verification | 10 | zero pageerrors, per-relic probes, perf bench inside budget |
+
+---
+
+## 10. Phase status + open dial (V1_435)
+
+Phases 1 (core, V1_434) and 2 (content, V1_435) are SHIPPED — all 28 relics live,
+probe-verified. Two §5 dials were trimmed under the §7 ceiling law: Overdriven Amp
++15%→+10%/stack, Master Tape +12%→+10%. Reverb Pedal / Spare Strings caps set to 4.
+
+**OPEN QUESTION FOR KEVIN (not blocking):** a theoretical kitchen-sink hoard (all
+28 relics at max stacks ≈ 100 chest opens) reaches ×6.5 vs the 4.05× tome/shop
+ceiling. This is economically unreachable (chest costs double to 1000 then +50% —
+a real 30-min run opens ~8–15 chests), so live play stays under the ceiling, but
+the structural options are: (a) accept relics as an intentional third power axis
+whose gate is the chest economy (current state), or (b) add an equipped-relic cap.
+Morning decision; the /goal loop measures a realistic 12-relic run multiplier as
+part of Integration/Balance scoring.
