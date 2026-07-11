@@ -204,3 +204,22 @@ exactly). Full 36-relic hoard incl. EVP at max is frame-time neutral (Δ ≈ 0 m
 baked V1_411 glows, no per-frame shadowBlur). Feedback Screamer is scoped to the
 themed BOSS_IDENTITY bosses (MiniBoss + MajorBoss); the Maw is deliberately excluded
 both directions to protect its bespoke `MAW_HP` tuning.
+
+---
+
+## 11. Final score (V1_437, /goal loop closed)
+
+| Category | Pts | Score | Evidence |
+|---|---|---|---|
+| Item variety/count | 20 | 19 | 36 relics, 11/11/9/5, every effect probe-verified |
+| Rarity/drop system | 15 | 14 | weights ±3%, luck lift +76-77% rel., pity clean, free-chest quality |
+| Stacking + tradeoffs | 15 | 14 | caps clamp-proven; 6 true tradeoffs |
+| Synergies | 15 | 15 | 10+ relics keying status/dash/gold/XP/evolution/shield/ghost/crit/economy |
+| Ceremony + inventory UX | 15 | 14 | rarity reveal + flavor + pulse, pause strip, results line, zero cutoff |
+| Integration/balance | 10 | 9 | realistic runs median 1.05×/p90 1.17× vs 4.05×; evolution intact; open: theoretical hoard cap (Kevin) |
+| Stability/verification | 10 | 10 | zero pageerrors all phases, frame-time neutral |
+| **TOTAL** | **100** | **95** | target 90 met at iteration 1 |
+
+Remaining headroom (honest): a deeper item pool (Megabonk ~50+), per-tier reveal
+SFX, an equipped-relic cap IF Kevin wants the theoretical hoard closed, and live
+mobile feel — Kevin-device territory, not headless-provable.
