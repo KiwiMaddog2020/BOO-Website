@@ -515,6 +515,9 @@
         }
         .pl-relic-chip .pl-ic { font-size: 15px; line-height: 1; display: inline-flex; align-items: center; }
         .pl-relic-chip .pl-lv { color: rgba(255, 255, 255, 0.55); font-size: 9px; font-weight: 700; }
+        /* V1_439: static RELIC_SPRITES bake, matching the weapon/tome pill icon footprint —
+           see mountPauseRelicIcons(); no RAF, painted once per renderPauseLoadout() rebuild. */
+        .pl-relic-chip .pl-relic-icon-canvas { width: 28px; height: 28px; display: block; }
         .relics-detail-line {
             width: 100%;
             min-height: 14px;
@@ -4316,6 +4319,14 @@
             margin: 2px auto 0;
             border-radius: 6px;
         }
+        /* V1_439: static RELIC_SPRITES bake for the relic branch of the chest reveal card —
+           square (not the 96:40 weapon/tome aspect); see setChestRewardIcon()'s relic branch. */
+        .modal-relic-icon-canvas {
+            width: 64px; height: 64px;
+            display: block;
+            margin: 2px auto 0;
+            border-radius: 6px;
+        }
         #chestModal .modal-preview-canvas { width: 120px; }
         #shopModal .modal-preview-canvas { width: 86px; }
 
@@ -5090,6 +5101,9 @@
         /* V1_322: live preview canvas inside a slot reel (level-up / chest reveal) — replaces
            the emoji flash with the item's custom animation. */
         .slot-preview-canvas { width: 78px; aspect-ratio: 96 / 40; height: auto; display: block; }
+        /* V1_439: static RELIC_SPRITES bake for the slot reel's post-spin result icon (relic
+           branch of mountSlotPreview) — square, matches the .slot-icon footprint. */
+        .relic-slot-preview-canvas { width: 42px; height: 42px; display: block; }
 
         .slot-name {
             font-size: 12px;
@@ -36891,6 +36905,588 @@
             }
         };
 
+        // ===== V1_439: RELIC ICONS =====
+        // Static neon glyphs for the 36 RELICS (registry ~L12981). Siblings of WEAPON_PREVIEWS/
+        // TOME_PREVIEWS in look (dark transparent bg, thin neon strokes + small filled glow cores,
+        // 1-3 colors, bold simple silhouettes readable at 24px) but NOT time-animated — relics are
+        // passive stat items with no natural motion cue, so each is baked ONCE (getRelicIconCanvas
+        // below) instead of driving a RAF loop like the weapon/tome preview grids. Rarity stays OFF
+        // the sprite by design — RELIC_RARITY_COLOR borders/badges already carry it everywhere this
+        // renders (pause chip border, reveal-card border/glow); baking is the one place shadowBlur
+        // is used off the hot path (V1_411/V1_423 precedent).
+        const RELIC_ICON_SIZE = 96; // bake resolution == design coordinate space (no transform needed)
+
+        // Small rounded-rect path helper — several icons are boxes (amp/pedal/cabinet/cassette/tape).
+        function _riBoxPath(ctx, x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+        }
+
+        const RELIC_SPRITES = {
+            // ===== COMMON (11) =====
+            // Moldy Green Room Sandwich — stacked bread/filling layers + a mold-green glow fleck.
+            moldySandwich(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                const bx0 = cx - 20, bx1 = cx + 20;
+                ctx.strokeStyle = '#ffcf7a'; ctx.lineWidth = 4; ctx.shadowBlur = 10; ctx.shadowColor = '#ffcf7a'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.moveTo(bx0, cy - 6); ctx.lineTo(cx, cy - 20); ctx.lineTo(bx1, cy - 6); ctx.stroke();
+                const layerY = [cy - 2, cy + 8, cy + 18];
+                const layerC = ['#ff6b6b', '#8fd94a', '#ffcf7a'];
+                layerY.forEach((y, i) => { ctx.strokeStyle = layerC[i]; ctx.shadowColor = layerC[i]; ctx.beginPath(); ctx.moveTo(bx0 + 2, y); ctx.lineTo(bx1 - 2, y); ctx.stroke(); });
+                ctx.globalAlpha = 0.9; ctx.fillStyle = '#39ff6a'; ctx.shadowColor = '#39ff6a'; ctx.shadowBlur = 14;
+                ctx.beginPath(); ctx.arc(cx + 10, cy - 1, 3.4, 0, TAU); ctx.fill();
+                ctx.beginPath(); ctx.arc(cx + 15, cy + 3, 1.8, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Cracked Drumstick — drumstick silhouette with a crack line.
+            crackedDrumstick(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                ctx.strokeStyle = '#ff8a3c'; ctx.lineWidth = 6; ctx.shadowBlur = 10; ctx.shadowColor = '#ff8a3c'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.moveTo(cx - 18, cy + 20); ctx.lineTo(cx + 14, cy - 16); ctx.stroke();
+                ctx.fillStyle = '#ffe0c0'; ctx.shadowBlur = 8; ctx.beginPath(); ctx.ellipse(cx + 18, cy - 20, 7, 5, -0.7, 0, TAU); ctx.fill();
+                ctx.globalAlpha = 1; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.shadowBlur = 6; ctx.shadowColor = '#ffffff';
+                ctx.beginPath(); ctx.moveTo(cx - 4, cy + 2); ctx.lineTo(cx + 2, cy - 4); ctx.lineTo(cx - 1, cy - 6); ctx.lineTo(cx + 5, cy - 12); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Blown Amp — amp box with a jagged blown-cone star.
+            blownAmp(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ff3300'; ctx.lineWidth = 3; ctx.shadowBlur = 9; ctx.shadowColor = '#ff3300'; ctx.globalAlpha = 0.9;
+                _riBoxPath(ctx, cx - 20, cy - 16, 40, 32, 4); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy + 2, 11, 0, TAU); ctx.stroke();
+                ctx.globalAlpha = 1; ctx.fillStyle = '#ffcc00'; ctx.shadowColor = '#ffcc00'; ctx.shadowBlur = 14;
+                _wpStar(ctx, cx, cy + 2, 9);
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.7; ctx.shadowBlur = 6;
+                for (let i = 0; i < 5; i++) { const a = i * TAU / 5; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * 12, cy + 2 + Math.sin(a) * 12); ctx.lineTo(cx + Math.cos(a) * 18, cy + 2 + Math.sin(a) * 18); ctx.stroke(); }
+                _wpReset(ctx);
+            },
+            // Frayed Cable — curved cable with exposed strand sparks.
+            frayedCable(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+                ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 4; ctx.shadowBlur = 9; ctx.shadowColor = '#00e5ff'; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.moveTo(cx - 22, cy + 16); ctx.quadraticCurveTo(cx - 6, cy - 20, cx + 10, cy - 4); ctx.stroke();
+                ctx.lineWidth = 1.6; ctx.globalAlpha = 0.55;
+                for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(cx + 8 + i, cy - 6 + i * 2); ctx.lineTo(cx + 16 + i * 3, cy - 12 - i * 2); ctx.stroke(); }
+                ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 10; ctx.globalAlpha = 1;
+                _wpStar(ctx, cx + 16, cy - 10, 4);
+                ctx.fillStyle = '#00e5ff'; ctx.shadowColor = '#00e5ff';
+                _wpStar(ctx, cx + 22, cy - 15, 2.4);
+                _wpReset(ctx);
+            },
+            // Setlist Scrap — torn paper with lines.
+            setlistScrap(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(223,246,255,0.10)'; ctx.strokeStyle = '#dff6ff'; ctx.lineWidth = 2.2; ctx.shadowBlur = 8; ctx.shadowColor = '#dff6ff'; ctx.globalAlpha = 0.95;
+                ctx.beginPath();
+                ctx.moveTo(cx - 15, cy - 20); ctx.lineTo(cx + 16, cy - 18); ctx.lineTo(cx + 14, cy + 6);
+                ctx.lineTo(cx + 19, cy + 12); ctx.lineTo(cx + 8, cy + 20); ctx.lineTo(cx - 6, cy + 14);
+                ctx.lineTo(cx - 17, cy + 18); ctx.lineTo(cx - 13, cy + 2); ctx.closePath();
+                ctx.fill(); ctx.stroke();
+                // V1_439: ruled lines need to read DARKER than the paper fill, so this pass drops
+                // to 'source-over' — a dark stroke under 'lighter' (additive) is invisible.
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = 'rgba(10,15,25,0.55)'; ctx.lineWidth = 1.6; ctx.globalAlpha = 0.8; ctx.shadowBlur = 0;
+                for (let i = 0; i < 4; i++) { const y = cy - 12 + i * 8; ctx.beginPath(); ctx.moveTo(cx - 9, y); ctx.lineTo(cx + 9 - (i === 3 ? 5 : 0), y); ctx.stroke(); }
+                _wpReset(ctx);
+            },
+            // Guitar Pick — pick silhouette.
+            guitarPick(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(255,215,0,0.14)'; ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 3; ctx.shadowBlur = 11; ctx.shadowColor = '#ffd700'; ctx.globalAlpha = 0.95;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy - 22);
+                ctx.bezierCurveTo(cx + 18, cy - 14, cx + 15, cy + 14, cx, cy + 22);
+                ctx.bezierCurveTo(cx - 15, cy + 14, cx - 18, cy - 14, cx, cy - 22);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 6; ctx.globalAlpha = 0.6;
+                ctx.beginPath(); ctx.ellipse(cx - 4, cy - 6, 4, 7, -0.4, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Duct Tape — tape roll.
+            ductTape(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#cfd8dc'; ctx.lineWidth = 8; ctx.shadowBlur = 9; ctx.shadowColor = '#cfd8dc'; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.arc(cx, cy, 16, 0, TAU); ctx.stroke();
+                ctx.lineWidth = 2; ctx.strokeStyle = '#8fa3ab'; ctx.globalAlpha = 0.7; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx, cy, 20, 0, TAU); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy, 12, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#10151a'; ctx.globalAlpha = 1;
+                ctx.beginPath(); ctx.arc(cx, cy, 7, 0, TAU); ctx.fill();
+                // V1_439b (architect review): flat pulled-tape tongue under the roll — a diagonal
+                // tab read as a magnifier handle; a horizontal strip reads as tape lying flat
+                ctx.fillStyle = '#aeb9bf'; ctx.globalAlpha = 0.85; ctx.shadowBlur = 5; ctx.shadowColor = '#cfd8dc';
+                ctx.beginPath(); ctx.moveTo(cx + 4, cy + 14); ctx.lineTo(cx + 30, cy + 14); ctx.lineTo(cx + 30, cy + 21); ctx.lineTo(cx - 2, cy + 21); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.95;
+                ctx.fillRect(cx + 27, cy + 14, 3, 7);
+                _wpReset(ctx);
+            },
+            // Merch Table Coin — coin with a note symbol.
+            merchCoin(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(255,215,0,0.16)'; ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 3; ctx.shadowBlur = 11; ctx.shadowColor = '#ffd700'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.arc(cx, cy, 19, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 6; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.arc(cx - 3, cy + 3, 3.4, 0, TAU); ctx.fill();
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(cx + 1, cy + 5); ctx.lineTo(cx + 1, cy - 8); ctx.lineTo(cx + 6, cy - 6); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Stage Light Gel — light beam through a gel square.
+            stageLightGel(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ff1493'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.shadowBlur = 10; ctx.shadowColor = '#ff1493'; ctx.globalAlpha = 0.6;
+                ctx.beginPath(); ctx.moveTo(cx - 20, cy - 20); ctx.lineTo(cx + 4, cy + 4); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx + 4, cy + 4); ctx.lineTo(cx + 20, cy + 20); ctx.stroke();
+                ctx.fillStyle = 'rgba(0,229,255,0.28)'; ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2.4; ctx.globalAlpha = 0.95; ctx.shadowBlur = 8; ctx.shadowColor = '#00e5ff';
+                ctx.beginPath(); ctx.rect(cx - 3, cy - 3, 14, 14); ctx.fill(); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Worn Tour Shirt — t-shirt.
+            wornTourShirt(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineJoin = 'round';
+                ctx.fillStyle = 'rgba(155,48,255,0.14)'; ctx.strokeStyle = '#9b30ff'; ctx.lineWidth = 2.6; ctx.shadowBlur = 9; ctx.shadowColor = '#9b30ff'; ctx.globalAlpha = 0.95;
+                ctx.beginPath();
+                ctx.moveTo(cx - 8, cy - 18); ctx.lineTo(cx - 18, cy - 12); ctx.lineTo(cx - 14, cy - 4); ctx.lineTo(cx - 10, cy - 7);
+                ctx.lineTo(cx - 10, cy + 20); ctx.lineTo(cx + 10, cy + 20); ctx.lineTo(cx + 10, cy - 7);
+                ctx.lineTo(cx + 14, cy - 4); ctx.lineTo(cx + 18, cy - 12); ctx.lineTo(cx + 8, cy - 18);
+                ctx.quadraticCurveTo(cx, cy - 12, cx - 8, cy - 18);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Pop Filter — mic pop filter disc.
+            popFilter(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 3; ctx.shadowBlur = 10; ctx.shadowColor = '#00ffff'; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.ellipse(cx, cy, 19, 15, 0, 0, TAU); ctx.stroke();
+                ctx.globalAlpha = 0.5; ctx.lineWidth = 1;
+                for (let gx = -12; gx <= 12; gx += 6) { ctx.beginPath(); ctx.moveTo(cx + gx, cy - 13); ctx.lineTo(cx + gx, cy + 13); ctx.stroke(); }
+                for (let gy = -9; gy <= 9; gy += 6) { ctx.beginPath(); ctx.moveTo(cx - 17, cy + gy); ctx.lineTo(cx + 17, cy + gy); ctx.stroke(); }
+                ctx.strokeStyle = '#cfd8dc'; ctx.lineWidth = 3; ctx.globalAlpha = 0.9; ctx.shadowBlur = 6;
+                ctx.beginPath(); ctx.moveTo(cx, cy + 15); ctx.lineTo(cx, cy + 22); ctx.stroke();
+                _wpReset(ctx);
+            },
+
+            // ===== RARE (11) =====
+            // Reverb Pedal — guitar pedal with knobs.
+            reverbPedal(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(155,48,255,0.16)'; ctx.strokeStyle = '#9b30ff'; ctx.lineWidth = 2.6; ctx.shadowBlur = 10; ctx.shadowColor = '#9b30ff'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 15, cy - 18, 30, 38, 5); ctx.fill(); ctx.stroke();
+                // three small top knobs in a ROW (asymmetric count breaks the two-eyes read) each
+                // with a radial tick, + a distinct ringed footswitch straddling the bottom edge
+                // (stompbox silhouette, not a face).
+                ctx.fillStyle = '#00e5ff'; ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 6;
+                [-8, 0, 8].forEach(dx => { ctx.beginPath(); ctx.arc(cx + dx, cy - 9, 2.6, 0, TAU); ctx.fill(); });
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.globalAlpha = 0.75; ctx.shadowBlur = 0;
+                [-8, 0, 8].forEach((dx, i) => { const a = -Math.PI / 2 + (i - 1) * 0.5; ctx.beginPath(); ctx.moveTo(cx + dx, cy - 9); ctx.lineTo(cx + dx + Math.cos(a) * 3.6, cy - 9 + Math.sin(a) * 3.6); ctx.stroke(); });
+                ctx.globalAlpha = 0.95; ctx.strokeStyle = '#ff1493'; ctx.lineWidth = 2.2; ctx.shadowColor = '#ff1493'; ctx.shadowBlur = 8;
+                ctx.beginPath(); ctx.arc(cx, cy + 17, 5, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#ff1493'; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(cx, cy + 17, 2, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Spare Strings — coiled string pack.
+            spareStrings(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+                ctx.strokeStyle = '#e0e6ea'; ctx.lineWidth = 2; ctx.shadowBlur = 8; ctx.shadowColor = '#e0e6ea'; ctx.globalAlpha = 0.9;
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath();
+                    for (let a = 0; a <= TAU * 2.4; a += 0.2) { const r = 3 + a * 1.1; const x = cx - 6 + i * 8 + Math.cos(a) * r * 0.3; const y = cy - 16 + a * 3.4; if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+                    ctx.stroke();
+                }
+                ctx.fillStyle = '#00e5ff'; ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 10; ctx.globalAlpha = 1;
+                _wpStar(ctx, cx + 14, cy - 16, 2.6);
+                _wpReset(ctx);
+            },
+            // Roadie Gloves — glove.
+            roadieGloves(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineJoin = 'round';
+                ctx.fillStyle = 'rgba(255,102,0,0.16)'; ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 2.6; ctx.shadowBlur = 9; ctx.shadowColor = '#ff6600'; ctx.globalAlpha = 0.95;
+                ctx.beginPath();
+                ctx.moveTo(cx - 12, cy + 18); ctx.lineTo(cx - 13, cy - 2);
+                ctx.lineTo(cx - 17, cy - 14); ctx.lineTo(cx - 12, cy - 16); ctx.lineTo(cx - 8, cy - 6);
+                ctx.lineTo(cx - 6, cy - 18); ctx.lineTo(cx - 1, cy - 18); ctx.lineTo(cx - 2, cy - 6);
+                ctx.lineTo(cx + 2, cy - 17); ctx.lineTo(cx + 7, cy - 15); ctx.lineTo(cx + 4, cy - 4);
+                ctx.lineTo(cx + 9, cy - 12); ctx.lineTo(cx + 14, cy - 8); ctx.lineTo(cx + 8, cy + 2);
+                ctx.lineTo(cx + 12, cy + 18); ctx.closePath();
+                ctx.fill(); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Energy Drink Case — can with lightning.
+            energyDrink(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(0,229,255,0.16)'; ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2.6; ctx.shadowBlur = 9; ctx.shadowColor = '#00e5ff'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 11, cy - 20, 22, 40, 4); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx - 11, cy - 13); ctx.lineTo(cx + 11, cy - 13); ctx.stroke();
+                ctx.fillStyle = '#fff200'; ctx.shadowColor = '#fff200'; ctx.shadowBlur = 12; ctx.globalAlpha = 1;
+                ctx.beginPath(); ctx.moveTo(cx + 3, cy - 8); ctx.lineTo(cx - 4, cy + 4); ctx.lineTo(cx, cy + 4); ctx.lineTo(cx - 3, cy + 15); ctx.lineTo(cx + 6, cy + 1); ctx.lineTo(cx + 2, cy + 1); ctx.closePath(); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Backstage Pass — lanyard pass.
+            backstagePass(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.shadowBlur = 6; ctx.shadowColor = '#ffd700'; ctx.globalAlpha = 0.85;
+                ctx.beginPath(); ctx.moveTo(cx - 4, cy - 22); ctx.quadraticCurveTo(cx + 10, cy - 20, cx + 4, cy - 12); ctx.stroke();
+                ctx.fillStyle = 'rgba(255,215,0,0.16)'; ctx.lineWidth = 2.6; ctx.shadowBlur = 10; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 13, cy - 12, 26, 32, 4); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy - 8, 3, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.shadowBlur = 7;
+                ctx.fillRect(cx - 8, cy - 1, 16, 3);
+                ctx.fillStyle = '#00e5ff'; ctx.shadowColor = '#00e5ff';
+                ctx.fillRect(cx - 8, cy + 5, 10, 3);
+                _wpReset(ctx);
+            },
+            // Feedback Loop — looping wave arrows.
+            feedbackLoop(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+                ctx.strokeStyle = '#ff1493'; ctx.lineWidth = 3; ctx.shadowBlur = 10; ctx.shadowColor = '#ff1493'; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.arc(cx, cy, 17, 0.3, TAU - 0.5); ctx.stroke();
+                ctx.save(); ctx.translate(cx + Math.cos(0.3) * 17, cy + Math.sin(0.3) * 17); ctx.rotate(0.3 + Math.PI / 2);
+                ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(4, 0); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fillStyle = '#ff1493'; ctx.fill(); ctx.restore();
+                ctx.strokeStyle = '#00e5ff'; ctx.shadowColor = '#00e5ff'; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.8;
+                ctx.beginPath(); for (let x = cx - 6; x <= cx + 6; x += 2) ctx.lineTo(x, cy + Math.sin((x - (cx - 6)) * 0.8) * 3); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Fog Machine — box emitting fog puffs.
+            fogMachine(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(191,239,255,0.16)'; ctx.strokeStyle = '#bfefff'; ctx.lineWidth = 2.4; ctx.shadowBlur = 8; ctx.shadowColor = '#bfefff'; ctx.globalAlpha = 0.9;
+                _riBoxPath(ctx, cx - 16, cy + 2, 32, 16, 3); ctx.fill(); ctx.stroke();
+                ctx.globalAlpha = 0.55; ctx.fillStyle = '#e8ffff'; ctx.shadowBlur = 12;
+                ctx.beginPath(); ctx.arc(cx - 6, cy - 8, 8, 0, TAU); ctx.arc(cx + 6, cy - 12, 9, 0, TAU); ctx.arc(cx + 14, cy - 4, 6, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Extra Verse — music staff with a plus.
+            extraVerse(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.6; ctx.shadowBlur = 5; ctx.shadowColor = '#ffffff'; ctx.globalAlpha = 0.6;
+                for (let i = 0; i < 4; i++) { const y = cy - 14 + i * 6; ctx.beginPath(); ctx.moveTo(cx - 18, y); ctx.lineTo(cx + 6, y); ctx.stroke(); }
+                ctx.fillStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.shadowBlur = 12; ctx.globalAlpha = 1;
+                ctx.fillRect(cx + 12, cy - 3, 12, 3.2); ctx.fillRect(cx + 16.4, cy - 9, 3.2, 15);
+                _wpReset(ctx);
+            },
+            // Cursed Setlist — setlist with a purple curse mark.
+            cursedSetlist(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(155,48,255,0.10)'; ctx.strokeStyle = '#9b30ff'; ctx.lineWidth = 2.2; ctx.shadowBlur = 8; ctx.shadowColor = '#9b30ff'; ctx.globalAlpha = 0.85;
+                _riBoxPath(ctx, cx - 14, cy - 20, 28, 40, 2); ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.6; ctx.shadowBlur = 0;
+                for (let i = 0; i < 4; i++) { const y = cy - 12 + i * 7; ctx.beginPath(); ctx.moveTo(cx - 9, y); ctx.lineTo(cx + 9, y); ctx.stroke(); }
+                ctx.strokeStyle = '#c060ff'; ctx.lineWidth = 2.4; ctx.shadowBlur = 12; ctx.shadowColor = '#c060ff'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.arc(cx, cy + 10, 7, 0.4, TAU - 0.4); ctx.moveTo(cx - 5, cy + 5); ctx.lineTo(cx + 5, cy + 15); ctx.moveTo(cx + 5, cy + 5); ctx.lineTo(cx - 5, cy + 15); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Feedback Screamer — screaming mic with rays.
+            feedbackScreamer(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 2; ctx.shadowBlur = 9; ctx.shadowColor = '#ff6600'; ctx.globalAlpha = 0.8;
+                for (let i = 0; i < 6; i++) { const a = i * TAU / 6; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * 16, cy + Math.sin(a) * 16); ctx.lineTo(cx + Math.cos(a) * 24, cy + Math.sin(a) * 24); ctx.stroke(); }
+                ctx.fillStyle = 'rgba(255,20,147,0.2)'; ctx.strokeStyle = '#ff1493'; ctx.lineWidth = 2.6; ctx.shadowColor = '#ff1493'; ctx.shadowBlur = 10; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.ellipse(cx, cy - 4, 8, 11, 0, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx, cy + 7); ctx.lineTo(cx, cy + 15); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // EVP Recorder — handheld recorder with a ghost wisp.
+            evpRecorder(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(0,229,255,0.16)'; ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2.4; ctx.shadowBlur = 8; ctx.shadowColor = '#00e5ff'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 9, cy - 4, 18, 26, 3); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.shadowBlur = 6;
+                ctx.beginPath(); ctx.arc(cx, cy + 4, 2, 0, TAU); ctx.fill();
+                // ghost wisp above the recorder — brighter fill + a matching outline stroke so it
+                // reads as a distinct floating shape (not just a soft blur) at small display sizes.
+                ctx.globalAlpha = 0.8; ctx.fillStyle = '#d8faff'; ctx.strokeStyle = '#7fe8ff'; ctx.lineWidth = 1.2; ctx.shadowColor = '#7fe8ff'; ctx.shadowBlur = 14;
+                ctx.beginPath();
+                ctx.moveTo(cx - 8, cy - 9); ctx.quadraticCurveTo(cx - 10, cy - 22, cx, cy - 24); ctx.quadraticCurveTo(cx + 10, cy - 22, cx + 8, cy - 9);
+                ctx.quadraticCurveTo(cx + 4, cy - 14, cx, cy - 9); ctx.quadraticCurveTo(cx - 4, cy - 14, cx - 8, cy - 9); ctx.closePath();
+                ctx.fill(); ctx.stroke();
+                ctx.globalAlpha = 1; ctx.fillStyle = '#0a1420'; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx - 3, cy - 16, 1.1, 0, TAU); ctx.arc(cx + 3, cy - 16, 1.1, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+
+            // ===== EPIC (9) =====
+            // Overdriven Amp — amp with red overdrive glow.
+            overdrivenAmp(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ff2200'; ctx.lineWidth = 3; ctx.shadowBlur = 14; ctx.shadowColor = '#ff2200'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 18, cy - 16, 36, 32, 4); ctx.stroke();
+                ctx.globalAlpha = 0.5; ctx.fillStyle = '#ff2200'; ctx.shadowBlur = 18;
+                ctx.beginPath(); ctx.arc(cx, cy + 2, 12, 0, TAU); ctx.fill();
+                ctx.globalAlpha = 1; ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 8;
+                ctx.beginPath(); ctx.arc(cx, cy + 2, 4, 0, TAU); ctx.fill();
+                ctx.strokeStyle = '#ff8800'; ctx.lineWidth = 1.6; ctx.globalAlpha = 0.8; ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 6;
+                for (let i = 0; i < 6; i++) { const x = cx - 15 + i * 5; ctx.beginPath(); ctx.moveTo(x, cy - 12); ctx.lineTo(x, cy - 8); ctx.stroke(); }
+                _wpReset(ctx);
+            },
+            // Pyro Rig — flame jet rig.
+            pyroRig(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#cfd8dc'; ctx.lineWidth = 4; ctx.shadowBlur = 4; ctx.globalAlpha = 0.7;
+                ctx.beginPath(); ctx.moveTo(cx - 4, cy + 18); ctx.lineTo(cx - 4, cy + 4); ctx.stroke();
+                const flame = (fx, fy, sc, col) => {
+                    ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 12 * sc; ctx.globalAlpha = 0.85;
+                    ctx.beginPath();
+                    ctx.moveTo(fx, fy + 16 * sc);
+                    ctx.quadraticCurveTo(fx - 10 * sc, fy + 4 * sc, fx - 3 * sc, fy - 8 * sc);
+                    ctx.quadraticCurveTo(fx, fy - 2 * sc, fx + 3 * sc, fy - 16 * sc);
+                    ctx.quadraticCurveTo(fx + 9 * sc, fy - 2 * sc, fx + 5 * sc, fy + 6 * sc);
+                    ctx.quadraticCurveTo(fx + 10 * sc, fy + 4 * sc, fx, fy + 16 * sc);
+                    ctx.closePath(); ctx.fill();
+                };
+                flame(cx - 4, cy + 2, 1.15, '#ff2200');
+                flame(cx - 4, cy + 3, 0.75, '#ff8800');
+                flame(cx - 4, cy + 4, 0.4, '#ffe066');
+                _wpReset(ctx);
+            },
+            // Bass Drop — speaker cone with shock rings.
+            bassDrop(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ff1493'; ctx.lineWidth = 2; ctx.globalAlpha = 0.7; ctx.shadowBlur = 8; ctx.shadowColor = '#ff1493';
+                ctx.beginPath(); ctx.arc(cx, cy, 22, 0, TAU); ctx.stroke();
+                ctx.strokeStyle = '#9b30ff'; ctx.shadowColor = '#9b30ff'; ctx.globalAlpha = 0.5;
+                ctx.beginPath(); ctx.arc(cx, cy, 16, 0, TAU); ctx.stroke();
+                ctx.fillStyle = 'rgba(0,229,255,0.18)'; ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2.6; ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 9; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.arc(cx, cy, 11, 0, TAU); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy, 5, 0, TAU); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Crowd Surf Pads — pad with motion lines.
+            crowdSurfPads(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(255,102,0,0.18)'; ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 2.6; ctx.shadowBlur = 9; ctx.shadowColor = '#ff6600'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.ellipse(cx, cy + 4, 17, 9, 0, 0, TAU); ctx.fill(); ctx.stroke();
+                // speed-line trio skimming low across the pad (reads as motion under something
+                // being carried) — brighter + closer to the pad than the original placement.
+                ctx.strokeStyle = '#ffffff'; ctx.lineCap = 'round'; ctx.globalAlpha = 0.95; ctx.shadowBlur = 8; ctx.shadowColor = '#ffffff';
+                for (let i = 0; i < 3; i++) { const y = cy - 8 + i * 5; ctx.lineWidth = 2.6 - i * 0.4; ctx.beginPath(); ctx.moveTo(cx - 22 + i * 3, y); ctx.lineTo(cx - 2 + i * 3, y); ctx.stroke(); }
+                _wpReset(ctx);
+            },
+            // Bootleg Recording — cassette.
+            bootlegRecording(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(143,214,230,0.14)'; ctx.strokeStyle = '#8fd6e6'; ctx.lineWidth = 2.4; ctx.shadowBlur = 8; ctx.shadowColor = '#8fd6e6'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 20, cy - 13, 40, 26, 3); ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = '#ff1493'; ctx.shadowColor = '#ff1493'; ctx.lineWidth = 1.6; ctx.globalAlpha = 0.8;
+                ctx.beginPath(); ctx.moveTo(cx - 16, cy - 2); ctx.lineTo(cx - 7, cy - 2); ctx.moveTo(cx + 7, cy - 2); ctx.lineTo(cx + 16, cy - 2); ctx.stroke();
+                ctx.fillStyle = '#10151a'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx - 9, cy + 4, 5, 0, TAU); ctx.arc(cx + 9, cy + 4, 5, 0, TAU); ctx.fill();
+                ctx.strokeStyle = '#8fd6e6'; ctx.lineWidth = 1.4; ctx.shadowColor = '#8fd6e6'; ctx.shadowBlur = 4;
+                ctx.beginPath(); ctx.arc(cx - 9, cy + 4, 2.4, 0, TAU); ctx.arc(cx + 9, cy + 4, 2.4, 0, TAU); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Golden Kazoo — kazoo in gold.
+            goldenKazoo(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+                ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 7; ctx.shadowBlur = 12; ctx.shadowColor = '#ffd700'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.moveTo(cx - 18, cy + 12); ctx.lineTo(cx + 8, cy - 12); ctx.stroke();
+                ctx.fillStyle = '#ffe97a'; ctx.shadowBlur = 8;
+                ctx.beginPath(); ctx.moveTo(cx + 3, cy - 17); ctx.lineTo(cx + 16, cy - 12); ctx.lineTo(cx + 3, cy - 7); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#fff6d0'; ctx.shadowBlur = 5; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.arc(cx - 4, cy + 2, 2.4, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Heavy Cab — speaker cabinet.
+            heavyCab(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(143,214,230,0.14)'; ctx.strokeStyle = '#8fd6e6'; ctx.lineWidth = 2.6; ctx.shadowBlur = 8; ctx.shadowColor = '#8fd6e6'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 18, cy - 20, 36, 40, 3); ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = '#8fd6e6'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(cx, cy - 6, 9, 0, TAU); ctx.arc(cx, cy + 10, 6, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#10151a'; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx, cy - 6, 3.4, 0, TAU); ctx.arc(cx, cy + 10, 2.2, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Strobe Rig — strobe burst.
+            strobeRig(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = '#ffffff'; ctx.shadowBlur = 18; ctx.shadowColor = '#ffffff'; ctx.globalAlpha = 1;
+                _wpStar(ctx, cx, cy, 15);
+                ctx.fillStyle = '#00e5ff'; ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 12; ctx.globalAlpha = 0.7;
+                ctx.save(); ctx.translate(cx, cy); ctx.rotate(Math.PI / 4);
+                ctx.beginPath(); ctx.moveTo(0, -15); ctx.lineTo(3, -3); ctx.lineTo(15, 0); ctx.lineTo(3, 3); ctx.lineTo(0, 15); ctx.lineTo(-3, 3); ctx.lineTo(-15, 0); ctx.lineTo(-3, -3); ctx.closePath(); ctx.fill();
+                ctx.restore();
+                _wpReset(ctx);
+            },
+            // Signature Solo — signed pick with star.
+            signatureSolo(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(0,229,255,0.14)'; ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2.6; ctx.shadowBlur = 9; ctx.shadowColor = '#00e5ff'; ctx.globalAlpha = 0.95;
+                // V1_439b (architect review): squat TILTED plectrum — an upright rounded-triangle
+                // reads as a heraldic shield; the ~20° tilt + squat profile breaks that read
+                // (shields are never drawn tilted, picks almost always are)
+                ctx.save(); ctx.translate(cx, cy); ctx.rotate(-0.35);
+                ctx.beginPath();
+                ctx.moveTo(-14, -9);
+                ctx.quadraticCurveTo(0, -18, 14, -9);
+                ctx.quadraticCurveTo(17, 4, 0, 16);
+                ctx.quadraticCurveTo(-17, 4, -14, -9);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.75; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.moveTo(-8, 0); ctx.quadraticCurveTo(-3, -4, 1, 2); ctx.quadraticCurveTo(5, 6, 8, -2); ctx.stroke();
+                ctx.restore();
+                ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 10; ctx.globalAlpha = 1;
+                _wpStar(ctx, cx + 13, cy - 14, 4);
+                _wpReset(ctx);
+            },
+
+            // ===== LEGENDARY (5) =====
+            // Platinum Record — platinum vinyl disc (distinct hue from Gold Master Disc below).
+            platinumRecord(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#dfe9f5'; ctx.lineWidth = 2.4; ctx.shadowBlur = 12; ctx.shadowColor = '#dfe9f5'; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.arc(cx, cy, 21, 0, TAU); ctx.stroke();
+                ctx.globalAlpha = 0.5;
+                ctx.beginPath(); ctx.arc(cx, cy, 15, 0, TAU); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy, 9, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#aeefff'; ctx.shadowBlur = 8; ctx.globalAlpha = 0.5;
+                ctx.beginPath(); ctx.moveTo(cx - 14, cy - 14); ctx.lineTo(cx - 4, cy - 14); ctx.lineTo(cx - 16, cy + 4); ctx.lineTo(cx - 20, cy + 2); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#f4fbff'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx, cy, 3, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Encore Flare — road flare with flame.
+            encoreFlare(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+                ctx.strokeStyle = '#ff5500'; ctx.lineWidth = 6; ctx.shadowBlur = 8; ctx.shadowColor = '#ff5500'; ctx.globalAlpha = 0.9;
+                ctx.beginPath(); ctx.moveTo(cx - 3, cy + 20); ctx.lineTo(cx + 8, cy); ctx.stroke();
+                ctx.fillStyle = '#ff2200'; ctx.shadowBlur = 16; ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.moveTo(cx + 8, cy + 4);
+                ctx.quadraticCurveTo(cx - 4, cy - 8, cx + 4, cy - 22);
+                ctx.quadraticCurveTo(cx + 9, cy - 12, cx + 15, cy - 16);
+                ctx.quadraticCurveTo(cx + 18, cy - 4, cx + 8, cy + 4);
+                ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#ffe066'; ctx.shadowBlur = 8; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.moveTo(cx + 8, cy - 2); ctx.quadraticCurveTo(cx + 3, cy - 8, cx + 8, cy - 16); ctx.quadraticCurveTo(cx + 12, cy - 8, cx + 8, cy - 2); ctx.closePath(); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Master Tape — reel tape.
+            masterTape(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.fillStyle = 'rgba(255,179,71,0.14)'; ctx.strokeStyle = '#ffb347'; ctx.lineWidth = 2.4; ctx.shadowBlur = 9; ctx.shadowColor = '#ffb347'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 20, cy - 4, 40, 16, 3); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx - 11, cy + 4, 8, 0, TAU); ctx.arc(cx + 11, cy + 4, 8, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#10151a'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx - 11, cy + 4, 3, 0, TAU); ctx.arc(cx + 11, cy + 4, 3, 0, TAU); ctx.fill();
+                ctx.strokeStyle = '#ffd98c'; ctx.lineWidth = 1.6; ctx.globalAlpha = 0.65; ctx.shadowColor = '#ffd98c'; ctx.shadowBlur = 5;
+                ctx.beginPath(); ctx.moveTo(cx - 5, cy + 8); ctx.quadraticCurveTo(cx, cy + 14, cx + 5, cy + 8); ctx.stroke();
+                _wpReset(ctx);
+            },
+            // Tour Bus — van/bus silhouette.
+            tourBus(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter'; ctx.lineJoin = 'round';
+                ctx.fillStyle = 'rgba(0,229,255,0.16)'; ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2.6; ctx.shadowBlur = 9; ctx.shadowColor = '#00e5ff'; ctx.globalAlpha = 0.95;
+                _riBoxPath(ctx, cx - 22, cy - 8, 44, 18, 4); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx - 22, cy - 8); ctx.lineTo(cx - 16, cy - 16); ctx.lineTo(cx + 10, cy - 16); ctx.lineTo(cx + 14, cy - 8); ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = '#9b30ff'; ctx.shadowColor = '#9b30ff'; ctx.shadowBlur = 6; ctx.globalAlpha = 0.8;
+                ctx.fillRect(cx - 12, cy - 14, 8, 6); ctx.fillRect(cx, cy - 14, 8, 6);
+                ctx.fillStyle = '#10151a'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx - 13, cy + 10, 4.4, 0, TAU); ctx.arc(cx + 10, cy + 10, 4.4, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+            // Gold Master Disc — gold vinyl disc.
+            goldMasterDisc(ctx, s) {
+                const cx = s / 2, cy = s / 2;
+                ctx.globalCompositeOperation = 'lighter';
+                ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2.4; ctx.shadowBlur = 14; ctx.shadowColor = '#ffd700'; ctx.globalAlpha = 0.95;
+                ctx.beginPath(); ctx.arc(cx, cy, 21, 0, TAU); ctx.stroke();
+                ctx.globalAlpha = 0.55;
+                ctx.beginPath(); ctx.arc(cx, cy, 15, 0, TAU); ctx.stroke();
+                ctx.beginPath(); ctx.arc(cx, cy, 9, 0, TAU); ctx.stroke();
+                ctx.fillStyle = '#fff6d0'; ctx.shadowBlur = 8; ctx.globalAlpha = 0.55;
+                ctx.beginPath(); ctx.moveTo(cx - 14, cy - 14); ctx.lineTo(cx - 4, cy - 14); ctx.lineTo(cx - 16, cy + 4); ctx.lineTo(cx - 20, cy + 2); ctx.closePath(); ctx.fill();
+                ctx.fillStyle = '#ffe97a'; ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+                ctx.beginPath(); ctx.arc(cx, cy, 3, 0, TAU); ctx.fill();
+                _wpReset(ctx);
+            },
+        };
+
+        // V1_439: bake cache — id -> offscreen <canvas> (baked once, reused everywhere below).
+        // Lazy AND idempotent: prebakeRelicIcons() warms every id at startGame (§ perf report),
+        // but any caller can also pull a fresh id on demand (e.g. the master-code grant path).
+        const _relicIconCache = new Map();
+        function getRelicIconCanvas(id) {
+            if (_relicIconCache.has(id)) return _relicIconCache.get(id);
+            const draw = RELIC_SPRITES[id];
+            if (!draw) return null; // fallback law: caller falls back to RELICS[id].icon (emoji)
+            const cv = document.createElement('canvas');
+            cv.width = cv.height = RELIC_ICON_SIZE;
+            const cx = cv.getContext('2d');
+            try { draw(cx, RELIC_ICON_SIZE); } catch (e) { return null; }
+            _relicIconCache.set(id, cv);
+            return cv;
+        }
+        // Prebake every registered relic icon; called once at startGame (idempotent — repeat
+        // "play again" calls are pure Map hits). Returns elapsed ms for the perf report.
+        function prebakeRelicIcons() {
+            const t0 = performance.now();
+            for (const id in RELIC_SPRITES) getRelicIconCanvas(id);
+            return performance.now() - t0;
+        }
+        // Paint a small square canvas from the cached bake at a fixed device-pixel size (no
+        // clientWidth dependency — safe to call on detached / not-yet-visible elements, unlike
+        // the weapon/tome preview mounts which need layout for their fixed-but-hidden canvases).
+        function _paintRelicIconCanvas(cv, id, cssPx) {
+            const src = getRelicIconCanvas(id);
+            if (!src) return false;
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            cv.width = cv.height = Math.round(cssPx * dpr);
+            cv.getContext('2d').drawImage(src, 0, 0, cv.width, cv.height);
+            return true;
+        }
+        // Paint every RELICS strip chip canvas just inserted into #plRelics (renderPauseLoadout
+        // rebuilds the strip's innerHTML fresh each pause; this is the matching paint pass —
+        // static bakes need no RAF, unlike mountPauseLoadoutPreviews' animated weapon/tome pills).
+        function mountPauseRelicIcons() {
+            document.querySelectorAll('#plRelics canvas.pl-relic-icon-canvas').forEach(cv => {
+                _paintRelicIconCanvas(cv, cv.dataset.relic, 28);
+            });
+        }
+        // Test seam extension (§ verification): expose the registry + cache for probing.
+        window.__RELICS.spriteIds = () => Object.keys(RELIC_SPRITES);
+        window.__RELICS.hasSprite = (id) => !!RELIC_SPRITES[id];
+        window.__RELICS._deleteSprite = (id) => { const had = !!RELIC_SPRITES[id]; delete RELIC_SPRITES[id]; _relicIconCache.delete(id); return had; }; // fallback-law probe
+
         // ===== V1_304/V1_311: shared preview renderer =====
         // One canvas frame: clear, inset-clip (6px sides / 3px top-bottom so glows stay
         // inside the card), then the effect's own draw fn. Used by all three preview
@@ -37035,6 +37631,21 @@
         // "wrong weapon/tome mid-spin" on real GPUs; DOM traces were always clean).
         function mountSlotPreview(iconEl, type, id, emojiFallback) {
             if (!iconEl) return;
+            // V1_439: relic branch — static RELIC_SPRITES bake (no RAF), so the reel's post-spin
+            // result icon matches the card that follows 400ms later instead of flashing the emoji
+            // fallback and THEN swapping to a sprite (fallback law: no sprite -> stays on emoji).
+            if (type === 'relic') {
+                const cv = document.createElement('canvas');
+                cv.className = 'relic-slot-preview-canvas';
+                cv.setAttribute('aria-hidden', 'true');
+                if (_paintRelicIconCanvas(cv, id, 42)) {
+                    iconEl.textContent = '';
+                    iconEl.appendChild(cv);
+                    return;
+                }
+                iconEl.innerHTML = emojiFallback != null ? emojiFallback : '';
+                return;
+            }
             const prev = resolveRewardPreview(type, id);
             if (prev) {
                 const cv = document.createElement('canvas');
@@ -37112,6 +37723,23 @@
         function setChestRewardIcon(type, id, emoji) {
             const host = DOM.modalIcon;
             if (!host) return;
+            // V1_439: relic branch — static RELIC_SPRITES bake (square, no RAF); separate from
+            // the animated weapon/tome/shrine pipeline below (different draw signature + aspect).
+            // Fallback law: no sprite for this id -> emoji, never a blank card-icon.
+            if (type === 'relic') {
+                const cv = document.createElement('canvas');
+                cv.className = 'modal-relic-icon-canvas';
+                cv.setAttribute('aria-hidden', 'true');
+                if (_paintRelicIconCanvas(cv, id, 64)) { // chest modal CSS width 64px
+                    host.textContent = '';
+                    host.appendChild(cv);
+                    startModalPreviews([]); // no animated items on this branch
+                    return;
+                }
+                startModalPreviews([]);
+                host.textContent = emoji || '';
+                return;
+            }
             const prev = resolveRewardPreview(type, id);
             if (prev) {
                 const cv = document.createElement('canvas');
@@ -38169,6 +38797,10 @@
             relicCommonStreak = 0;
             runRelicsCollected = 0; // V1_436: results-screen "Relics collected: N" counter
             _bassDropLast = 0; // V1_435: first Bass Drop pulse lands at 12s of gameTime
+            // V1_439: warm the relic icon bake cache here — idempotent (Map hits after the first
+            // run), so this lands the one-time ~1ms cost on the run-start transition, never on the
+            // first pause/chest mid-run. window.__RELIC_ICON_BUILD_MS is a perf-report test seam.
+            try { window.__RELIC_ICON_BUILD_MS = prebakeRelicIcons(); } catch (e) {}
             updateGoldDisplay();
             
             // Reset upgrade variety tracking
@@ -39151,8 +39783,13 @@
                     const d = RELICS[id];
                     if (!d) return '';
                     const rc = RELIC_RARITY_COLOR[d.rarity] || RELIC_RARITY_COLOR.common;
-                    return `<div class="pl-relic-chip" style="border-color:${rc};" data-name="${d.name}" data-color="${rc}" data-desc="${d.desc}"><span class="pl-ic">${d.icon}</span>${n > 1 ? `<span class="pl-lv">×${n}</span>` : ''}</div>`;
+                    // V1_439: sprite icon when RELIC_SPRITES has this id, else the emoji (fallback law).
+                    // Canvas is painted just below by mountPauseRelicIcons() — no clientWidth dependency,
+                    // so (unlike the weapon/tome pill previews) it's safe to paint immediately here.
+                    const ic = RELIC_SPRITES[id] ? `<canvas class="pl-relic-icon-canvas" data-relic="${id}" aria-hidden="true"></canvas>` : d.icon;
+                    return `<div class="pl-relic-chip" style="border-color:${rc};" data-name="${d.name}" data-color="${rc}" data-desc="${d.desc}"><span class="pl-ic">${ic}</span>${n > 1 ? `<span class="pl-lv">×${n}</span>` : ''}</div>`;
                 }).join('');
+                mountPauseRelicIcons(); // V1_439: paint the sprite canvases just inserted (static bake, no RAF)
             }
             // Fresh detail line each time the pause menu opens (cleared until a chip is tapped).
             const rDetail = document.getElementById('relicsDetailLine');
