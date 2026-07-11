@@ -5611,6 +5611,29 @@
         }
         /* V1_233: dim the BOOST button while it has no charge (on cooldown). */
         .jump-btn.boost-empty { opacity: 0.4; }
+        /* V1_418: multi-charge pips — shown only when a legendary/boss reward raises max
+           charges above 1. Filled = available, dim = spent/recharging. Hidden when max is 1. */
+        .jump-btn .jump-btn-pips {
+            position: absolute;
+            top: 5px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 3px;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .jump-btn.multi-charge .jump-btn-pips { display: flex; }
+        .jump-btn .jump-btn-pip {
+            width: 5px; height: 5px;
+            border-radius: 50%;
+            background: rgba(0, 255, 255, 0.22);
+            box-shadow: 0 0 3px rgba(0, 255, 255, 0.35);
+        }
+        .jump-btn .jump-btn-pip.filled {
+            background: #0ff;
+            box-shadow: 0 0 5px #0ff, 0 0 9px #0ff;
+        }
         /* Slightly smaller on the OnePlus 13R / narrow phones (412px target) */
         @media (max-width: 480px) {
             .jump-btn {
@@ -7104,7 +7127,7 @@
              joystick. Sibling of .trackpad-zone (NOT a child) so the trackpad's
              "hide all children" rule can't hide it, and so its touches never reach
              the trackpad's spawn-joystick handler. -->
-        <button class="jump-btn" id="jumpBtn" type="button" aria-label="Boost"><span class="jump-btn-cd" aria-hidden="true"></span><span class="jump-btn-icon">💨</span><span class="jump-btn-timer" aria-hidden="true"></span><span class="jump-btn-label">BOOST</span><span class="jump-btn-hint" aria-hidden="true">[Spacebar]</span></button>
+        <button class="jump-btn" id="jumpBtn" type="button" aria-label="Boost"><span class="jump-btn-cd" aria-hidden="true"></span><span class="jump-btn-pips" aria-hidden="true"></span><span class="jump-btn-icon">💨</span><span class="jump-btn-timer" aria-hidden="true"></span><span class="jump-btn-label">BOOST</span><span class="jump-btn-hint" aria-hidden="true">[Spacebar]</span></button>
         <!-- V1_340: Void-rift despawn timer (bottom-left), mirrors the BOOST button -->
         <div class="rift-timer" id="riftTimer" aria-hidden="true"><span class="rift-timer-ring" aria-hidden="true"></span><span class="rift-timer-secs">0</span><span class="rift-timer-label">RIFT</span></div>
     </div>
@@ -7703,6 +7726,7 @@
                 kill:       function () { if (!gate('kill', 40)) return; tone(180, 0.07, 'square', 0.12, 90); noise(0.05, 0.08); },
                 hurt:       function () { tone(200, 0.16, 'sawtooth', 0.20, 90); },
                 shieldBlock:function () { if (!gate('shield', 60)) return; tone(520, 0.08, 'sine', 0.14, 260); noise(0.04, 0.08); },
+                wispBlock:  function () { if (!gate('wisp', 120)) return; tone(1046, 0.06, 'sine', 0.13, 1568); setTimeout(function(){ tone(1568, 0.08, 'sine', 0.11, 2093); }, 60); }, // V1_418: Guardian Wisp block chime
                 playerDeath:function () { tone(330, 0.5, 'sawtooth', 0.22, 60); },
                 levelup:    function () { tone(523, 0.10, 'square', 0.18, 784); setTimeout(function(){ tone(784, 0.12, 'square', 0.16, 1046); }, 110); },
                 confirm:    function () { tone(660, 0.08, 'square', 0.16, 990); },
@@ -11026,7 +11050,11 @@
             combustion: { active: false },   // slain enemies explode (AoE)
             deadeye: { active: false },      // +crit chance / +crit damage
             windRunner: { active: false },   // V1_359: +2 dash charges, +move speed, faster dash recharge
-            splitFire: { active: false }     // WP8: volley weapons fire +1 projectile
+            // V1_418 — new gameplay-altering legendaries
+            spectralEcho: { active: false, procs: 0 },        // 20% chance: phantom re-tick at 50% dmg
+            soulHarvest: { active: false, stacks: [] },       // kills -> timed +0.5% dmg stacks (cap 20), array of expiry ms
+            phantomStride: { active: false, lastEmit: 0 },    // dash leaves a damaging ghost-trail + boost cd -20%
+            guardianWisp: { active: false, readyAt: 0, angle: 0 } // orbiting wisp destroys an incoming enemyProjectile every 4s
         };
         let combustionChaining = false; // V1_325: re-entrancy guard so one kill = one blast (no runaway cascade)
         
@@ -11704,6 +11732,77 @@
             ctx.restore();
         }
 
+        // V1_418: Phantom Stride ghost-trail — reuses the flameGroundPatches lingering-ground
+        // pattern (timed patches that tick DoT to anything standing in them). Ghost-white
+        // visual instead of fire. No per-frame shadowBlur (baked radial-gradient fill).
+        let phantomTrailPatches = [];
+        function updatePhantomTrailPatches(now) {
+            if (!phantomTrailPatches.length) return;
+            for (let i = phantomTrailPatches.length - 1; i >= 0; i--) {
+                const p = phantomTrailPatches[i];
+                if (now - p.born > p.life) { phantomTrailPatches.splice(i, 1); continue; }
+                if (now - p.lastTick >= 250) {
+                    p.lastTick = now;
+                    const hit = (arr) => {
+                        for (const e of arr) {
+                            if (e.dead) continue;
+                            if (Math.hypot(e.x - p.x, e.y - p.y) < p.radius + e.radius) {
+                                const { damage, isCrit } = player.calcDamage(p.dmg);
+                                e.takeDamage(damage, isCrit); player.onDealDamage(damage);
+                            }
+                        }
+                    };
+                    hit(enemies); hit(bosses); hit(leprechauns);
+                }
+            }
+        }
+        function drawPhantomTrailPatches(now) {
+            if (!phantomTrailPatches.length) return;
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            for (const p of phantomTrailPatches) {
+                if (!camera.isVisible(p.x, p.y)) continue;
+                const age = (now - p.born) / p.life;
+                const a = (1 - age) * 0.42;
+                const sx = camera.screenX(p.x), sy = camera.screenY(p.y), r = camera.scale(p.radius);
+                const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r);
+                grad.addColorStop(0, 'rgba(220,235,255,' + a + ')');
+                grad.addColorStop(0.6, 'rgba(150,190,255,' + (a * 0.6) + ')');
+                grad.addColorStop(1, 'rgba(120,150,255,0)');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        // V1_418: Soul Harvest timed-stack helpers. Each stack is a 10s buff; the array holds
+        // expiry timestamps. Prune drops expired; live-count is what the damage multiplier reads.
+        const SOUL_HARVEST_CAP = 20;
+        const SOUL_HARVEST_MS = 10000;
+        function soulHarvestPrune(now) {
+            const s = legendaryEffects.soulHarvest.stacks;
+            if (!s.length) return;
+            for (let i = s.length - 1; i >= 0; i--) { if (s[i] <= now) s.splice(i, 1); }
+        }
+        function soulHarvestLiveStacks() {
+            soulHarvestPrune(Date.now());
+            return legendaryEffects.soulHarvest.stacks.length;
+        }
+        function soulHarvestOnKill() {
+            if (!legendaryEffects.soulHarvest.active) return;
+            const now = Date.now();
+            const s = legendaryEffects.soulHarvest.stacks;
+            soulHarvestPrune(now);
+            const exp = now + SOUL_HARVEST_MS;
+            if (s.length < SOUL_HARVEST_CAP) {
+                s.push(exp);
+            } else {
+                // At cap: refresh the soonest-to-expire so a killing streak keeps it topped.
+                let mi = 0; for (let i = 1; i < s.length; i++) if (s[i] < s[mi]) mi = i;
+                s[mi] = exp;
+            }
+        }
+
         // ===== PASSIVE UPGRADES =====
         const PASSIVES = {
             speed: { name: 'Speed Boost', icon: '👟', color: COLORS.teal, desc: '+12% move speed' },
@@ -12157,7 +12256,7 @@
                 this.boostMaxCharges = Math.min(BOOST_MAX_CHARGES_CAP + windBoost, 1 + (this.passives.extraBoost || 0) + windBoost);
                 this.boostSpeedMult = 1 + (this.passives.tailwind || 0) * 0.20;
                 this.boostDurationMult = 1 + (this.passives.slipstream || 0) * 0.18;
-                this.boostCooldownMult = Math.max(0.625, 1 - (this.passives.quickRecovery || 0) * 0.125) * (legendaryEffects.windRunner.active ? 0.75 : 1); // 8s -> floor 5s; Windrunner -25%
+                this.boostCooldownMult = Math.max(0.625, 1 - (this.passives.quickRecovery || 0) * 0.125) * (legendaryEffects.windRunner.active ? 0.75 : 1) * (legendaryEffects.phantomStride.active ? 0.80 : 1); // 8s -> floor 5s; Windrunner -25%; V1_418 Phantom Stride -20%
                 if (this.boostCharges > this.boostMaxCharges) this.boostCharges = this.boostMaxCharges;
                 
                 // Attack speed from shrine + tome
@@ -12223,7 +12322,7 @@
                 // WP8: Tome of Retribution — % of incoming contact damage reflected to the attacker
                 this.thornsPct = Math.min(1.2, this.tomeBonuses.thornsBonus || 0);
                 // V1_377: Barrage shrine blessing — flat +N projectiles for volley weapons,
-                // applied at the same call sites as the Split Fire legendary. Capped at +2.
+                // applied at the volley-count call sites. Capped at +2.
                 this.bonusProjectiles = Math.min(2, this.shrineBonuses.bonusProjectiles || 0);
             }
             
@@ -12255,6 +12354,15 @@
                 // V1_325 Bloodlust: up to +60% damage scaling with missing HP
                 if (legendaryEffects.berserker.active && this.maxHp > 0) {
                     damage *= 1 + 0.60 * (1 - Math.max(0, this.hp) / this.maxHp);
+                }
+
+                // V1_418 Soul Harvest: TEMPORARY timed stacks (kills grant +0.5% dmg for 10s,
+                // cap 20 = +10%). Applied here as a multiplier so it is EXEMPT from the V1_416
+                // DR lanes baked into damageMultiplier (like Bloodlust above). Prune is lazy —
+                // read only live (non-expired) stacks.
+                if (legendaryEffects.soulHarvest.active && legendaryEffects.soulHarvest.stacks.length) {
+                    const n = soulHarvestLiveStacks();
+                    if (n > 0) damage *= 1 + 0.005 * n;
                 }
 
                 return { damage, isCrit };
@@ -12473,6 +12581,18 @@
                     this.y += this.boostDirY * BOOST_SPEED * this.boostSpeedMult * dtScale;
                     this.boostTrail.push({ x: this.x, y: this.y });
                     if (this.boostTrail.length > 6) this.boostTrail.shift();
+                    // V1_418 Phantom Stride: drop damaging ghost-trail patches along the dash.
+                    if (legendaryEffects.phantomStride.active) {
+                        const nowE = Date.now();
+                        if (nowE - legendaryEffects.phantomStride.lastEmit >= 55 && phantomTrailPatches.length < 40) {
+                            legendaryEffects.phantomStride.lastEmit = nowE;
+                            phantomTrailPatches.push({
+                                x: this.x, y: this.y, radius: 34,
+                                born: nowE, life: 1500, lastTick: 0,
+                                dmg: 6 + (this.level || 1) * 0.6 // modest DPS; calcDamage adds dmgMult+crit
+                            });
+                        }
+                    }
                 } else if (this.boostTrail.length) {
                     this.boostTrail.length = 0;
                 }
@@ -12673,7 +12793,6 @@
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 let projectileCount = def.baseProjectiles + Math.floor(level / 4);
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) projectileCount++; // WP8
                 projectileCount += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
                 const totalDamage = baseDamage * projectileCount;
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
@@ -13224,7 +13343,6 @@
                 SFX.wVoidDaggers();
 
                 let strikeCount = def.baseDaggers + Math.floor(level / 3); // V1_298: slower dagger stacking (was /2)
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) strikeCount++; // WP8
                 strikeCount += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
 
@@ -13476,7 +13594,6 @@
                 state.lastFire = now;
                 SFX.wBoomerang();
                 let count = def.baseCount + Math.floor(level / 6);
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) count++; // WP8
                 count += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
@@ -13672,7 +13789,6 @@
                 if (now - state.lastFire < fireRate) return;
 
                 let shardCount = def.baseProjectiles + Math.floor(level / 4);
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) shardCount++; // WP8
                 shardCount += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
@@ -13845,7 +13961,6 @@
                 state.lastFire = now;
                 SFX.wGhost();
                 let orbCount = def.baseOrbs + Math.floor(level / 4);
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) orbCount++; // WP8
                 orbCount += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 const sizeScale = (1 + (level - 1) * 0.03) * this.sizeMultiplier; // +3% size per level
@@ -14118,7 +14233,6 @@
                 
                 const baseDamage = def.baseDamage * (1 + (level - 1) * (def.dmgScale ?? 0.04));
                 let arrowCount = level >= 3 ? 3 + Math.floor((level - 3) / 5) * 2 : def.baseArrows; // 1 -> 3 at L3, then 5, 7...
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) arrowCount++; // WP8
                 arrowCount += (this.bonusProjectiles || 0); // V1_377: Barrage blessing
                 const pierce = def.pierce + Math.floor(level / 4);
                 
@@ -14342,7 +14456,6 @@
                 const baseDamage = def.baseDamage * (1 + (level - 1) * 0.05); // V1_298: gentler damage scaling (was 0.06)
                 let pelletCount = def.pelletCount + Math.floor(level / 3);
                 if (def.hellscatter) pelletCount += 2; // V1_417: Hellscatter — extra pellets per barrel
-                if (legendaryEffects.splitFire && legendaryEffects.splitFire.active) pelletCount += 2; // WP8: shotgun gets +2 per spec
                 pelletCount += 2 * (this.bonusProjectiles || 0); // V1_377: Barrage blessing — mirrors the +2-pellet rule
                 const spreadAngle = def.spreadAngle + level * 0.02;
                 const maxRange = Math.min(def.maxRange + level * 15, ONSCREEN_RANGE_CAP); // V1_303: pellets die at the screen edge
@@ -14717,7 +14830,7 @@
             // A spectral BOO retraces the player's path from `delay` ms ago and burns
             // everything inside its aura. The trail clock accumulates game dt (not wall
             // time) so pauses don't teleport the ghost. Lv7+ adds a second ghost twice
-            // as far behind. Not a volley weapon — Split Fire / Barrage don't apply.
+            // as far behind. Not a volley weapon — the Barrage blessing doesn't apply.
             updateEncore(id, def, state, level, now, dt) {
                 if (!state.trail) { state.trail = []; state.clock = 0; }
                 state.clock += dt;
@@ -17223,6 +17336,12 @@
                     enforceGhostCap(); // V1_411 soft cap ~12 live (oldest fades out)
                 }
 
+                // V1_418 Soul Harvest: kills feed timed damage stacks; subtle purple wisp on gain.
+                if (legendaryEffects.soulHarvest.active) {
+                    soulHarvestOnKill();
+                    spawnParticles(this.x, this.y, '#b060ff', 3);
+                }
+
                 // V1_325 Combustion: slain enemies erupt, dealing AoE damage to nearby foes.
                 // Guarded so one real kill = one blast (deaths it causes don't chain-explode).
                 // V1_361: now a 35% chance per kill (was every kill) so the blast VFX doesn't
@@ -17698,6 +17817,54 @@
             }
         }
         window.enemyProjectiles = enemyProjectiles; // live ref (reset uses .length=0) — P4/P6 tests
+
+        // V1_418: Guardian Wisp — a small wisp orbits the player and destroys ONE incoming
+        // enemyProjectile within 60px every 4s (flash + chime on block; dims while recharging).
+        // Pure anti-ranged defense — never targets enemies, only their projectiles.
+        const GUARDIAN_WISP_RANGE = 60;
+        const GUARDIAN_WISP_COOLDOWN = 4000;
+        function updateGuardianWisp(now) {
+            const gw = legendaryEffects.guardianWisp;
+            if (!gw.active || !player) return;
+            gw.angle = (gw.angle + 0.05) % (Math.PI * 2); // orbit spin
+            if (now < gw.readyAt) return;                 // recharging
+            if (!enemyProjectiles.length) return;
+            let best = null, bestD = GUARDIAN_WISP_RANGE;
+            for (const p of enemyProjectiles) {
+                if (p.dead) continue;
+                const px = (p.kind === 'glob') ? p.x : p.x, py = (p.kind === 'glob') ? p.y : p.y;
+                const d = Math.hypot(px - player.x, py - player.y);
+                if (d < bestD) { bestD = d; best = p; }
+            }
+            if (best) {
+                best.dead = true;
+                gw.readyAt = now + GUARDIAN_WISP_COOLDOWN;
+                spawnParticles(best.x, best.y, '#8fd8ff', 12); // block flash
+                addRing(best.x, best.y, 26, '#8fd8ff');
+                try { SFX.wispBlock(); } catch (e) {}
+            }
+        }
+        function drawGuardianWisp(now) {
+            const gw = legendaryEffects.guardianWisp;
+            if (!gw.active || !player) return;
+            const orbitR = player.radius + 26;
+            const wx = player.x + Math.cos(gw.angle) * orbitR;
+            const wy = player.y + Math.sin(gw.angle) * orbitR;
+            if (!camera.isVisible(wx, wy, 40)) return;
+            const sx = camera.screenX(wx), sy = camera.screenY(wy);
+            const charging = now < gw.readyAt;
+            const r = camera.scale(charging ? 5 : 7);
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = charging ? 0.35 : 1; // visibly dim while recharging
+            const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 2.4);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.35, '#8fd8ff');
+            grad.addColorStop(1, 'rgba(80,160,255,0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.arc(sx, sy, r * 2.4, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+        }
 
         // ===== V1_400: ENEMY_KINDS REGISTRY (Phase 4) =====
         // New kinds live here; the Enemy ctor / update / draw / die all FALL THROUGH to these
@@ -21217,6 +21384,33 @@
             get counts() { try { return { enemies: enemies.length, bosses: bosses.length, projectiles: enemyProjectiles.length }; } catch (e) { return null; } }
         };
 
+        // V1_418: legendary verification seam (mirrors __P4/__MAW). Verification only.
+        window.__LEG = {
+            boot(weapon) { try { window.activeLevel = 'meadow'; selectedStartingWeapon = weapon || 'energyBolt'; startGame(); gamePaused = false; return gameRunning; } catch (e) { return String(e); } },
+            acquire(id) { try { selectLegendaryUpgrade(id); return playerHasLegendary(id); } catch (e) { return String(e); } },
+            has(id) { try { return playerHasLegendary(id); } catch (e) { return String(e); } },
+            owned() { try { return Object.keys(LEGENDARY_UPGRADES).filter(playerHasLegendary); } catch (e) { return String(e); } },
+            poolSize() { try { return Object.keys(LEGENDARY_UPGRADES).length; } catch (e) { return -1; } },
+            offeredReset() { try { offeredLegendaries = new Set(); return true; } catch (e) { return String(e); } },
+            offer() { try { const o0 = document.getElementById('legendaryOverlay'); if (o0) o0.innerHTML = ''; showLegendaryUpgrade(); const o = document.getElementById('legendaryOverlay'); const ids = o ? [...o.querySelectorAll('.legendary-card')].map(c => c.dataset.upgrade) : []; if (o) o.classList.remove('active'); gamePaused = false; return ids; } catch (e) { return String(e); } },
+            blessingShown() { try { return !!(pendingChest && pendingChest.isDirectiveBlessing); } catch (e) { return String(e); } },
+            eff() { try { const e = legendaryEffects; return { echoProcs: e.spectralEcho.procs, harvestActive: e.soulHarvest.active, harvestStacks: e.soulHarvest.stacks.length, strideActive: e.phantomStride.active, wispReadyAt: e.guardianWisp.readyAt }; } catch (e) { return String(e); } },
+            echoProbe(n) { try { const before = legendaryEffects.spectralEcho.procs; const e = { x: player.x + 40, y: player.y, radius: 10, hp: 1e12, maxHp: 1e12, dead: false, takeDamage() {}, applyBurn() {}, applyFreeze() {}, applyShock() {} }; for (let i = 0; i < n; i++) applyStatusEffects(e, 100); return legendaryEffects.spectralEcho.procs - before; } catch (e) { return String(e); } },
+            harvestKill(n) { try { for (let i = 0; i < (n || 1); i++) soulHarvestOnKill(); return soulHarvestLiveStacks(); } catch (e) { return String(e); } },
+            harvestStacks() { try { return soulHarvestLiveStacks(); } catch (e) { return String(e); } },
+            harvestExpire() { try { legendaryEffects.soulHarvest.stacks = legendaryEffects.soulHarvest.stacks.map(() => Date.now() - 1); return soulHarvestLiveStacks(); } catch (e) { return String(e); } },
+            dmg(base) { try { const b = base || 1000; let mx = 0; for (let i = 0; i < 200; i++) { const d = player.calcDamage(b).damage; if (d > mx) mx = d; } return mx / b; } catch (e) { return String(e); } },
+            calcMin(base) { try { const b = base || 1000; let mn = Infinity; for (let i = 0; i < 500; i++) { const d = player.calcDamage(b).damage; if (d < mn) mn = d; } return mn; } catch (e) { return String(e); } },
+            boost() { try { return { max: player.boostMaxCharges, cur: player.boostCharges, cdMult: player.boostCooldownMult }; } catch (e) { return String(e); } },
+            setCharges(n) { try { player.boostCharges = n; return player.boostCharges; } catch (e) { return String(e); } },
+            spawnEProj(off) { try { const o = (off == null) ? 45 : off; spawnEnemyProjectile({ x: player.x + o, y: player.y, vx: 0, vy: 0, radius: 8, damage: 10, color: '#ff44ff', kind: 'bolt', travel: 0, range: 99999, dead: false, attacker: null }); return enemyProjectiles.filter(p => !p.dead).length; } catch (e) { return String(e); } },
+            eprojCount() { try { return enemyProjectiles.filter(p => !p.dead).length; } catch (e) { return String(e); } },
+            trailCount() { try { return phantomTrailPatches.length; } catch (e) { return String(e); } },
+            emitTrail() { try { const now = Date.now(); phantomTrailPatches.push({ x: player.x, y: player.y, radius: 34, born: now, life: 1500, lastTick: 0, dmg: 6 + (player.level || 1) * 0.6 }); return phantomTrailPatches.length; } catch (e) { return String(e); } },
+            enemyAt(off) { try { const o = (off == null) ? 10 : off; const e = new Enemy('basic', player.x + o, player.y); e.hp = 1e9; e.maxHp = 1e9; enemies.push(e); return { hp: e.hp }; } catch (e) { return String(e); } },
+            lastEnemyHp() { try { for (let i = enemies.length - 1; i >= 0; i--) if (!enemies[i].dead) return enemies[i].hp; return null; } catch (e) { return String(e); } }
+        };
+
         // V1_417: evolution test seam — eligibility + forced-evolve for verification.
         window.__EVO = {
             eligible() { try { return getEligibleEvolution(); } catch (e) { return String(e); } },
@@ -21564,18 +21758,20 @@
                     legendaryChance = 0;
                 }
 
-                if (Math.random() < legendaryChance) {
-                    // Pick a random legendary for preview
-                    const legendaryKeys = Object.keys(LEGENDARY_UPGRADES);
-                    const randomKey = legendaryKeys[Math.floor(Math.random() * legendaryKeys.length)];
+                // V1_418: only preview UNOWNED legendaries (one-of-each). If somehow all are
+                // owned, fall through to a shrine powerup instead of previewing a dupe.
+                const unownedLeg = Object.keys(LEGENDARY_UPGRADES).filter(id => !playerHasLegendary(id));
+                if (unownedLeg.length && Math.random() < legendaryChance) {
+                    // Pick a random UNOWNED legendary for preview
+                    const randomKey = unownedLeg[Math.floor(Math.random() * unownedLeg.length)];
                     const legendary = LEGENDARY_UPGRADES[randomKey];
-                    return { 
-                        type: 'legendary', 
+                    return {
+                        type: 'legendary',
                         id: randomKey,
-                        icon: legendary.icon, 
-                        name: legendary.name, 
+                        icon: legendary.icon,
+                        name: legendary.name,
                         desc: legendary.desc,
-                        color: legendary.color 
+                        color: legendary.color
                     };
                 } else {
                     // Random shrine powerup
@@ -26092,7 +26288,7 @@
                 effect: '+10% Lifesteal on all attacks'
             },
             xpMagnet: {
-                name: 'Soul Harvest',
+                name: 'Soul Siphon', // V1_418: renamed from 'Soul Harvest' — freed that name for the new kill-stacking legendary (this one is an XP magnet)
                 icon: '💎',
                 color: '#ffd700',
                 desc: 'Absorb ALL XP on map every 30s',
@@ -26140,16 +26336,46 @@
                 desc: '+2 Dash Charges, +10% Move Speed',
                 effect: 'Dashes recharge 25% faster'
             },
-            splitFire: {
-                name: 'Split Fire',
-                icon: '🎇',
-                color: '#ff9944',
-                desc: 'Volley weapons fire +1 projectile',
-                effect: 'Permanent for this run'
+            spectralEcho: {
+                name: 'Spectral Echo',
+                icon: '👥',
+                color: '#cfe0ff',
+                desc: '20% of hits fire a phantom echo',
+                effect: 'Ghostly duplicate deals 50% damage'
+            },
+            soulHarvest: {
+                name: 'Soul Harvest',
+                icon: '💀',
+                color: '#b060ff',
+                desc: 'Kills grant +0.5% damage for 10s',
+                effect: 'Stacks up to 20 (max +10%) — timed'
+            },
+            phantomStride: {
+                name: 'Phantom Stride',
+                icon: '👣',
+                color: '#7fe0d0',
+                desc: 'Dash leaves a damaging ghost-trail',
+                effect: '+ Boost recharges 20% faster'
+            },
+            guardianWisp: {
+                name: 'Guardian Wisp',
+                icon: '🧿',
+                color: '#66ccff',
+                desc: 'A wisp destroys an enemy shot every 4s',
+                effect: 'Blocks incoming projectiles within 60px'
             }
         };
 
         function showLegendaryUpgrade() {
+            // V1_418: ONE-OF-EACH. An owned legendary is never offered again on ANY surface
+            // (chest / directive / pot / bad-luck) — this is the single offer chokepoint they
+            // all route through. If every eligible legendary is already owned (only reachable
+            // via curse/edge paths; MAX_LEGENDARIES=4 < pool 17 normally prevents it), fall back
+            // to the V1_385 free-blessing path instead of re-offering a dupe.
+            const owned = new Set(Object.keys(LEGENDARY_UPGRADES).filter(playerHasLegendary));
+            const unowned = Object.keys(LEGENDARY_UPGRADES).filter(id => !owned.has(id));
+            if (unowned.length === 0) { showDirectiveBlessing(); return; }
+
             gamePaused = true;
             SFX.legendary();
 
@@ -26161,12 +26387,12 @@
                 overlay.className = 'legendary-overlay';
                 document.body.appendChild(overlay);
             }
-            
+
             // V1_347: once a legendary has been OFFERED it leaves the pool, so a run never
-            // repeats legendaries across its offers. Safety net re-opens the full pool if
-            // somehow exhausted.
-            let pool = Object.keys(LEGENDARY_UPGRADES).filter(id => !offeredLegendaries.has(id));
-            if (pool.length < 3) pool = Object.keys(LEGENDARY_UPGRADES);
+            // repeats legendaries across its offers. V1_418: owned legendaries are ALSO excluded
+            // (one-of-each). Safety net re-opens the unowned pool if the offered-filter drains it.
+            let pool = unowned.filter(id => !offeredLegendaries.has(id));
+            if (pool.length < 3) pool = unowned.slice();
             const shuffled = pool.sort(() => Math.random() - 0.5);
             const options = shuffled.slice(0, 3);
             options.forEach(id => offeredLegendaries.add(id));
@@ -26275,8 +26501,21 @@
                     player.applyPassives(); // V1_359: bake +speed / +dash cap / faster recharge into stats
                     player.boostCharges = player.boostMaxCharges; // hand over the new charges right away
                     break;
-                case 'splitFire':
-                    legendaryEffects.splitFire.active = true;
+                case 'spectralEcho':
+                    legendaryEffects.spectralEcho.active = true;
+                    break;
+                case 'soulHarvest':
+                    legendaryEffects.soulHarvest.active = true;
+                    legendaryEffects.soulHarvest.stacks = [];
+                    break;
+                case 'phantomStride':
+                    legendaryEffects.phantomStride.active = true;
+                    legendaryEffects.phantomStride.lastEmit = 0;
+                    player.applyPassives(); // V1_418: bake the -20% boost cooldown into stats
+                    break;
+                case 'guardianWisp':
+                    legendaryEffects.guardianWisp.active = true;
+                    legendaryEffects.guardianWisp.readyAt = 0; // armed immediately
                     break;
             }
 
@@ -26462,6 +26701,17 @@
             // Try shock
             if (legendaryEffects.shock.chance > 0 && Math.random() < legendaryEffects.shock.chance) {
                 enemy.applyShock(legendaryEffects.shock.damage);
+            }
+            // V1_418 Spectral Echo: 20% chance on a weapon damage-dealing hit to fire a phantom
+            // re-tick at 50% damage. This is the SHARED implementation — applyStatusEffects is the
+            // one on-hit chokepoint every major weapon archetype routes through, so a single
+            // "phantom re-tick" here covers all of them uniformly (no per-type projectile clones).
+            // Ghost-white particle burst sells the duplicate; the re-tick spawns its own dmg number.
+            if (legendaryEffects.spectralEcho.active && !enemy.dead && damage > 0 && Math.random() < 0.20) {
+                legendaryEffects.spectralEcho.procs++;
+                const phantom = damage * 0.5;
+                spawnParticles(enemy.x, enemy.y, '#dfeaff', 4); // ghost-white translucent echo
+                enemy.takeDamage(phantom, false);
             }
             // V1_325 Executioner: cull regular enemies left below 12% HP after a hit (bosses/rifts/elites immune)
             if (legendaryEffects.executioner.active && !enemy.dead
@@ -30979,6 +31229,28 @@
                         const tEl = jb.querySelector('.jump-btn-timer');
                         if (tEl) tEl.textContent = Math.ceil(player.boostCooldownTimer / 1000);
                     }
+                    // V1_418: multi-charge pips (only when a legendary/boss reward gives >1 charge).
+                    // When max is 1 the pip row stays hidden and the button looks exactly as before.
+                    const maxC = player.boostMaxCharges | 0;
+                    const curC = Math.max(0, Math.min(maxC, player.boostCharges | 0));
+                    jb.classList.toggle('multi-charge', maxC > 1);
+                    if (maxC > 1) {
+                        const pipWrap = jb.querySelector('.jump-btn-pips');
+                        if (pipWrap) {
+                            // Rebuild the pip row only when max changes; otherwise just retint.
+                            if ((pipWrap._max | 0) !== maxC) {
+                                pipWrap._max = maxC;
+                                let html = '';
+                                for (let i = 0; i < maxC; i++) html += '<span class="jump-btn-pip"></span>';
+                                pipWrap.innerHTML = html;
+                            }
+                            if ((pipWrap._cur | 0) !== curC) {
+                                pipWrap._cur = curC;
+                                const pips = pipWrap.children;
+                                for (let i = 0; i < pips.length; i++) pips[i].classList.toggle('filled', i < curC);
+                            }
+                        }
+                    }
                 }
                 camera.update();
                 updateFogOfWar();
@@ -31022,8 +31294,11 @@
                     // Very distant enemies don't update (will catch up when closer)
                 }
                 for (const proj of projectiles) proj.update(dt);
+                updateGuardianWisp(Date.now());       // V1_418: block an incoming enemy projectile
                 updateEnemyProjectiles(effectiveDt); // V1_400: enemy projectile system (time-stop aware)
                 updateFlameGroundPatches(Date.now()); // V1_417: Dragon's Breath burning ground
+                updatePhantomTrailPatches(Date.now()); // V1_418: Phantom Stride ghost-trail DoT
+                soulHarvestPrune(Date.now());          // V1_418: expire timed Soul Harvest stacks
 
                 // Batch XP gem updates - only update visible/nearby gems every frame
                 const gemUpdateRadius = 600;
@@ -32929,6 +33204,8 @@
             
             // V1_417: burning ground under projectiles
             drawFlameGroundPatches(Date.now());
+            drawPhantomTrailPatches(Date.now()); // V1_418: Phantom Stride ghost-trail
+            drawGuardianWisp(Date.now());        // V1_418: orbiting Guardian Wisp
 
             // Draw projectiles (under player)
             for (const proj of projectiles) proj.draw();
@@ -36105,6 +36382,7 @@
             projectiles = [];
             evolvedWeapons = new Set();     // V1_417: fresh evolution state each run
             flameGroundPatches.length = 0;  // V1_417: clear burning ground
+            phantomTrailPatches.length = 0; // V1_418: clear Phantom Stride ghost-trail
             _goldReaverSecond = 0; _goldReaverWindow = 0; // V1_417: reset gold-cap window
             enemyProjectiles.length = 0; // V1_400: reset in place (keep window ref live for tests)
             _voidSnipersAiming = 0;      // V1_400: reset shared sniper-aim token
@@ -36219,7 +36497,10 @@
                 combustion: { active: false },
                 deadeye: { active: false },
                 windRunner: { active: false }, // V1_359
-                splitFire: { active: false }   // WP8
+                spectralEcho: { active: false, procs: 0 },        // V1_418
+                soulHarvest: { active: false, stacks: [] },       // V1_418
+                phantomStride: { active: false, lastEmit: 0 },    // V1_418
+                guardianWisp: { active: false, readyAt: 0, angle: 0 } // V1_418
             };
             combustionChaining = false;
             
