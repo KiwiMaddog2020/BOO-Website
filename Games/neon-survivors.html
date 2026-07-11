@@ -3831,6 +3831,62 @@
             transform: scale(0.95);
         }
 
+        /* V1_431: CONSUMABLES ROW (reroll / banish / skip) — one compact flex row under the
+           option cards. House neon, Oxanium. Wraps + centers so it fits alongside 3-4 cards at
+           412x720 and 900x500 (the overlay is safe-center + overflow-y:auto per V1_422). */
+        .consumables-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            align-items: center;
+            margin-top: 16px;
+            width: 100%;
+            max-width: 460px;
+        }
+        .consumable-btn {
+            padding: 8px 14px;
+            min-width: 104px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            font-family: 'Oxanium', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s ease;
+            background: linear-gradient(145deg, rgba(42, 42, 50, 0.7), rgba(15, 15, 20, 0.85));
+            border: 2px solid #55555f;
+            color: #cfd0da;
+            box-shadow: 0 0 10px rgba(100, 100, 110, 0.28);
+        }
+        .consumable-btn:hover { transform: scale(1.05); }
+        .consumable-btn:active { transform: scale(0.95); }
+        .reroll-consumable { border-color: #3aa6c8; color: #bfe7f5; box-shadow: 0 0 10px rgba(0, 200, 255, 0.25); }
+        .reroll-consumable:hover { border-color: #57c6e8; color: #e2f6ff; box-shadow: 0 0 16px rgba(0, 210, 255, 0.45); }
+        .banish-consumable { border-color: #aa4444; color: #ffb0b0; box-shadow: 0 0 10px rgba(180, 60, 60, 0.3); }
+        .banish-consumable:hover { border-color: #d36a6a; color: #ffd6d6; box-shadow: 0 0 16px rgba(200, 70, 70, 0.5); }
+        .banish-consumable.active {
+            background: rgba(220, 50, 50, 0.9);
+            color: #fff;
+            box-shadow: 0 0 25px rgba(255, 30, 30, 0.6);
+            animation: banish-pulse 0.5s ease-in-out infinite alternate;
+        }
+        .skip-consumable { border-color: #c8a23a; color: #ffe6a0; box-shadow: 0 0 10px rgba(200, 160, 40, 0.28); }
+        .skip-consumable:hover { border-color: #e2bb50; color: #fff2c2; box-shadow: 0 0 16px rgba(220, 180, 50, 0.5); }
+        /* 0-charge state: dimmed + non-interactive (still visible per architect spec). */
+        .consumable-btn.spent {
+            opacity: 0.35;
+            cursor: default;
+            pointer-events: none;
+            filter: grayscale(0.6);
+            box-shadow: none;
+        }
+
         /* Shrine Power-up Overlay */
         .shrine-overlay {
             position: fixed;
@@ -9738,12 +9794,37 @@
             { id: 'pickup',      name: 'Pickup Range',  icon: '🧲', per: 3,   unit: '%' },
             { id: 'luck',        name: 'Luck',          icon: '🍀', per: 1,   unit: '%' },
             { id: 'goldGain',    name: 'Gold Gain',     icon: '🪙', per: 2,   unit: '%' },
-            { id: 'startGold',   name: 'Starting Gold', icon: '💰', per: 20,  unit: '' }
+            { id: 'startGold',   name: 'Starting Gold', icon: '💰', per: 20,  unit: '' },
+            // V1_431: QoL / consistency CAPACITIES — reroll/banish/skip run charges + the two
+            // pre-game ban caps. These are NOT power stats: Player.applyPassives never reads
+            // these ids (no `lane`, not in the _sr.* list), so the V1_416 permanent DR lanes
+            // stay untouched. They are consumed only at startGame (run charges) and at the
+            // edit-screens (ban caps). fmt:'count' rows display base+rank as 'current -> next'
+            // (per/unit are unused for them). `max` varies per row; the shared SHOP_COSTS curve
+            // simply stops earlier for rows whose max < 5 (weaponBans max4 -> cap5, tomeBans
+            // max2 -> cap3: identical ceilings to the old fixed 5/3 disables at full ranks).
+            { id: 'rerolls',    name: 'Rerolls +1/rank',     icon: '🎲',   per: 1, unit: '', fmt: 'count', base: 1, max: 4 },
+            { id: 'banishes',   name: 'Banishes +1/rank',    icon: '🚫',   per: 1, unit: '', fmt: 'count', base: 1, max: 4 },
+            { id: 'skips',      name: 'Skips +1/rank',       icon: '⏭️',   per: 1, unit: '', fmt: 'count', base: 0, max: 5 },
+            { id: 'weaponBans', name: 'Weapon Bans +1/rank', icon: '⚔️🚫', per: 1, unit: '', fmt: 'count', base: 1, max: 4 },
+            { id: 'tomeBans',   name: 'Tome Bans +1/rank',   icon: '📖🚫', per: 1, unit: '', fmt: 'count', base: 1, max: 2 }
         ];
         const SHOP_IDS = SHOP_STATS.map(function (s) { return s.id; });
+        // V1_431: per-stat rank ceiling (defaults to the global SHOP_MAX_RANK for the 10
+        // legacy power stats which carry no `max`). Every buy/clamp/render path reads this
+        // so the shared 5-entry SHOP_COSTS curve just stops early for lower-max capacity rows.
+        function shopStatMax(id) {
+            for (let i = 0; i < SHOP_STATS.length; i++) if (SHOP_STATS[i].id === id) return (SHOP_STATS[i].max != null ? SHOP_STATS[i].max : SHOP_MAX_RANK);
+            return SHOP_MAX_RANK;
+        }
         // Total plasm spent to reach `rank` in one stat (sum of the first `rank` costs).
         function shopSpentForRank(rank) { let t = 0; for (let i = 0; i < rank && i < SHOP_COSTS.length; i++) t += SHOP_COSTS[i]; return t; }
         const PLASM_GLYPH = '🔮'; // consistent violet mark everywhere (V1_427: Kevin kept plasm; the shop feature is titled UPGRADES)
+        // V1_431: master-code one-time plasm grant. Bumped from 2,000 so it covers the FULL
+        // grown board (10 legacy stats x 200 = 2,000  +  new rows: rerolls 120 + banishes 120
+        // + skips 200 + weaponBans 120 + tomeBans 30 = 590  =>  2,590 exact; granted 2,600 so
+        // redeem -> buy-everything leaves a small positive balance). See V1_431 report arithmetic.
+        const MASTER_CODE_PLASM_GRANT = 2600;
 
         // ========== V1_397: META-PROGRESSION ENGINE (Phase 1) ==========
         // Persistent unlock / achievement layer. Lives in the MAIN game script so it
@@ -9862,7 +9943,7 @@
                     for (let i = 0; i < SHOP_IDS.length; i++) {
                         const id = SHOP_IDS[i];
                         const r = saved.shop[id];
-                        if (typeof r === 'number' && r > 0) d.shop[id] = Math.min(SHOP_MAX_RANK, Math.max(0, Math.floor(r)));
+                        if (typeof r === 'number' && r > 0) d.shop[id] = Math.min(shopStatMax(id), Math.max(0, Math.floor(r))); // V1_431: per-stat ceiling (legacy rows still clamp to 5)
                     }
                 }
                 if (saved.masterCodeRedeemed) d.masterCodeRedeemed = true; // V1_425: additive — absent/false stays false (legacy saves unaffected)
@@ -10143,13 +10224,13 @@
                 getShop: function () { try { return Object.assign({}, state.shop); } catch (e) { return {}; } },
                 getRank: function (id) { try { return (state.shop && state.shop[id]) || 0; } catch (e) { return 0; } },
                 // Cost to buy the NEXT rank of `id` (null when maxed).
-                shopNextCost: function (id) { try { const r = (state.shop && state.shop[id]) || 0; return r >= SHOP_MAX_RANK ? null : SHOP_COSTS[r]; } catch (e) { return null; } },
+                shopNextCost: function (id) { try { const r = (state.shop && state.shop[id]) || 0; return r >= shopStatMax(id) ? null : SHOP_COSTS[r]; } catch (e) { return null; } }, // V1_431: per-stat max
                 // Attempt to buy one rank. Returns true on success (deducts plasm, saves).
                 buyRank: function (id) {
                     try {
                         if (SHOP_IDS.indexOf(id) === -1) return false;
                         const r = (state.shop[id] || 0);
-                        if (r >= SHOP_MAX_RANK) return false;
+                        if (r >= shopStatMax(id)) return false; // V1_431: per-stat max
                         const cost = SHOP_COSTS[r];
                         if ((state.plasm || 0) < cost) return false;
                         state.plasm -= cost;
@@ -10202,7 +10283,7 @@
                         const firstTime = !state.masterCodeRedeemed;
                         let granted = 0;
                         if (firstTime) {
-                            granted = 2000;
+                            granted = MASTER_CODE_PLASM_GRANT; // V1_431: 2,000 -> 2,600 (covers the grown board)
                             state.plasm += granted;
                             state.plasmLifetime += granted;
                             state.masterCodeRedeemed = true;
@@ -10230,7 +10311,7 @@
                 // --- test seams (Phase 1 verification only) ---
                 _sim: function (obj) { _runActive = true; _simOverride = Object.assign(_simOverride || {}, obj || {}); _scan(_runSnapshot()); },
                 _grantPlasm: function (n) { try { const v = Math.max(0, Math.floor(+n || 0)); state.plasm += v; state.plasmLifetime += v; _saveNow(); return state.plasm; } catch (e) { return String(e); } }, // V1_421
-                _setRank: function (id, r) { try { if (SHOP_IDS.indexOf(id) === -1) return false; state.shop[id] = Math.min(SHOP_MAX_RANK, Math.max(0, Math.floor(+r || 0))); _saveNow(); return state.shop[id]; } catch (e) { return String(e); } }, // V1_421
+                _setRank: function (id, r) { try { if (SHOP_IDS.indexOf(id) === -1) return false; state.shop[id] = Math.min(shopStatMax(id), Math.max(0, Math.floor(+r || 0))); _saveNow(); return state.shop[id]; } catch (e) { return String(e); } }, // V1_421; V1_431: per-stat max
                 // V1_399: test seam — set the run clock to an absolute second value (client-
                 // trusted like scores). Used by P3/P6 to reach the 30:00 final horde fast.
                 _warp: function (sec) { try { if (typeof sec === 'number' && isFinite(sec)) gameTime = sec; } catch (e) {} try { return gameTime; } catch (e) { return null; } },
@@ -11697,8 +11778,11 @@
         
         // Upgrade variety tracking - reduce chance of seeing same offers repeatedly
         let offerHistory = {}; // Tracks how many times each upgrade was offered
-        let rerollsRemaining = 3; // Player gets 3 rerolls per game
-        let banishesRemaining = 2; // Player gets 2 banishes per game
+        // V1_431: per-run consumable charges — actual values are set in startGame from shop ranks
+        // (rerolls = 1 + rank, banishes = 1 + rank, skips = 0 + rank). These are just safe defaults.
+        let rerollsRemaining = 1;
+        let banishesRemaining = 1;
+        let skipsRemaining = 0;
 
         // Entity limits for performance
         const LIMITS = {
@@ -12570,6 +12654,7 @@
         // Tome-offer gate, applied by both level-up offer builders.
         function tomeOfferAllowed(id) {
             if (!tomeUnlocked(id)) return false; // V1_397: meta-gate — locked tomes never enter any offer pool
+            if (typeof banishedTomes !== 'undefined' && banishedTomes.has(id)) return false; // V1_431: run-local tome banish (parallels weaponOfferAllowed's banishedWeapons)
             if (id === 'velocityTome') return playerHasAnyWeapon(PROJSPEED_WEAPONS);
             if (id === 'persistTome') return playerHasAnyWeapon(PERSIST_WEAPONS);
             return true;
@@ -30340,11 +30425,9 @@
             DOM.upgradeSlotMachine.style.display = 'flex';
             DOM.upgradeSlotMachine.style.visibility = 'visible';
             DOM.upgradeOptions.innerHTML = '';
-            // Drop stale reroll/banish buttons so they can't be clicked mid-spin.
-            const staleReroll = DOM.upgradeOverlay.querySelector('.reroll-button');
-            if (staleReroll) staleReroll.remove();
-            const staleBanish = DOM.upgradeOverlay.querySelector('.banish-button');
-            if (staleBanish) staleBanish.remove();
+            // V1_431: drop the stale consumables row so it can't be clicked mid-spin.
+            const staleCons = DOM.upgradeOverlay.querySelector('.consumables-row');
+            if (staleCons) staleCons.remove();
             
             // Generate available upgrades with weights
             const available = [];
@@ -30742,11 +30825,9 @@
             DOM.upgradeSlotMachine.innerHTML = '';
             DOM.upgradeOptions.innerHTML = '';
             
-            // Remove any existing reroll and banish buttons
-            const existingReroll = DOM.upgradeOverlay.querySelector('.reroll-button');
-            if (existingReroll) existingReroll.remove();
-            const existingBanish = DOM.upgradeOverlay.querySelector('.banish-button');
-            if (existingBanish) existingBanish.remove();
+            // V1_431: remove any existing consumables row before re-rendering.
+            const existingCons = DOM.upgradeOverlay.querySelector('.consumables-row');
+            if (existingCons) existingCons.remove();
             
             // Reset banish mode
             banishMode = false;
@@ -30911,47 +30992,56 @@
 
             });
             
-            // Add reroll button if player has rerolls remaining
-            if (rerollsRemaining > 0) {
-                const rerollBtn = document.createElement('div');
-                rerollBtn.className = 'reroll-button';
-                rerollBtn.innerHTML = `🎲 Reroll (${rerollsRemaining})`;
-                
-                rerollBtn.onclick = function(e) {
-                    rerollsRemaining--;
-                    // Re-trigger upgrade selection
-                    DOM.upgradeOverlay.classList.remove('active');
-                    showUpgradeSelection();
-                };
-                
-                rerollBtn.ontouchend = function(e) {
-                    e.preventDefault();
-                    rerollsRemaining--;
-                    DOM.upgradeOverlay.classList.remove('active');
-                    showUpgradeSelection();
-                };
-                
-                DOM.upgradeOverlay.appendChild(rerollBtn);
-            }
-            
-            // Add banish button (only if charges remaining)
-            if (banishesRemaining > 0) {
-                const banishBtn = document.createElement('div');
-                banishBtn.className = 'banish-button';
-                banishBtn.id = 'banishBtn';
-                banishBtn.innerHTML = `🚫 Banish (${banishesRemaining})`;
-                
-                banishBtn.onclick = function(e) {
-                    toggleBanishMode();
-                };
-                
-                banishBtn.ontouchend = function(e) {
-                    e.preventDefault();
-                    toggleBanishMode();
-                };
-                
-                DOM.upgradeOverlay.appendChild(banishBtn);
-            }
+            // V1_431: CONSUMABLES ROW — REROLL / BANISH / SKIP under the option cards. All
+            // three always render (dimmed + disabled at 0 charges, per the architect spec) as a
+            // single compact flex row so it fits alongside 3-4 cards at 412x720 and 900x500.
+            // Charges are set in startGame from the shop capacity rows.
+            const consRow = document.createElement('div');
+            consRow.className = 'consumables-row';
+
+            // REROLL — consumes 1, re-deals the entire offer via the same generation path.
+            const rerollBtn = document.createElement('div');
+            rerollBtn.className = 'consumable-btn reroll-consumable' + (rerollsRemaining > 0 ? '' : ' spent');
+            rerollBtn.innerHTML = `🎲 REROLL (${rerollsRemaining})`;
+            const doReroll = function(e) {
+                if (e) e.preventDefault();
+                if (rerollsRemaining <= 0) return;
+                rerollsRemaining--;
+                DOM.upgradeOverlay.classList.remove('active');
+                showUpgradeSelection();
+            };
+            rerollBtn.onclick = doReroll;
+            rerollBtn.ontouchend = doReroll;
+            consRow.appendChild(rerollBtn);
+
+            // BANISH — arms banish mode; the charge is consumed only on a successful card banish.
+            const banishBtn = document.createElement('div');
+            banishBtn.className = 'consumable-btn banish-consumable' + (banishesRemaining > 0 ? '' : ' spent');
+            banishBtn.id = 'banishBtn';
+            banishBtn.innerHTML = `🚫 BANISH (${banishesRemaining})`;
+            const doBanish = function(e) {
+                if (e) e.preventDefault();
+                if (banishesRemaining <= 0) return;
+                toggleBanishMode();
+            };
+            banishBtn.onclick = doBanish;
+            banishBtn.ontouchend = doBanish;
+            consRow.appendChild(banishBtn);
+
+            // SKIP — consumes 1, closes with NO upgrade, banks a gold bounty (25 + 5*level).
+            const skipBtn = document.createElement('div');
+            skipBtn.className = 'consumable-btn skip-consumable' + (skipsRemaining > 0 ? '' : ' spent');
+            skipBtn.innerHTML = `⏭️ SKIP (${skipsRemaining})`;
+            const doSkip = function(e) {
+                if (e) e.preventDefault();
+                if (skipsRemaining <= 0) return;
+                skipUpgrade();
+            };
+            skipBtn.onclick = doSkip;
+            skipBtn.ontouchend = doSkip;
+            consRow.appendChild(skipBtn);
+
+            DOM.upgradeOverlay.appendChild(consRow);
 
             // V1_304: animate this fresh set of upgrade-card icons (weapons + tomes).
             startUpgradePreviews();
@@ -30965,26 +31055,24 @@
             const cards = DOM.upgradeOptions.querySelectorAll('.upgrade-card');
             
             if (banishMode) {
-                banishBtn.classList.add('active');
-                banishBtn.innerHTML = '✕ Cancel';
-                
-                // Add banish-target class to weapon cards only
+                if (banishBtn) { banishBtn.classList.add('active'); banishBtn.innerHTML = '🚫 tap a card'; } // V1_431: hint state (button glows via .active)
+
+                // V1_431: banishable cards = weapons AND tomes (both flow through their offer chokepoints)
                 cards.forEach((card, i) => {
                     const upgrade = upgradeSlotResults[i];
-                    if (upgrade && upgrade.type === 'weapon') {
+                    if (upgrade && (upgrade.type === 'weapon' || upgrade.type === 'tome')) {
                         card.classList.add('banish-target');
                         card.onclick = function(e) {
-                            banishWeapon(upgrade);
+                            banishOption(upgrade);
                         };
                         card.ontouchend = function(e) {
                             e.preventDefault();
-                            banishWeapon(upgrade);
+                            banishOption(upgrade);
                         };
                     }
                 });
             } else {
-                banishBtn.classList.remove('active');
-                banishBtn.innerHTML = `🚫 Banish (${banishesRemaining})`;
+                if (banishBtn) { banishBtn.classList.remove('active'); banishBtn.innerHTML = `🚫 BANISH (${banishesRemaining})`; }
                 
                 // Restore normal card behavior
                 cards.forEach((card, i) => {
@@ -31003,15 +31091,22 @@
             }
         }
         
-        function banishWeapon(upgrade) {
-            if (upgrade.type !== 'weapon') return;
-            
-            // Add to banished set for this run
-            banishedWeapons.add(upgrade.id);
-            
-            // Decrement banish charges
+        // V1_431: banish a single offered card (weapon OR tome). The item is added to the
+        // matching RUN-LOCAL set, which is read by weaponOfferAllowed()/tomeOfferAllowed() —
+        // the SAME chokepoints the unlock/disable gating uses (never a parallel filter). Then
+        // the whole offer is re-dealt via showUpgradeSelection (full re-deal — the existing,
+        // proven path; re-filling just the one slot would fight the generation code). Flagged
+        // in the V1_431 report.
+        function banishOption(upgrade) {
+            if (!upgrade || (upgrade.type !== 'weapon' && upgrade.type !== 'tome')) return;
+            if (banishesRemaining <= 0) return; // guard: no charge -> no-op
+
+            if (upgrade.type === 'weapon') banishedWeapons.add(upgrade.id);
+            else banishedTomes.add(upgrade.id);
+
+            // Decrement banish charges (consumed only on a successful banish)
             banishesRemaining--;
-            
+
             // Show notification
             const notification = document.createElement('div');
             notification.className = 'power-notification';
@@ -31024,11 +31119,43 @@
             `;
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 2000);
-            
+
             // Reset banish mode and refresh upgrade options
             banishMode = false;
             DOM.upgradeOverlay.classList.remove('active');
             showUpgradeSelection();
+        }
+
+        // V1_431: SKIP — close the level-up overlay with NO upgrade, banking a gold bounty
+        // (25 + 5*level). Mirrors selectUpgrade's close path so the frame loop resumes and any
+        // (rare) queued warning still processes; it does not re-open an offer (the gainXP while-
+        // loop collapses multi-level XP into one overlay, so there is no pending next offer).
+        function skipUpgrade() {
+            if (skipsRemaining <= 0) return;
+            skipsRemaining--;
+
+            const bounty = 25 + 5 * (player ? player.level : 1);
+            playerGold += bounty;
+            updateGoldDisplay();
+
+            // Brief "+N 🪙" cue.
+            const cue = document.createElement('div');
+            cue.className = 'power-notification';
+            cue.innerHTML = `<div style="font-size:20px;color:#ffd24a;">+${bounty} 🪙</div>`;
+            cue.style.cssText = `
+                position: fixed; top: 22%; left: 50%; transform: translateX(-50%);
+                background: rgba(40, 32, 8, 0.9); padding: 12px 22px; border-radius: 10px;
+                border: 2px solid #ffcf4a; z-index: 10001; text-align: center;
+                animation: fadeInOut 1.6s forwards;
+            `;
+            document.body.appendChild(cue);
+            setTimeout(() => cue.remove(), 1600);
+
+            banishMode = false;
+            DOM.upgradeOverlay.classList.remove('active');
+            gamePaused = false;
+            SFX.confirm();
+            setTimeout(processWarningQueue, 300);
         }
 
         function selectUpgrade(upgrade) {
@@ -34607,6 +34734,22 @@
         // Selected starting weapon (default to energyBolt)
         let selectedStartingWeapon = 'energyBolt';
         
+        // V1_431: ONE-TIME HARD RESET of the pre-game disable sets (Kevin's explicit choice).
+        // V1_431 moves both ban caps from fixed 5/3 to dynamic base-1 + shop rank, so a fresh
+        // save now caps at 1/1. Rather than silently keeping over-cap legacy disables, we wipe
+        // BOTH persisted sets exactly once so everyone re-picks under the new caps. A versioned
+        // localStorage guard ensures it never re-fires and never touches future legitimate
+        // disables. Runs BEFORE the set initializers below so they read the cleared storage.
+        (function migrateBansV431(){
+            try {
+                const GUARD = 'survivors_bans_reset_v431';
+                if (localStorage.getItem(GUARD)) return;
+                localStorage.removeItem('disabledWeapons');
+                localStorage.removeItem('disabledTomes');
+                localStorage.setItem(GUARD, '1');
+            } catch(e){}
+        })();
+
         // Disabled weapons (won't appear in upgrade pool) - persisted
         let disabledWeapons = new Set((function(){
             try {
@@ -34622,7 +34765,7 @@
             } catch(e){ return []; }
         })()); // V1_164: defensive parse (storage/JSON can throw at init in iOS WebView / private mode)
         let weaponEditMode = false;
-        const MAX_DISABLED_WEAPONS = 5;
+        let MAX_DISABLED_WEAPONS = 1; // V1_431: dynamic — base 1 + shop 'weaponBans' rank (recomputeBanCaps())
         
         // Disabled tomes (won't appear in upgrade pool) - persisted
         let disabledTomes = new Set((function(){
@@ -34637,10 +34780,22 @@
                 return cleaned;
             } catch(e){ return []; }
         })()); // V1_164: defensive parse
-        const MAX_DISABLED_TOMES = 3;
-        
+        let MAX_DISABLED_TOMES = 1; // V1_431: dynamic — base 1 + shop 'tomeBans' rank (recomputeBanCaps())
+
+        // V1_431: pre-game ban caps scale with the shop capacity rows. weaponBans max 4 -> cap 5,
+        // tomeBans max 2 -> cap 3 (the SAME ceilings as the old fixed 5/3 at full ranks). Recomputed
+        // whenever the weapon-select screen opens so buying/refunding a rank takes effect w/o reload.
+        function _shopRankSafe(id) { try { return window.META ? (META.getRank(id) || 0) : 0; } catch (e) { return 0; } }
+        function recomputeBanCaps() {
+            MAX_DISABLED_WEAPONS = 1 + _shopRankSafe('weaponBans');
+            MAX_DISABLED_TOMES   = 1 + _shopRankSafe('tomeBans');
+        }
+        recomputeBanCaps();
+
         // Banished weapons (removed for current run only)
         let banishedWeapons = new Set();
+        // V1_431: run-local banished tomes (parallels banishedWeapons; read by tomeOfferAllowed). Never persisted.
+        let banishedTomes = new Set();
         
         // Available starting weapons
         const STARTING_WEAPONS = [
@@ -36487,6 +36642,7 @@
         }
 
         function showWeaponSelect() {
+            recomputeBanCaps(); // V1_431: refresh dynamic ban caps from current shop ranks before rendering captions
             DOM.menuOverlay.classList.add('hidden');
             DOM.weaponSelectOverlay.classList.add('active');
             
@@ -37367,9 +37523,12 @@
             
             // Reset upgrade variety tracking
             offerHistory = {};
-            rerollsRemaining = 3;
-            banishesRemaining = 2;
+            // V1_431: per-run consumable charges scale with the shop capacity rows (base + rank).
+            rerollsRemaining  = 1 + _shopRankSafe('rerolls');
+            banishesRemaining = 1 + _shopRankSafe('banishes');
+            skipsRemaining    = 0 + _shopRankSafe('skips');
             banishedWeapons.clear();
+            banishedTomes.clear(); // V1_431: run-local — banished items offer again next run
             
             // Reset all legendary effects
             legendaryEffects = {
@@ -37851,6 +38010,7 @@
         let _shopRefundArmed = false; // two-step Refund All confirm
         // Display a per-rank cumulative effect value, trimming trailing ".0".
         function _shopFmtEffect(stat, rank) {
+            if (stat.fmt === 'count') return String((stat.base || 0) + rank); // V1_431: capacity/charge total (e.g. '1' -> '2'), not a '+%'
             const v = rank * stat.per;
             const s = (Math.abs(v % 1) < 1e-9) ? String(Math.round(v)) : String(+v.toFixed(1));
             return '+' + s + stat.unit;
@@ -37863,11 +38023,12 @@
             for (let i = 0; i < SHOP_STATS.length; i++) {
                 const stat = SHOP_STATS[i];
                 const rank = META.getRank(stat.id);
-                const maxed = rank >= SHOP_MAX_RANK;
+                const statMax = shopStatMax(stat.id); // V1_431: per-stat ceiling
+                const maxed = rank >= statMax;
                 const nextCost = maxed ? null : SHOP_COSTS[rank];
                 const affordable = !maxed && balance >= nextCost;
                 let pips = '';
-                for (let p = 0; p < SHOP_MAX_RANK; p++) pips += '<span class="shop-pip' + (p < rank ? ' on' : '') + '"></span>';
+                for (let p = 0; p < statMax; p++) pips += '<span class="shop-pip' + (p < rank ? ' on' : '') + '"></span>';
                 const curEff = _shopFmtEffect(stat, rank);
                 const effHtml = maxed
                     ? '<span class="nx">' + curEff + '</span> (MAX)'
@@ -38093,7 +38254,7 @@
                 master: true,
                 kicker: firstTime ? '🌟 MASTER CODE REDEEMED' : '🌟 MASTER CODE',
                 icon: '🏆',
-                name: firstTime ? 'Everything unlocked · +2000 🔮' : 'Already redeemed — unlocks refreshed'
+                name: firstTime ? ('Everything unlocked · +' + MASTER_CODE_PLASM_GRANT + ' 🔮') : 'Already redeemed — unlocks refreshed' // V1_431: +2600
             });
         }
         function confirmMasterCode() {
