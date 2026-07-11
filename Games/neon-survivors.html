@@ -220,7 +220,17 @@
         
         /* Settings Button */
         .settings-btn {
-            position: absolute;
+            /* V1_422: absolute -> fixed. Both #menuSettingsBtn and #pauseSettingsBtn are direct
+               children of their respective (scrollable, overflow-y:auto) full-viewport overlays;
+               as position:absolute they scrolled away with the panel content on tall builds at
+               short viewports (reproduced: #pauseSettingsBtn at ~-53px off the top of a 900x500
+               viewport with a full pause loadout). position:fixed pins it to the true viewport,
+               same as the other overlays' pinned exit buttons (neither parent overlay uses
+               filter/backdrop-filter/transform, so fixed here resolves against the real
+               viewport, not a containing-block ancestor — see the .shop-overlay note above for
+               the opposite case). Visual position is unchanged since both parent overlays are
+               themselves position:fixed, full-viewport, and start unscrolled. */
+            position: fixed;
             top: 6px;
             left: 6px;
             width: 36px;
@@ -255,7 +265,11 @@
             width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.95);
             display: none;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening (see .confirm-overlay
+               note). No position:fixed descendant, so this is a no-op today, purely defensive
+               against a future settings section pushing the panel past a short viewport. */
+            justify-content: safe center;
+            overflow-y: auto;
             align-items: center;
             flex-direction: column;
             z-index: 10000;
@@ -599,7 +613,12 @@
             display: none;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening, same recipe as
+               .tome-editor-overlay/.achievements-overlay/.pause-overlay/.menu-overlay (no
+               visual change while content fits; stops future content growth from repeating
+               the reported info-popup clip). */
+            justify-content: safe center;
+            overflow-y: auto;
             z-index: 560;
         }
         
@@ -1166,8 +1185,16 @@
             height: 100%;
             background: rgba(0, 0, 0, 0.85);
             display: none;
+            /* V1_422: flex-direction:column + justify-content:"safe center" (was row +
+               justify-content:center, with vertical clipping governed by align-items:center).
+               Plain center clips BOTH ends of an oversized flex child and refuses to scroll
+               to the clipped region — the classic flex-centering-overflow bug (same class of
+               bug fixed via this exact recipe on .tome-editor-overlay/.achievements-overlay/
+               .shop-overlay). "safe" makes the browser fall back to start-alignment + scroll
+               instead of clipping when content is taller than the popup. */
+            flex-direction: column;
             align-items: center;
-            justify-content: center;
+            justify-content: safe center;
             /* V1_169: allow the popup to scroll if it ever outgrows a short viewport
                instead of clipping the title / "Got it!" button. */
             overflow-y: auto;
@@ -1186,7 +1213,11 @@
             border-radius: 8px;
             padding: 30px 35px;
             max-width: 380px;
-            max-height: 100%;
+            /* V1_422: max-height:100% removed — with no overflow rule of its own, the box
+               couldn't clip to that cap, so tall content (V1_417 evolution recipes) just
+               painted outside it while the popup's flex-centering ate the scroll offset
+               (see .weapon-tutorial-popup). Natural height + the popup's own overflow-y:auto
+               is the same recipe already used by .tome-editor-content/.achievements-content. */
             margin: auto;
             box-sizing: border-box;
             text-align: center;
@@ -1256,7 +1287,38 @@
             color: #000;
             box-shadow: 0 0 15px #0ff;
         }
-        
+
+        /* V1_422: always-visible ✕ exit, belt-and-suspenders alongside "Got it!" — same
+           position:fixed-pins-to-viewport-corner recipe as .tome-editor-x/.achievements-x/
+           .shop-x, so the popup is dismissable even if a future recipe-list growth spurt
+           pushes "Got it!" itself past the fold before the user scrolls. */
+        .weapon-tutorial-x {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.6);
+            border: 2px solid #0ff;
+            border-radius: 50%;
+            color: #0ff;
+            font-size: 17px;
+            line-height: 1;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 0 10px #0ff;
+            transition: background 0.2s, color 0.2s;
+            z-index: 701; /* above .weapon-tutorial-content within the popup's own stacking context */
+        }
+
+        .weapon-tutorial-x:hover {
+            background: #0ff;
+            color: #000;
+        }
+
         .weapon-select-title {
             font-size: 26px;
             color: #fff;
@@ -2496,9 +2558,21 @@
         .shop-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: radial-gradient(ellipse at 50% 35%, rgba(60, 12, 90, 0.55), rgba(0, 0, 0, 0.94) 70%), #000;
-            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            /* V1_422: backdrop-filter moved to ::before below. A `backdrop-filter` (like
+               `filter`) makes ITS element a containing block for position:fixed descendants —
+               with it here, #shopX (position:fixed, meant to stay pinned to the viewport
+               regardless of scroll) was instead anchored to .shop-overlay's own box and
+               scrolled away with the panel content at short viewports (reproduced at 900x500:
+               #shopX rendered ~69-81px above the viewport after scrolling). Moving the blur to
+               its own fixed pseudo-layer keeps the identical visual (still blurs whatever's
+               behind the panel) without .shop-overlay itself becoming that containing block. */
             display: none; justify-content: safe center; align-items: center;
             z-index: 10002; flex-direction: column; overflow-y: auto;
+        }
+        .shop-overlay::before {
+            content: ''; position: fixed; inset: 0;
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            z-index: -1; pointer-events: none;
         }
         .shop-overlay.active { display: flex; }
         .shop-content { text-align: center; max-width: 720px; width: 100%; box-sizing: border-box; padding: 20px 22px; margin: auto; }
@@ -3197,7 +3271,11 @@
             display: none;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening (see .confirm-overlay
+               note). No position:fixed descendant (upgrade cards are the dismiss action), so
+               unlike .shop-overlay the backdrop-filter here is not a concern. */
+            justify-content: safe center;
+            overflow-y: auto;
             z-index: 500;
         }
 
@@ -3693,10 +3771,14 @@
             display: none;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening (see .confirm-overlay
+               note). No position:fixed descendant (shrine cards are the dismiss action), so
+               unlike .shop-overlay the backdrop-filter here is not a concern. */
+            justify-content: safe center;
+            overflow-y: auto;
             z-index: 500;
         }
-        
+
         /* GPU-accelerated flash overlay */
         .shrine-overlay::before {
             content: '';
@@ -3876,13 +3958,17 @@
             display: none;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening (see .confirm-overlay
+               note). #chestModal has no position:fixed descendant, so unlike .shop-overlay the
+               backdrop-filter here is not a concern. */
+            justify-content: safe center;
+            overflow-y: auto;
             z-index: 999999;
             pointer-events: auto;
             touch-action: auto !important;
             -webkit-touch-callout: default !important;
         }
-        
+
         /* GPU-accelerated flash overlay */
         #chestModal::before {
             content: '';
@@ -4246,7 +4332,11 @@
             display: none;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening (see .confirm-overlay
+               note). #shopModal has no position:fixed descendant (its close is #shopLeave, a
+               normal-flow button), so unlike .shop-overlay the backdrop-filter here is not a concern. */
+            justify-content: safe center;
+            overflow-y: auto;
             z-index: 999999;
             pointer-events: auto;
             touch-action: auto !important;
@@ -4374,6 +4464,12 @@
             align-items: center;
             justify-content: flex-start;
             padding-top: 15%;
+            /* V1_422: reached at 900x500 with padding-top:15% + no scroll fallback, the
+               decline button rendered 3px past the bottom edge (unclippable/unreachable —
+               flex-start overflow has nowhere to go but visually past the box with no way
+               back). overflow-y:auto is a no-op when content fits (the normal case) and lets
+               a short viewport scroll to reach it otherwise. */
+            overflow-y: auto;
             z-index: 999999;
             pointer-events: auto;
             touch-action: auto !important;
@@ -4942,10 +5038,17 @@
             display: none;
             flex-direction: column;
             align-items: center;
+            /* V1_422: NOT hardened with overflow-y:auto (unlike its .upgrade-overlay/.shrine-
+               overlay siblings) — the ::after god-rays layer below is a deliberately oversized
+               (220vmax) decorative box, and overflow-y:auto turns that into real scrollable
+               content (~800px of bogus scrollHeight), which then eats the "scroll to bottom"
+               reveal and shoves the real cards off-screen. Verified passing as-is (plain
+               center, no scroll) at all 5 test viewports with real 3-card content; revisit if
+               legendary card copy ever grows enough to overflow a short viewport. */
             justify-content: center;
             z-index: 600;
         }
-        
+
         /* GPU-accelerated flash overlay */
         .legendary-overlay::before {
             content: '';
@@ -6105,7 +6208,9 @@
             height: 100%;
             background: rgba(0, 0, 0, 0.92);
             z-index: 10000;
-            justify-content: center;
+            /* V1_422: safe center + overflow-y:auto — preventive hardening (see .confirm-overlay note) */
+            justify-content: safe center;
+            overflow-y: auto;
             align-items: center;
             flex-direction: column;
             gap: 12px;
@@ -7469,6 +7574,8 @@
         
         <!-- First-time Tutorial Popup -->
         <div class="weapon-tutorial-popup" id="weaponTutorialPopup">
+            <!-- V1_422: pinned exit, lives OUTSIDE .weapon-tutorial-content so it can never scroll away -->
+            <button class="weapon-tutorial-x" id="weaponTutorialX" aria-label="Close">✕</button>
             <div class="weapon-tutorial-content">
                 <div class="weapon-tutorial-title">Weapons & Tomes</div>
                 <div class="weapon-tutorial-text">
@@ -31292,6 +31399,7 @@
             weaponConfirmBtn: document.getElementById('weaponConfirmBtn'),
             weaponTutorialPopup: document.getElementById('weaponTutorialPopup'),
             weaponTutorialBtn: document.getElementById('weaponTutorialBtn'),
+            weaponTutorialX: document.getElementById('weaponTutorialX'), // V1_422
             colorSelectorGrid: document.getElementById('colorSelectorGrid'),
             pauseOverlay: document.getElementById('pauseOverlay'),
             resumeBtn: document.getElementById('resumeBtn'),
@@ -37611,7 +37719,11 @@
                 const doneCount = Object.keys(st.ach).filter(function (id) { return st.ach[id].done; }).length;
                 const totalAch = Object.keys(META.ACHIEVEMENTS).length;
                 const wUnlocked = st.unlocked.weapons.length;
-                const wTotal = (typeof WEAPONS !== 'undefined') ? Object.keys(WEAPONS).length : wUnlocked;
+                // V1_422: denominator was Object.keys(WEAPONS).length, which counted the 8 evolved
+                // weapon defs (WEAPONS entries with evolved:true) — those are derived end-states,
+                // never independently unlockable/offered (see weaponOfferAllowed), so they can never
+                // close the gap. Exclude them so the fraction can actually reach 100% (…/25).
+                const wTotal = (typeof WEAPONS !== 'undefined') ? Object.keys(WEAPONS).filter(function (id) { return !WEAPONS[id].evolved; }).length : wUnlocked;
                 const runs = st.life.runs || 0;
                 if (runs === 0 && doneCount === 0) { el.style.display = 'none'; el.textContent = ''; return; }
                 el.textContent = '🏆 ' + doneCount + '/' + totalAch + ' · 🔓 ' + wUnlocked + '/' + wTotal + ' weapons · 💀 ' + runs + ' runs';
@@ -37744,7 +37856,17 @@
             e.preventDefault();
             DOM.weaponTutorialPopup.classList.remove('active');
         });
-        
+        // V1_422: pinned ✕ exit, same dismiss routine as "Got it!"
+        if (DOM.weaponTutorialX) {
+            DOM.weaponTutorialX.addEventListener('click', () => {
+                DOM.weaponTutorialPopup.classList.remove('active');
+            });
+            DOM.weaponTutorialX.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                DOM.weaponTutorialPopup.classList.remove('active');
+            });
+        }
+
         // Pause button handler
         // V1_314: fill the pause-menu loadout panel (offense/defense + current weapons/tomes).
         // Reuses the same stat formulas as the in-game HUD (updateStatPanels).
