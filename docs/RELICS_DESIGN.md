@@ -162,5 +162,45 @@ ceiling. This is economically unreachable (chest costs double to 1000 then +50% 
 a real 30-min run opens ~8–15 chests), so live play stays under the ceiling, but
 the structural options are: (a) accept relics as an intentional third power axis
 whose gate is the chest economy (current state), or (b) add an equipped-relic cap.
-Morning decision; the /goal loop measures a realistic 12-relic run multiplier as
-part of Integration/Balance scoring.
+
+## 10a. V1_437 (RELICS /goal iteration 1) — 85→ target 92, gaps attacked
+
+Registry now **36 relics** (common 11 / rare 11 / epic 9 / legendary 5); base
+weights unchanged (58/27/12/3). Adds: **6 true-downside relics** now live
+(Overdriven Amp, Pyro Rig + Cursed Setlist, Heavy Cab, Feedback Screamer, Strobe
+Rig); **4 niche-fillers** (Pop Filter shield-cap, EVP Recorder ghost soft-cap +2,
+Signature Solo = first crit-DAMAGE relic, Gold Master Disc gold+escalation-slow);
+**free-chest luck** (+0.25 to live luck on `chest.isFree` rolls only).
+
+**Realistic-run measurement (replaces the earlier "measures a 12-relic run" promise
+— these are the actual figures).** Simulated 20× the natural acquisition curve of a
+competent 30-min run: gold income 2000–3500, 5 free chests (~1/6 min) rolled at live
+luck 0.10 + the 0.25 free bonus, paid chests bought while affordable against the LIVE
+escalation, all rolls through the live `rollRelic` (pity + luck). Natural loadout =
+**13–15 relic stacks, 9–14 unique** per run. Effective single-target-DPS multiplier
+(damage × attack-speed × crit — the same proxy the V1_416 4.05× reference used):
+
+| Metric | Core (dmg×AS×crit) | With projectiles (Platinum Record) |
+|---|---|---|
+| median | **1.05×** | 1.14× |
+| p90    | **1.17×** | 2.06× |
+| max    | 1.28×              | 2.33× |
+
+The natural loadout lands **~1.05–1.17× core DPS**, i.e. relics contribute a modest
+lift on top of a build and the realistic ceiling is **nowhere near 4.05×** — most
+relic value is survivability / economy / utility, not raw single-target DPS. The
+kitchen-sink ×6.5 remains a theoretical (≈100-open) hoard, not a reachable state.
+
+**Free-chest quality lift (300 free vs 300 paid, L=0):** epic+legendary share
+13.3% paid → 23.4% free (**+75.9% relative**), consistent with an L=0.25 roll —
+"found treasure is better treasure," no new UI (free chests keep their FREE styling).
+
+**Ceiling proofs (numeric):** Strobe Rig's +10% attack speed enters the PERMANENT
+lane through `PERM_AS_KNEE` (measured AS 1.65→1.725 softened, vs 1.75 naive).
+Signature Solo's +20% crit damage enters the PERMANENT crit lane through
+`PERM_CRIT_KNEE` — above the knee the relic's expected-crit-factor gain is softened
+from a naive ΔF +0.19 to a measured +0.086 (measured F 3.034 = softened expectation
+exactly). Full 36-relic hoard incl. EVP at max is frame-time neutral (Δ ≈ 0 ms;
+baked V1_411 glows, no per-frame shadowBlur). Feedback Screamer is scoped to the
+themed BOSS_IDENTITY bosses (MiniBoss + MajorBoss); the Maw is deliberately excluded
+both directions to protect its bespoke `MAW_HP` tuning.
