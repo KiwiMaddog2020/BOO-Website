@@ -13083,10 +13083,10 @@
         // ===== V1_434: RELICS — Megabonk-style run-local item system (Phase 1 CORE) =====
         // Run-local passive items dropped by chests (RELICS_DESIGN.md). They reset every run
         // (relicState cleared at startGame); the meta layer (plasm shop, achievements) is
-        // untouched. Phase 1 ships the 10 COMMONS + the roll/pity engine + a single stat
-        // collector folded into Player.applyPassives. rare+ rarities roll but have no content
-        // yet, so they FALL THROUGH to consolation gold (Phase 2 adds their registry entries
-        // right here). Stat relics NEVER take a second stat pathway — one collector only.
+        // untouched. Phase 1 shipped the 10 COMMONS + the roll/pity engine + a single stat
+        // collector folded into Player.applyPassives; every rarity is populated as of V1_435,
+        // and V1_444 removed gold from chests entirely (rollRelic always resolves to a real
+        // relic). Stat relics NEVER take a second stat pathway — one collector only.
         const RELICS = {
             // COMMON (10) — §5. Stack caps 5–8.
             moldySandwich:    { name: 'Moldy Green Room Sandwich', icon: '🥪', rarity: 'common', flavor: 'Week three. Still edible. Probably.', desc: '+6 Max HP',            maxStacks: 8, stats: { maxHp: 6 } },
@@ -13172,24 +13172,27 @@
             const total = sC + sR + sE + sL, r = Math.random() * total;
             return r < sC ? 'common' : r < sC + sR ? 'rare' : r < sC + sR + sE ? 'epic' : 'legendary';
         }
-        // Full relic roll → { rarity, id|null, gold }. V1_435: every rarity is now populated,
-        // so a roll of ANY rarity resolves to a real relic of that tier. A dupe of a MAX-STACKED
-        // pick rerolls ONCE within the same tier, then (only if that reroll is also maxed) falls
-        // back to VS-style consolation gold (40 + 10*minute). Consolation is now the max-stack
-        // safety valve ONLY — no rarity falls through for lack of content.
+        // Full relic roll → { rarity, id|null }. V1_435: every rarity is populated, so a roll
+        // of ANY rarity resolves to a real relic of that tier. V1_444 (Kevin): chests NEVER
+        // pay out gold — the old max-stacked-dupe path (reroll once → consolation gold) is
+        // gone; the player just PAID gold for the chest. The roll now draws only from
+        // NON-maxed relics of the tier; an exhausted tier climbs to the next tier up (then
+        // back down) so a chest always yields a real relic. id:null is only possible when
+        // EVERY relic in the game is max-stacked (god-run territory) — the caller falls back
+        // to a shrine blessing card, still never gold.
         function rollRelic(luckOverride) {
             const L = relicRollLuck(luckOverride);
-            const minute = Math.max(0, Math.floor((typeof gameTime === 'number' ? gameTime : 0) / 60));
-            const consolation = () => 40 + 10 * minute;
             const rarity = rollRelicRarity(L);
             if (rarity === 'common') relicCommonStreak++; else relicCommonStreak = 0;
-            const pool = Object.keys(RELICS).filter(id => RELICS[id].rarity === rarity);
-            if (!pool.length) return { rarity, id: null, gold: consolation() }; // defensive; every tier is populated
             const maxed = id => (relicState.get(id) || 0) >= RELICS[id].maxStacks;
-            const pick = () => pool[Math.floor(Math.random() * pool.length)];
-            let id = pick();
-            if (maxed(id)) { id = pick(); if (maxed(id)) return { rarity, id: null, gold: consolation() }; } // reroll once, then gold
-            return { rarity, id, gold: 0 };
+            const TIERS = ['common', 'rare', 'epic', 'legendary'];
+            const ti = TIERS.indexOf(rarity);
+            const order = [rarity].concat(TIERS.slice(ti + 1), TIERS.slice(0, ti).reverse());
+            for (const tier of order) {
+                const open = Object.keys(RELICS).filter(id => RELICS[id].rarity === tier && !maxed(id));
+                if (open.length) return { rarity: tier, id: open[Math.floor(Math.random() * open.length)] };
+            }
+            return { rarity, id: null };
         }
         // Grant n stacks of a relic (clamped to maxStacks); recomputes passives. Returns new count.
         function grantRelic(id, n) {
@@ -23162,8 +23165,8 @@
                             typeBadge = 'BUFF';
                         } else if (contents.type === 'relic') {
                             typeBadge = (contents.rarity || 'common').toUpperCase(); // V1_434: TYPE line = rarity (§6)
-                        } else if (contents.type === 'gold') {
-                            typeBadge = 'GOLD'; // V1_434: consolation
+                        } else if (contents.type === 'shrine') {
+                            typeBadge = 'BLESSING'; // V1_444: all-relics-maxed fallback (never gold)
                         }
                         DOM.modalType.textContent = typeBadge;
                         DOM.modalType.style.color = typeColor;
@@ -23221,7 +23224,7 @@
                 // V1_437 (§C): FREE chests (boss/event-dropped) roll with a flat +0.25 luck bonus on
                 // top of the player's LIVE luck for THIS roll only — "found treasure is better treasure".
                 // Paid chests keep the plain live-luck roll. Reveal keeps its existing FREE styling (no new UI).
-                const r = this.isFree ? rollRelic((player ? player.luck : 0) + 0.25) : rollRelic(); // V1_435: live luck + pity; every rarity resolves to a real relic (consolation gold only on a max-stacked dupe)
+                const r = this.isFree ? rollRelic((player ? player.luck : 0) + 0.25) : rollRelic(); // V1_435: live luck + pity; V1_444: always a real relic (id:null only when every relic is max-stacked)
                 if (r.id && RELICS[r.id]) {
                     const def = RELICS[r.id];
                     return {
@@ -23236,16 +23239,19 @@
                         color: RELIC_RARITY_COLOR[def.rarity] || RELIC_RARITY_COLOR.common
                     };
                 }
-                // Consolation gold: a dupe of a max-stacked relic (rerolled once) or a rare+
-                // roll with no shipped content this phase (Phase 2 replaces this fall-through).
+                // V1_444 (Kevin): chests never pay out gold. This branch is only reachable
+                // when EVERY relic in the game is max-stacked — fall back to a build-aware
+                // shrine stat card (applies via the shrine branch in acceptChestOffer).
+                const pool = shrinePowerupPool();
+                const pid = pool[Math.floor(Math.random() * pool.length)];
+                const p = SHRINE_POWERUPS[pid];
                 return {
-                    type: 'gold',
-                    id: 'gold',
-                    amount: r.gold,
-                    icon: '🪙',
-                    name: `${r.gold} Gold`,
-                    desc: 'A little something for the road.',
-                    color: COLORS.gold
+                    type: 'shrine',
+                    id: pid,
+                    icon: p.icon,
+                    name: p.name,
+                    desc: p.desc,
+                    color: '#00ffaa'
                 };
             }
             
@@ -23905,18 +23911,15 @@
             spawnParticles(chest.x, chest.y, burstColor, 20);
             addRing(chest.x, chest.y, chest.radius || 30, burstColor);
 
-            // Apply contents — V1_434: chests grant a RELIC (or consolation gold). The
-            // chest-sourced legendary branch is gone; legendary upgrades keep their other sources.
+            // Apply contents — V1_434: chests grant a RELIC. V1_444 (Kevin): the gold branch
+            // is gone — chests never pay out gold; the only non-relic contents left is the
+            // all-relics-maxed shrine blessing fallback.
             if (chest.contents.type === 'relic') {
                 grantRelic(chest.contents.relicId || chest.contents.id, 1); // recomputes passives internally
                 updateBuffsBar();
                 closeChestModal();
-            } else if (chest.contents.type === 'gold') {
-                playerGold += (chest.contents.amount || 0);
-                updateGoldDisplay();
-                closeChestModal();
             } else {
-                // Legacy safety (shrine powerup) — unreachable post-V1_434, kept defensive.
+                // Shrine blessing (V1_444 fallback; also legacy safety for any stray contents).
                 const powerup = SHRINE_POWERUPS[chest.contents.id];
                 if (powerup) { player.addShrineBonus(powerup.stat, powerup.value); updateBuffsBar(); }
                 closeChestModal();
