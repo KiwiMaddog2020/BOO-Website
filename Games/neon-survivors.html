@@ -33843,7 +33843,6 @@
             // OFFENSE title: color: rgba(255, 150, 150, 1); text-shadow: 0 0 8px rgba(255, 100, 100, 0.5)
             // DEFENSE title: color: rgba(150, 200, 255, 1); text-shadow: 0 0 8px rgba(100, 200, 255, 0.5)
             ctx.font = 'bold 12px Oxanium, monospace';
-            ctx.textAlign = 'center';
             if (type === 'offense') {
                 ctx.fillStyle = 'rgba(255, 150, 150, 1)';
                 ctx.shadowColor = 'rgba(255, 100, 100, 0.5)';
@@ -33852,7 +33851,26 @@
                 ctx.shadowColor = 'rgba(100, 200, 255, 0.5)';
             }
             ctx.shadowBlur = 8;
-            ctx.fillText(title, x + w / 2, y + 16);
+            // V1_443: on Windows Chrome the '⚔️ OFFENSE' title rendered starting AT the
+            // panel center — the alignment offset for an emoji-containing run comes back 0
+            // (font-fallback shaping quirk; the pure-Latin rows align fine). Left-aligned
+            // draws use no alignment offset, so split the title into two left-aligned runs
+            // and center them by measuring only the Latin word (reliable on every browser);
+            // the emoji advance is clamped so bogus metrics can't skew the pair.
+            const _tSp = title.indexOf(' ');
+            if (_tSp > 0) {
+                const _tIcon = title.slice(0, _tSp), _tWord = title.slice(_tSp + 1);
+                ctx.textAlign = 'left';
+                const _tWordW = ctx.measureText(_tWord).width;
+                let _tIconAdv = ctx.measureText(_tIcon + ' ').width;
+                if (!(_tIconAdv > 6 && _tIconAdv < 30)) _tIconAdv = 16;
+                const _tStartX = x + w / 2 - (_tIconAdv + _tWordW) / 2;
+                ctx.fillText(_tIcon, _tStartX, y + 16);
+                ctx.fillText(_tWord, _tStartX + _tIconAdv, y + 16);
+            } else {
+                ctx.textAlign = 'center';
+                ctx.fillText(title, x + w / 2, y + 16);
+            }
             ctx.shadowBlur = 0;
             
             // Title underline - V1_169: accent-tinted gradient that fades at both ends
