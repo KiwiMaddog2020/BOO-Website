@@ -20840,6 +20840,38 @@
         // back) and always finds an opening if one exists, including through a gap between two
         // obstacles. A short steering memory (self._steer) commits the boss to one side so it
         // follows a wall out of a pocket instead of oscillating at the pinch point.
+        // V1_445: last-resort unstick — relocate a wedged boss onto open ground near the
+        // player. Only reached when a stuck-phase already failed to free it (e.g. ringed by
+        // water, which phasing still can't cross). Ring-searches outward from the player;
+        // the absolute fallback drops the boss right beside the player, whose own footing is
+        // guaranteed walkable. Bosses must NEVER stay locked in place (Kevin).
+        function unstickRelocate(self) {
+            const pr = (typeof player !== 'undefined' && player) ? player : self;
+            const place = (x, y) => {
+                spawnParticles(self.x, self.y, '#aa66ff', 12);
+                self.x = x; self.y = y;
+                spawnParticles(self.x, self.y, '#aa66ff', 16);
+                self._stuckAccum = 0; self._stuckSampleT = 0;
+                self._lastSampleX = x; self._lastSampleY = y; self._steer = 0;
+            };
+            for (const rad of [320, 400, 480, 560]) {
+                for (let k = 0; k < 14; k++) {
+                    const a = Math.random() * Math.PI * 2;
+                    const x = pr.x + Math.cos(a) * rad, y = pr.y + Math.sin(a) * rad;
+                    if (x < self.radius || y < self.radius || x > WORLD.width - self.radius || y > WORLD.height - self.radius) continue;
+                    if (isInTerrain(x, y, self.radius + 4)) continue; // terrainObstacles includes lakes + mountains
+                    place(x, y);
+                    return;
+                }
+            }
+            // No open ground in 56 samples (pathological map): land beside the player —
+            // the player cannot stand inside terrain, so their fringe is always walkable.
+            const a = Math.random() * Math.PI * 2;
+            const d = self.radius + (pr.radius || 14) + 40;
+            place(Math.max(self.radius, Math.min(WORLD.width - self.radius, pr.x + Math.cos(a) * d)),
+                  Math.max(self.radius, Math.min(WORLD.height - self.radius, pr.y + Math.sin(a) * d)));
+        }
+
         function moveWithAvoidance(self, dirX, dirY, frameSpeed, dt = 16) {
             // V1_339: while phasing (stuck-escape), ONLY water blocks — the boss slips through
             // trees/rocks/bushes/mountains for a few seconds to unwedge, but never water.
@@ -20884,6 +20916,13 @@
 
             // V1_339: stuck detection (windowed net-displacement). A chasing boss that makes
             // almost no real progress for a few seconds earns a 4s phase to walk free.
+            // V1_445 (Kevin: bosses may NEVER stay stuck) — two holes closed:
+            //  1) the old "distToPlayer > radius + 90" gate meant a boss wedged CLOSE to the
+            //     player (thin rock/water strip between them) never counted as stuck and froze
+            //     forever. Only true body contact (where it's landing hits anyway) is exempt now.
+            //  2) a phase can't cross water, so a boss ringed by lake re-phased in place
+            //     forever. If the previous phase (within the last 12s) freed <120px of ground,
+            //     escalate to unstickRelocate() — a hard move onto open ground near the player.
             if (self._phaseT > 0) {
                 self._phaseT -= dt;
                 if (self._phaseT <= 0) { self._phaseT = 0; self._stuckAccum = 0; self._stuckSampleT = 0; self._lastSampleX = self.x; self._lastSampleY = self.y; }
@@ -20894,10 +20933,22 @@
                     const net = Math.hypot(self.x - self._lastSampleX, self.y - self._lastSampleY);
                     const expected = self.speed * (self._stuckSampleT / 16);
                     const distToPlayer = (typeof player !== 'undefined' && player) ? Math.hypot(player.x - self.x, player.y - self.y) : 9999;
-                    // Only when genuinely trying to traverse ground (well away from the player).
-                    if (frameSpeed > 0.01 && distToPlayer > self.radius + 90 && net < expected * 0.25) {
+                    const inContact = distToPlayer < self.radius + ((typeof player !== 'undefined' && player && player.radius) || 14) + 8;
+                    if (frameSpeed > 0.01 && !inContact && net < expected * 0.25) {
                         self._stuckAccum = (self._stuckAccum || 0) + self._stuckSampleT;
-                        if (self._stuckAccum >= 2800) { self._phaseT = 4000; self._stuckAccum = 0; } // stuck >~3s -> phase 4s
+                        if (self._stuckAccum >= 2800) {
+                            const now = (typeof gameTime === 'number') ? gameTime : 0;
+                            const phaseFailed = self._lastPhaseX != null && (now - (self._lastPhaseAt || 0)) < 12
+                                && Math.hypot(self.x - self._lastPhaseX, self.y - self._lastPhaseY) < 120;
+                            if (phaseFailed) {
+                                unstickRelocate(self);
+                                self._lastPhaseX = null;
+                            } else {
+                                self._lastPhaseX = self.x; self._lastPhaseY = self.y; self._lastPhaseAt = now;
+                                self._phaseT = 4000; // stuck >~3s -> phase 4s
+                            }
+                            self._stuckAccum = 0;
+                        }
                     } else {
                         self._stuckAccum = 0;
                     }
@@ -20991,27 +21042,32 @@
                 
                 if (dist > 0) {
                     // V1_305: robust avoidance (was a single-perpendicular slide that stuck on rocks/trees).
-                    moveWithAvoidance(this, dx / dist, dy / dist, frameSpeed);
+                    // V1_445: pass real dt so the stuck timers track wall-clock at low fps too.
+                    moveWithAvoidance(this, dx / dist, dy / dist, frameSpeed, dt);
                 }
-                
+
                 // Apply knockback velocity (smooth knockback)
                 if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
                     const dtScale2 = dt / 16;
-                    this.x += this.knockbackVelX * dtScale2;
-                    this.y += this.knockbackVelY * dtScale2;
-                    
+                    // V1_445: never let knockback shove the boss INSIDE terrain/water — an
+                    // embedded boss has every heading blocked and looks frozen. Skip the
+                    // displacement (velocity still decays) when it would land in an obstacle.
+                    const kbx = this.x + this.knockbackVelX * dtScale2;
+                    const kby = this.y + this.knockbackVelY * dtScale2;
+                    if (!isInTerrain(kbx, kby, this.radius)) { this.x = kbx; this.y = kby; }
+
                     const friction = 0.88;
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
-                    
+
                     if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
                     if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
                 }
-                
+
                 // Clamp to world
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
-                
+
                 // Collision damage
                 if (dist < this.radius + player.radius) {
                     player.takeDamage(25, this);
@@ -21407,6 +21463,10 @@
                         this.y += (dy / dist) * 8 * dtScale;
                     } else {
                         this.isCharging = false;
+                        // V1_445: a charge plows straight through terrain, so the landing can
+                        // be INSIDE a rock/lake — grant an immediate phase so the boss walks
+                        // right out instead of freezing until stuck-detection catches up.
+                        if (isInTerrain(this.x, this.y, this.radius)) this._phaseT = 4000;
                         // Shockwave on landing
                         spawnParticles(this.x, this.y, this.color, 25);
                         // Damage player if close
@@ -21440,21 +21500,24 @@
                 // Apply knockback velocity (smooth knockback)
                 if (this.knockbackVelX !== 0 || this.knockbackVelY !== 0) {
                     const dtScale2 = dt / 16;
-                    this.x += this.knockbackVelX * dtScale2;
-                    this.y += this.knockbackVelY * dtScale2;
-                    
+                    // V1_445: same guard as MiniBoss — knockback may never embed the boss
+                    // inside terrain/water (an embedded boss reads as frozen).
+                    const kbx = this.x + this.knockbackVelX * dtScale2;
+                    const kby = this.y + this.knockbackVelY * dtScale2;
+                    if (!isInTerrain(kbx, kby, this.radius)) { this.x = kbx; this.y = kby; }
+
                     const friction = 0.88;
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
-                    
+
                     if (Math.abs(this.knockbackVelX) < 0.05) this.knockbackVelX = 0;
                     if (Math.abs(this.knockbackVelY) < 0.05) this.knockbackVelY = 0;
                 }
-                
+
                 // Clamp to world
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
-                
+
                 // Collision damage
                 const dist = Math.hypot(player.x - this.x, player.y - this.y);
                 if (dist < this.radius + player.radius) {
