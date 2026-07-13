@@ -4536,57 +4536,185 @@
             box-shadow: 0 0 8px rgba(100, 100, 100, 0.3) !important;
         }
         
-        /* Chest Slot Reel */
+        /* ===== V1_447: PREMIUM CHEST SLOT REEL =====
+           Kevin: the old .chest-slot-reel was a single block jittering via a CSS
+           @keyframes translateY loop (chestSlotSpin, now removed) — "not premium
+           enough... i want it to look like actual slots", and separately reported
+           misbehaving on Brave. Replaced with a real windowed drum: a classic
+           3-symbol viewing window (.csr-window shows the previous/current/next
+           cell of .csr-strip, current cell dead-center on the payline — a single
+           peephole showing only one symbol read as "a blurry dot", not a slot
+           machine) plus a separate .csr-nameplate readout below the drum, the
+           way a physical cabinet separates the spinning reels from their payout
+           display. The motion itself is NOT a CSS animation/transition — it's
+           driven by plain `element.style.transform` writes from a rAF loop in JS
+           (runChestReelSpin(), near mountSlotPreview) so there is no CSS timing
+           engine, Web Animations API, or animation-timeline for Brave to
+           mishandle. The outer box keeps its original id/class contract
+           (#chestSlotReel, .spinning/.stopped, style.display gating) — every
+           existing hide/reset call site (L20253ish, L23919ish, L24052ish,
+           L34122ish) keeps working untouched. */
         .chest-slot-reel {
-            width: 160px;
-            height: 120px;
-            background: rgba(0, 0, 0, 0.9);
+            width: 190px;
+            background: rgba(0, 0, 0, 0.92);
             border: 3px solid #ffd700;
             border-radius: 12px;
             overflow: hidden;
             position: relative;
-            box-shadow: 0 0 30px rgba(255, 215, 0, 0.4);
-            margin-bottom: 15px;
+            /* Gold outer glow + a thin cyan inner trim line — ties the reel to the
+               site's cyan/gold neon-arcade palette instead of gold-only. */
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.4), inset 0 0 0 1px rgba(0, 255, 255, 0.25), inset 0 0 20px rgba(0, 0, 0, 0.6);
+            margin: 0 auto 15px;
             display: none;
         }
-        
-        .chest-slot-reel.spinning {
+
+        .chest-slot-reel.spinning, .chest-slot-reel.stopped {
             display: block;
         }
-        
-        .chest-slot-reel.spinning .slot-content {
-            animation: chestSlotSpin 0.08s linear infinite;
+
+        /* 3-symbol viewing window = exactly 3x the cell height, so the strip
+           always shows a full symbol above + the payline symbol + a full symbol
+           below (classic slot-cabinet framing). Height here is the ONE canonical
+           cell size (window = 3 * cell) — runChestReelSpin() reads THIS element's
+           clientHeight/3 at spin time, so JS always follows CSS; .csr-cell below
+           must still be hand-kept equal to height/3 (a plain duplicate literal,
+           not calc()/custom-property — deliberately the most boring option, see
+           the file-level Brave note above). */
+        .csr-window {
+            position: relative;
+            width: 100%;
+            height: 156px; /* 3 * 52px cell */
+            overflow: hidden;
         }
-        
-        .chest-slot-reel.stopped {
-            display: block;
+
+        .csr-strip {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            z-index: 1;
+            /* transform (translateY) is written every rAF tick from JS — no CSS
+               transition/animation touches this property (V1_447 Brave-safety rule). */
         }
-        
-        @keyframes chestSlotSpin {
-            0% { transform: translateY(0); opacity: 0.7; }
-            50% { transform: translateY(-30px); opacity: 0.3; }
-            100% { transform: translateY(-60px); opacity: 0.7; }
+        /* Motion-blur illusion during the fast part of the spin — a static filter
+           value toggled on/off by class, never recomputed per frame (perf law:
+           no per-frame shadowBlur-equivalent cost here). With 3 symbols visible
+           at once this reads as a real streak, not just one smeared dot. */
+        .csr-strip.csr-blur {
+            filter: blur(2px);
         }
-        
-        .chest-slot-reel .slot-content {
+
+        .csr-cell {
+            height: 52px;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100%;
-            padding: 10px;
-            gap: 8px;
+            box-sizing: border-box;
         }
-        
+        .csr-cell .csr-ghost-icon {
+            font-size: 34px;
+            line-height: 1;
+            opacity: 0.9;
+        }
+
+        /* Drum squash during the fast sustain phase — scaleY lives on the WINDOW
+           (not the strip) so it never fights the strip's own translateY transform. */
+        .csr-window.csr-fast {
+            transform: scaleY(1.03);
+            transform-origin: 50% 50%;
+        }
+
         .chest-slot-reel .slot-icon {
-            font-size: 42px;
+            font-size: 36px;
+            line-height: 1;
         }
-        
+
+        /* Payout readout — separate from the drum, like a cabinet's win display.
+           Empty/placeholder during the spin, swapped to the real name the instant
+           the drum lands (see _csrLand()). Fixed min-height so this never causes
+           a layout shift when the text appears (V1_422 viewport-cutoff law). */
+        .csr-nameplate {
+            border-top: 1px solid rgba(255, 215, 0, 0.35);
+            background: rgba(0, 0, 0, 0.35);
+            padding: 8px 10px;
+            min-height: 40px;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
         .chest-slot-reel .slot-name {
             font-size: 14px;
             color: #fff;
             text-align: center;
             font-weight: bold;
+            width: 100%;
+            max-height: 2.6em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            line-height: 1.3;
+        }
+
+        /* Center payline: thin glowing notch line through the middle symbol —
+           this is what sells "reel" over "scrolling list". */
+        .csr-payline {
+            position: absolute;
+            left: 0; right: 0;
+            top: 50%;
+            height: 2px;
+            transform: translateY(-1px);
+            background: linear-gradient(90deg, transparent, rgba(0, 255, 255, 0.85) 15%, rgba(0, 255, 255, 0.85) 85%, transparent);
+            box-shadow: 0 0 8px rgba(0, 255, 255, 0.7);
+            pointer-events: none;
+            z-index: 3;
+        }
+        .csr-payline::before, .csr-payline::after {
+            content: '';
+            position: absolute;
+            top: -4px;
+            width: 0; height: 0;
+            border-style: solid;
+        }
+        .csr-payline::before { left: 2px; border-width: 5px 0 5px 6px; border-color: transparent transparent transparent #0ff; }
+        .csr-payline::after { right: 2px; border-width: 5px 6px 5px 0; border-color: transparent #0ff transparent transparent; }
+
+        /* Cylinder-drum illusion: shade the window's top/bottom edges so the
+           strip reads as curving away rather than a flat scrolling list. Sized to
+           roughly a third of a cell so the top/bottom symbols still peek through
+           (that peek IS the "multiple symbols visible" premium reel look). */
+        .csr-shade {
+            position: absolute;
+            left: 0; right: 0;
+            height: 18px;
+            pointer-events: none;
+            z-index: 2;
+        }
+        .csr-shade-top { top: 0; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0)); }
+        .csr-shade-bottom { bottom: 0; background: linear-gradient(to top, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0)); }
+
+        /* One-shot landing flourish (plain @keyframes, single iteration — NOT
+           per-frame JS, NOT infinite; the result cell already holds its final
+           mounted content when this plays). Disabled globally for
+           prefers-reduced-motion by the existing `#chestModal *` rule below. */
+        @keyframes csrLandPulse {
+            0%   { transform: scale(1); filter: brightness(1); }
+            35%  { transform: scale(1.1); filter: brightness(1.6); }
+            100% { transform: scale(1); filter: brightness(1); }
+        }
+        .csr-cell-result.csr-pulse {
+            animation: csrLandPulse 0.4s ease-out 1;
+        }
+        /* Nameplate gets its own (equally one-shot) tint flash tied to the same class. */
+        @keyframes csrNamePulse {
+            0%   { text-shadow: none; }
+            35%  { text-shadow: 0 0 12px currentColor; }
+            100% { text-shadow: none; }
+        }
+        .csr-nameplate.csr-pulse .slot-name {
+            animation: csrNamePulse 0.4s ease-out 1;
         }
 
         /* ===== Traveling Merchant shop modal (V1_299) — mirrors chest-modal styling ===== */
@@ -7608,6 +7736,25 @@
                 font-size: 22px;
                 letter-spacing: 2px;
             }
+            /* V1_447: reel scales down with the rest of the mobile modal. Window
+               stays EXACTLY 3x the cell height (same coupling note as the desktop
+               rule) — runChestReelSpin() measures .csr-window.clientHeight/3 fresh
+               at spin time, so this is the only pair of numbers to keep synced. */
+            .chest-slot-reel {
+                width: 168px;
+            }
+            .csr-window {
+                height: 132px; /* 3 * 44px cell */
+            }
+            .csr-cell {
+                height: 44px;
+            }
+            .csr-cell .csr-ghost-icon {
+                font-size: 30px;
+            }
+            .chest-slot-reel .slot-icon {
+                font-size: 32px;
+            }
             #chestModal .modal-card {
                 width: 115px;
                 min-height: 160px;
@@ -7891,9 +8038,19 @@
     <div id="chestModal" ontouchstart="event.stopPropagation();" ontouchmove="event.stopPropagation();" ontouchend="event.stopPropagation();">
         <div class="modal-title" id="modalTitle">💎 TREASURE FOUND! 💎</div>
         <div class="modal-cost" id="modalCost"></div>
+        <!-- V1_447: premium slot reel — .csr-strip's cells are built fresh per
+             spin by runChestReelSpin() (ghost cells + the real result cell, icon
+             only); this skeleton provides the window/payline/shade chrome plus
+             the .csr-nameplate payout readout, neither of which changes shape
+             between spins. Outer id/class contract unchanged (see CSS comment above). -->
         <div class="chest-slot-reel" id="chestSlotReel">
-            <div class="slot-content">
-                <div class="slot-icon">❓</div>
+            <div class="csr-window">
+                <div class="csr-strip" id="chestSlotStrip"></div>
+                <div class="csr-shade csr-shade-top"></div>
+                <div class="csr-shade csr-shade-bottom"></div>
+                <div class="csr-payline"></div>
+            </div>
+            <div class="csr-nameplate" id="chestSlotNameplate">
                 <div class="slot-name">???</div>
             </div>
         </div>
@@ -23182,13 +23339,14 @@
                     return;
                 }
 
-                // Set up slot reel with spinning state
+                // Set up slot reel with spinning state (V1_447: runChestReelSpin()
+                // builds the physical strip — ghost cells + a placeholder RESULT
+                // cell — fresh each spin; the old static ❓/??? textContent reset
+                // is now baked into that build, see the engine near mountSlotPreview).
                 const slotReel = DOM.chestSlotReel;
                 slotReel.classList.add('spinning');
                 slotReel.classList.remove('stopped');
-                slotReel.querySelector('.slot-icon').textContent = '❓';
-                slotReel.querySelector('.slot-name').textContent = '???';
-                
+
                 // Show modal with slot spinning
                 DOM.chestModal.classList.add('visible');
                 // V1_436: rare+ relics get the legendary sting family (SFX.legendary takes no
@@ -23202,19 +23360,19 @@
                 const canAfford = this.isFree || playerGold >= this.cost;
                 const isFree = this.isFree;
                 const cost = this.cost;
-                
-                // After delay, stop spinning and reveal
-                setTimeout(() => {
+
+                // V1_447: physics-driven reel spin (rAF + JS-computed translateY —
+                // see runChestReelSpin() near mountSlotPreview; replaces the old
+                // CSS-keyframe jitter Kevin flagged as both unpremium and
+                // Brave-flaky). onLanded fires the instant the strip visually stops
+                // on the result cell — icon/name/color are already mounted by
+                // then — the same moment the old setTimeout(800) callback used to
+                // fire, so everything downstream keeps its original relative timing.
+                runChestReelSpin(slotReel, contents, chestColor, () => {
                     slotReel.classList.remove('spinning');
                     slotReel.classList.add('stopped');
-                    
-                    // Update slot content to show result
-                    mountSlotPreview(slotReel.querySelector('.slot-icon'), contents.type, contents.id, contents.icon); // V1_322: custom preview, no emoji flash
-                    slotReel.querySelector('.slot-name').textContent = contents.name;
-                    slotReel.style.borderColor = contents.color || chestColor;
-                    slotReel.style.boxShadow = `0 0 30px ${contents.color || chestColor}50`;
-                    
-                    // After brief pause, hide slot and show card
+
+                    // After a brief settle/glow-pulse pause, hide slot and show card
                     setTimeout(() => {
                         slotReel.classList.remove('stopped');
                         slotReel.style.display = 'none';
@@ -23305,10 +23463,10 @@
                         DOM.modalCard.style.display = '';
                         DOM.modalTake.parentElement.style.display = '';
                         DOM.modalLeave.style.display = '';
-                    }, 400);
-                }, 800);
+                    }, 450); // V1_447: was 400 — nudged so the landing glow-pulse (0.4s) fully reads before the card cuts in; still comfortably inside the 1.4x ceremony-length budget
+                });
             }
-            
+
             rollContents() {
                 // V1_434: chests now roll a RELIC (was: chest-sourced shrine powerup / legendary
                 // roll — both removed here; legendary upgrades keep their non-chest sources: pot of
@@ -37920,6 +38078,204 @@
                 }
             }
             iconEl.innerHTML = emojiFallback != null ? emojiFallback : '';
+        }
+
+        // ===== V1_447: PREMIUM CHEST SLOT-REEL ENGINE =====
+        // Kevin: the old .chest-slot-reel spin was a single block jittering via a
+        // CSS @keyframes translateY loop — "not premium enough... i want it to
+        // look like actual slots" — and was separately reported misbehaving on
+        // Brave. This engine drives a real windowed drum (see the .chest-slot-reel
+        // CSS block + #chestSlotReel markup) through four physical phases —
+        // spin-up, fast sustain, ease-out decel, overshoot+settle — using ONLY
+        // `element.style.transform = 'translateY(...)'` writes inside a rAF loop.
+        // Deliberately NOT used: CSS @keyframes/transitions to drive the motion,
+        // the Web Animations API, animation-timeline, CSS @property — all newer
+        // or timing-engine-dependent primitives that were the suspects for the
+        // Brave misbehavior. Plain per-frame style writes are the most boring,
+        // most universally-supported option there is.
+        //
+        // A hard setTimeout watchdog guarantees the reel lands in its correct
+        // final visual/data state no matter what happens to the rAF loop (a
+        // throttled background tab, a stalled frame callback, anything) — the
+        // reveal can never hang half-spun.
+
+        // Cheap, varied ghost-cell icon pool: every relic icon in the game plus a
+        // few generic slot glyphs. Built once and cached (RELICS is static after load).
+        function _csrGhostIconPool() {
+            if (_csrGhostIconPool._cache) return _csrGhostIconPool._cache;
+            const icons = Object.values(RELICS).map(r => r.icon);
+            icons.push('✦', '❓', '⭐', '🍀', '💰', '🎰');
+            _csrGhostIconPool._cache = icons;
+            return icons;
+        }
+
+        let _csrRAF = 0;       // active rAF handle for the running spin (0 = none)
+        let _csrWatchdog = 0;  // hard-stop timeout id — always cleared once a spin lands cleanly
+        let _csrSpinToken = 0; // bumped on every new spin so a stale rAF/timeout from an
+                                // already-resolved spin recognizes itself as stale and no-ops
+                                // instead of clobbering whatever spin is running now
+
+        // Mounts the REAL reward (icon/color into the RESULT cell, name into the
+        // separate .csr-nameplate readout) and fires a one-shot rarity-tinted
+        // pulse on both. Shared by the normal rAF landing, the reduced-motion
+        // short-circuit, and the watchdog — every route through
+        // runChestReelSpin() converges on this exact same final visual state.
+        function _csrLand(slotReel, stripEl, contents, chestColor, onLanded) {
+            if (_csrWatchdog) { clearTimeout(_csrWatchdog); _csrWatchdog = 0; }
+            const resultCell = stripEl ? stripEl.querySelector('.csr-cell-result') : null;
+            const iconEl = (resultCell || slotReel).querySelector('.slot-icon');
+            const nameplate = slotReel.querySelector('.csr-nameplate'); // sibling of .csr-window, NOT inside the strip
+            const nameEl = nameplate ? nameplate.querySelector('.slot-name') : slotReel.querySelector('.slot-name');
+            mountSlotPreview(iconEl, contents.type, contents.id, contents.icon); // V1_322: custom preview, no emoji flash
+            if (nameEl) nameEl.textContent = contents.name;
+            slotReel.style.borderColor = contents.color || chestColor;
+            slotReel.style.boxShadow = `0 0 30px ${contents.color || chestColor}50`;
+            if (nameEl) nameEl.style.color = contents.color || '#fff'; // rarity-tinted readout text, matches the pulse's currentColor glow
+            [resultCell, nameplate].forEach(el => {
+                if (!el) return;
+                el.classList.remove('csr-pulse');
+                void el.offsetWidth; // restart the one-shot @keyframes if this ever fires twice (watchdog race)
+                el.classList.add('csr-pulse');
+            });
+            if (typeof onLanded === 'function') onLanded();
+        }
+
+        // Kicks off the physical reel spin. Calls `onLanded` the instant the strip
+        // visually stops on the result cell (icon/name already mounted) — the same
+        // moment the OLD code's setTimeout(800) callback used to fire, so every
+        // caller's downstream reveal timing is unchanged.
+        function runChestReelSpin(slotReel, contents, chestColor, onLanded) {
+            const myToken = ++_csrSpinToken;
+            // Defensively cancel any previous spin's rAF/watchdog. Normally
+            // unreachable (the modal's buttons are hidden for the whole spin, so
+            // it can't be re-triggered mid-flight) but keeps the system self-healing.
+            if (_csrRAF) { cancelAnimationFrame(_csrRAF); _csrRAF = 0; }
+            if (_csrWatchdog) { clearTimeout(_csrWatchdog); _csrWatchdog = 0; }
+
+            const winEl = slotReel.querySelector('.csr-window');
+            const stripEl = slotReel.querySelector('.csr-strip');
+            const nameplate = slotReel.querySelector('.csr-nameplate');
+            if (!winEl || !stripEl) { _csrLand(slotReel, stripEl, contents, chestColor, onLanded); return; } // markup missing -> land instantly rather than hang
+
+            // Reset the payout readout to its placeholder + clear any leftover
+            // pulse from a previous spin (a prior name/glow must never bleed
+            // through the next spin-up).
+            if (nameplate) {
+                nameplate.classList.remove('csr-pulse');
+                const npName = nameplate.querySelector('.slot-name');
+                if (npName) { npName.textContent = '???'; npName.style.color = ''; }
+            }
+
+            // ----- Build the strip fresh: N random ghost cells (icon-only — the
+            // classic 3-symbol window has no room for name text per cell, hence
+            // the separate nameplate), the real RESULT cell (placeholder ❓ until
+            // landing), and one blank trailing cell that absorbs the landing
+            // overshoot bounce. -----
+            const GHOST_COUNT = 14;
+            const pool = _csrGhostIconPool();
+            let html = '';
+            for (let i = 0; i < GHOST_COUNT; i++) {
+                const icon = pool[Math.floor(Math.random() * pool.length)];
+                html += '<div class="csr-cell csr-cell-ghost"><div class="csr-ghost-icon">' + icon + '</div></div>';
+            }
+            html += '<div class="csr-cell csr-cell-result"><div class="slot-icon">❓</div></div>';
+            html += '<div class="csr-cell csr-cell-blank"></div>';
+            stripEl.innerHTML = html;
+            stripEl.classList.remove('csr-blur');
+            stripEl.style.transform = 'translateY(0px)';
+            winEl.classList.remove('csr-fast');
+
+            const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            if (reduceMotion) { _csrLand(slotReel, stripEl, contents, chestColor, onLanded); return; } // V1_447: OS-level motion preference — land instantly, no drum spin
+
+            // The window shows 3 cells at once (previous/current/next — the
+            // classic slot-cabinet frame); cellH is a THIRD of the measured
+            // window height, not the whole thing. Measured, not hardcoded —
+            // always matches the live CSS (desktop/mobile breakpoints alike).
+            const cellH = (winEl.clientHeight || 156) / 3;
+            // Strip offset that centers the RESULT cell (index GHOST_COUNT) on
+            // the payline: its own center (index*cellH + cellH/2) minus half the
+            // window height.
+            const targetDist = GHOST_COUNT * cellH + cellH / 2 - winEl.clientHeight / 2;
+            const overshoot = Math.min(16, cellH * 0.14);
+
+            // Phase durations (ms): spin-up / fast sustain / ease-out decel / overshoot+settle.
+            const D1 = 150, D2 = 380, D3 = 340, D4 = 130;
+            const TOTAL = D1 + D2 + D3 + D4; // 1000ms of physical motion — total ceremony (spin + landing pause)
+                                              // stays ~1.3x the pre-V1_447 length, inside Kevin's 1.4x budget
+            // vMax solved so the three travel phases sum to exactly targetDist:
+            // d1 (spin-up, ease-in-quad) = 0.5*vMax*D1; sustain = vMax*D2; d3 (decel, ease-out-quad) = 0.5*vMax*D3
+            const vMax = targetDist / (0.5 * D1 + D2 + 0.5 * D3);
+            const d1 = 0.5 * vMax * D1;
+            const d2 = d1 + vMax * D2;
+
+            let blurred = false;
+            let landedFired = false;
+            const startTime = performance.now();
+
+            function fireLanding() {
+                if (landedFired) return;
+                landedFired = true;
+                winEl.classList.remove('csr-fast');
+                stripEl.classList.remove('csr-blur');
+                _csrLand(slotReel, stripEl, contents, chestColor, onLanded);
+            }
+
+            function frame(now) {
+                if (myToken !== _csrSpinToken) return; // superseded by a newer spin — bail quietly
+                const elapsed = now - startTime;
+                let dist;
+                if (elapsed <= D1) {
+                    dist = 0.5 * vMax * (elapsed * elapsed / D1); // ease-in-quad spin-up
+                } else if (elapsed <= D1 + D2) {
+                    dist = d1 + vMax * (elapsed - D1); // constant-velocity fast sustain
+                } else if (elapsed <= D1 + D2 + D3) {
+                    const t = elapsed - D1 - D2;
+                    dist = d2 + (vMax * t - 0.5 * vMax * (t * t / D3)); // ease-out-quad decel, lands exactly on targetDist at t=D3
+                } else if (elapsed <= TOTAL) {
+                    const t = (elapsed - D1 - D2 - D3) / D4; // 0..1
+                    dist = targetDist + overshoot * Math.sin(Math.PI * t); // overshoot past the payline then settle back, continuous at both ends
+                } else {
+                    dist = targetDist;
+                }
+
+                // Reveal the real result the instant we cross into the overshoot
+                // phase (the strip has JUST reached targetDist) — matches the
+                // "stop spinning" moment the OLD code fired its reveal callback at.
+                if (!landedFired && elapsed > D1 + D2 + D3) fireLanding();
+
+                // Blur only through spin-up + sustain + the first half of decel —
+                // sharpens up before landing so the result reads cleanly.
+                const wantBlur = elapsed < (D1 + D2 + D3 * 0.5);
+                if (wantBlur !== blurred) {
+                    blurred = wantBlur;
+                    stripEl.classList.toggle('csr-blur', blurred);
+                    winEl.classList.toggle('csr-fast', blurred);
+                }
+
+                stripEl.style.transform = 'translateY(-' + dist + 'px)';
+
+                if (elapsed < TOTAL) {
+                    _csrRAF = requestAnimationFrame(frame);
+                } else {
+                    _csrRAF = 0;
+                    if (!landedFired) fireLanding();
+                }
+            }
+            _csrRAF = requestAnimationFrame(frame);
+
+            // ----- Hard watchdog: forces the exact landed state (correct icon,
+            // name, colors, strip position) well after TOTAL would naturally have
+            // elapsed, no matter what happened to rAF. This is the "can never hang
+            // half-spun" guarantee Brave's flaky timing made non-negotiable. -----
+            _csrWatchdog = setTimeout(() => {
+                if (myToken !== _csrSpinToken) return; // a newer spin already took over
+                if (_csrRAF) { cancelAnimationFrame(_csrRAF); _csrRAF = 0; }
+                stripEl.classList.remove('csr-blur');
+                winEl.classList.remove('csr-fast');
+                stripEl.style.transform = 'translateY(-' + targetDist + 'px)';
+                fireLanding();
+            }, TOTAL + 600);
         }
 
         // ===== V1_331: PAUSE LOADOUT PILL PREVIEWS =====
