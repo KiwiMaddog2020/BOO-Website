@@ -12201,8 +12201,36 @@
         function lateGameDamageMult(t) {
             if (t <= 1500) return 1;                              // <=25 min: unchanged
             if (t <= 1860) return 1 + ((t - 1500) / 360) * 0.5;   // 25->31 min: linear 1.0 -> 1.5
-            const steps = Math.floor((t - 1860) / 15);            // 31 min+: x1.07 every 15s
-            return 1.5 * Math.pow(1.07, steps);
+            if (t <= 2100) {
+                const steps = Math.floor((t - 1860) / 15);        // 31->35 min: x1.07 every 15s
+                return 1.5 * Math.pow(1.07, steps);
+            }
+            // V1_446 (Kevin): 35:00 inflection — 5 min into the FINAL HORDE the curve shifts
+            // into a faster gear (x1.10 every 15s, continuous with the 31-35min segment) so
+            // KEEP GOING runs escalate toward a real ending instead of coasting.
+            const steps35 = Math.floor((t - 2100) / 15);
+            return 1.5 * Math.pow(1.07, 16) * Math.pow(1.10, steps35);
+        }
+        // V1_446 (Kevin): global enemy-damage tune — the game read a touch too easy even at
+        // the start. ONE dial, applied at every enemy-family damage source: regular enemies
+        // (their ranged projectiles derive from enemy.damage, so they inherit it) and
+        // mini/major boss computed damage + flat contact hits. The Maw keeps its bespoke
+        // tuning and is deliberately NOT wired through this.
+        const ENEMY_DMG_TUNE = 1.10;
+        // V1_446 (Kevin): enemies keep getting faster through the FINAL HORDE — gentle
+        // (+3%/min) inside the SURVIVE hold, then +6%/min once the hold expires (KEEP GOING
+        // endless), capped at +45% so the fast type doesn't trivially outrun every build.
+        // Applied to newly spawned enemies; the horde respawns constantly, so the ramp
+        // reaches the whole field within seconds.
+        function finalWaveSpeedMult(t) {
+            let start = 1800, hold = 120;
+            try { const l = getLevel(); start = l.finalWaveAt; hold = l.clearHoldSeconds; } catch (e) {}
+            if (t < start) return 1;
+            const over = t - start;
+            const bonus = over <= hold
+                ? (over / 60) * 0.03
+                : (hold / 60) * 0.03 + ((over - hold) / 60) * 0.06;
+            return 1 + Math.min(0.45, bonus);
         }
         // Difficulty HP ramp (V1_258): enemy HP grows multiplicatively to keep pace with the
         // player's multiplicative DPS (rarity variants). Flat for the first 4 min, then
@@ -18094,7 +18122,8 @@
                 // stop outrunning the player ~2x by 20min+ — flattens growth past ~13 min.
                 let speedScale = 1 + Math.floor(gameTime / 50) * 0.05;
                 if (speedScale > 1.8) speedScale = 1.8 + (speedScale - 1.8) * 0.35;
-                
+                speedScale *= finalWaveSpeedMult(gameTime); // V1_446: horde speed ramp (1.0 before 30:00)
+
                 switch (type) {
                     case 'basic':
                         this.radius = 12;
@@ -18143,8 +18172,9 @@
                     this.xpValue = _st.xpValue;
                 }
 
-                // Apply damage scaling with difficulty bonus
-                this.damage = Math.floor(this.baseDamage * dmgScale * enemyDamageBonus * lateGameDamageMult(gameTime));
+                // Apply damage scaling with difficulty bonus (V1_446: + global ENEMY_DMG_TUNE;
+                // ranged kinds derive projectile damage from this, so they inherit it too)
+                this.damage = Math.floor(this.baseDamage * dmgScale * enemyDamageBonus * lateGameDamageMult(gameTime) * ENEMY_DMG_TUNE);
                 this.hp = Math.floor(this.maxHp * enemyHealthBonus * powerOffsetHpMult(gameTime) * earlyHpMult(gameTime) * levelingReliefHpMult(gameTime)); // V1_305 early cushion + V1_319 mid-game leveling relief
                 this.maxHp = this.hp;
                 this.speed = this.speed * enemySpeedBonus;
@@ -20975,7 +21005,7 @@
                 this.speed = 1.235 * speedScale * enemySpeedBonus;
                 this.maxHp = Math.floor((380 + bossCount * 110) * hpTimeScale * enemyHealthBonus * 0.7156 * powerOffsetHpMult(gameTime)); // V1_324/V1_339 trims; V1_352 -10% (0.855->0.7695); V1_383: Kevin -7% (0.7695->0.7156)
                 this.hp = this.maxHp;
-                this.damage = Math.floor(25 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
+                this.damage = Math.floor(25 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime) * ENEMY_DMG_TUNE); // V1_446
                 // V1_404: per-level body-tint hue (null on meadow => unchanged fire colors).
                 // Recolors the body mass / glow only — AI, stats, minions untouched.
                 this.tint = (typeof bossIdentity === 'function') ? bossIdentity().tint : null;
@@ -21068,9 +21098,9 @@
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
 
-                // Collision damage
+                // Collision damage (V1_446: flat contact routed through the global tune)
                 if (dist < this.radius + player.radius) {
-                    player.takeDamage(25, this);
+                    player.takeDamage(Math.round(25 * ENEMY_DMG_TUNE), this);
                 }
                 
                 // Spawn minions periodically
@@ -21371,7 +21401,7 @@
                 this.speed = this.baseSpeedValue;
                 this.maxHp = Math.floor((560 + bossCount * 161) * hpTimeScale * enemyHealthBonus * 0.6554 * powerOffsetHpMult(gameTime)); // V1_324/V1_339 trims; V1_352 -10% (0.783->0.7047); V1_383: Kevin -7% (0.7047->0.6554)
                 this.hp = this.maxHp;
-                this.damage = Math.floor(40 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime));
+                this.damage = Math.floor(40 * timeScale * enemyDamageBonus * lateGameDamageMult(gameTime) * ENEMY_DMG_TUNE); // V1_446
                 // V1_404: per-level body-tint hue (null on meadow => unchanged fire colors).
                 this.tint = (typeof bossIdentity === 'function') ? bossIdentity().tint : null;
                 this.color = this.tint || '#ff6600';
@@ -21518,10 +21548,10 @@
                 this.x = Math.max(this.radius, Math.min(WORLD.width - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(WORLD.height - this.radius, this.y));
 
-                // Collision damage
+                // Collision damage (V1_446: flat contact routed through the global tune)
                 const dist = Math.hypot(player.x - this.x, player.y - this.y);
                 if (dist < this.radius + player.radius) {
-                    player.takeDamage(35, this);
+                    player.takeDamage(Math.round(35 * ENEMY_DMG_TUNE), this);
                 }
                 
                 // Attack patterns
@@ -30592,12 +30622,17 @@
                 if (gameTime >= finalSwarmTime) {
                     const secondsOver30Min = gameTime - finalSwarmTime;
                     count += Math.floor(secondsOver30Min / 20); // +1 enemy per 20 seconds over 30 min
+                    // V1_446 (Kevin): 35:00 inflection — past 5 min into the horde the wave
+                    // size compounds twice as fast (+1 per 10s on top of the base ramp).
+                    if (secondsOver30Min > 300) count += Math.floor((secondsOver30Min - 300) / 10);
                 }
                 
                 for (let i = 0; i < count; i++) {
                     // Enforce enemy limit (raised for final horde)
                     const baseCap = LIMITS.enemies + Math.min(20, Math.floor(Math.max(0, gameTime - 480) / 60) * 5); // V1_258: +5/min after min 8, up to +20
-                    const maxEnemies = (gameTime >= finalSwarmTime) ? baseCap + 50 : baseCap;
+                    // V1_446: +30 more headroom past the 35:00 inflection so the doubled wave
+                    // growth actually lands on the field (glows are baked — crowd draw is cheap).
+                    const maxEnemies = (gameTime >= finalSwarmTime) ? baseCap + 50 + (gameTime >= finalSwarmTime + 300 ? 30 : 0) : baseCap;
                     if (enemies.length >= maxEnemies) break;
                     
                     const type = types[Math.floor(Math.random() * types.length)];
