@@ -33943,19 +33943,29 @@
                 ctx.stroke();
                 ctx.shadowBlur = 0;
                 
-                // Draw emoji icon — V1_419: clipped to the icon box (defensive — see
-                // HUD_ICON_FONT_SCALE above) so an oversized glyph can never bleed past its
-                // rounded square; iceShard also gets a tuned-down font size to match its
-                // neighbors' visual weight instead of just being cropped.
+                // Draw icon — V1_449: the emoji glyph (ctx.fillText, clipped defensively per
+                // V1_419/HUD_ICON_FONT_SCALE) is replaced with the weapon's baked WEAPON_PREVIEWS
+                // sprite (see getHudIconSprite above) — emoji have per-glyph off-center visual
+                // bounds (Kevin's void railgun report) that no amount of clip/scale tuning can fix
+                // for every glyph; the game's own art is centered by construction. Fallback law:
+                // ids with no WEAPON_PREVIEWS entry (passives) keep the original emoji draw.
                 ctx.save();
                 ctx.beginPath();
                 ctx.roundRect(iconX, iconY, iconSize, iconSize, 4);
                 ctx.clip();
-                ctx.font = `${Math.round(16 * (HUD_ICON_FONT_SCALE[weapon.id] || 1))}px Oxanium, monospace`;
-                ctx.fillStyle = '#fff';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(weapon.icon || '?', iconX + iconSize / 2, iconY + iconSize / 2 - 1);
+                const wSprite = getHudIconSprite('weapon', weapon.id, weapon.color || '#0ff');
+                if (wSprite) {
+                    // Contain-fit the sprite's crop (trimmed bbox, or a square window for
+                    // extreme-aspect/sparse content — see getHudIconSprite / drawHudIconSprite)
+                    // into the box, centered.
+                    drawHudIconSprite(ctx, wSprite, iconX, iconY, iconSize);
+                } else {
+                    ctx.font = `${Math.round(16 * (HUD_ICON_FONT_SCALE[weapon.id] || 1))}px Oxanium, monospace`;
+                    ctx.fillStyle = '#fff';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(weapon.icon || '?', iconX + iconSize / 2, iconY + iconSize / 2 - 1);
+                }
                 ctx.restore();
 
                 // Draw level badge - original: bottom-right, black bg, white text, 12px font
@@ -34000,28 +34010,36 @@
                 ctx.stroke();
                 ctx.shadowBlur = 0;
                 
-                // Draw tome icon (book base + effect icon overlay, matching edit menu)
-                // V1_419: clipped to the icon box (defensive — audit found all 16 tome glyphs
-                // already fit comfortably, but this guards any future addition the same way
-                // the weapon column is guarded above).
+                // Draw tome icon — V1_449: replaces the two-layer emoji composite (faded 📖 base +
+                // effect-glyph overlay) with the tome's baked TOME_PREVIEWS sprite — same emoji
+                // off-center-bounds problem as the weapon column above, and the same fix (identical
+                // art the pause loadout pills already show). V1_419's per-glyph clip guard is
+                // superseded by the sprite's own centered bake; fallback law: ids with no
+                // TOME_PREVIEWS entry keep the original book+glyph emoji composite.
                 ctx.save();
                 ctx.beginPath();
                 ctx.roundRect(iconX, iconY, iconSize, iconSize, 4);
                 ctx.clip();
-                // Base: faded book emoji
-                ctx.font = '20px Oxanium, monospace';
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('📖', iconX + iconSize / 2, iconY + iconSize / 2);
+                const tSprite = getHudIconSprite('tome', tome.id, tome.color || '#a855f7');
+                if (tSprite) {
+                    // Same fit logic as the weapon column (see drawHudIconSprite / V1_449).
+                    drawHudIconSprite(ctx, tSprite, iconX, iconY, iconSize);
+                } else {
+                    // Base: faded book emoji
+                    ctx.font = '20px Oxanium, monospace';
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('📖', iconX + iconSize / 2, iconY + iconSize / 2);
 
-                // Effect: actual tome icon overlaid
-                ctx.font = '12px Oxanium, monospace';
-                ctx.fillStyle = '#fff';
-                ctx.shadowColor = '#000';
-                ctx.shadowBlur = 2;
-                ctx.fillText(tome.icon || '?', iconX + iconSize / 2, iconY + iconSize / 2);
-                ctx.shadowBlur = 0;
+                    // Effect: actual tome icon overlaid
+                    ctx.font = '12px Oxanium, monospace';
+                    ctx.fillStyle = '#fff';
+                    ctx.shadowColor = '#000';
+                    ctx.shadowBlur = 2;
+                    ctx.fillText(tome.icon || '?', iconX + iconSize / 2, iconY + iconSize / 2);
+                    ctx.shadowBlur = 0;
+                }
                 ctx.restore();
 
                 // Draw level badge - original: bottom-right, black bg, white text, 12px font
@@ -37920,6 +37938,259 @@
         window.__RELICS.spriteIds = () => Object.keys(RELIC_SPRITES);
         window.__RELICS.hasSprite = (id) => !!RELIC_SPRITES[id];
         window.__RELICS._deleteSprite = (id) => { const had = !!RELIC_SPRITES[id]; delete RELIC_SPRITES[id]; _relicIconCache.delete(id); return had; }; // fallback-law probe
+
+        // ===== V1_449: TRACKPAD HUD WEAPON/TOME ICON BAKE =====
+        // Kevin: the bottom HUD's weapon+tome boxes drew the raw emoji glyph (e.g. void railgun's
+        // 🛰️) via ctx.fillText — OS emoji have per-glyph off-center visual bounds, so some glyphs
+        // sit crooked inside the 28x28 box and get partly clipped ("second issue of this nature").
+        // Durable fix: reuse the SAME custom canvas art the weapon-select grid + pause loadout
+        // pills already paint (WEAPON_PREVIEWS/TOME_PREVIEWS, ~L36373/L37010) — that art is drawn
+        // in-house and centered by construction, so the whole emoji-centering bug class disappears.
+        //
+        // LIVE vs BAKED: drawTrackpad() runs every frame and would need to render up to 6 weapon +
+        // 6 tome previews per frame. WEAPON_PREVIEWS/TOME_PREVIEWS fns lean on ctx.shadowBlur +
+        // globalCompositeOperation:'lighter' for their glow look (see energyBolt/plasmaOrbit/beam
+        // above) — running those live here would plant NEW per-frame shadowBlur calls in a hot
+        // path, which the V1_411/V1_423 perf law forbids. So: BAKE, matching the RELIC_SPRITES
+        // pattern just above (getRelicIconCanvas/prebakeRelicIcons) — one offscreen render per
+        // (id,color) the first time it's ever needed, cached forever after, then a plain drawImage
+        // per frame (no shadowBlur, no path fills — just a bitmap blit, same cost class as the
+        // relic strip icons already do every pause).
+        //
+        // ANIMATION FRAME CHOICE: rather than hand-picking one t per weapon (43 preview fns to eyeball
+        // is exactly the kind of manual tuning that regresses later), each bake samples the preview
+        // fn at many t values across its loop and picks whichever sample is both strong (lots of
+        // "ink" on screen) and well-balanced (its content sits evenly around ITS OWN bounding box,
+        // so cropping-and-centering that bbox into the 28x28 HUD box reads as centered, not
+        // lopsided) — see the picker just below getHudIconSprite for the exact two-pass rule and
+        // why. Automatic, self-verifying stand-in for "a visually-strong, centered moment" that
+        // works for every current AND future WEAPON_PREVIEWS/TOME_PREVIEWS entry, no id-by-id tuning.
+        //
+        // 31 samples across a 3s window, 0.1s apart (was 8 samples across 1.75s) — a coarser grid
+        // repeatedly missed a preview's true best-balanced moment (e.g. magnetTome's tightest frame
+        // sits at t=1.55s, attackSpeedTome's at t=0.1s — neither lands on a wide-spaced grid point),
+        // and some previews loop slower than 2s. Still a one-time cost per (id,color): ~31 tiny
+        // 96x40 offscreen renders + pixel scans, done once ever, never in the per-frame hot path.
+        const HUD_ICON_BAKE_SAMPLES = Array.from({ length: 31 }, (_, i) => i * 0.1); // 0, 0.1, 0.2 ... 3.0s
+
+        // Scans a freshly-drawn 96x40 bake for its non-transparent footprint: total ink (alpha
+        // summed), ink PIXEL COUNT (used below for the coverage check — how much of the trimmed
+        // bbox is actually painted vs. empty), mass-centroid (both used for frame scoring above),
+        // and a tight bounding box (used below to contain-fit the ACTUAL drawn content into the
+        // 28x28 box instead of the mostly-empty full 96x40 canvas — several previews only use a
+        // fraction of that canvas's height, and fitting the full authored rect would shrink them
+        // to an illegibly thin sliver).
+        function _hudIconInk(cx, w, h) {
+            const data = cx.getImageData(0, 0, w, h).data;
+            let alphaSum = 0, inkCount = 0, sx = 0, sy = 0, minX = w, minY = h, maxX = -1, maxY = -1;
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const a = data[(y * w + x) * 4 + 3];
+                    if (a > 10) { // ignore near-invisible AA/glow noise so the bbox stays tight
+                        alphaSum += a; inkCount++; sx += x * a; sy += y * a;
+                        if (x < minX) minX = x; if (x > maxX) maxX = x;
+                        if (y < minY) minY = y; if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            if (maxX < 0) return { alphaSum: 0, inkCount: 0, bbox: { x: 0, y: 0, w, h }, centroid: { x: w / 2, y: h / 2 } }; // nothing drawn — fall back to full canvas rect
+            return {
+                alphaSum, inkCount,
+                bbox: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 },
+                centroid: { x: sx / alphaSum, y: sy / alphaSum }, // alpha-weighted, not just bbox midpoint
+            };
+        }
+
+        // ===== V1_449 follow-up: SQUARE-WINDOW CROP for extreme-aspect / sparse art =====
+        // The original drawHudIconSprite had a "fill both axes" exception for extreme-aspect
+        // trimmed bboxes (thin wide beams etc.) — that turned voidRailgun/beam into solid-color
+        // SLABS (a stretched featureless rectangle reads as a rendering error, not a weapon), and
+        // did nothing for sparse-but-normal-aspect art (starField's dots, voidDaggers' slivers)
+        // whose ink is spread thin across the whole trimmed bbox. Replacement: instead of
+        // stretching (or naively cropping) the WHOLE trimmed bbox, slide a SQUARE window across
+        // the full bake frame and keep the placement with the most ink under it, then recenter
+        // that window on its own ink centroid. Contain-fitting a square window into the square
+        // 24x24 inset area is always aspect-safe (scale = availW/side on both dims), so this one
+        // rule replaces both the old stretch-exception AND the "whole bbox" default for the ids
+        // that need it — normal-aspect, well-covered art never enters this branch at all (see
+        // HUD_ICON_COVERAGE_FLOOR below) and keeps using the plain trimmed-bbox contain-fit path,
+        // unchanged.
+        const HUD_ICON_ASPECT_MAX = 2.5, HUD_ICON_ASPECT_MIN = 0.4;
+        // Coverage = ink pixel COUNT (not alpha-weighted — a few bright pixels shouldn't count as
+        // "dense") divided by trimmed-bbox area. Tuned by eye against the 43-icon gallery: at 0.18,
+        // every id that currently reads as "mostly empty box" (starField 0.163) trips it, while
+        // every id that already reads as a clear glyph at full-bbox coverage (iceShard 0.319,
+        // encore 0.299, xpTome 0.219, ...) stays clear of it. Measured via
+        // /tmp/.../scratchpad/v449b-diag.js against the live bake — re-run that if a future
+        // preview's ink layout changes and this needs revisiting.
+        const HUD_ICON_COVERAGE_FLOOR = 0.18;
+        // Window side: at least tall enough to include the bbox's own height (so a short-but-wide
+        // beam still gets some vertical breathing room around its glow), at least
+        // HUD_ICON_WINDOW_SIDE_MIN so a single-pixel-tall sliver doesn't produce a useless 1px
+        // window, never bigger than the full 40px canvas height, and never bigger than the bbox's
+        // own width (a window wider than the content it's framing just re-admits empty margin).
+        const HUD_ICON_WINDOW_SIDE_MIN = 22, HUD_ICON_WINDOW_SIDE_MAX = WEAPON_PREVIEW_H;
+        function _hudIconWindowSide(bbW, bbH) {
+            let side = Math.max(bbH, HUD_ICON_WINDOW_SIDE_MIN);
+            side = Math.min(side, HUD_ICON_WINDOW_SIDE_MAX);
+            side = Math.min(side, Math.max(bbW, HUD_ICON_WINDOW_SIDE_MIN));
+            return Math.round(side);
+        }
+        // Per-id crop overrides for the handful of ids where the generic rule still doesn't land
+        // on the most legible window — e.g. an id whose brightest cluster isn't its most
+        // "identifiable" one. `side` overrides the computed window size; everything else about the
+        // slide-and-recenter search stays the same. Empty by default — the art director's escape
+        // hatch, not the default path.
+        //
+        // voidDaggers: the generic side (22, from the formula) is technically correct — no edge
+        // clipping, no empty-box problem — but the drawn daggers themselves are small (a ~9x3.4px
+        // diamond) and the weapon's own color (#9400d3) is a dim violet with no white highlight
+        // core (unlike almost every other weapon preview), so even the best floor-passing frame
+        // reads as a small dim smudge inside a 22px window. Tightening the window to 14 doesn't
+        // change WHICH frame or pixels get shown (still the exact same picked bake, same
+        // max-ink-window search, same recenter) — it just zooms in further so that same content
+        // fills noticeably more of the 24x24 inset, which is the one lever this crop step has for
+        // "small + dim" art. Chosen by comparing sides 12/13/14/16/18/22 rendered at the actual
+        // 28px HUD size (scratchpad v449b-vd28-compare2.png) — 14 was the tightest that still kept
+        // full margin from the inset edge.
+        const HUD_ICON_CROP_HINTS = {
+            voidDaggers: { side: 14 },
+        };
+        // Slides a `side`x`side` window over the full (w x h) bake canvas, keeping the placement
+        // with the highest alpha sum under it (via a summed-area table — cheap even brute-forced
+        // since this runs once ever per (type,id,color), at bake time, never in a hot path), then
+        // recenters that window on the alpha-weighted centroid of ITS OWN content (so the crop
+        // isn't just "wherever the densest window happened to land" but actually centered on what
+        // it's showing), clamped back onto the canvas.
+        function _hudIconBestWindow(cx, w, h, side) {
+            const data = cx.getImageData(0, 0, w, h).data;
+            const integral = new Float64Array((w + 1) * (h + 1));
+            for (let y = 0; y < h; y++) {
+                let rowSum = 0;
+                for (let x = 0; x < w; x++) {
+                    rowSum += data[(y * w + x) * 4 + 3];
+                    integral[(y + 1) * (w + 1) + (x + 1)] = integral[y * (w + 1) + (x + 1)] + rowSum;
+                }
+            }
+            const winSum = (x0, y0) => {
+                const x1 = x0 + side, y1 = y0 + side;
+                return integral[y1 * (w + 1) + x1] - integral[y0 * (w + 1) + x1] - integral[y1 * (w + 1) + x0] + integral[y0 * (w + 1) + x0];
+            };
+            const maxX = w - side, maxY = h - side;
+            let bestX = 0, bestY = 0, bestSum = -1;
+            for (let y = 0; y <= maxY; y++) {
+                for (let x = 0; x <= maxX; x++) {
+                    const s = winSum(x, y);
+                    if (s > bestSum) { bestSum = s; bestX = x; bestY = y; }
+                }
+            }
+            // Recenter on the ink centroid within the window — iterated (mean-shift style) rather
+            // than a single step: shifting the window changes WHICH pixels are "within it", so one
+            // recenter based on the original max-sum placement can leave the window still
+            // off-balance for lopsided art (e.g. encore's bright head + long fading comet tail).
+            // A few iterations let the window settle on its own stable centroid; stops early once
+            // a step doesn't move it (nearly always within 2-3 iterations on a 96x40 frame).
+            let fx = bestX, fy = bestY;
+            for (let iter = 0; iter < 6; iter++) {
+                let sx = 0, sy = 0, sa = 0;
+                for (let y = fy; y < fy + side; y++) {
+                    for (let x = fx; x < fx + side; x++) {
+                        const a = data[(y * w + x) * 4 + 3];
+                        if (a > 10) { sa += a; sx += x * a; sy += y * a; }
+                    }
+                }
+                if (sa <= 0) break;
+                let nx = Math.round(sx / sa - side / 2);
+                let ny = Math.round(sy / sa - side / 2);
+                nx = Math.max(0, Math.min(w - side, nx));
+                ny = Math.max(0, Math.min(h - side, ny));
+                if (nx === fx && ny === fy) break;
+                fx = nx; fy = ny;
+            }
+            return { x: fx, y: fy, w: side, h: side };
+        }
+
+        // Bake cache: key `${type}:${id}:${color}` — weapon color is fixed (WEAPONS[id].color) but
+        // TOME color is the RARITY tint (uiState.tomes pushes rarityInfo.color, which changes as a
+        // tome levels into a new rarity band), so the key must include color or a re-rarity'd tome
+        // would keep showing its old tint forever.
+        const _hudIconSpriteCache = new Map();
+        // Two-pass pick: (1) render every sample, keep the ink+centroid+bbox for each; (2) among
+        // samples whose ink is at least HUD_ICON_INK_FLOOR of that id's peak (i.e. "strong enough
+        // to be worth showing" — excludes faint/near-empty transition frames), keep the one whose
+        // ink-centroid sits CLOSEST TO ITS OWN BBOX CENTER. That's the metric that actually matters:
+        // drawHudIconSprite centers the trimmed BBOX rectangle in the 28x28 box (by construction,
+        // always exact), so what determines whether the visible content LOOKS centered afterward is
+        // how evenly the ink is distributed within that bbox — NOT where the bbox happens to sit on
+        // the original 96x40 canvas (tried scoring against canvas-center first; it optimized the
+        // wrong distance and left several tomes visibly off-center after the crop). A single
+        // ink-weighted score (ink divided by a balance penalty) was tried too but let a
+        // much-brighter, badly lopsided frame outscore a slightly-dimmer, well-balanced one — the
+        // floor-then-most-balanced rule instead guarantees the chosen frame is never far short of
+        // the id's own best-case brightness AND is the most balanced option among frames that qualify.
+        const HUD_ICON_INK_FLOOR = 0.35;
+        function getHudIconSprite(type, id, color) {
+            const draw = type === 'weapon' ? WEAPON_PREVIEWS[id] : TOME_PREVIEWS[id];
+            if (!draw) return null; // fallback law: caller keeps the clipped-emoji draw (e.g. passives)
+            const key = `${type}:${id}:${color}`;
+            if (_hudIconSpriteCache.has(key)) return _hudIconSpriteCache.get(key);
+            const candidates = [];
+            let maxInk = 0;
+            for (const t of HUD_ICON_BAKE_SAMPLES) {
+                const cv = document.createElement('canvas');
+                cv.width = WEAPON_PREVIEW_W; cv.height = WEAPON_PREVIEW_H; // bake at native preview coords — no transform needed
+                const cx = cv.getContext('2d');
+                try { draw(cx, t, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H, color); } catch (e) { continue; }
+                const ink = _hudIconInk(cx, WEAPON_PREVIEW_W, WEAPON_PREVIEW_H);
+                const bboxCx = ink.bbox.x + ink.bbox.w / 2, bboxCy = ink.bbox.y + ink.bbox.h / 2;
+                const balance = Math.hypot(ink.centroid.x - bboxCx, ink.centroid.y - bboxCy);
+                if (ink.alphaSum > maxInk) maxInk = ink.alphaSum;
+                candidates.push({ cv, ink, balance });
+            }
+            if (!candidates.length) return null;
+            const inkFloor = maxInk * HUD_ICON_INK_FLOOR;
+            let best = null;
+            for (const c of candidates) {
+                if (c.ink.alphaSum < inkFloor) continue; // too faint to be "the" frame, even if perfectly balanced
+                if (!best || c.balance < best.balance) best = c;
+            }
+            if (!best) best = candidates.reduce((a, b) => (b.ink.alphaSum > a.ink.alphaSum ? b : a)); // defensive: maxInk sample always clears its own floor, so this never actually triggers
+
+            // Crop selection: the plain trimmed bbox for normal-aspect, well-covered art (unchanged
+            // from before — flameThrower, plasmaOrbit, boomerang, skull/heart/shield/hourglass
+            // tomes etc. all land here, byte-identical to the original bake). Extreme-aspect OR
+            // sparse (low ink-pixel-coverage) art instead gets a square window cropped around its
+            // own densest ink cluster — see _hudIconBestWindow above.
+            const bb0 = best.ink.bbox;
+            const aspect = bb0.w / bb0.h;
+            const coverage = best.ink.inkCount / (bb0.w * bb0.h);
+            let bbox = bb0;
+            if (aspect > HUD_ICON_ASPECT_MAX || aspect < HUD_ICON_ASPECT_MIN || coverage < HUD_ICON_COVERAGE_FLOOR) {
+                const hint = HUD_ICON_CROP_HINTS[id];
+                const side = (hint && hint.side) || _hudIconWindowSide(bb0.w, bb0.h);
+                bbox = _hudIconBestWindow(best.cv.getContext('2d'), WEAPON_PREVIEW_W, WEAPON_PREVIEW_H, side);
+            }
+            const entry = { canvas: best.cv, bbox };
+            _hudIconSpriteCache.set(key, entry);
+            return entry;
+        }
+
+        // Draws a baked HUD sprite centered inside a (iconX,iconY,iconSize,iconSize) box, small
+        // inset, contain-fit (preserves aspect ratio, never exceeds the available box — no clip,
+        // no bleed). sprite.bbox is either the plain trimmed bbox (normal-aspect, well-covered art)
+        // or a square window (see _hudIconBestWindow / HUD_ICON_COVERAGE_FLOOR above) — both are
+        // just rectangles here, so one plain contain-fit handles everything: a square window's
+        // aspect is always 1, so it always scales evenly on both axes and fills the inset square
+        // corner-to-corner without ever needing a separate "stretch to fill" path.
+        function drawHudIconSprite(ctx, sprite, iconX, iconY, iconSize) {
+            const inset = 2;
+            const availW = iconSize - inset * 2, availH = iconSize - inset * 2;
+            const bb = sprite.bbox;
+            const scale = Math.min(availW / bb.w, availH / bb.h);
+            const dw = bb.w * scale, dh = bb.h * scale;
+            const dx = iconX + (iconSize - dw) / 2, dy = iconY + (iconSize - dh) / 2;
+            ctx.drawImage(sprite.canvas, bb.x, bb.y, bb.w, bb.h, dx, dy, dw, dh);
+        }
 
         // ===== V1_304/V1_311: shared preview renderer =====
         // One canvas frame: clear, inset-clip (6px sides / 3px top-bottom so glows stay
