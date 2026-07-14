@@ -2788,6 +2788,10 @@
         }
         .mastercode-confirm { border: 2px solid #ffcc00; color: #ffcc00; box-shadow: 0 0 10px rgba(255, 204, 0, 0.5); }
         .mastercode-confirm:hover { background: #ffcc00; color: #000; }
+        /* V1_448: armed reset-confirm state — the Confirm button turns danger-red while the
+           reset code awaits its second confirming click ("ERASE EVERYTHING"). */
+        .mastercode-confirm.mastercode-danger { border-color: #ff3355; color: #ff5577; box-shadow: 0 0 12px rgba(255, 51, 85, 0.6); }
+        .mastercode-confirm.mastercode-danger:hover { background: #ff3355; color: #fff; }
         .mastercode-cancel { border: 2px solid rgba(255, 255, 255, 0.4); color: rgba(255, 255, 255, 0.75); }
         .mastercode-cancel:hover { background: rgba(255, 255, 255, 0.15); }
         /* V1_429: the pinned top-right ✕ (.mastercode-x) was removed — in the site embed
@@ -10864,6 +10868,22 @@
                     } catch (e) { return false; }
                 },
                 masterCodeRedeemedFlag: function () { try { return !!state.masterCodeRedeemed; } catch (e) { return false; } },
+
+                // V1_448: hard reset — wipe the save back to a fresh install (STARTER_*
+                // unlocks only, zero plasm, no clears/achievements, masterCodeRedeemed
+                // false again). The public, reset-code-guarded twin of the _reset() test
+                // seam. Also drains any queued unlock toasts so a pre-wipe toast can't fire
+                // after the wipe. Reversible only by re-earning progress — the overlay
+                // arms a confirm before this is ever reached.
+                hardReset: function () {
+                    try {
+                        state = _defaults();
+                        _pruned = false;
+                        try { pendingToasts.length = 0; } catch (e) {}
+                        _saveNow();
+                        return { ok: true };
+                    } catch (e) { return { ok: false, error: String(e) }; }
+                },
 
                 // --- test seams (Phase 1 verification only) ---
                 _sim: function (obj) { _runActive = true; _simOverride = Object.assign(_simOverride || {}, obj || {}); _scan(_runSnapshot()); },
@@ -40187,6 +40207,12 @@
         // The static code. Matching is forgiving: uppercased, spaces/dashes stripped, so
         // 'boolegends', 'boo legends' and 'BOO-LEGENDS' all match.
         const MASTER_CODE = 'BOO-LEGENDS';
+        // V1_448: reset code — the destructive twin of the master code. Same 7-tap entry +
+        // same overlay; the typed code decides the action. Matching is forgiving (uppercased,
+        // spaces/dashes stripped) exactly like the master code. Because it wipes the save it
+        // takes a second confirming click ("ERASE EVERYTHING") before it fires.
+        const RESET_CODE = 'BOO-REWIND';
+        let _rcArmed = false; // true once the reset code is entered, awaiting the confirm click
         function _mcNormalize(s) { return String(s == null ? '' : s).toUpperCase().replace(/[\s-]+/g, ''); }
 
         // Secret entry point: 7 taps on the menu title within ~5s (window resets after).
@@ -40206,6 +40232,7 @@
         }
         function openMasterCodeOverlay() {
             if (!DOM.mastercodeOverlay) return;
+            _restoreMasterCodeChrome(); // V1_448: fresh open is always the code-entry state, never a leftover armed-reset
             if (DOM.mastercodeInput) { DOM.mastercodeInput.value = ''; DOM.mastercodeInput.classList.remove('error'); }
             if (DOM.mastercodeError) DOM.mastercodeError.textContent = '';
             DOM.mastercodeOverlay.classList.add('active');
@@ -40213,6 +40240,45 @@
         }
         function closeMasterCodeOverlay() {
             if (DOM.mastercodeOverlay) DOM.mastercodeOverlay.classList.remove('active');
+            _restoreMasterCodeChrome(); // V1_448: disarm + restore chrome so cancel mid-confirm can't leave it armed
+        }
+        // V1_448: restore the overlay to its default code-entry chrome (title/sub/input/button)
+        // and disarm any pending reset confirm. Idempotent; safe to call on open, close, and
+        // after a completed reset.
+        function _restoreMasterCodeChrome() {
+            _rcArmed = false;
+            const c = DOM.mastercodeOverlay;
+            if (!c) return;
+            const title = c.querySelector('.mastercode-title');
+            const sub = c.querySelector('.mastercode-sub');
+            if (title) title.textContent = '🏆 Master Code';
+            if (sub) sub.textContent = 'Enter your code to unlock everything on this device.';
+            if (DOM.mastercodeInput) DOM.mastercodeInput.style.display = '';
+            if (DOM.mastercodeConfirm) { DOM.mastercodeConfirm.textContent = 'Confirm'; DOM.mastercodeConfirm.classList.remove('mastercode-danger'); }
+        }
+        // V1_448: arm the reset — swap the overlay into a red "erase everything?" warning
+        // that requires a second click on the (now danger-styled) Confirm button.
+        function armReset() {
+            _rcArmed = true;
+            const c = DOM.mastercodeOverlay;
+            const title = c ? c.querySelector('.mastercode-title') : null;
+            const sub = c ? c.querySelector('.mastercode-sub') : null;
+            if (title) title.textContent = '⚠️ Reset Everything?';
+            if (sub) sub.textContent = 'This erases ALL progress — unlocks, level clears, plasm and achievements. It cannot be undone.';
+            if (DOM.mastercodeInput) DOM.mastercodeInput.style.display = 'none';
+            if (DOM.mastercodeError) DOM.mastercodeError.textContent = '';
+            if (DOM.mastercodeConfirm) { DOM.mastercodeConfirm.textContent = 'ERASE EVERYTHING'; DOM.mastercodeConfirm.classList.add('mastercode-danger'); }
+        }
+        function performReset() {
+            const res = (window.META && META.hardReset) ? META.hardReset() : { ok: false };
+            closeMasterCodeOverlay(); // also disarms + restores chrome
+            // Re-render every surface that reads meta/unlock state — the wipe changed all of them.
+            try { updateMenuMetaStrip(); } catch (e) {}
+            if (DOM.achievementsOverlay && DOM.achievementsOverlay.classList.contains('active')) { try { renderAchievementsGrid(); } catch (e) {} }
+            if (DOM.weaponSelectOverlay && DOM.weaponSelectOverlay.classList.contains('active')) { try { showWeaponSelect(); } catch (e) {} }
+            if (DOM.levelSelectOverlay && DOM.levelSelectOverlay.classList.contains('active')) { try { renderLevelSelectGrid(); } catch (e) {} }
+            queueUnlockToast({ master: true, kicker: '↺ PROGRESS RESET', icon: '🔄', name: 'Save wiped — starting fresh' });
+            try { if (window.SFX && SFX.hit) SFX.hit(); } catch (e) {}
         }
         function _mcShowError(msg) {
             if (DOM.mastercodeError) DOM.mastercodeError.textContent = msg || 'Invalid code';
@@ -40233,8 +40299,13 @@
         }
         function confirmMasterCode() {
             if (!window.META) { closeMasterCodeOverlay(); return; }
+            // V1_448: if the reset is armed, this click IS the confirming second click.
+            if (_rcArmed) { performReset(); return; }
             const val = DOM.mastercodeInput ? DOM.mastercodeInput.value : '';
-            if (_mcNormalize(val) !== _mcNormalize(MASTER_CODE)) { _mcShowError('Invalid code'); return; }
+            const norm = _mcNormalize(val);
+            // V1_448: reset code -> arm the destructive confirm (never wipes on first entry).
+            if (norm === _mcNormalize(RESET_CODE)) { armReset(); return; }
+            if (norm !== _mcNormalize(MASTER_CODE)) { _mcShowError('Invalid code'); return; }
             const res = META.redeemMasterCode();
             closeMasterCodeOverlay();
             // Refresh every surface that reads unlock state (redeem flowed through the same
