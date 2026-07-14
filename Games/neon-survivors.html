@@ -4558,22 +4558,58 @@
            (#chestSlotReel, .spinning/.stopped, style.display gating) — every
            existing hide/reset call site (L20253ish, L23919ish, L24052ish,
            L34122ish) keeps working untouched. */
+        /* ===== V1_450: GOLDMINE CHASSIS RE-SKIN =====
+           Kevin: "make it match the level-up slot machine style." Adopts the
+           .upgrade-slot-machine .slot-reel card language verbatim — 170deg
+           gradient body, 1px rgba(60,70,100,0.3) resting border, radius 14px,
+           the same flat shadow recipe, and the springy 0.4s cubic-bezier
+           transition — so the two machines read as one family. The physical
+           drum mechanics below (window/strip/payline/shades, rAF physics,
+           watchdog, reduced-motion) are the V1_447 system and are UNCHANGED. */
         .chest-slot-reel {
             width: 190px;
-            background: rgba(0, 0, 0, 0.92);
-            border: 3px solid #ffd700;
-            border-radius: 12px;
+            background: linear-gradient(170deg, rgba(15, 20, 35, 0.95) 0%, rgba(8, 10, 20, 0.98) 100%);
+            border: 1px solid rgba(60, 70, 100, 0.3);
+            border-radius: 14px;
             overflow: hidden;
             position: relative;
-            /* Gold outer glow + a thin cyan inner trim line — ties the reel to the
-               site's cyan/gold neon-arcade palette instead of gold-only. */
-            box-shadow: 0 0 30px rgba(255, 215, 0, 0.4), inset 0 0 0 1px rgba(0, 255, 255, 0.25), inset 0 0 20px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             margin: 0 auto 15px;
             display: none;
         }
 
+        /* Soft top sheen, matching Goldmine's .slot-reel::before exactly. */
+        .chest-slot-reel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 40%;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%);
+            pointer-events: none;
+            z-index: 1;
+        }
+
         .chest-slot-reel.spinning, .chest-slot-reel.stopped {
             display: block;
+        }
+
+        /* Springy landing pop: the .chest-slot-reel transition (above) makes this
+           scale change bounce via the cubic-bezier overshoot — same felt "settle"
+           as a landed Goldmine reel, adapted from hover-only (Goldmine springs on
+           :hover; this drum isn't hovered, so the pop is tied to the landed state
+           itself, added/removed by the existing classList.add/remove('stopped')
+           calls in Chest.showOffer — no new JS needed for this rule). */
+        .chest-slot-reel.stopped {
+            transform: scale(1.02);
+        }
+
+        /* Landing ceremony parity: mirrors .slot-reel.new-ability /
+           .upgrade-card.new-ability exactly, sharing the same global newCardPulse
+           keyframes — _csrLand() sets --ability-color to the reward's rarity
+           color and adds this class the instant the drum lands. */
+        .chest-slot-reel.new-ability {
+            animation: newCardPulse 2s ease-in-out infinite;
         }
 
         /* 3-symbol viewing window = exactly 3x the cell height, so the strip
@@ -4589,6 +4625,10 @@
             width: 100%;
             height: 156px; /* 3 * 52px cell */
             overflow: hidden;
+            /* V1_450: stacks above the new .chest-slot-reel::before sheen (z-index 1)
+               the same way Goldmine's .slot-content (z-index 2) rides above its own
+               ::before sheen — otherwise the sheen would paint over the drum. */
+            z-index: 2;
         }
 
         .csr-strip {
@@ -4638,7 +4678,9 @@
            the drum lands (see _csrLand()). Fixed min-height so this never causes
            a layout shift when the text appears (V1_422 viewport-cutoff law). */
         .csr-nameplate {
-            border-top: 1px solid rgba(255, 215, 0, 0.35);
+            /* V1_450: divider de-golded to the Goldmine chassis's neutral slate
+               border color, matching the card family instead of the old gold accent. */
+            border-top: 1px solid rgba(60, 70, 100, 0.3);
             background: rgba(0, 0, 0, 0.35);
             padding: 8px 10px;
             min-height: 40px;
@@ -4647,8 +4689,11 @@
             align-items: center;
             justify-content: center;
         }
+        /* V1_450: sized to match Goldmine's .slot-name typography (12px bold white,
+           line-height 1.3, 2-line clamp) — was 14px, the one text-treatment mismatch
+           left after the chassis re-skin. */
         .chest-slot-reel .slot-name {
-            font-size: 14px;
+            font-size: 12px;
             color: #fff;
             text-align: center;
             font-weight: bold;
@@ -24228,10 +24273,11 @@
             DOM.modalLeave.style.display = ''; // Restore leave button
             // Reset slot reel for next chest
             if (DOM.chestSlotReel) {
-                DOM.chestSlotReel.classList.remove('spinning', 'stopped');
+                DOM.chestSlotReel.classList.remove('spinning', 'stopped', 'new-ability'); // V1_450: also drop the landing pulse class
                 DOM.chestSlotReel.style.display = '';
                 DOM.chestSlotReel.style.borderColor = '';
                 DOM.chestSlotReel.style.boxShadow = '';
+                DOM.chestSlotReel.style.removeProperty('--ability-color'); // V1_450
             }
             gamePaused = false;
         }
@@ -38419,8 +38465,17 @@
             const nameEl = nameplate ? nameplate.querySelector('.slot-name') : slotReel.querySelector('.slot-name');
             mountSlotPreview(iconEl, contents.type, contents.id, contents.icon); // V1_322: custom preview, no emoji flash
             if (nameEl) nameEl.textContent = contents.name;
-            slotReel.style.borderColor = contents.color || chestColor;
-            slotReel.style.boxShadow = `0 0 30px ${contents.color || chestColor}50`;
+            // V1_450: landing ceremony aligned to the level-up reel's ".new-ability"
+            // recipe — same static border/glow values (25px @ 50% alpha) as the
+            // fallback/reduced-motion state, PLUS the --ability-color pulse via the
+            // mirrored .chest-slot-reel.new-ability selector (shares newCardPulse).
+            // Every chest landing gets the pulse (chests have no clean "isNew" vs
+            // "upgrade" split like weapons/tomes do — every open is a reveal).
+            const landColor = contents.color || chestColor;
+            slotReel.style.setProperty('--ability-color', landColor);
+            slotReel.classList.add('new-ability');
+            slotReel.style.borderColor = landColor;
+            slotReel.style.boxShadow = `0 0 25px ${landColor}50`;
             if (nameEl) nameEl.style.color = contents.color || '#fff'; // rarity-tinted readout text, matches the pulse's currentColor glow
             [resultCell, nameplate].forEach(el => {
                 if (!el) return;
@@ -38428,6 +38483,10 @@
                 void el.offsetWidth; // restart the one-shot @keyframes if this ever fires twice (watchdog race)
                 el.classList.add('csr-pulse');
             });
+            // V1_450: the level-up machine's per-reel landing tick — was silent here.
+            // Single choke point (every landing route converges on _csrLand), so this
+            // fires exactly once per landing regardless of rAF / reduced-motion / watchdog path.
+            SFX.slotTick();
             if (typeof onLanded === 'function') onLanded();
         }
 
