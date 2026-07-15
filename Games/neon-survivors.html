@@ -18860,6 +18860,11 @@
                 if (this.slowMult && this.slowMult < 1) {
                     effectiveSpeed *= this.slowMult;
                 }
+                // V1_456: off-screen rubber-band — 1.0 on-screen (no change), speeds up the
+                // further off-screen this enemy is + the faster the player is. A multiplier, so
+                // the freeze/slow reductions above still apply. Uses baseSpeed (nominal pace) for
+                // the player-speed gap so the boost doesn't distort with active slows.
+                effectiveSpeed *= offscreenRubberMult(this.x, this.y, this.baseSpeed);
 
                 const frameSpeed = effectiveSpeed * dtScale;
 
@@ -21253,6 +21258,34 @@
                   Math.max(self.radius, Math.min(WORLD.height - self.radius, pr.y + Math.sin(a) * d)));
         }
 
+        // ===== V1_456: OFF-SCREEN RUBBER-BAND =====
+        // Kevin: enemies that walk off-screen should speed up to catch back up — MORE the
+        // further off-screen they are, AND scaled by how much faster the PLAYER is than them
+        // (so a fast/boosted player can't leave the horde in the dust). ZERO effect on-screen:
+        // the multiplier is EXACTLY 1.0 for anything inside the camera view rect (+margin), so
+        // on-screen pacing/behaviour is byte-identical. It's a pure MULTIPLIER (not an absolute
+        // speed floor), so freeze/ice slows still reduce a boosted off-screen enemy proportionally.
+        const RUBBER_MARGIN = 60;    // world units past the visible edge before ANY boost starts
+        const RUBBER_RANGE = 900;    // ramp: 0 boost at the edge -> full boost RUBBER_RANGE beyond it
+        const RUBBER_DIST = 0.5;     // distance-term contribution at full range (up to +50%)
+        const RUBBER_CATCHUP = 0.6;  // player-speed-gap contribution at full range, per unit of (playerSpeed/mySpeed - 1)
+        const RUBBER_CAP = 2.5;      // hard ceiling on the multiplier
+        const BOSS_SPEED_BUMP = 1.06; // V1_456: tiny always-on mini/major boss chase-speed nudge (Kevin)
+        function offscreenRubberMult(x, y, mySpeed) {
+            // How far is (x,y) OUTSIDE the camera view rectangle (expanded by RUBBER_MARGIN)?
+            // Measured from the RECT (not the player) so it's correct even where the camera is
+            // clamped at a world edge. 0 for anything on-screen -> the whole mechanic no-ops there.
+            const vw = gameWidth / camera.zoom, vh = gameHeight / camera.zoom;
+            const ox = Math.max(camera.x - RUBBER_MARGIN - x, x - (camera.x + vw + RUBBER_MARGIN), 0);
+            const oy = Math.max(camera.y - RUBBER_MARGIN - y, y - (camera.y + vh + RUBBER_MARGIN), 0);
+            const dOff = Math.hypot(ox, oy);
+            if (dOff <= 0) return 1;                          // on-screen: exact no-op
+            const frac = Math.min(1, dOff / RUBBER_RANGE);   // 0 at the edge -> 1 far off-screen
+            const pSpeed = (typeof player !== 'undefined' && player) ? player.speed : mySpeed;
+            const gap = Math.max(0, pSpeed / Math.max(0.01, mySpeed) - 1); // how much faster the player is
+            return Math.min(RUBBER_CAP, 1 + frac * (RUBBER_DIST + RUBBER_CATCHUP * gap));
+        }
+
         function moveWithAvoidance(self, dirX, dirY, frameSpeed, dt = 16) {
             // V1_339: while phasing (stuck-escape), ONLY water blocks — the boss slips through
             // trees/rocks/bushes/mountains for a few seconds to unwedge, but never water.
@@ -21414,7 +21447,7 @@
 
                 // Frame-rate independent
                 const dtScale = dt / 16;
-                const frameSpeed = this.speed * dtScale;
+                const frameSpeed = this.speed * dtScale * BOSS_SPEED_BUMP * offscreenRubberMult(this.x, this.y, this.speed); // V1_456: tiny always-on boss bump + off-screen rubber-band
 
                 // Chase player
                 const dx = player.x - this.x;
@@ -21870,7 +21903,7 @@
                     const dy = player.y - this.y;
                     const dist = Math.hypot(dx, dy);
                     
-                    const frameSpeed = this.speed * dtScale;
+                    const frameSpeed = this.speed * dtScale * BOSS_SPEED_BUMP * offscreenRubberMult(this.x, this.y, this.speed); // V1_456: tiny always-on boss bump + off-screen rubber-band
                     
                     if (dist > 0) {
                         // V1_305: robust avoidance (was a single-perpendicular slide that stuck on rocks/trees).
