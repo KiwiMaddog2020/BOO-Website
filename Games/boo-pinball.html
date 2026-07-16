@@ -690,12 +690,21 @@
         flipperR.len = FLIP_LEN * RUN.flipperScale;
     }
 
-    /* ===================== BOARD GEOMETRY (Neon Space) ===================== */
+    /* ===================== BOARD GEOMETRY (Neon Space — AUTHENTIC layout, P1_3) =====================
+       Space-Cadet-modeled portrait table. Regions (top→bottom, §2.2):
+         · TOP        : rounded arch, 3 B-O-O rollover lanes (2 dividing posts), orbit rails
+         · UPPER-L    : 3 mushroom pop bumpers in a tight triangular NEST, ringed by posts
+         · CENTER     : kickout saucer ("Wormhole") + standup-target ring; drop-target bank
+         · SIDES      : left ramp (up-and-over) · left/right orbits (spinner)
+         · LOWER      : slingshots framing the flipper V; 4-lane bottom (outlane|sling|inlane|flipper)
+         · FAR RIGHT  : shooter lane the whole way down (plunger + one-way gate → top arch)
+       Playfield spans x∈[24,540] (center ≈ 280); the shooter channel is bolted on at x∈[540,584]. */
+    const SHOOTER_X = 540;         // divider between playfield and launch channel
     // Outer containment polygon (clockwise). Every outer wall is a segment on this
     // loop, so the ball's CENTER can never leave it (used by the anti-tunnel test).
     const OUTER = [
-        [38, 862], [38, 175], [56, 128], [92, 90], [150, 60], [228, 44], [315, 40],
-        [402, 46], [468, 64], [520, 94], [552, 130], [568, 175], [568, 862]
+        [24, 866], [24, 150], [40, 104], [86, 64], [150, 40], [240, 26], [330, 26],
+        [420, 36], [488, 62], [536, 98], [568, 142], [584, 186], [584, 866]
     ];
 
     // Collider factory helpers
@@ -749,88 +758,93 @@
             colliders.push(seg(a[0], a[1], b[0], b[1], 'wall'));
         }
 
-        // ---- plunger-lane divider (separates play area from the launch channel) ----
-        colliders.push(seg(520, 250, 520, 862, 'divider'));
-
-        // ---- one-way gate at the channel mouth: blocks re-entry (downward), lets launch pass up ----
-        gateCollider = seg(520, 250, 568, 250, 'gate', { oneWay: 'up' });
+        /* ===== SHOOTER LANE (far right, full height) ===== */
+        // divider separates the playfield from the launch channel
+        colliders.push(seg(SHOOTER_X, 250, SHOOTER_X, 866, 'divider'));
+        // one-way gate at the channel mouth: blocks downward re-entry, passes the launch up
+        gateCollider = seg(SHOOTER_X, 250, 584, 250, 'gate', { oneWay: 'up' });
         colliders.push(gateCollider);
+        // deflector that curls a launched ball out of the top-right pocket into the top arch
+        const gTop = seg(SHOOTER_X, 250, 498, 208, 'wall'); colliders.push(gTop); guides.push(gTop);
 
-        // ---- lower funnels: bring the wide field down to the flipper zone ----
-        colliders.push(seg(38, 585, 150, 690, 'funnel'));
-        colliders.push(seg(520, 585, 410, 690, 'funnel'));
+        /* ===== TOP ROLLOVER LANES (B-O-O) — 3 lanes, 2 dividing posts (§2.1.6) ===== */
+        // outer lane guides (angled — funnel a ball down out of the lanes into the playfield)
+        const gTL = seg(196, 74, 180, 150, 'wall'); colliders.push(gTL); guides.push(gTL);   // left outer guide
+        const gTR = seg(404, 74, 420, 150, 'wall'); colliders.push(gTR); guides.push(gTR);   // right outer guide
+        // the 2 dividing posts between the 3 rollover lanes
+        colliders.push(makePost(258, 116, 7));
+        colliders.push(makePost(342, 116, 7));
 
-        // ---- slingshots (triangles flanking the flippers); e3 = kicking face (one-shot latch) ----
-        // left sling
-        colliders.push(seg(150, 690, 150, 762, 'wall'));    // outer vertical
-        colliders.push(seg(150, 762, 212, 732, 'wall'));    // lower face
-        makeSling(212, 732, 150, 690);                      // kicker (up-right)
-        // right sling
-        colliders.push(seg(410, 690, 410, 762, 'wall'));
-        colliders.push(seg(410, 762, 348, 732, 'wall'));
-        makeSling(348, 732, 410, 690);                      // kicker (up-left)
+        /* ===== POP-BUMPER MUSHROOM NEST (upper-center-left, tight triangle — §2.1.1) ===== */
+        addBumper(198, 302, 26, '#ff1493');   // top-left  (magenta)
+        addBumper(282, 292, 26, '#00ffff');   // top-right (cyan)
+        addBumper(238, 366, 26, '#ff6600');   // lower     (orange)  → downward-pointing triangular nest
+        // ring of rubber posts hugging the nest (authentic pop-bumper cage)
+        colliders.push(makePost(196, 250, 7));
+        colliders.push(makePost(292, 244, 7));
+        colliders.push(makePost(150, 322, 7));
+        colliders.push(makePost(338, 300, 7));
+        colliders.push(makePost(184, 404, 7));
+        colliders.push(makePost(294, 402, 7));
 
-        // ---- inlane guide rails + return-lane rollovers (density pass) ----
-        //   Short channels between each sling and its flipper that feed a rolling ball onto the
-        //   flipper top surface, each with a lit return-rollover dot. Purely ADDITIVE (they don't
-        //   open a new outlane/drain path — the center gap stays the only fair drain). Bottom-of-
-        //   board symmetry is authentic and never reads as a face; the "face" problem is up top.
-        colliders.push(seg(214, 742, 232, 772, 'wall'));    // left inlane guide
-        colliders.push(seg(386, 742, 368, 772, 'wall'));    // right inlane guide
-        inlanes.push({ x: 224, y: 748, cd: 0 });            // left return rollover
-        inlanes.push({ x: 376, y: 748, cd: 0 });            // right return rollover
-
-        /* ======================= UPPER-BOARD REDESIGN (kill the face) =======================
-           OLD silhouette: symmetric purple orbit "brows", two gold "eye" posts, a cyan "mouth"
-           arc, and a mirror-triangle bumper cluster ("cheeks") → an unmistakable smiley. NEW read:
-           an asymmetric orbit/lane cluster — no mirror pairs, no centered down-arc, no gold eyes. */
-
-        // ---- pop bumpers — asymmetric SCALENE cluster (was a mirror triangle = "cheeks") ----
-        addBumper(252, 300, 27, '#ff1493');
-        addBumper(346, 336, 26, '#00ffff');
-        addBumper(270, 394, 25, '#ff6600');
-
-        // ---- upper-corner lane guides (replace the two symmetric gold "eye" posts) ----
-        //   Different length + angle each side so they can never read as a pair of eyes; they
-        //   double as orbit-return deflectors steering a dropping ball back toward the flippers.
-        const gL = seg(120, 196, 152, 250, 'wall'); colliders.push(gL); guides.push(gL);    // left: steep, short
-        const gR = seg(452, 188, 468, 272, 'wall'); colliders.push(gR); guides.push(gR);    // right: longer, shallower
-        const gRc = seg(468, 272, 452, 300, 'wall'); colliders.push(gRc); guides.push(gRc); // right guide continues (asymmetric)
-
-        // ---- "mouth" replacement: a single RIGHT-of-center diagonal deflector (was a centered
-        //   down-arc "smile"). Feeds a top-center ball down toward the bumper nerve-center. ----
-        const gM = seg(324, 174, 374, 214, 'wall'); colliders.push(gM); guides.push(gM);
-
-        // ---- rubber posts filling the dead zones (asymmetric — no mirror twin) ----
-        colliders.push(makePost(150, 452, 10));    // left dead zone
-        colliders.push(makePost(486, 452, 9));     // right dead zone (between ramp & plunger divider)
-        colliders.push(makePost(438, 300, 10));    // right of the cyan bumper (fills the upper-right gap)
-
-        // ---- 3-drop-target bank (horizontal row, mid-lower center) ----
-        // fall when hit (down flag), reset as a bank; completing lights the ramp jackpot.
-        dropTargets.length = 0;
-        const DROP_Y = 556, DROP_W = 34, DROP_G = 6, DROP_X0 = 234;
-        for (let i = 0; i < 3; i++) {
-            const x0 = DROP_X0 + i * (DROP_W + DROP_G);
-            const c = seg(x0, DROP_Y, x0 + DROP_W, DROP_Y, 'droptarget', { onHit: (function (idx) { return function () { hitDrop(idx); }; })(i) });
-            c.dropIdx = i; c.dcx = x0 + DROP_W / 2; c.dcy = DROP_Y;
-            colliders.push(c); dropTargets.push(c);
-        }
-
-        // ---- standup targets (5 total; the 2 new ones sit asymmetrically in the dead zones) ----
+        /* ===== CENTRAL KICKOUT SAUCER + STANDUP RING (§2.1.7) ===== */
+        // saucer capture handled by SAUCER + checkSaucer; standups form its target ring.
         standTargets.length = 0;
         function standup(idx, ax, ay, bx, by) {
             const c = seg(ax, ay, bx, by, 'standup', { onHit: (function (k) { return function () { hitStandup(k); }; })(idx) });
             c.standIdx = idx; c.scx = (ax + bx) / 2; c.scy = (ay + by) / 2;
             colliders.push(c); standTargets.push(c);
         }
-        standup(0, 62, 470, 62, 512);        // left post standup (faces +x) — feeds playfield mult
-        standup(1, 506, 470, 506, 512);      // right post standup (faces -x)
-        standup(2, 284, 476, 316, 476);      // center standup (faces up)
-        standup(3, 470, 300, 470, 342);      // NEW right-upper dead zone (faces -x)
-        standup(4, 178, 402, 214, 402);      // NEW left-mid dead zone (faces up)
+        // 3 ringing the saucer = the playfield-multiplier bank (indices 0-2)
+        standup(0, 380, 300, 412, 300);       // above the saucer  (faces up)
+        standup(1, 354, 324, 354, 356);       // left of saucer    (faces -x)
+        standup(2, 438, 356, 438, 324);       // right of saucer   (faces +x)
+        // 2 scattered standups (index 3-4)
+        standup(3, 486, 300, 486, 338);       // right playfield rail (faces -x)
+        standup(4, 300, 470, 332, 470);       // center-low           (faces up)
 
-        // index static circle colliders for cheap lookups (unused placeholder for phase 3)
+        /* ===== DROP-TARGET BANK (3 angled, mid-left — lights the ramp jackpot, §2.1.9) ===== */
+        dropTargets.length = 0;
+        const dropPts = [[126, 470], [172, 480], [218, 490]];   // descending diagonal = angled bank
+        for (let i = 0; i < dropPts.length; i++) {
+            const cx = dropPts[i][0], cy = dropPts[i][1], hw = 18, tilt = 5;
+            const c = seg(cx - hw, cy - tilt, cx + hw, cy + tilt, 'droptarget', { onHit: (function (idx) { return function () { hitDrop(idx); }; })(i) });
+            c.dropIdx = i; c.dcx = cx; c.dcy = cy;
+            colliders.push(c); dropTargets.push(c);
+        }
+
+        /* ===== SLINGSHOTS (triangular rubber kickers above+outside each flipper — §2.1.2) ===== */
+        // LEFT sling island: outer vertical + bottom + kicking face (normal → up-right)
+        colliders.push(seg(150, 662, 150, 730, 'wall'));    // outer vertical
+        colliders.push(seg(150, 730, 208, 714, 'wall'));    // bottom
+        makeSling(208, 714, 150, 662);                      // kicking face
+        // RIGHT sling island (mirror across x=280): kicking face (normal → up-left)
+        colliders.push(seg(410, 662, 410, 730, 'wall'));
+        colliders.push(seg(410, 730, 352, 714, 'wall'));
+        makeSling(410, 662, 352, 714);
+
+        /* ===== BOTTOM 4-LANE STRUCTURE : outlane | sling | inlane | flipper (§2.1.4) =====
+           Funnels bring the wide field down; each side splits into an OUTLANE (outer — a ball
+           down it drains) and an INLANE (inner — feeds the flipper), separated by the sling body
+           + a rubber lane-guide post. A return rollover sits in each inlane. This 4-lane bottom
+           is what makes the table read as a table. */
+        // funnels (wide field → flipper zone)
+        colliders.push(seg(24, 566, 108, 648, 'funnel'));   // left funnel
+        colliders.push(seg(SHOOTER_X, 566, 452, 648, 'funnel')); // right funnel
+        // outlane outer walls (a ball down these reaches the drain line)
+        colliders.push(seg(108, 648, 108, 806, 'wall'));    // left outlane outer
+        colliders.push(seg(452, 648, 452, 806, 'wall'));    // right outlane outer
+        // lane-guide posts (with rubber) — split outlane from inlane
+        colliders.push(makePost(150, 792, 8));              // left lane-guide post
+        colliders.push(makePost(410, 792, 8));              // right lane-guide post
+        // inlane guide rails feed the ball onto the flipper base
+        const iL = seg(208, 716, 176, 752, 'wall'); colliders.push(iL); guides.push(iL);    // left inlane rail
+        const iR = seg(352, 716, 384, 752, 'wall'); colliders.push(iR); guides.push(iR);    // right inlane rail
+        // return rollovers in each inlane
+        inlanes.push({ x: 190, y: 742, cd: 0 });            // left inlane return rollover
+        inlanes.push({ x: 370, y: 742, cd: 0 });            // right inlane return rollover
+
+        // index static colliders + build broadphase grid
         colliders.forEach(function (c, i) { c.idx = i; });
 
         buildGrid();
@@ -999,7 +1013,7 @@
 
     // Spawn a ball into the plunger lane; auto=true fires it immediately (ball-save / multiball).
     function spawnLaneBall(auto) {
-        const b = makeBall(544, PLUNGER_REST_Y - BALL_R - 1, 0, 0);
+        const b = makeBall(562, PLUNGER_REST_Y - BALL_R - 1, 0, 0);
         b.inLane = true;
         balls.push(b);
         if (auto) {
@@ -1153,19 +1167,19 @@
     }
 
     const LANES = [
-        // Right orbit: shoot up the right, loop over the top, come down the left → left flipper
+        // Right orbit: shoot up the right, loop over the top arch, come down the left → left flipper
         makeLane({ name: 'rightOrbit', kind: 'orbit', source: 'orbit', score: SCORE.orbit,
-            entry: [498, 176], entryR: 30, minSpeed: 760, entryDir: [-0.3, -1], exitDir: [-0.12, 1],
-            pts: [[498, 176], [486, 118], [430, 78], [352, 62], [268, 62], [186, 80], [128, 122], [110, 190]] }),
-        // Left orbit (with the spinner): shoot up the left, loop over the top → right flipper
+            entry: [500, 402], entryR: 30, minSpeed: 760, entryDir: [0.04, -1], exitDir: [-0.16, 1],
+            pts: [[500, 402], [506, 196], [484, 124], [430, 80], [352, 60], [268, 58], [190, 80], [130, 126], [104, 200], [100, 360]] }),
+        // Left orbit (with the SPINNER): shoot up the left, loop over the top arch → right flipper
         makeLane({ name: 'leftOrbit', kind: 'orbit', source: 'orbit', score: SCORE.orbit,
-            entry: [110, 176], entryR: 30, minSpeed: 760, entryDir: [0.3, -1], exitDir: [0.12, 1],
-            spinner: { s0: 40, s1: 150 },
-            pts: [[110, 176], [122, 118], [178, 78], [256, 62], [340, 62], [422, 80], [480, 122], [498, 190]] }),
-        // Left ramp: rises center-left, feeds the right inlane
+            entry: [60, 402], entryR: 30, minSpeed: 760, entryDir: [-0.04, -1], exitDir: [0.16, 1],
+            spinner: { s0: 74, s1: 196 },
+            pts: [[60, 402], [54, 196], [76, 124], [130, 80], [208, 60], [292, 58], [370, 80], [430, 126], [456, 200], [460, 360]] }),
+        // Left ramp (elevated, up-and-over): rises center-left, arcs over the top, feeds the right inlane/flipper
         makeLane({ name: 'leftRamp', kind: 'ramp', source: 'ramp', score: SCORE.ramp,
-            entry: [214, 600], entryR: 30, minSpeed: 820, entryDir: [-0.05, -1], exitDir: [0.12, 1],
-            pts: [[214, 600], [206, 505], [244, 455], [318, 440], [398, 456], [450, 522], [456, 606]] })
+            entry: [166, 592], entryR: 30, minSpeed: 820, entryDir: [-0.02, -1], exitDir: [0.12, 1],
+            pts: [[166, 592], [158, 502], [200, 452], [276, 436], [352, 452], [404, 514], [416, 598]] })
     ];
 
     function captureLane(ball, lane, sp) {
@@ -1233,7 +1247,7 @@
     // V2: staggered (was a flat symmetric row at y=110) — two lit green rollovers side-by-side
     // read as an "eye pair" above the bumpers. No two share a y now, so the face read is gone
     // while they still spell B-O-O across the top lane bank.
-    const ROLLS = [[236, 120], [300, 104], [364, 112]];
+    const ROLLS = [[226, 108], [300, 108], [374, 108]];
     const ROLL_R = 20, SKILL_IDX = 1;
     function checkRollovers(ball) {
         for (let i = 0; i < ROLLS.length; i++) {
@@ -1276,7 +1290,7 @@
     }
 
     // ---- Lock saucer + multiball (§1.5) ----
-    const SAUCER = { x: 300, y: 236, r: 18 };
+    const SAUCER = { x: 396, y: 340, r: 18 };
     function checkSaucer(ball) {
         if (ball.held > 0 || ball.lane || ball.inLane) return;
         const dx = ball.x - SAUCER.x, dy = ball.y - SAUCER.y;
@@ -1497,9 +1511,9 @@
 
     // plunger top face (moving horizontal segment inside the launch channel)
     function resolvePlunger(ball) {
-        if (ball.x < 512) return false; // only balls in the channel
+        if (ball.x < SHOOTER_X) return false; // only balls in the launch channel
         const y = plunger.y;
-        if (ball.x < 520 || ball.x > 568) return false;
+        if (ball.x < SHOOTER_X || ball.x > 584) return false;
         const dy = ball.y - (y - ball.r);
         if (ball.y + ball.r <= y) return false;          // above the face
         if (ball.y - ball.r > y + 8) return false;       // below (shouldn't happen)
@@ -1539,7 +1553,7 @@
             // resting on the plunger — light gravity, clamp to channel
             ball.vy += GRAVITY * h * 0.35;
             resolvePlunger(ball);
-            if (ball.x < 528) ball.x = 528; if (ball.x > 560) ball.x = 560;
+            if (ball.x < 550) ball.x = 550; if (ball.x > 574) ball.x = 574;
             if (ball.y > plunger.y - ball.r) ball.y = plunger.y - ball.r;
             ball.lastX = ball.x; ball.lastY = ball.y;
             return;
@@ -1563,8 +1577,8 @@
         tryEnterLane(ball);
         if (!ball.lane) { checkRollovers(ball); checkSaucer(ball); checkInlanes(ball); }
         if (ball.lane || ball.held > 0) { ball.lastX = ball.x; ball.lastY = ball.y; ball.stuck = 0; return; }
-        // drain (play side only — the channel-resting ball is excluded above)
-        if (ball.y > DRAIN_Y && ball.x < 514) { onDrain(ball); return; }
+        // drain (play side only — the launch-channel ball is x>SHOOTER_X, excluded here)
+        if (ball.y > DRAIN_Y && ball.x < 530) { onDrain(ball); return; }
         // stuck-ball watchdog
         const moved = Math.hypot(ball.x - ball.lastX, ball.y - ball.lastY);
         if (Math.hypot(ball.vx, ball.vy) < STUCK_SPEED && moved < 0.4) {
@@ -1654,24 +1668,20 @@
             g.fillStyle = 'rgba(200,225,255,' + a + ')'; g.fillRect(x, y, 1.5, 1.5);
         }
         g.restore();
-        // ---- inlaid playfield emblem (apron) — intentional & crisp, NOT a ghost watermark ----
+        // ---- inlaid apron badge (below the flippers, real-table apron) ----
         (function () {
             g.save();
-            // V2: opacities raised so it reads as a deliberate inlaid apron badge, not a faint
-            // ghost watermark (was borderline invisible/artifact-y at 2x DPR on mobile).
-            g.translate(300, 694); g.lineCap = 'round';
-            g.strokeStyle = 'rgba(0,255,255,0.26)'; g.lineWidth = 2;
-            g.beginPath(); g.arc(0, 0, 31, 0, Math.PI * 2); g.stroke();
-            g.strokeStyle = 'rgba(155,48,255,0.22)'; g.lineWidth = 1;
-            g.beginPath(); g.arc(0, 0, 35, 0, Math.PI * 2); g.stroke();
-            g.textBaseline = 'middle'; g.font = '800 24px Oxanium, sans-serif';
+            g.translate(280, 848); g.lineCap = 'round'; g.textAlign = 'center';
+            g.strokeStyle = 'rgba(0,255,255,0.22)'; g.lineWidth = 1.5;
+            g.beginPath(); g.arc(0, 0, 20, 0, Math.PI * 2); g.stroke();
+            g.textBaseline = 'middle'; g.font = '800 16px Oxanium, sans-serif';
             const W = g.measureText('BOO').width, bW = g.measureText('B').width;
             g.textAlign = 'left';
-            g.fillStyle = 'rgba(0,255,255,0.42)'; g.fillText('OO', -W / 2 + bW, -3);
-            g.fillStyle = 'rgba(255,20,147,0.48)'; g.fillText('B', -W / 2, -3);
+            g.fillStyle = 'rgba(0,255,255,0.40)'; g.fillText('OO', -W / 2 + bW, -1);
+            g.fillStyle = 'rgba(255,20,147,0.48)'; g.fillText('B', -W / 2, -1);
             g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-            g.font = '700 7.5px Oxanium, sans-serif'; g.fillStyle = 'rgba(159,179,217,0.5)';
-            g.fillText('N E O N   S P A C E', 0, 17);
+            g.font = '700 6px Oxanium, sans-serif'; g.fillStyle = 'rgba(159,179,217,0.45)';
+            g.fillText('N E O N   S P A C E', 0, 15);
             g.restore();
         })();
 
@@ -1710,13 +1720,30 @@
             g.restore();
         }
 
-        // ---- ORBIT lanes drawn UNDER the walls (they read as the outer top loops) ----
+        // ---- ORBIT lanes drawn UNDER the walls (they read as the outer top loops / arch) ----
         LANES.forEach(function (lane) {
             if (lane.kind !== 'orbit') return;
-            laneBand(lane, 'rgba(155,48,255,0.15)', 'rgba(155,48,255,0.5)', BALL_R * 2 + 3);
+            laneBand(lane, 'rgba(155,48,255,0.22)', 'rgba(155,48,255,0.7)', BALL_R * 2 + 4);
         });
 
-        // ---- segment walls / guides / slings / funnels (one-time baked glow) ----
+        // ---- 4-LANE BOTTOM channel tints (under the walls): OUTLANE = drain-magenta, INLANE = feed-green ----
+        function fillPoly(pts, col) {
+            g.save(); g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+            g.closePath(); g.fillStyle = col; g.fill(); g.restore();
+        }
+        // outlanes (outer, drain)
+        fillPoly([[108, 648], [150, 662], [150, 800], [108, 806]], 'rgba(255,20,147,0.09)');
+        fillPoly([[452, 648], [410, 662], [410, 800], [452, 806]], 'rgba(255,20,147,0.09)');
+        // inlanes (inner, feed the flipper)
+        fillPoly([[208, 716], [150, 733], [176, 786], [212, 762]], 'rgba(0,255,155,0.10)');
+        fillPoly([[352, 716], [410, 733], [384, 786], [348, 762]], 'rgba(0,255,155,0.10)');
+
+        // ---- sling triangle vertices (must mirror buildBoard) ----
+        const SLING_L = [[150, 662], [150, 730], [208, 714]];
+        const SLING_R = [[410, 662], [410, 730], [352, 714]];
+
+        // ---- segment walls / guides / funnels (one-time baked glow) — slings drawn specially ----
         function strokeSeg(c, color, w, glow) {
             g.save();
             g.lineCap = 'round'; g.lineWidth = w; g.strokeStyle = color;
@@ -1726,10 +1753,10 @@
         }
         colliders.forEach(function (c) {
             if (c.type !== 'seg') return;
-            if (c.kind === 'wall') strokeSeg(c, '#00ffff', 4, 10);
+            if (c.kind === 'sling') return;                     // sling faces rendered below
+            if (c.kind === 'wall') strokeSeg(c, '#00ffff', 4, 9);
             else if (c.kind === 'divider') strokeSeg(c, '#9b30ff', 4, 9);
-            else if (c.kind === 'funnel') strokeSeg(c, '#00ffff', 4, 9);
-            else if (c.kind === 'sling') strokeSeg(c, '#ff1493', 5, 12);
+            else if (c.kind === 'funnel') strokeSeg(c, '#00ffff', 4, 8);
             else if (c.kind === 'gate') strokeSeg(c, '#ff6600', 2.5, 6);
         });
 
@@ -1744,8 +1771,8 @@
             for (let i = 1; i < lane.pts.length; i++) g.lineTo(lane.pts[i][0], lane.pts[i][1]);
             g.stroke(); g.restore();
             // raised surface + bright top edge highlight
-            laneBand(lane, 'rgba(0,214,255,0.26)', 'rgba(140,240,255,0.85)', BALL_R * 2 + 7);
-            laneChevrons(lane, 'rgba(190,250,255,0.92)', 4, 0.12, 0.72, 6);
+            laneBand(lane, 'rgba(0,214,255,0.24)', 'rgba(140,240,255,0.85)', BALL_R * 2 + 5);
+            laneChevrons(lane, 'rgba(190,250,255,0.92)', 5, 0.12, 0.78, 6);
             // lit entrance mouth + up-arrow
             g.save(); g.translate(lane.entry[0], lane.entry[1]);
             g.shadowColor = '#00ffff'; g.shadowBlur = 12;
@@ -1755,94 +1782,125 @@
             g.beginPath(); g.moveTo(-8, 5); g.lineTo(0, -7); g.lineTo(8, 5); g.closePath(); g.fill();
             g.restore();
             g.save(); g.font = '800 9px Oxanium, sans-serif'; g.textAlign = 'center';
-            g.fillStyle = 'rgba(180,250,255,0.55)'; g.fillText('RAMP', lane.entry[0], lane.entry[1] + 24); g.restore();
+            g.fillStyle = 'rgba(180,250,255,0.6)'; g.fillText('RAMP', lane.entry[0], lane.entry[1] + 24); g.restore();
         });
 
         // ---- orbit directional chevrons + lit entrances (over the walls) ----
         LANES.forEach(function (lane) {
             if (lane.kind !== 'orbit') return;
-            laneChevrons(lane, 'rgba(196,150,255,0.85)', 3, 0.05, 0.18, 5);
+            laneChevrons(lane, 'rgba(196,150,255,0.85)', 4, 0.08, 0.3, 5);
             laneEntrance(lane, '#9b30ff');
         });
+        // orbit labels at the two side entries
+        g.save(); g.font = '800 9px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillStyle = 'rgba(196,150,255,0.6)';
+        g.fillText('ORBIT', 500, 430); g.fillText('ORBIT', 60, 430); g.restore();
 
-        // ---- flow-direction chevrons on the asymmetric lane guides (reads as intentional guides,
-        //      not stray marks) — one small chevron per guide, oriented down-screen ----
-        g.save(); g.strokeStyle = 'rgba(120,240,255,0.85)'; g.lineWidth = 2.5; g.lineCap = 'round';
-        guides.forEach(function (s) {
-            let ax = s.ax, ay = s.ay, bx = s.bx, by = s.by;
-            if (by < ay) { const tx = ax, ty = ay; ax = bx; ay = by; bx = tx; by = ty; }   // orient downstream
-            const mx = (ax + bx) / 2, my = (ay + by) / 2;
-            g.save(); g.translate(mx, my); g.rotate(Math.atan2(by - ay, bx - ax));
-            g.beginPath(); g.moveTo(-4, -5); g.lineTo(4, 0); g.lineTo(-4, 5); g.stroke();
-            g.restore();
-        });
-        g.restore();
-
-        // ---- prominent spinner (left orbit) — asymmetric vs the right orbit ----
+        // ---- prominent SPINNER (left orbit) ----
         (function () {
             const lo = LANES[1]; if (!lo || !lo.spinner) return;
             const p = lanePos(lo, (lo.spinner.s0 + lo.spinner.s1) / 2);
             g.save(); g.translate(p.x, p.y); g.strokeStyle = 'gold'; g.shadowColor = 'gold'; g.shadowBlur = 9;
             g.lineWidth = 2.5;
-            g.beginPath(); g.arc(0, 0, 11, 0, Math.PI * 2); g.stroke();
-            for (let a = 0; a < 3; a++) { const ang = a * Math.PI / 3; g.beginPath(); g.moveTo(-11 * Math.cos(ang), -11 * Math.sin(ang)); g.lineTo(11 * Math.cos(ang), 11 * Math.sin(ang)); g.stroke(); }
+            g.beginPath(); g.arc(0, 0, 12, 0, Math.PI * 2); g.stroke();
+            for (let a = 0; a < 3; a++) { const ang = a * Math.PI / 3; g.beginPath(); g.moveTo(-12 * Math.cos(ang), -12 * Math.sin(ang)); g.lineTo(12 * Math.cos(ang), 12 * Math.sin(ang)); g.stroke(); }
             g.shadowBlur = 0; g.font = '800 7px Oxanium, sans-serif'; g.textAlign = 'center';
-            g.fillStyle = 'rgba(255,215,0,0.7)'; g.fillText('SPIN', 0, 24);
+            g.fillStyle = 'rgba(255,215,0,0.8)'; g.fillText('SPIN', 0, 26);
             g.restore();
         })();
 
-        // ---- rubber posts (dark core + purple ring — NOT gold: no more "eyes") ----
+        // ---- SLINGSHOTS: filled triangle body + bright rubber kicking face ----
+        function drawSling(v, faceA, faceB) {
+            g.save();
+            // body
+            g.beginPath(); g.moveTo(v[0][0], v[0][1]); g.lineTo(v[1][0], v[1][1]); g.lineTo(v[2][0], v[2][1]); g.closePath();
+            g.fillStyle = 'rgba(255,20,147,0.14)'; g.fill();
+            g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,20,147,0.55)'; g.stroke();
+            // rubber kicking face (thick, bright, with a highlight core)
+            g.lineCap = 'round';
+            g.shadowColor = '#ff1493'; g.shadowBlur = 12; g.lineWidth = 6; g.strokeStyle = '#ff1493';
+            g.beginPath(); g.moveTo(faceA[0], faceA[1]); g.lineTo(faceB[0], faceB[1]); g.stroke();
+            g.shadowBlur = 0; g.lineWidth = 2; g.strokeStyle = 'rgba(255,210,235,0.9)';
+            g.beginPath(); g.moveTo(faceA[0], faceA[1]); g.lineTo(faceB[0], faceB[1]); g.stroke();
+            g.restore();
+        }
+        drawSling(SLING_L, [208, 714], [150, 662]);   // left face
+        drawSling(SLING_R, [352, 714], [410, 662]);   // right face
+
+        // ---- rubber posts (dark core + purple ring) ----
         posts.forEach(function (pst) {
             g.save();
             g.fillStyle = '#0a0e22'; g.beginPath(); g.arc(pst.x, pst.y, pst.r, 0, Math.PI * 2); g.fill();
-            g.lineWidth = 2.5; g.strokeStyle = '#9b30ff'; g.shadowColor = '#9b30ff'; g.shadowBlur = 8;
+            g.lineWidth = 2.5; g.strokeStyle = '#9b30ff'; g.shadowColor = '#9b30ff'; g.shadowBlur = 7;
             g.beginPath(); g.arc(pst.x, pst.y, pst.r, 0, Math.PI * 2); g.stroke();
             g.restore();
         });
 
-        // ---- bumper base rings ----
+        // ---- MUSHROOM POP-BUMPER NEST: soft nest backing, then each bumper as skirt+cap ----
+        (function () {
+            // nest backing glow tying the 3 jets into one cluster (the Space-Cadet signature)
+            let cx = 0, cy = 0; bumpers.forEach(function (b) { cx += b.x; cy += b.y; });
+            cx /= bumpers.length; cy /= bumpers.length;
+            g.save();
+            const ng = g.createRadialGradient(cx, cy, 10, cx, cy, 96);
+            ng.addColorStop(0, 'rgba(120,60,190,0.16)'); ng.addColorStop(1, 'rgba(120,60,190,0)');
+            g.fillStyle = ng; g.beginPath(); g.arc(cx, cy, 96, 0, Math.PI * 2); g.fill();
+            g.restore();
+        })();
         bumpers.forEach(function (b) {
             g.save();
-            g.shadowColor = b.color; g.shadowBlur = 14;
-            g.lineWidth = 4; g.strokeStyle = b.color;
+            // outer skirt ring (wide, translucent — the mushroom skirt)
+            g.lineWidth = 5; g.strokeStyle = hexA(b.color, 0.55);
             g.beginPath(); g.arc(b.x, b.y, b.r, 0, Math.PI * 2); g.stroke();
-            g.fillStyle = hexA(b.color, 0.12); g.fill();
-            g.shadowBlur = 0; g.fillStyle = hexA(b.color, 0.9);
-            g.beginPath(); g.arc(b.x, b.y, b.r * 0.42, 0, Math.PI * 2); g.fill();
+            g.fillStyle = hexA(b.color, 0.10);
+            g.beginPath(); g.arc(b.x, b.y, b.r, 0, Math.PI * 2); g.fill();
+            // inner ring (bright, glowing)
+            g.shadowColor = b.color; g.shadowBlur = 12; g.lineWidth = 3.5; g.strokeStyle = b.color;
+            g.beginPath(); g.arc(b.x, b.y, b.r * 0.66, 0, Math.PI * 2); g.stroke();
+            // raised inner cap (bright core + specular highlight)
+            g.shadowBlur = 8;
+            const cap = g.createRadialGradient(b.x - b.r * 0.16, b.y - b.r * 0.2, 1, b.x, b.y, b.r * 0.5);
+            cap.addColorStop(0, '#ffffff'); cap.addColorStop(0.4, hexA(b.color, 0.95)); cap.addColorStop(1, hexA(b.color, 0.6));
+            g.fillStyle = cap; g.beginPath(); g.arc(b.x, b.y, b.r * 0.46, 0, Math.PI * 2); g.fill();
             g.restore();
         });
 
-        // ---- lock saucer ring ----
+        // ---- CENTRAL KICKOUT SAUCER ("WORMHOLE") — concentric ring hole ----
         g.save();
-        g.strokeStyle = '#9b30ff'; g.shadowColor = '#9b30ff'; g.shadowBlur = 12; g.lineWidth = 3;
+        const wg = g.createRadialGradient(SAUCER.x, SAUCER.y, 1, SAUCER.x, SAUCER.y, SAUCER.r + 8);
+        wg.addColorStop(0, 'rgba(10,4,26,0.95)'); wg.addColorStop(0.6, 'rgba(60,20,120,0.5)'); wg.addColorStop(1, 'rgba(155,48,255,0)');
+        g.fillStyle = wg; g.beginPath(); g.arc(SAUCER.x, SAUCER.y, SAUCER.r + 8, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#9b30ff'; g.shadowColor = '#9b30ff'; g.shadowBlur = 14; g.lineWidth = 3;
         g.beginPath(); g.arc(SAUCER.x, SAUCER.y, SAUCER.r, 0, Math.PI * 2); g.stroke();
-        g.fillStyle = 'rgba(155,48,255,0.18)'; g.fill();
-        g.shadowBlur = 0; g.globalAlpha = 0.9; g.fillStyle = '#9b30ff';
-        g.font = '700 9px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillText('LOCK', SAUCER.x, SAUCER.y + 3);
+        g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,255,255,0.5)'; g.shadowColor = '#00ffff'; g.shadowBlur = 8;
+        g.beginPath(); g.arc(SAUCER.x, SAUCER.y, SAUCER.r * 0.6, 0, Math.PI * 2); g.stroke();
+        g.shadowBlur = 0; g.fillStyle = 'rgba(210,180,255,0.85)';
+        g.font = '800 8px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillText('WORMHOLE', SAUCER.x, SAUCER.y + SAUCER.r + 16);
         g.restore();
 
-        // ---- drop-target slot bases (faint dashes so empty slots still read as a bank) ----
-        g.save(); g.globalAlpha = 0.28; g.strokeStyle = '#ff6600'; g.lineWidth = 2; g.lineCap = 'round';
-        dropTargets.forEach(function (c) { g.beginPath(); g.moveTo(c.ax, c.ay + 5); g.lineTo(c.bx, c.by + 5); g.stroke(); });
-        g.restore();
-
-        // ---- standup targets ----
+        // ---- standup targets (cyan bars with a rounded cap) ----
         standTargets.forEach(function (c) {
             g.save(); g.lineCap = 'round'; g.lineWidth = 7; g.strokeStyle = '#00ffff';
-            g.shadowColor = '#00ffff'; g.shadowBlur = 10;
+            g.shadowColor = '#00ffff'; g.shadowBlur = 9;
+            g.beginPath(); g.moveTo(c.ax, c.ay); g.lineTo(c.bx, c.by); g.stroke();
+            g.shadowBlur = 0; g.lineWidth = 2.5; g.strokeStyle = 'rgba(190,250,255,0.9)';
             g.beginPath(); g.moveTo(c.ax, c.ay); g.lineTo(c.bx, c.by); g.stroke();
             g.restore();
         });
 
-        // ---- top rollover-lane bank (B-O-O): lane dividers + down-chevrons + rings ----
+        // ---- drop-target slot bases (faint dashes so empty slots still read as a bank) ----
+        g.save(); g.globalAlpha = 0.3; g.strokeStyle = '#ff6600'; g.lineWidth = 2; g.lineCap = 'round';
+        dropTargets.forEach(function (c) { g.beginPath(); g.moveTo(c.ax, c.ay + 6); g.lineTo(c.bx, c.by + 6); g.stroke(); });
+        g.globalAlpha = 0.5; g.font = '800 8px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#ff6600';
+        g.fillText('DROP BANK', 172, 512);
+        g.restore();
+
+        // ---- TOP ROLLOVER LANES (B-O-O): outer guide walls already drawn; add feed chevrons + rings ----
         g.save();
-        g.strokeStyle = 'rgba(0,255,255,0.28)'; g.lineWidth = 2; g.lineCap = 'round';
-        [270, 330].forEach(function (dx) { g.beginPath(); g.moveTo(dx, 88); g.lineTo(dx, 134); g.stroke(); });
         ['B', 'O', 'O'].forEach(function (ch, i) {
             const x = ROLLS[i][0], y = ROLLS[i][1];
             // feed chevron above the lane
-            g.strokeStyle = 'rgba(0,255,255,0.5)'; g.lineWidth = 2.5;
-            g.beginPath(); g.moveTo(x - 6, y - 26); g.lineTo(x, y - 20); g.lineTo(x + 6, y - 26); g.stroke();
+            g.strokeStyle = 'rgba(0,255,255,0.5)'; g.lineWidth = 2.5; g.lineCap = 'round';
+            g.beginPath(); g.moveTo(x - 6, y - 28); g.lineTo(x, y - 22); g.lineTo(x + 6, y - 28); g.stroke();
             // ring + letter
             g.textAlign = 'center'; g.font = '700 15px Oxanium, sans-serif';
             g.strokeStyle = 'rgba(255,20,147,0.55)'; g.lineWidth = 1.5;
@@ -1851,18 +1909,38 @@
         });
         g.restore();
 
-        // ---- inlane return-lane rollover bases (decorative dots by each flipper feed) ----
+        // ---- INLANE / OUTLANE lane markings (the 4-lane bottom read) ----
         g.save();
-        inlanes.forEach(function (r) {
-            g.strokeStyle = 'rgba(0,255,155,0.4)'; g.lineWidth = 2;
+        g.textAlign = 'center'; g.lineCap = 'round';
+        // outlane down-arrows (magenta, drain-y) + labels
+        [[128, 736], [432, 736]].forEach(function (p) {
+            g.strokeStyle = 'rgba(255,20,147,0.55)'; g.lineWidth = 2.5;
+            g.beginPath(); g.moveTo(p[0] - 6, p[1]); g.lineTo(p[0], p[1] + 8); g.lineTo(p[0] + 6, p[1]); g.stroke();
+            g.font = '800 8px Oxanium, sans-serif'; g.fillStyle = 'rgba(255,20,147,0.6)';
+            g.fillText('OUT', p[0], p[1] - 8);
+        });
+        // inlane feed-arrows (green, feed the flipper) + return-rollover bases + labels
+        inlanes.forEach(function (r, i) {
+            g.strokeStyle = 'rgba(0,255,155,0.45)'; g.lineWidth = 2;
             g.beginPath(); g.arc(r.x, r.y, 6, 0, Math.PI * 2); g.stroke();
+            const dir = i === 0 ? 1 : -1;   // left inlane feeds right-down, right inlane left-down
+            g.beginPath(); g.moveTo(r.x - 6 * dir, r.y + 14); g.lineTo(r.x + 2 * dir, r.y + 20); g.lineTo(r.x - 2 * dir, r.y + 12); g.stroke();
+            g.font = '800 8px Oxanium, sans-serif'; g.fillStyle = 'rgba(0,255,155,0.6)';
+            g.fillText('IN', r.x, r.y - 12);
         });
         g.restore();
 
-        // ---- drain arrows ----
+        // ---- SHOOTER-LANE label (vertical, in the launch chute) ----
         g.save();
-        g.globalAlpha = 0.35; g.strokeStyle = '#ff1493'; g.lineWidth = 2; g.lineCap = 'round';
-        g.beginPath(); g.moveTo(258, 838); g.lineTo(280, 858); g.lineTo(302, 838); g.stroke();
+        g.translate(562, 470); g.rotate(Math.PI / 2);
+        g.font = '800 11px Oxanium, sans-serif'; g.textAlign = 'center';
+        g.fillStyle = 'rgba(255,102,0,0.55)'; g.fillText('LAUNCH', 0, 4);
+        g.restore();
+
+        // ---- center-drain arrows ----
+        g.save();
+        g.globalAlpha = 0.4; g.strokeStyle = '#ff1493'; g.lineWidth = 2; g.lineCap = 'round';
+        g.beginPath(); g.moveTo(262, 812); g.lineTo(280, 832); g.lineTo(298, 812); g.stroke();
         g.restore();
     }
 
@@ -1966,11 +2044,11 @@
             ctx.restore();
         }
 
-        // plunger visual
+        // plunger visual (in the far-right launch chute)
         ctx.save();
         ctx.fillStyle = '#ff6600'; ctx.shadowColor = '#ff6600'; ctx.shadowBlur = 0;
-        ctx.fillRect(522, plunger.y, 44, 18);
-        ctx.fillStyle = 'rgba(255,180,60,0.4)'; ctx.fillRect(522, plunger.y, 44, 4);
+        ctx.fillRect(544, plunger.y, 38, 18);
+        ctx.fillStyle = 'rgba(255,180,60,0.4)'; ctx.fillRect(544, plunger.y, 38, 4);
         ctx.restore();
 
         // bumper flashes (baked white glow scaled by flash)
@@ -2558,8 +2636,8 @@
         const rect = canvas.getBoundingClientRect();
         const lx = (clientX - rect.left) / rect.width * PW;
         const ly = (clientY - rect.top) / rect.height * PH;
-        if (lx > 500 && ly > 600) return 'plunger';
-        return lx < PW / 2 ? 'L' : 'R';
+        if (lx > 512 && ly > 600) return 'plunger';   // far-right launch chute
+        return lx < 280 ? 'L' : 'R';                   // playfield center ≈ 280 (shooter offsets it)
     }
     canvas.addEventListener('touchstart', function (e) {
         e.preventDefault();

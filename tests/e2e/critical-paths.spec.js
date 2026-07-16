@@ -298,7 +298,7 @@ test.describe('BOO website — critical paths', () => {
       }
       // a rising flipper must add speed; a bumper hit must kick
       PB._reset(); PB._noTilt(true);
-      PB._serveBall(252, 300, 5, 5); // inside the magenta pop bumper (scalene cluster, P1_2 polish)
+      PB._serveBall(198, 302, 5, 5); // inside the magenta pop bumper (top-left of the triangular nest, P1_3 authentic rebuild)
       let bumpMax = 0;
       for (let i = 0; i < 6; i++) { PB._sim(6); const s = PB._ballState().speed; if (s > bumpMax) bumpMax = s; }
       return { tunnels, nans, bumpMax: Math.round(bumpMax), bumperKick: PB._consts.BUMPER_KICK };
