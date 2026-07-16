@@ -119,25 +119,56 @@ increases ball speed, a bumper hit adds the right score, drain decrements balls,
 
 ---
 
-## 2. The Neon Space board (the slice)
+## 2. The Neon Space board — AUTHENTIC layout (P1_3 redesign)
 
-A tall portrait table, deep-space neon. Logical playfield coordinates (e.g. 600×900), rendered scaled.
+Kevin's bar: **3D Pinball for Windows (Space Cadet) levels of quality.** Same neon *style*, but the board
+must read at a glance as a REAL, designed pinball table — the authentic element *vocabulary* arranged the
+way a real table (Space Cadet) arranges it. The v1 board read as abstract neon shapes; this is the fix.
+Portrait 600×900 logical, rendered scaled. Deep-space blue playfield, neon-outlined elements.
 
-Anatomy (top → bottom):
-- **Top arc / orbits:** left & right orbits loop the ball across the top; a lit rollover lane bank (spells a
-  word, e.g. `B-O-O` or `S-P-A-C-E`, completing = bonus/mode).
-- **Upper third — "the belt":** a cluster of **3 pop bumpers** (the Space-Cadet nerve center) + a spinner in
-  one orbit + the **multiball lock saucer**.
-- **Mid — ramps:** one left **ramp** (feeds a right inlane / mini upper-flipper), one right **orbit** return; a
-  **drop-target bank** (3 targets) that lights the ramp jackpot; a couple of standup targets.
-- **Lower — flippers:** two main flippers, two **slingshots**, inlanes + **outlanes**, center drain. Optional
-  a single **upper flipper** for the ramp shot (feel-tester; can cut for the slice).
-- **Plunger lane** on the right feeding the top orbit; **skill shot** = the lit top rollover.
+### 2.1 The authentic element vocabulary (every one must be present and recognizable)
+1. **Mushroom pop bumpers ×3** in a tight triangular **nest** (the signature). Round, with an outer skirt
+   ring + a raised inner cap + a strong glow; they visibly flash+kick. Placed upper-center-left, the classic
+   Space-Cadet bumper cluster. This is the single most recognizable feature — nail it.
+2. **Slingshots ×2** — triangular rubber kickers sitting just **above and outside each flipper**, faces
+   angled inward-down, with a visible rubber band on the kicking face. (Not floating triangles — they must
+   frame the flipper zone.)
+3. **Flipper V** at the bottom: two main flippers, tips angled toward a **fair center drain** gap.
+4. **The bottom lane structure (the other signature)** — a real flipper zone: **outlanes** (outer, drain-y)
+   and **inlanes** (inner, feed the flipper) on each side, separated by the slingshot body + a **lane-guide
+   post with a rubber**. Return-rollover in each inlane. This 4-lane bottom is what makes a table read as a
+   table; the v1 board lacked it.
+5. **Launch chute (shooter lane)** — a vertical lane down the **far right** with the plunger at the bottom
+   and a **one-way gate** at the top, feeding a **top arch / orbit** that carries the ball across the top and
+   down into the upper playfield. Skill shot = a lit target reachable off the plunge.
+6. **Top rollover lanes ×3** at the arch exit (separated by 2 posts), spelling `B-O-O` — the classic entry
+   lanes; complete to light multiball.
+7. **Central kickout saucer** (the multiball **lock**, themed "Wormhole"/"Black Hole") with a **ring of
+   standup targets** around it — the central mission feature.
+8. **Left ramp** (elevated surface, directional chevrons, lit entrance — unmistakable up-and-over) + a
+   **right orbit** loop; a **spinner** in one orbit lane.
+9. **Drop-target bank ×3–4** (angled row) that lights the ramp jackpot, plus a couple of scattered standups.
+10. **Posts + neon rubber bands** throughout to delineate lanes and give the table authentic visual density.
 
-**Missions/targets (reflavored Space-Cadet "ranks"):** a light, always-on objective ladder — e.g. complete
-the rollover word → light multiball; hit the drop bank → light the ramp jackpot; N ramps → "Hyperspace"
-mode (timed scoring frenzy). These are the score sources that make the **target-score round** achievable and
-skill-expressive.
+### 2.2 Arrangement (Space-Cadet-modeled, top → bottom)
+- **Top:** the shooter-lane feed curves into a smooth **top arch/orbit**; under it, the **3 rollover lanes**.
+- **Upper-center-left:** the **3-bumper mushroom nest** ringed by posts; a **spinner** orbit to one side.
+- **Center:** the **kickout saucer** + its **standup-target ring** (the mission hole).
+- **Mid sides:** the **left ramp**, the **right orbit** return, the **drop-target bank**.
+- **Lower:** **slingshots** framing the **flipper V**, with the **inlane/outlane** 4-lane structure and
+  return rollovers; **center drain**.
+- **Far right:** the **launch chute** the whole way down.
+
+### 2.3 Recognizability test (the acceptance bar for this redesign)
+An experienced pinball player, shown a still of the board, must immediately identify: the **bumper nest**,
+the **slingshots**, the **flipper zone with inlanes/outlanes**, the **shooter lane**, and the **top orbit +
+rollover lanes** — the same read they'd get from a Space Cadet screenshot. If any of those don't jump out,
+it's not done. Physics engine + all systems (§1, §3) are preserved; only the table geometry (colliders) and
+its render are rebuilt, and every scoring hook is remapped onto the authentic elements.
+
+**Missions/targets (reflavored Space-Cadet "ranks"):** complete the rollover word → light multiball; hit the
+drop bank → light the ramp jackpot; N ramps → "Hyperspace" frenzy. These are the score sources that make the
+target-score round achievable and skill-expressive.
 
 ---
 
