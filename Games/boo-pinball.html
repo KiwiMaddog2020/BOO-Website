@@ -2155,9 +2155,18 @@
     let CSS_W = PW, CSS_H = PH, DPR = 1;
     function resize() {
         DPR = Math.min(window.devicePixelRatio || 1, 2.5);
-        const wrap = document.querySelector('.cabinet');
         const availW = Math.min(window.innerWidth - 12, 640);
-        const availH = window.innerHeight - (document.documentElement.classList.contains('in-iframe') ? 4 : 74);
+        // P1_5 (Kevin: "can't even see the bottom of the screen"): the old math reserved a
+        // FLAT 4px (iframe) / 74px (standalone) for everything that isn't the canvas — but the
+        // cabinet stacks the HUD row + progress bar ABOVE the stage, so the canvas was sized
+        // ~full-height and its bottom (flippers/drain) was pushed below the fold. Measure the
+        // real chrome (everything in the cabinet except the canvas) and subtract THAT, so the
+        // whole board always fits. V1_422 viewport-cutoff law applies to the playfield too.
+        const hudEl = document.querySelector('.hud');
+        const progEl = document.getElementById('progressWrap');
+        const chrome = (hudEl ? hudEl.offsetHeight : 0) + (progEl ? progEl.offsetHeight : 0)
+            + (document.documentElement.classList.contains('in-iframe') ? 8 : 74);
+        const availH = Math.max(200, window.innerHeight - chrome);
         let w = availW, h = w * (PH / PW);
         if (h > availH) { h = availH; w = h * (PW / PH); }
         CSS_W = Math.max(120, Math.floor(w)); CSS_H = Math.floor(CSS_W * (PH / PW));
@@ -2165,6 +2174,9 @@
         canvas.width = Math.floor(CSS_W * DPR); canvas.height = Math.floor(CSS_H * DPR);
     }
     window.addEventListener('resize', resize);
+    // The HUD wraps/reflows at narrow widths (its height changes after first layout) — re-measure
+    // once everything has settled so a wrapped HUD can't re-introduce the clip.
+    window.addEventListener('load', resize);
 
     function render() {
         updateIndicators();
