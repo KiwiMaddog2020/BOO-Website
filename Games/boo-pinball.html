@@ -628,9 +628,21 @@
     // punchy but controllable. Anti-tunnelling is unaffected (CCD clamps by distance/substep,
     // MAX_SPEED=2600 is the hard ceiling). Raise toward 1800 for a livelier table.
     const FLIP_MAX_EXIT = 1650;     // clamp on flipper-launched ball speed          [FEEL DIAL]
+    // Cradle-to-aim (P1_A): a ball resting on a HELD, settled flipper is gently slid toward the
+    // TIP (a "tip-ward slope on the hold surface"), so a re-flip strikes it at a large radius
+    // (ω×r) and imparts a real, aimable shot instead of dying at the base. Capped at
+    // CRADLE_TIP_FRAC so it holds near the tip and never rolls off into the drain. Only affects a
+    // SLOW ball on a NON-swinging raised flipper — live catches / active flips are untouched.
+    const CRADLE_TIP_FRAC = 0.70;   // rest point along the flipper (0=pivot,1=tip)   [FEEL DIAL]
+    const CRADLE_SLIDE_V = 90;      // px/s gentle tip-ward creep toward the rest pt  [FEEL DIAL]
+    const CRADLE_SLOW = 150;        // px/s below which a ball counts as "cradled"    [FEEL DIAL]
 
     // active elements
-    const BUMPER_KICK = 560;        // px/s radial ejection                          [FEEL DIAL]
+    // FEEL DIAL (Kevin): pop-bumper kick. Bumpers now EJECT at max(incoming, BUMPER_KICK) along
+    // the normal (P1_A) — a fast ball is POPPED, never braked (was: velocity SET to 560, which
+    // slowed fast balls). Raised 560 -> 750 so the nest reads lively. MAX_SPEED (2600) + the
+    // per-bumper cooldown are the safety net against a runaway multi-bumper rally.
+    const BUMPER_KICK = 750;        // px/s min radial ejection                       [FEEL DIAL]
     const BUMPER_COOLDOWN = 70;     // ms re-arm
     const SLING_KICK = 430;         // px/s face-normal ejection                     [FEEL DIAL]
     const SLING_COOLDOWN = 90;      // ms one-shot latch — a sling can't re-fire until this
@@ -1247,13 +1259,28 @@
         ball.vx = p.tx * ball.laneSpeed; ball.vy = p.ty * ball.laneSpeed;
         if (lane.kind === 'ramp') SFX.ramp(); else SFX.orbit();
     }
-    function tryEnterLane(ball) {
-        if (ball.lane || ball.inLane || ball.held > 0) return;
+    // squared distance from point P(px,py) to segment A(ax,ay)-B(bx,by)
+    function segPointDist2(ax, ay, bx, by, px, py) {
+        const abx = bx - ax, aby = by - ay, ab2 = abx * abx + aby * aby || 1;
+        let t = ((px - ax) * abx + (py - ay) * aby) / ab2;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        const dx = px - (ax + abx * t), dy = py - (ay + aby * t);
+        return dx * dx + dy * dy;
+    }
+    // Lane capture (P1_A): tested against the SWEPT sub-step path (px0,py0)->(ball) when the
+    // previous position is supplied, so ANY path through the entry circle captures — a fast ball
+    // can no longer cross the 30px gate between 240Hz samples (the ~50% aimed-shot strobing bug).
+    // Without a previous position it falls back to the point test (post-loop belt-and-suspenders).
+    function tryEnterLane(ball, px0, py0) {
+        if (ball.lane || ball.inLane || ball.held > 0) return false;
+        const swept = (px0 !== undefined);
         const sp = Math.hypot(ball.vx, ball.vy);
         for (let i = 0; i < LANES.length; i++) {
             const lane = LANES[i];
-            const dx = ball.x - lane.entry[0], dy = ball.y - lane.entry[1];
-            if (dx * dx + dy * dy > lane.entryR * lane.entryR) continue;
+            let d2;
+            if (swept) d2 = segPointDist2(px0, py0, ball.x, ball.y, lane.entry[0], lane.entry[1]);
+            else { const dx = ball.x - lane.entry[0], dy = ball.y - lane.entry[1]; d2 = dx * dx + dy * dy; }
+            if (d2 > lane.entryR * lane.entryR) continue;
             if (sp < lane.minSpeed) continue;
             const dot = (ball.vx * lane.entryDir[0] + ball.vy * lane.entryDir[1]);
             if (dot < lane.minSpeed * 0.35) continue;
@@ -1518,8 +1545,13 @@
         const overlap = sum - d;
         ball.x += nx * overlap; ball.y += ny * overlap;
         if (c.radial) {
-            // pop bumper — eject radially at a fixed speed (classic lively kick)
-            ball.vx = nx * c.radial; ball.vy = ny * c.radial;
+            // pop bumper — eject radially at max(incoming speed, BUMPER_KICK) along the normal.
+            // FEEL (P1_A): a fast ball is POPPED, not braked — was `= c.radial` which SET the
+            // speed (slowing anything faster than the kick). MAX_SPEED (clamped in stepBall) and
+            // the per-bumper cooldown remain the runaway safety.  [FEEL DIAL: BUMPER_KICK]
+            const inSp = Math.hypot(ball.vx, ball.vy);
+            const outSp = inSp > c.radial ? inSp : c.radial;
+            ball.vx = nx * outSp; ball.vy = ny * outSp;
             if (c.onHit) c.onHit(ball, nx, ny);
         } else {
             reflect(ball, nx, ny, c.rest, c.fric, c.onHit);
@@ -1571,6 +1603,21 @@
             const sp = Math.hypot(ball.vx, ball.vy);
             if (sp > FLIP_MAX_EXIT) { ball.vx *= FLIP_MAX_EXIT / sp; ball.vy *= FLIP_MAX_EXIT / sp; }
             if (f.angVel !== 0 && SFX.gate('flip' + f.side, 30)) SFX.flip();
+        }
+        // Cradle-to-aim tip creep (P1_A): on a HELD, non-swinging flipper, a slow (cradled) ball
+        // below the tip target gets a gentle tip-ward nudge so it settles near the TIP — where a
+        // re-flip carries real impulse. `t` is the contact fraction (0=pivot,1=tip). Skipped for
+        // fast balls and during any active flip (angVel≠0), so live catches keep full bite.
+        if (f.up && f.angVel === 0 && t < CRADLE_TIP_FRAC) {
+            const sp = Math.hypot(ball.vx, ball.vy);
+            if (sp < CRADLE_SLOW) {
+                const tx = Math.cos(f.angle), ty = Math.sin(f.angle);   // pivot→tip (tip-ward)
+                const vt = ball.vx * tx + ball.vy * ty;                 // current tip-ward speed
+                if (vt < CRADLE_SLIDE_V) {
+                    const add = (CRADLE_SLIDE_V - vt) * 0.5;
+                    ball.vx += tx * add; ball.vy += ty * add;
+                }
+            }
         }
         ball.onFlipper = true;
         return true;
@@ -1642,13 +1689,18 @@
             const s = Math.hypot(ball.vx, ball.vy);
             const maxDt = s > 1e-6 ? CCD_STEP / s : budget;
             const dt = Math.min(budget, maxDt);
+            const px0 = ball.x, py0 = ball.y;
             advanceAndResolve(ball, dt);
+            // P1_A: swept lane capture INSIDE the CCD loop — a fast ball can't skip the gate
+            // between full 240Hz samples (fixes the ~50% aimed-shot strobing). Captures on the
+            // sub-step path, then stops micro-stepping (the lane now drives the ball).
+            if (!ball.lane && !ball.inLane && ball.held <= 0 && tryEnterLane(ball, px0, py0)) break;
             budget -= dt; iter++;
         }
         // first flipper touch ends the skill-shot window for this ball
         if (ball.onFlipper) { ball.touchedFlipper = true; }
         // ---- playfield feature detection (guided-lane entry, rollovers, lock saucer) ----
-        tryEnterLane(ball);
+        tryEnterLane(ball);   // belt-and-suspenders point test at the final rest position
         if (!ball.lane) { checkRollovers(ball); checkSaucer(ball); checkInlanes(ball); }
         if (ball.lane || ball.held > 0) { ball.lastX = ball.x; ball.lastY = ball.y; ball.stuck = 0; return; }
         // drain (play side only — the launch-channel ball is x>SHOOTER_X, excluded here)
