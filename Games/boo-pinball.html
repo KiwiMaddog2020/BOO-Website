@@ -95,7 +95,7 @@
         .hud .target { color: #0ff; font-size: clamp(11px, 3vw, 16px); text-shadow: 0 0 8px rgba(0, 255, 255, 0.5); }
 
         .stage { position: relative; line-height: 0; }
-        canvas#board { display: block; background: #05060d; border-radius: 8px; touch-action: none; }
+        canvas#board { display: block; background: #05060d; border-radius: 8px; touch-action: none; outline: none; }
 
         #muteBtn {
             position: absolute; top: 8px; left: 8px; z-index: 30;
@@ -124,6 +124,13 @@
             text-align: center;
         }
         .overlay.hidden { display: none; }
+        /* menu is see-through toward the edges so the attract-mode lamp chase glows behind the
+           title (§gap6); center stays dark to keep the title + copy legible. */
+        #menuOverlay {
+            background: radial-gradient(130% 100% at 50% 44%,
+                rgba(5,6,13,0.92) 0%, rgba(5,6,13,0.9) 26%,
+                rgba(7,9,22,0.66) 60%, rgba(7,9,22,0.42) 100%);
+        }
         .overlay h1 {
             font-size: clamp(30px, 9vw, 58px); font-weight: 800; letter-spacing: 3px;
             color: #fff; text-shadow: 0 0 14px #0ff, 0 0 30px #9b30ff;
@@ -356,7 +363,7 @@
         <div class="stage">
             <button id="muteBtn" aria-label="Toggle sound" aria-pressed="false">&#128266;</button>
             <button id="nudgeBtn" aria-label="Nudge the table">NUDGE</button>
-            <canvas id="board" width="600" height="900"></canvas>
+            <canvas id="board" width="600" height="900" tabindex="0"></canvas>
             <div id="plungerMeter"><div id="plungerFill"></div></div>
             <div id="launchHint">HOLD&nbsp;SPACE</div>
             <div id="tiltWrap">
@@ -373,7 +380,7 @@
         <!-- TITLE / MENU -->
         <div class="overlay" id="menuOverlay">
             <h1><span class="b">B</span>OO PINBALL</h1>
-            <p>NEON SPACE &mdash; a roguelike table. Flip with &larr;/&rarr; (or Z / M), or tap the left &amp; right halves of the board. Hold <b>SPACE</b> to charge the plunger. Beat the <b>TARGET</b> in 3 balls, then <b>DRAFT</b> an upgrade and push for a higher ante.</p>
+            <p>NEON SPACE &mdash; a roguelike table. Flip with &larr;/&rarr; (or Z / M), or click / tap the left &amp; right halves of the board. Hold <b>SPACE</b> &mdash; or press &amp; hold the plunger &mdash; to launch. Beat the <b>TARGET</b> in 3 balls, then <b>DRAFT</b> an upgrade and push for a higher ante.</p>
             <button class="btn" id="startBtn">START RUN</button>
             <button id="lbBtn">LEADERBOARD</button>
         </div>
@@ -500,7 +507,17 @@
             bumper:  function () { tone(520, 0.05, 'square', 0.18, 720); noise(0.05, 0.10); },
             sling:   function () { tone(360, 0.05, 'triangle', 0.14, 520); },
             flip:    function () { tone(140, 0.035, 'square', 0.10, 90); },
-            launch:  function () { tone(180, 0.28, 'sawtooth', 0.20, 620); noise(0.18, 0.10, 900); },
+            launch:  function (power) {
+                // pitch + brightness scale with plunger charge (0..1) — a soft plunk at low
+                // power rising to a hard rocket-launch zip at full pull (Space-Cadet feel).
+                power = Math.max(0, Math.min(1, power || 0));
+                const base = 130 + power * 250;
+                tone(base, 0.30 + power * 0.06, 'sawtooth', 0.16 + power * 0.10, base * (2.6 + power * 1.6));
+                noise(0.14 + power * 0.10, 0.08 + power * 0.06, 800 + power * 1600);
+                if (power > 0.55) tone(base * 2, 0.10, 'square', 0.06 * power, base * 4);   // bright harmonic on a strong pull
+            },
+            lamp:    function () { if (gate('lamp', 26)) tone(1500 + Math.random() * 400, 0.02, 'sine', 0.03); },
+            plungerClick: function () { if (gate('pcl', 30)) tone(70, 0.02, 'square', 0.05); },   // ratchet tick while charging
             drain:   function () { tone(320, 0.18, 'sawtooth', 0.18, 90); },
             gameover:function () { tone(440, 0.25, 'sawtooth', 0.24, 210); setTimeout(function () { tone(220, 0.30, 'sawtooth', 0.24, 90); }, 200); },
             uiClick: function () { tone(600, 0.04, 'sine', 0.12, 520); },
@@ -630,6 +647,12 @@
 
     // safety
     const STUCK_MS = 1200, STUCK_SPEED = 14;
+    // Resting-contact threshold (P1 fix): when a ball is in persistent contact with a
+    // support and its into-surface (normal) speed is below this, the resolve ZEROES that
+    // component instead of reflecting it — so gravity can't re-accumulate speed on a ball
+    // that is just sitting there (plunger tip / floor / flipper cradle / saucer). Small
+    // vs typical play speeds (100s–1000s px/s), so lively bounces are untouched.  [FEEL DIAL]
+    const REST_VN = 46;             // px/s
 
     /* ===================== PHASE 2 — SCORING / PLAYFIELD TUNING ===================== */
     // Base score values — every event funnels through addScore(base, {combo, source}).
@@ -741,8 +764,11 @@
 
     // furniture helpers — record for custom rendering, then the caller pushes to colliders
     function makePost(x, y, r) { posts.push({ x: x, y: y, r: r }); return circ(x, y, r, 'post', { rest: REST.post }); }
-    function makeSling(ax, ay, bx, by) {
-        const st = { cd: 0 };
+    function makeSling(ax, ay, bx, by, apexX, apexY) {
+        // ax,ay–bx,by = kicking face; apex = outer triangle vertex. Store geometry + flash so the
+        // render layer can draw a chunky rubber body and a kick-flash on fire (baked, perf-safe).
+        const st = { cd: 0, flash: 0, fa: [ax, ay], fb: [bx, by], apex: [apexX, apexY],
+            cx: (ax + bx + apexX) / 3, cy: (ay + by + apexY) / 3 };
         const c = seg(ax, ay, bx, by, 'sling', { onHit: function (ball, nx, ny) { slingHit(ball, nx, ny, st); } });
         colliders.push(c); slings.push(st);
         return c;
@@ -795,21 +821,23 @@
             c.standIdx = idx; c.scx = (ax + bx) / 2; c.scy = (ay + by) / 2;
             colliders.push(c); standTargets.push(c);
         }
-        // 3 ringing the saucer = the playfield-multiplier bank (indices 0-2)
-        standup(0, 380, 300, 412, 300);       // above the saucer  (faces up)
-        standup(1, 354, 324, 354, 356);       // left of saucer    (faces -x)
-        standup(2, 438, 356, 438, 324);       // right of saucer   (faces +x)
+        // 3 standups in a TIGHT RING hugging the saucer = the playfield-multiplier bank (idx 0-2).
+        // Evenly spaced (top / lower-left / lower-right) at r≈35 so the mission hole reads as one
+        // ringed feature at a glance; the lower gap is the ball's entry mouth (authentic saucer).
+        standup(0, 380, 304, 412, 304);       // top of ring
+        standup(1, 358, 368, 374, 346);       // lower-left (angled)
+        standup(2, 434, 346, 418, 368);       // lower-right (angled)
         // 2 scattered standups (index 3-4)
         standup(3, 486, 300, 486, 338);       // right playfield rail (faces -x)
         standup(4, 300, 470, 332, 470);       // center-low           (faces up)
 
         /* ===== DROP-TARGET BANK (3 angled, mid-left — lights the ramp jackpot, §2.1.9) ===== */
         dropTargets.length = 0;
-        const dropPts = [[126, 470], [172, 480], [218, 490]];   // descending diagonal = angled bank
+        const dropPts = [[124, 470], [172, 481], [220, 492]];   // descending diagonal = angled bank
         for (let i = 0; i < dropPts.length; i++) {
-            const cx = dropPts[i][0], cy = dropPts[i][1], hw = 18, tilt = 5;
+            const cx = dropPts[i][0], cy = dropPts[i][1], hw = 21, tilt = 5.5;
             const c = seg(cx - hw, cy - tilt, cx + hw, cy + tilt, 'droptarget', { onHit: (function (idx) { return function () { hitDrop(idx); }; })(i) });
-            c.dropIdx = i; c.dcx = cx; c.dcy = cy;
+            c.dropIdx = i; c.dcx = cx; c.dcy = cy; c.dropT = 0;   // dropT>0 = drop animation playing
             colliders.push(c); dropTargets.push(c);
         }
 
@@ -817,11 +845,11 @@
         // LEFT sling island: outer vertical + bottom + kicking face (normal → up-right)
         colliders.push(seg(150, 662, 150, 730, 'wall'));    // outer vertical
         colliders.push(seg(150, 730, 208, 714, 'wall'));    // bottom
-        makeSling(208, 714, 150, 662);                      // kicking face
+        makeSling(208, 714, 150, 662, 150, 730);            // kicking face + apex
         // RIGHT sling island (mirror across x=280): kicking face (normal → up-left)
         colliders.push(seg(410, 662, 410, 730, 'wall'));
         colliders.push(seg(410, 730, 352, 714, 'wall'));
-        makeSling(410, 662, 352, 714);
+        makeSling(410, 662, 352, 714, 410, 730);
 
         /* ===== BOTTOM 4-LANE STRUCTURE : outlane | sling | inlane | flipper (§2.1.4) =====
            Funnels bring the wide field down; each side splits into an OUTLANE (outer — a ball
@@ -869,7 +897,7 @@
         // contact fires ONE kick, then the sling can't re-fire until SLING_COOLDOWN elapses — so a
         // ball overlapping across several CCD substeps can't compound the kick (316→1428 bug).
         if (st && st.cd > 0) return;
-        if (st) st.cd = SLING_COOLDOWN;
+        if (st) { st.cd = SLING_COOLDOWN; st.flash = 1; lampFlash(st === slings[0] ? 'slingL' : 'slingR', st.cx, st.cy, '#ff1493', 22); kick(3); }
         ball.vx += nx * SLING_KICK; ball.vy += ny * SLING_KICK;
         // clamp the post-kick speed so "fast ball + kick" can't stack into a rocket (feel dial)
         const sp = Math.hypot(ball.vx, ball.vy);
@@ -918,7 +946,7 @@
     /* ===================== FLIPPERS ===================== */
     function makeFlipper(px, py, restA, actA, side) {
         return { px: px, py: py, len: FLIP_LEN, r: FLIP_R, side: side,
-            restA: restA, actA: actA, angle: restA, angVel: 0, up: false };
+            restA: restA, actA: actA, angle: restA, angVel: 0, up: false, flash: 0 };
     }
     const flipperL = makeFlipper(183, 762, FLIP_REST_L, FLIP_ACT_L, 'L');
     const flipperR = makeFlipper(377, 762, FLIP_REST_R, FLIP_ACT_R, 'R');
@@ -927,6 +955,7 @@
     function updateFlippers(h) {
         for (let i = 0; i < flippers.length; i++) {
             const f = flippers[i];
+            if (f.flash > 0) f.flash = Math.max(0, f.flash - h * 4.5);
             const target = f.up ? f.actA : f.restA;
             const speed = f.up ? FLIP_OMEGA_UP : FLIP_OMEGA_DOWN;
             const diff = target - f.angle;
@@ -938,22 +967,34 @@
     function flipperTip(f) { return [f.px + f.len * Math.cos(f.angle), f.py + f.len * Math.sin(f.angle)]; }
 
     /* ===================== PLUNGER ===================== */
-    const plunger = { y: PLUNGER_REST_Y, vy: 0, charging: false, charge: 0, releaseT: 0 };
+    const plunger = { y: PLUNGER_REST_Y, vy: 0, charging: false, charge: 0, releaseT: 0,
+        recoil: 0, flash: 0, launchPow: 0, _tick: 0 };
 
     function updatePlunger(h) {
+        if (plunger.flash > 0) plunger.flash = Math.max(0, plunger.flash - h * 4);
         if (plunger.charging) {
             plunger.charge = Math.min(1, plunger.charge + h / CHARGE_TIME);
             plunger.y = PLUNGER_REST_Y + plunger.charge * PLUNGER_MAX_COMPRESS;
             plunger.vy = 0;
+            // ratchet ticks while pulling back — audible feedback the spring is loading
+            plunger._tick += h;
+            if (plunger._tick > 0.055 && plunger.charge < 1) { plunger._tick = 0; SFX.plungerClick(); }
+        } else if (plunger.recoil > 0) {
+            // release recoil: the head snaps UP past rest (overshoot) then settles — a spring kick.
+            plunger.recoil = Math.max(0, plunger.recoil - h);
+            const t = plunger.recoil / 0.14;               // 1 → 0 over 0.14s
+            const overshoot = -18 * plunger.launchPow;     // px above rest at peak, scaled by power
+            plunger.y = PLUNGER_REST_Y + overshoot * Math.sin(t * Math.PI) * (0.4 + 0.6 * t);
+            if (plunger.recoil <= 0) { plunger.y = PLUNGER_REST_Y; plunger.vy = 0; }
         } else if (plunger.releaseT > 0) {
             plunger.releaseT -= h;
             const t = Math.max(0, plunger.releaseT / 0.05);
-            plunger.y = PLUNGER_REST_Y + (plunger.y - PLUNGER_REST_Y) * t; // ease back up
+            plunger.y = PLUNGER_REST_Y + (plunger.y - PLUNGER_REST_Y) * t;
             if (plunger.releaseT <= 0) { plunger.y = PLUNGER_REST_Y; plunger.vy = 0; }
         }
     }
     function laneBall() { for (let i = 0; i < balls.length; i++) if (balls[i].inLane) return balls[i]; return null; }
-    function startCharge() { if (laneBall()) plunger.charging = true; }
+    function startCharge() { if (laneBall() && !draftOpen) plunger.charging = true; } // P1_4 guard: no charging under an open draft (verify-gate belt-and-suspenders)
     function releasePlunger() {
         if (!plunger.charging) return;
         plunger.charging = false;
@@ -962,8 +1003,10 @@
             ball.inLane = false; ball.launched = true;
             ball.vy = -(LAUNCH_MIN + (LAUNCH_MAX - LAUNCH_MIN) * plunger.charge);
             ball.vx = (Math.random() - 0.5) * 40;
-            SFX.launch();
+            ball.chuteBoost = 1;         // render flag: ball rockets up the chute (trail intensified)
+            SFX.launch(plunger.charge);  // pitch/brightness scale with pull
             armBallSave();               // §1.6 ball-save starts at launch
+            plunger.recoil = 0.14; plunger.flash = 1; plunger.launchPow = plunger.charge; // spring kick + flash
         }
         plunger.releaseT = 0.05; plunger.charge = 0;
     }
@@ -996,6 +1039,20 @@
     let tableShX = 0, tableShY = 0;   // nudge table shift (visual + slight physics)
     let scorePops = [];               // floating score text
 
+    /* ---- LIGHT SHOW (§gap6): transient lamp flashes, jackpot strobe, event screen-shake ---- */
+    let lamps = [];                   // {key,x,y,col,r,t} — element flash on a scoring event
+    let strobe = 0, strobeCol = '#ffd700';  // full-board strobe (jackpot/multiball)
+    let shakeMag = 0;                 // decaying screen-shake magnitude (px)
+    function lampFlash(key, x, y, col, r) {
+        for (let i = 0; i < lamps.length; i++) {
+            if (lamps[i].key === key) { lamps[i].t = 1; lamps[i].x = x; lamps[i].y = y; lamps[i].col = col; lamps[i].r = r; return; }
+        }
+        lamps.push({ key: key, x: x, y: y, col: col, r: r, t: 1 });
+        if (lamps.length > 40) lamps.shift();
+    }
+    function fireStrobe(col) { strobe = 1; strobeCol = col || '#ffd700'; }
+    function kick(mag) { shakeMag = Math.max(shakeMag, mag); }   // event screen-shake impulse
+
     function nowMs() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
     function comboMult() { return combo > 0 ? 1 + Math.min(combo - 1, COMBO_CAP) * COMBO_STEP : 1; }
     function modeMult() { return nowMs() < hyperUntil ? 2 : 1; }
@@ -1008,7 +1065,8 @@
             alive: true, lost: false, inLane: false, launched: false,
             onFlipper: false, stuck: 0, lastX: x, lastY: y,
             lane: null, laneS: 0, laneSpeed: 0, spinAt: -1,   // guided-lane state
-            held: 0, touchedFlipper: false };                 // saucer + skill-shot state
+            held: 0, touchedFlipper: false,                   // saucer + skill-shot state
+            trail: [], chuteBoost: 0 };                       // motion-trail ring buffer + launch flag
     }
 
     // Spawn a ball into the plunger lane; auto=true fires it immediately (ball-save / multiball).
@@ -1260,6 +1318,7 @@
                 SFX.skillshot();
                 updateIndicators();
             }
+            lampFlash('roll' + i, ROLLS[i][0], ROLLS[i][1], '#00ff9b', 13);
             if (!rollLit[i]) {
                 rollLit[i] = true;
                 addScore(SCORE.rollover, { source: 'rollover' });
@@ -1272,7 +1331,7 @@
     function completeWord() {
         addScore(Math.round(SCORE.word * RUN.wordMult), { source: 'word' }); // RUN.wordMult chokepoint
         rollLit = [false, false, false];
-        if (!multiballActive) { multiballLit = true; SFX.multiball(); }
+        if (!multiballActive) { multiballLit = true; SFX.multiball(); fireStrobe('#9b30ff'); kick(5); }
         updateIndicators();
     }
 
@@ -1324,7 +1383,7 @@
         lightJackpot();
         armBallSave();                     // ball-save covers the multiball start
         addScore(SCORE.mbStart, { source: 'jackpot', combo: false });  // starting jackpot payout
-        SFX.multiball();
+        SFX.multiball(); fireStrobe('#ff1493'); kick(9);
         updateIndicators();
     }
     function endMultiball() {
@@ -1335,7 +1394,7 @@
     function payJackpot() {
         if (!jackpotLit) return;
         addScore(Math.round(SCORE.jackpot * RUN.jackpotMult), { source: 'jackpot' }); // RUN.jackpotMult chokepoint
-        SFX.jackpot();
+        SFX.jackpot(); fireStrobe('#ffd700'); kick(7);
         if (!multiballActive) jackpotLit = false;   // multiball keeps jackpot lit; drop-bank jackpot is one-shot
         updateIndicators();
     }
@@ -1344,7 +1403,8 @@
     function hitDrop(i) {
         if (dropDown[i]) return;
         dropDown[i] = true;
-        if (dropTargets[i]) dropTargets[i].down = true;
+        if (dropTargets[i]) { dropTargets[i].down = true; dropTargets[i].dropT = 1; }   // trigger drop animation
+        lampFlash('drop' + i, dropTargets[i] ? dropTargets[i].dcx : 0, dropTargets[i] ? dropTargets[i].dcy : 0, '#ff6600', 18);
         addScore(SCORE.drop, { source: 'drop' });
         SFX.drop();
         if (dropDown[0] && dropDown[1] && dropDown[2]) {
@@ -1363,6 +1423,7 @@
 
     // ---- Standup bank → playfield multiplier (§3.1) ----
     function hitStandup(i) {
+        const st = standTargets[i]; if (st) lampFlash('stand' + i, st.scx, st.scy, '#00ffff', 15);
         addScore(SCORE.standup, { source: 'standup' });
         SFX.target();
         if (!standHit[i]) {
@@ -1380,7 +1441,7 @@
     function startHyper() {
         hyperUntil = nowMs() + HYPER_MS;
         rampCount = 0;
-        SFX.hyper();
+        SFX.hyper(); fireStrobe('#ffd700'); kick(6);
         updateIndicators();
     }
 
@@ -1415,7 +1476,10 @@
         if (vn < 0) {
             let tvx = ball.vx - vn * nx, tvy = ball.vy - vn * ny;   // tangential
             tvx *= (1 - fric); tvy *= (1 - fric);
-            const rvn = -rest * vn;                                  // reflected normal magnitude
+            // Resting contact: if the ball is barely moving into the surface, kill the
+            // normal component instead of bouncing. Otherwise a supported ball's vn just
+            // re-accumulates from gravity every step. Tangential (slope slide) is kept.
+            const rvn = (-vn < REST_VN) ? 0 : -rest * vn;           // reflected normal magnitude
             ball.vx = tvx + rvn * nx; ball.vy = tvy + rvn * ny;
         }
         if (onHit) onHit(ball, nx, ny);
@@ -1498,7 +1562,10 @@
         if (vn < 0) {
             let tvx = rvx - vn * nx, tvy = rvy - vn * ny;
             tvx *= (1 - FLIP_FRIC); tvy *= (1 - FLIP_FRIC);
-            const rvn = -FLIP_RESTITUTION * vn;
+            // Resting cradle: a ball sitting on a still flipper has a tiny relative-normal
+            // speed → zero it so it settles instead of buzzing. A moving flipper strikes with
+            // a large |vn| (ball vs surface velocity), so live catches/backhands keep full bite.
+            const rvn = (-vn < REST_VN) ? 0 : -FLIP_RESTITUTION * vn;
             rvx = tvx + rvn * nx; rvy = tvy + rvn * ny;
             ball.vx = rvx + svx; ball.vy = rvy + svy;
             const sp = Math.hypot(ball.vx, ball.vy);
@@ -1511,14 +1578,15 @@
 
     // plunger top face (moving horizontal segment inside the launch channel)
     function resolvePlunger(ball) {
-        if (ball.x < SHOOTER_X) return false; // only balls in the launch channel
+        if (ball.x < SHOOTER_X || ball.x > 584) return false; // only balls in the launch channel
         const y = plunger.y;
-        if (ball.x < SHOOTER_X || ball.x > 584) return false;
-        const dy = ball.y - (y - ball.r);
-        if (ball.y + ball.r <= y) return false;          // above the face
+        if (ball.y + ball.r <= y) return false;          // above the face — no contact
         if (ball.y - ball.r > y + 8) return false;       // below (shouldn't happen)
-        // push up onto the face
-        if (ball.y > y - ball.r) { ball.y = y - ball.r; if (ball.vy > 0) ball.vy *= -0.12; }
+        // push up onto the face and kill the into-face (downward) component: a slow ball
+        // RESTS on the plunger (REST_VN → 0) instead of re-gaining vy from gravity every
+        // step; a fast incoming ball still gets a soft damped bounce.
+        ball.y = y - ball.r;
+        if (ball.vy > 0) ball.vy = (ball.vy < REST_VN) ? 0 : ball.vy * -0.12;
         return true;
     }
 
@@ -1550,11 +1618,17 @@
         // ---- on a guided lane (ramp/orbit): position driven along the spline (no tunneling) ----
         if (ball.lane) { laneStep(ball, h); return; }
         if (ball.inLane) {
-            // resting on the plunger — light gravity, clamp to channel
+            // Resting on the plunger tip (a SUPPORT). Apply gravity, then zero the
+            // into-face (downward) component so it never accumulates — this branch never
+            // integrates position, so the collider never sees penetration and previously
+            // let vy climb unbounded (the P1 launch-corruption bug: 269→505→1564 px/s while
+            // motionless). The ball simply sits on the plunger face; releasePlunger() sets
+            // the launch velocity directly, so a zeroed rest velocity never hurts launch.
             ball.vy += GRAVITY * h * 0.35;
-            resolvePlunger(ball);
+            if (ball.vy > 0) ball.vy = 0;                // resting contact — kill accumulation
+            ball.vx *= 0.5;                              // settle any lateral drift
             if (ball.x < 550) ball.x = 550; if (ball.x > 574) ball.x = 574;
-            if (ball.y > plunger.y - ball.r) ball.y = plunger.y - ball.r;
+            ball.y = plunger.y - ball.r;                 // ride the plunger face (follows charge)
             ball.lastX = ball.x; ball.lastY = ball.y;
             return;
         }
@@ -1603,8 +1677,13 @@
             if (b.cooldown > 0) b.cooldown = Math.max(0, b.cooldown - h * 1000);
         }
         // slingshot one-shot latch + inlane-rollover cooldown decay (frame-based, _sim-safe)
-        for (let i = 0; i < slings.length; i++) if (slings[i].cd > 0) slings[i].cd = Math.max(0, slings[i].cd - h * 1000);
+        for (let i = 0; i < slings.length; i++) { if (slings[i].cd > 0) slings[i].cd = Math.max(0, slings[i].cd - h * 1000); if (slings[i].flash > 0) slings[i].flash = Math.max(0, slings[i].flash - h * 5); }
         for (let i = 0; i < inlanes.length; i++) if (inlanes[i].cd > 0) inlanes[i].cd = Math.max(0, inlanes[i].cd - h * 1000);
+        // ---- light-show timers: lamp flashes, jackpot strobe, drop-target drop animation, screen-shake ----
+        for (let i = lamps.length - 1; i >= 0; i--) { lamps[i].t -= h * 3.2; if (lamps[i].t <= 0) lamps.splice(i, 1); }
+        if (strobe > 0) strobe = Math.max(0, strobe - h * 2.4);
+        if (shakeMag > 0) shakeMag = Math.max(0, shakeMag - h * 42);
+        for (let i = 0; i < dropTargets.length; i++) if (dropTargets[i].dropT > 0) dropTargets[i].dropT = Math.max(0, dropTargets[i].dropT - h * 4.5);
         // ---- phase-2 timers ----
         // combo window expiry → reset the blue chain
         if (combo > 0 && nowMs() > comboExpire) combo = 0;
@@ -1719,6 +1798,25 @@
             g.beginPath(); g.moveTo(-5, 4); g.lineTo(4, 0); g.lineTo(-5, -4); g.stroke();   // chevron into the lane
             g.restore();
         }
+        // per-vertex offset of a lane path along its averaged normals → parallel side rails.
+        function laneOffsetPath(lane, off) {
+            const pts = lane.pts, n = pts.length, out = [];
+            for (let i = 0; i < n; i++) {
+                let nx = 0, ny = 0;
+                if (i > 0) { const dx = pts[i][0] - pts[i - 1][0], dy = pts[i][1] - pts[i - 1][1], L = Math.hypot(dx, dy) || 1; nx += -dy / L; ny += dx / L; }
+                if (i < n - 1) { const dx = pts[i + 1][0] - pts[i][0], dy = pts[i + 1][1] - pts[i][1], L = Math.hypot(dx, dy) || 1; nx += -dy / L; ny += dx / L; }
+                const L = Math.hypot(nx, ny) || 1;
+                out.push([pts[i][0] + nx / L * off, pts[i][1] + ny / L * off]);
+            }
+            return out;
+        }
+        function strokePath(pts, col, w, glow) {
+            g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = w; g.strokeStyle = col;
+            if (glow) { g.shadowColor = col; g.shadowBlur = glow; }
+            g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+            g.stroke(); g.restore();
+        }
 
         // ---- ORBIT lanes drawn UNDER the walls (they read as the outer top loops / arch) ----
         LANES.forEach(function (lane) {
@@ -1764,25 +1862,39 @@
         //      up-and-over chevrons + a lit entrance (reads unmistakably as a raised ramp) ----
         LANES.forEach(function (lane) {
             if (lane.kind !== 'ramp') return;
-            // elevation drop-shadow
-            g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.translate(0, 4);
-            g.strokeStyle = 'rgba(0,0,0,0.42)'; g.lineWidth = BALL_R * 2 + 9;
+            const halfW = BALL_R + 4;                        // ramp surface half-width
+            // deep elevation drop-shadow (offset down/right = the ramp stands ABOVE the playfield)
+            g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.translate(3, 7);
+            g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = halfW * 2 + 10;
             g.beginPath(); g.moveTo(lane.pts[0][0], lane.pts[0][1]);
             for (let i = 1; i < lane.pts.length; i++) g.lineTo(lane.pts[i][0], lane.pts[i][1]);
             g.stroke(); g.restore();
-            // raised surface + bright top edge highlight
-            laneBand(lane, 'rgba(0,214,255,0.24)', 'rgba(140,240,255,0.85)', BALL_R * 2 + 5);
-            laneChevrons(lane, 'rgba(190,250,255,0.92)', 5, 0.12, 0.78, 6);
-            // lit entrance mouth + up-arrow
+            // ramp FLOOR: a solid dark base band so the surface reads as a physical deck
+            strokePath(lane.pts, 'rgba(8,16,34,0.96)', halfW * 2 + 4, 0);
+            // surface sheen (a lighter core stripe fakes the domed metal deck)
+            strokePath(lane.pts, 'rgba(0,150,210,0.22)', halfW * 2 - 3, 0);
+            strokePath(lane.pts, 'rgba(120,225,255,0.16)', halfW * 0.9, 0);
+            // side RAILS — two bright parallel guides with their own inner shadow (the up-and-over read)
+            const railL = laneOffsetPath(lane, halfW), railR = laneOffsetPath(lane, -halfW);
+            strokePath(railL.map(function (p) { return [p[0] + 1.5, p[1] + 2.5]; }), 'rgba(0,0,0,0.55)', 4.5, 0);  // rail shadow
+            strokePath(railR.map(function (p) { return [p[0] + 1.5, p[1] + 2.5]; }), 'rgba(0,0,0,0.55)', 4.5, 0);
+            strokePath(railL, '#8cf0ff', 3, 8);
+            strokePath(railR, '#8cf0ff', 3, 8);
+            // directional chevrons up the deck
+            laneChevrons(lane, 'rgba(200,250,255,0.95)', 5, 0.14, 0.8, 6);
+            // ENTRANCE LIP — a bright raised mouth the ball rolls up onto + lit up-arrow
             g.save(); g.translate(lane.entry[0], lane.entry[1]);
-            g.shadowColor = '#00ffff'; g.shadowBlur = 12;
-            g.strokeStyle = 'rgba(0,255,255,0.85)'; g.lineWidth = 3; g.lineCap = 'round';
-            g.beginPath(); g.arc(0, 0, 13, Math.PI * 0.18, Math.PI * 0.82, true); g.stroke();
-            g.fillStyle = 'rgba(120,240,255,0.95)';
-            g.beginPath(); g.moveTo(-8, 5); g.lineTo(0, -7); g.lineTo(8, 5); g.closePath(); g.fill();
+            const ep = lanePos(lane, 6); g.rotate(Math.atan2(ep.ty, ep.tx));
+            g.shadowColor = '#00ffff'; g.shadowBlur = 12; g.lineCap = 'round';
+            g.strokeStyle = '#bff2ff'; g.lineWidth = 5;     // lip bar across the mouth
+            g.beginPath(); g.moveTo(0, -halfW - 1); g.lineTo(0, halfW + 1); g.stroke();
+            g.shadowBlur = 0; g.strokeStyle = 'rgba(0,255,255,0.85)'; g.lineWidth = 3;
+            g.beginPath(); g.arc(0, 0, 13, Math.PI * 0.62, Math.PI * 1.38); g.stroke();
+            g.fillStyle = 'rgba(150,245,255,0.95)';
+            g.beginPath(); g.moveTo(5, -8); g.lineTo(-7, 0); g.lineTo(5, 8); g.closePath(); g.fill();  // arrow up the ramp
             g.restore();
             g.save(); g.font = '800 9px Oxanium, sans-serif'; g.textAlign = 'center';
-            g.fillStyle = 'rgba(180,250,255,0.6)'; g.fillText('RAMP', lane.entry[0], lane.entry[1] + 24); g.restore();
+            g.fillStyle = 'rgba(180,250,255,0.65)'; g.fillText('RAMP', lane.entry[0] + 12, lane.entry[1] + 22); g.restore();
         });
 
         // ---- orbit directional chevrons + lit entrances (over the walls) ----
@@ -1810,17 +1922,30 @@
 
         // ---- SLINGSHOTS: filled triangle body + bright rubber kicking face ----
         function drawSling(v, faceA, faceB) {
-            g.save();
-            // body
+            g.save(); g.lineJoin = 'round'; g.lineCap = 'round';
+            const cx = (v[0][0] + v[1][0] + v[2][0]) / 3, cy = (v[0][1] + v[1][1] + v[2][1]) / 3;
+            // CHUNKY body: bright magenta gradient fill (reads as a solid rubber kicker mass)
             g.beginPath(); g.moveTo(v[0][0], v[0][1]); g.lineTo(v[1][0], v[1][1]); g.lineTo(v[2][0], v[2][1]); g.closePath();
-            g.fillStyle = 'rgba(255,20,147,0.14)'; g.fill();
-            g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,20,147,0.55)'; g.stroke();
-            // rubber kicking face (thick, bright, with a highlight core)
-            g.lineCap = 'round';
-            g.shadowColor = '#ff1493'; g.shadowBlur = 12; g.lineWidth = 6; g.strokeStyle = '#ff1493';
+            const bg = g.createRadialGradient(cx, cy, 2, cx, cy, 52);
+            bg.addColorStop(0, 'rgba(255,60,170,0.5)'); bg.addColorStop(0.55, 'rgba(255,20,147,0.28)'); bg.addColorStop(1, 'rgba(120,10,70,0.14)');
+            g.fillStyle = bg; g.fill();
+            g.lineWidth = 3; g.strokeStyle = 'rgba(255,80,175,0.75)'; g.shadowColor = '#ff1493'; g.shadowBlur = 8; g.stroke();
+            g.shadowBlur = 0;
+            // inner glow rim (inset a few px toward centroid)
+            g.beginPath();
+            [0, 1, 2].forEach(function (k, idx) { const x = v[k][0] + (cx - v[k][0]) * 0.22, y = v[k][1] + (cy - v[k][1]) * 0.22; if (idx === 0) g.moveTo(x, y); else g.lineTo(x, y); });
+            g.closePath(); g.lineWidth = 1.5; g.strokeStyle = 'rgba(255,190,230,0.5)'; g.stroke();
+            // thick rubber kicking BAND with round caps + bright core
+            g.shadowColor = '#ff1493'; g.shadowBlur = 14; g.lineWidth = 8; g.strokeStyle = '#ff2f9e';
             g.beginPath(); g.moveTo(faceA[0], faceA[1]); g.lineTo(faceB[0], faceB[1]); g.stroke();
-            g.shadowBlur = 0; g.lineWidth = 2; g.strokeStyle = 'rgba(255,210,235,0.9)';
+            g.shadowBlur = 0; g.lineWidth = 3; g.strokeStyle = 'rgba(255,220,240,0.95)';
             g.beginPath(); g.moveTo(faceA[0], faceA[1]); g.lineTo(faceB[0], faceB[1]); g.stroke();
+            // band anchor posts at each end of the kicking face
+            [faceA, faceB].forEach(function (p) {
+                g.fillStyle = '#12081a'; g.beginPath(); g.arc(p[0], p[1], 4.5, 0, Math.PI * 2); g.fill();
+                g.lineWidth = 2; g.strokeStyle = '#ff2f9e'; g.shadowColor = '#ff1493'; g.shadowBlur = 6;
+                g.beginPath(); g.arc(p[0], p[1], 4.5, 0, Math.PI * 2); g.stroke(); g.shadowBlur = 0;
+            });
             g.restore();
         }
         drawSling(SLING_L, [208, 714], [150, 662]);   // left face
@@ -1873,8 +1998,12 @@
         g.beginPath(); g.arc(SAUCER.x, SAUCER.y, SAUCER.r, 0, Math.PI * 2); g.stroke();
         g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,255,255,0.5)'; g.shadowColor = '#00ffff'; g.shadowBlur = 8;
         g.beginPath(); g.arc(SAUCER.x, SAUCER.y, SAUCER.r * 0.6, 0, Math.PI * 2); g.stroke();
-        g.shadowBlur = 0; g.fillStyle = 'rgba(210,180,255,0.85)';
-        g.font = '800 8px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillText('WORMHOLE', SAUCER.x, SAUCER.y + SAUCER.r + 16);
+        // faint target-ring arc tying the 3 standups into one ringed mission feature (gap2)
+        g.setLineDash([5, 6]); g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,255,255,0.28)'; g.shadowColor = '#00ffff'; g.shadowBlur = 5;
+        g.beginPath(); g.arc(SAUCER.x, SAUCER.y - 6, 36, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([]); g.shadowBlur = 0;
+        g.fillStyle = 'rgba(210,180,255,0.85)';
+        g.font = '800 8px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillText('WORMHOLE', SAUCER.x, SAUCER.y + SAUCER.r + 20);
         g.restore();
 
         // ---- standup targets (cyan bars with a rounded cap) ----
@@ -1887,12 +2016,32 @@
             g.restore();
         });
 
-        // ---- drop-target slot bases (faint dashes so empty slots still read as a bank) ----
-        g.save(); g.globalAlpha = 0.3; g.strokeStyle = '#ff6600'; g.lineWidth = 2; g.lineCap = 'round';
-        dropTargets.forEach(function (c) { g.beginPath(); g.moveTo(c.ax, c.ay + 6); g.lineTo(c.bx, c.by + 6); g.stroke(); });
-        g.globalAlpha = 0.5; g.font = '800 8px Oxanium, sans-serif'; g.textAlign = 'center'; g.fillStyle = '#ff6600';
-        g.fillText('DROP BANK', 172, 512);
-        g.restore();
+        // ---- DROP-TARGET BANK HOUSING (frame so the 3 targets read as ONE bank, §gap4) ----
+        (function () {
+            const a = dropTargets[0], z = dropTargets[dropTargets.length - 1];
+            const cx = (a.dcx + z.dcx) / 2, cy = (a.dcy + z.dcy) / 2;
+            const ang = Math.atan2(z.dcy - a.dcy, z.dcx - a.dcx);
+            const len = Math.hypot(z.dcx - a.dcx, z.dcy - a.dcy);
+            const halfW = len / 2 + 26, halfH = 20, rad = 9;
+            g.save(); g.translate(cx, cy); g.rotate(ang);
+            // recessed dark housing
+            function rr(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+            rr(-halfW, -halfH, halfW * 2, halfH * 2, rad);
+            g.fillStyle = 'rgba(6,10,22,0.82)'; g.fill();
+            // orange bank frame
+            g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,102,0,0.7)'; g.shadowColor = '#ff6600'; g.shadowBlur = 8; g.stroke();
+            g.shadowBlur = 0;
+            // slot recesses at each target (empty-slot read when a target is down)
+            g.strokeStyle = 'rgba(255,140,40,0.35)'; g.lineWidth = 2; g.lineCap = 'round';
+            for (let i = 0; i < dropTargets.length; i++) {
+                const sx = (i - (dropTargets.length - 1) / 2) * (len / (dropTargets.length - 1));
+                g.beginPath(); g.moveTo(sx - 20, 8); g.lineTo(sx + 20, 8); g.stroke();
+            }
+            g.restore();
+            // label under the housing
+            g.save(); g.font = '800 9px Oxanium, sans-serif'; g.textAlign = 'center';
+            g.fillStyle = 'rgba(255,140,40,0.75)'; g.fillText('DROP BANK', cx, cy + 34); g.restore();
+        })();
 
         // ---- TOP ROLLOVER LANES (B-O-O): outer guide walls already drawn; add feed chevrons + rings ----
         g.save();
@@ -1959,16 +2108,22 @@
         return { cv: cv, ox: pad, oy: pad + r };
     })();
 
-    // baked raised drop-target sprite (orange bar + glow) — perf law: no per-frame shadowBlur
+    // baked raised drop-target sprite (bigger, brighter orange chip + glow) — perf law: no per-frame shadowBlur.
+    // A rounded chip body with a bright top bevel + gold core so 3 read clearly as a bank of raised targets.
     const dropSprite = (function () {
-        const w = 34, hh = 9, pad = 14;
+        const w = 44, hh = 13, pad = 16;
         const cv = document.createElement('canvas'); cv.width = w + pad * 2; cv.height = hh + pad * 2;
         const gg = cv.getContext('2d');
-        gg.translate(pad, pad + hh / 2); gg.lineCap = 'round'; gg.lineWidth = hh;
-        gg.strokeStyle = '#ff6600'; gg.shadowColor = '#ff6600'; gg.shadowBlur = 10;
+        gg.translate(pad, pad + hh / 2); gg.lineCap = 'round';
+        // outer glow body
+        gg.lineWidth = hh; gg.strokeStyle = '#ff6600'; gg.shadowColor = '#ff8a1e'; gg.shadowBlur = 14;
         gg.beginPath(); gg.moveTo(0, 0); gg.lineTo(w, 0); gg.stroke();
-        gg.shadowBlur = 0; gg.strokeStyle = 'rgba(255,220,150,0.85)'; gg.lineWidth = hh * 0.4;
-        gg.beginPath(); gg.moveTo(0, 0); gg.lineTo(w, 0); gg.stroke();
+        // brighter fill
+        gg.shadowBlur = 0; gg.lineWidth = hh * 0.72; gg.strokeStyle = '#ffab3d';
+        gg.beginPath(); gg.moveTo(1, 0); gg.lineTo(w - 1, 0); gg.stroke();
+        // top bevel highlight (reads as a raised chip)
+        gg.lineWidth = hh * 0.28; gg.strokeStyle = 'rgba(255,240,200,0.95)';
+        gg.beginPath(); gg.moveTo(2, -hh * 0.22); gg.lineTo(w - 2, -hh * 0.22); gg.stroke();
         return { cv: cv, ox: pad, oy: pad + hh / 2 };
     })();
 
@@ -2014,14 +2169,53 @@
     function render() {
         updateIndicators();
         const sx = canvas.width / PW, sy = canvas.height / PH;
-        ctx.setTransform(sx, 0, 0, sy, tableShX * sx, tableShY * sy);   // nudge table shift
-        ctx.clearRect(-tableShX, -tableShY, PW, PH);
+        // nudge shift + event screen-shake (decaying jitter, §gap7)
+        const shX = shakeMag > 0.1 ? (Math.random() - 0.5) * shakeMag : 0;
+        const shY = shakeMag > 0.1 ? (Math.random() - 0.5) * shakeMag : 0;
+        const ox = tableShX + shX, oy = tableShY + shY;
+        ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(sx, 0, 0, sy, ox * sx, oy * sy);
         if (boardBg) ctx.drawImage(boardBg, 0, 0, PW, PH);
 
-        // ---- drop-target bank (blit the baked sprite for raised targets — no per-frame shadowBlur) ----
+        // ---- ATTRACT MODE: lamp chase behind the menu title (§gap6) ----
+        if (gameState === 'menu') { drawAttract(nowMs()); }
+
+        // ---- transient LAMP FLASHES on scoring elements (baked glow, alpha pulse — perf-safe) ----
+        for (let i = 0; i < lamps.length; i++) {
+            const L = lamps[i], t = L.t, sp = glowSprite(L.col, L.r, 0.4), sz = L.r * 3 * (0.75 + 0.55 * (1 - t));
+            ctx.globalAlpha = Math.min(1, t) * 0.85;
+            ctx.drawImage(sp, L.x - sz, L.y - sz, sz * 2, sz * 2);
+        }
+        ctx.globalAlpha = 1;
+
+        // ---- SLINGSHOT kick flashes (white burst over the rubber body on fire, §gap5) ----
+        for (let i = 0; i < slings.length; i++) {
+            const s = slings[i]; if (s.flash <= 0) continue;
+            const sp = glowSprite('#ffffff', 20, 0.3), sz = 20 * 3 * (0.7 + s.flash * 0.5);
+            ctx.globalAlpha = s.flash * 0.8;
+            ctx.drawImage(sp, s.cx - sz, s.cy - sz, sz * 2, sz * 2);
+            // snap the bright rubber face
+            ctx.globalAlpha = s.flash;
+            ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3.5; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(s.fa[0], s.fa[1]); ctx.lineTo(s.fb[0], s.fb[1]); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+
+        // ---- drop-target bank (baked chip sprite; satisfying sink+fade drop animation on hit, §gap4) ----
         for (let i = 0; i < dropTargets.length; i++) {
-            const c = dropTargets[i]; if (c.down) continue;
-            ctx.drawImage(dropSprite.cv, c.ax - dropSprite.ox, c.ay - dropSprite.oy);
+            const c = dropTargets[i];
+            const bx = c.dcx - dropSprite.ox - 22, by = c.dcy - dropSprite.oy;
+            if (!c.down) {
+                ctx.drawImage(dropSprite.cv, bx, by);
+            } else if (c.dropT > 0) {
+                const k = c.dropT;                       // 1 → 0
+                ctx.save();
+                ctx.translate(c.dcx, c.dcy + (1 - k) * 12); // sink into the housing
+                const sc = 0.55 + k * 0.45; ctx.scale(sc, sc);
+                ctx.globalAlpha = k;
+                ctx.drawImage(dropSprite.cv, -dropSprite.ox - 22, -dropSprite.oy);
+                ctx.restore(); ctx.globalAlpha = 1;
+            }
         }
         // ---- rollover lit fills (B-O-O) — baked glow disc + crisp core (no per-frame shadowBlur) ----
         for (let i = 0; i < ROLLS.length; i++) {
@@ -2044,11 +2238,57 @@
             ctx.restore();
         }
 
-        // plunger visual (in the far-right launch chute)
+        // ---- PLUNGER: compressing spring + hot-charge head + release flash (§gap1) ----
         ctx.save();
-        ctx.fillStyle = '#ff6600'; ctx.shadowColor = '#ff6600'; ctx.shadowBlur = 0;
-        ctx.fillRect(544, plunger.y, 38, 18);
-        ctx.fillStyle = 'rgba(255,180,60,0.4)'; ctx.fillRect(544, plunger.y, 38, 4);
+        const chuteX = 545, chuteW = 36, cxc = chuteX + chuteW / 2;
+        const headY = plunger.y, springTop = headY + 16, springBot = 862;
+        const chg = plunger.charging ? plunger.charge : (plunger.recoil > 0 ? plunger.launchPow * 0.25 : 0);
+        const hot = Math.max(0, Math.min(1, chg)), flash = plunger.flash;
+        // base anchor plate at the bottom of the chute
+        ctx.fillStyle = '#2a1606'; ctx.fillRect(chuteX, springBot, chuteW, 5);
+        // soft charge/launch halo behind the head (baked glow sprite — perf law: no shadowBlur)
+        const glowAmt = Math.max(hot, flash);
+        if (glowAmt > 0.03) {
+            const hs = glowSprite('#ffab3d', 20, 0.3), gz = 20 * 3 * (0.7 + 0.5 * glowAmt);
+            ctx.globalAlpha = glowAmt * 0.7;
+            ctx.drawImage(hs, cxc - gz, headY + 8 - gz, gz * 2, gz * 2);
+            ctx.globalAlpha = 1;
+        }
+        // compressing spring (zigzag coils; bunch up as the head is pulled down)
+        const coils = 8;
+        ctx.strokeStyle = 'rgba(255,' + Math.round(140 + 90 * hot) + ',' + Math.round(45 + 150 * hot) + ',0.92)';
+        ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath(); ctx.moveTo(cxc, springTop);
+        for (let i = 1; i <= coils; i++) {
+            const yy = springTop + (springBot - springTop) * (i / coils);
+            const xx = cxc + ((i % 2) ? chuteW * 0.33 : -chuteW * 0.33);
+            ctx.lineTo(xx, yy);
+        }
+        ctx.lineTo(cxc, springBot); ctx.stroke();
+        // plunger HEAD — orange, heats toward gold/white as it charges, flares on release
+        const hg = Math.min(255, Math.round(102 + 120 * hot + 130 * flash));
+        const hb = Math.min(255, Math.round(0 + 150 * hot + 210 * flash));
+        ctx.fillStyle = 'rgb(255,' + hg + ',' + hb + ')';
+        ctx.fillRect(chuteX, headY, chuteW, 16);
+        ctx.fillStyle = 'rgba(255,238,200,' + (0.45 + 0.55 * glowAmt) + ')';
+        ctx.fillRect(chuteX + 2, headY + 2, chuteW - 4, 3);
+        ctx.restore();
+        // "HOLD" launch affordance — pulses on the plunger whenever a ball is waiting to be
+        // launched, so mouse/touch/keyboard players all see the press-and-hold cue.
+        if (laneBall()) {
+            const pulse = 0.5 + 0.5 * Math.abs(Math.sin(nowMs() / 240));
+            ctx.globalAlpha = pulse;
+            ctx.fillStyle = '#ffd24a';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.font = '800 13px Oxanium, sans-serif';
+            ctx.fillText('HOLD', 563, plunger.y - 30);
+            ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            for (let i = 0; i < 2; i++) {
+                const ay = plunger.y - 50 - i * 11;
+                ctx.beginPath(); ctx.moveTo(556, ay + 6); ctx.lineTo(563, ay); ctx.lineTo(570, ay + 6); ctx.stroke();
+            }
+            ctx.globalAlpha = 1;
+        }
         ctx.restore();
 
         // bumper flashes (baked white glow scaled by flash)
@@ -2071,15 +2311,40 @@
             const fs = f.len / FLIP_LEN; if (fs !== 1) ctx.scale(fs, 1);   // wider-flippers card: draw matches collision length
             ctx.drawImage(flipperSprite.cv, -flipperSprite.ox, -flipperSprite.oy);
             ctx.restore();
+            // active-flash: a bright burst travelling the flipper on a fresh flip (§gap7, baked sprite)
+            if (f.flash > 0) {
+                const tip = flipperTip(f), fg = glowSprite('#ffffff', FLIP_R, 0.3), sz = FLIP_R * 3 * (0.9 + f.flash * 0.7);
+                ctx.globalAlpha = f.flash * 0.7;
+                ctx.drawImage(fg, tip[0] - sz, tip[1] - sz, sz * 2, sz * 2);
+                ctx.globalAlpha = 1;
+            }
             // pivot cap
             ctx.save(); ctx.fillStyle = '#9b30ff';
             ctx.beginPath(); ctx.arc(f.px, f.py, f.r + 1.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
         }
 
-        // balls (baked glow + bright core)
+        // balls (motion trail → baked glow → bright core; §gap1/gap7 — all baked sprites, perf-safe)
         const ballGlow = glowSprite('#ffffff', BALL_R, 0.35);
+        const trailGlow = glowSprite('#9fe8ff', BALL_R, 0.4);
         for (let i = 0; i < balls.length; i++) {
             const b = balls[i]; if (!b.alive) continue;
+            const spd = Math.hypot(b.vx, b.vy);
+            // sample the trail ring-buffer once per frame; reset on teleport (lane capture/exit jumps)
+            const tl = b.trail, n = tl.length;
+            if (n >= 2 && Math.hypot(b.x - tl[n - 2], b.y - tl[n - 1]) > 60) tl.length = 0;
+            tl.push(b.x, b.y);
+            if (tl.length > 16) tl.splice(0, tl.length - 16);
+            if ((spd > 320 || b.chuteBoost > 0) && !b.inLane && b.held <= 0) {
+                const pairs = tl.length / 2, intensity = Math.min(1, spd / 900);
+                for (let t = 0; t < pairs - 1; t++) {
+                    const a = (t / pairs) * 0.5 * intensity; if (a <= 0.02) continue;
+                    const tsz = BALL_R * (0.9 + 1.1 * (t / pairs));
+                    ctx.globalAlpha = a;
+                    ctx.drawImage(trailGlow, tl[t * 2] - tsz, tl[t * 2 + 1] - tsz, tsz * 2, tsz * 2);
+                }
+                ctx.globalAlpha = 1;
+            }
+            if (b.chuteBoost > 0) b.chuteBoost = Math.max(0, b.chuteBoost - 0.04);
             const gsz = BALL_R * 3;
             ctx.drawImage(ballGlow, b.x - gsz, b.y - gsz, gsz * 2, gsz * 2);
             ctx.save();
@@ -2122,6 +2387,48 @@
         } else if (jackpotLit) {
             blitText('RAMP JACKPOT LIT', 16, '#ffd700', 10, PW / 2, 430);
         }
+
+        // ---- JACKPOT STROBE: 3 quick full-board pulses fading out (§gap6) ----
+        if (strobe > 0) {
+            const puls = Math.abs(Math.sin(strobe * Math.PI * 3));   // 3 pulses across the decay
+            ctx.globalAlpha = strobe * puls * 0.3;
+            ctx.fillStyle = strobeCol;
+            ctx.fillRect(0, 0, PW, PH);
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    /* ---- ATTRACT MODE: a lamp chase sweeping the scoring elements behind the menu title (§gap6).
+       Menu-only (not a gameplay hot path); all draws are baked glow sprites + alpha. ---- */
+    let _attractPts = null;
+    function attractPoints() {
+        if (_attractPts) return _attractPts;
+        const pts = [];
+        bumpers.forEach(function (b) { pts.push({ x: b.x, y: b.y, c: b.color, r: b.r }); });
+        for (let i = 0; i < ROLLS.length; i++) pts.push({ x: ROLLS[i][0], y: ROLLS[i][1], c: '#00ff9b', r: 12 });
+        standTargets.forEach(function (s) { pts.push({ x: s.scx, y: s.scy, c: '#00ffff', r: 12 }); });
+        for (let i = 0; i < slings.length; i++) pts.push({ x: slings[i].cx, y: slings[i].cy, c: '#ff1493', r: 18 });
+        for (let i = 0; i < dropTargets.length; i++) pts.push({ x: dropTargets[i].dcx, y: dropTargets[i].dcy, c: '#ff6600', r: 12 });
+        pts.push({ x: SAUCER.x, y: SAUCER.y, c: '#9b30ff', r: 20 });
+        // order by angle around the board center so the chase sweeps around
+        const cx = 300, cy = 420;
+        pts.forEach(function (p) { p.a = Math.atan2(p.y - cy, p.x - cx); });
+        pts.sort(function (a, b) { return a.a - b.a; });
+        _attractPts = pts; return pts;
+    }
+    function drawAttract(t) {
+        const pts = attractPoints(), n = pts.length;
+        const phase = (t / 1100) % 1;                 // one sweep ≈ 1.1s
+        for (let i = 0; i < n; i++) {
+            const f = i / n;
+            let d = Math.abs(f - phase); d = Math.min(d, 1 - d);        // wrap-around distance
+            const lit = Math.max(0, 1 - d * 7);                        // narrow travelling pulse
+            if (lit <= 0.02) continue;
+            const p = pts[i], sp = glowSprite(p.c, p.r, 0.4), sz = p.r * 3 * (0.7 + 0.5 * lit);
+            ctx.globalAlpha = lit * 0.8;
+            ctx.drawImage(sp, p.x - sz, p.y - sz, sz * 2, sz * 2);
+        }
+        ctx.globalAlpha = 1;
     }
 
     /* ===================== MAIN LOOP ===================== */
@@ -2148,8 +2455,9 @@
     const plungerMeter = document.getElementById('plungerMeter');
     const plungerFill = document.getElementById('plungerFill');
     const launchHint = document.getElementById('launchHint');
-    // V2: no spacebar on touch — show the real gesture on coarse-pointer devices.
-    try { if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) launchHint.textContent = 'TAP & HOLD'; } catch (e) {}
+    // V2: no spacebar on touch — show the real gesture on coarse-pointer devices; on desktop
+    // SPACE and press-and-hold on the plunger both work.
+    try { launchHint.textContent = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ? 'TAP & HOLD' : 'HOLD SPACE / DRAG'; } catch (e) {}
     const saveBadge = document.getElementById('saveBadge');
     const modeBadge = document.getElementById('modeBadge');
     const tiltBadge = document.getElementById('tiltBadge');
@@ -2210,6 +2518,7 @@
         scorePops = []; tableShX = 0; tableShY = 0; musicPaused = false;
         hideAllOverlays();
         plungerMeter.style.display = 'block'; launchHint.style.display = 'block';
+        try { window.focus(); canvas.focus({ preventScroll: true }); } catch (e) {}   // keyboard ready immediately
         try { MUSIC.setState('game'); } catch (e) {}
         serveBall();
         updateHud(); updateIndicators();
@@ -2226,7 +2535,7 @@
         for (let i = 0; i < balls.length; i++) balls[i].alive = false;   // pull remaining balls (no drain penalty)
         balls = [];
         roundsCleared++;
-        SFX.jackpot();
+        SFX.jackpot(); fireStrobe('#ffd700'); kick(8);
         // between-round draft, then escalate + serve the next ante
         setTimeout(function () { openDraft('round', advanceRound); }, 500);
     }
@@ -2613,7 +2922,7 @@
         const f = side === 'L' ? flipperL : flipperR;
         if (f.up === up) return;
         f.up = up;
-        if (up && SFX.gate('flipkey' + side, 40)) SFX.flip();
+        if (up) { f.flash = 1; if (SFX.gate('flipkey' + side, 40)) SFX.flip(); }
     }
     window.addEventListener('keydown', function (e) {
         if (e.repeat) return;
@@ -2630,17 +2939,27 @@
         else if (k === ' ' || k === 'enter') releasePlunger();
     });
 
-    // touch: left half = left flipper, right half = right flipper; bottom-right lane = plunger
+    // touch/mouse: left half = left flipper, right half = right flipper; right chute = plunger.
+    // Maps client px → logical (600x900) via the CANVAS's own rect, so it is correct through
+    // the arcade embed's letterbox/scale (the canvas fills the whole logical playfield; its
+    // getBoundingClientRect is the true on-screen rect, no separate container offset to undo).
     const activeTouches = {};
     function touchZone(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
         const lx = (clientX - rect.left) / rect.width * PW;
-        const ly = (clientY - rect.top) / rect.height * PH;
-        if (lx > 512 && ly > 600) return 'plunger';   // far-right launch chute
+        // Plunger = the WHOLE right shooter-chute column (generous), but only while a ball is
+        // waiting in the lane — otherwise a far-right tap acts as the right flipper.
+        if (lx > 506 && laneBall()) return 'plunger';
         return lx < 280 ? 'L' : 'R';                   // playfield center ≈ 280 (shooter offsets it)
     }
+    // FOCUS (embed fix): the arcade iframe never reliably holds keyboard focus after the pill
+    // click, so page-level SPACE/arrows go to the PARENT and the plunger can't charge. Focusing
+    // the (now tabindex-able) canvas hands the iframe document focus so its window keydown fires.
+    function grabFocus() { try { window.focus(); canvas.focus({ preventScroll: true }); } catch (e) {} }
+
     canvas.addEventListener('touchstart', function (e) {
         e.preventDefault();
+        grabFocus();                                    // pull keyboard focus into the iframe
         for (let i = 0; i < e.changedTouches.length; i++) {
             const t = e.changedTouches[i], z = touchZone(t.clientX, t.clientY);
             activeTouches[t.identifier] = z;
@@ -2656,6 +2975,32 @@
     }
     canvas.addEventListener('touchend', function (e) { e.preventDefault(); endTouch(e); }, { passive: false });
     canvas.addEventListener('touchcancel', function (e) { endTouch(e); }, { passive: false });
+
+    // Any board interaction pulls keyboard focus into this iframe (belt-and-suspenders with
+    // index.html focusing the iframe on load).
+    ['pointerdown', 'touchstart'].forEach(function (ev) {
+        canvas.addEventListener(ev, grabFocus, { passive: true });
+    });
+
+    // MOUSE controls (desktop, keyboard NOT required): left/right board halves = flippers,
+    // the right shooter-chute column = plunger — press-and-hold to charge, release to launch
+    // (the classic Space-Cadet pull). preventDefault on touchstart above suppresses the
+    // synthetic mouse events on touch devices, so these fire for real mouse input only.
+    let mouseZone = null;
+    canvas.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        grabFocus();
+        SFX.unlock();
+        const z = touchZone(e.clientX, e.clientY);
+        mouseZone = z;
+        if (z === 'plunger') startCharge(); else setFlip(z, true);
+        e.preventDefault();
+    });
+    window.addEventListener('mouseup', function () {
+        if (mouseZone == null) return;
+        const z = mouseZone; mouseZone = null;
+        if (z === 'plunger') releasePlunger(); else setFlip(z, false);
+    });
 
     function nudge() { doNudge(); }   // §1.6 nudge → impulse + table shift, builds the tilt meter
 

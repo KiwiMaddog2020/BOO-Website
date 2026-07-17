@@ -11505,6 +11505,13 @@
                     switchArcadeGame(pill);
                 });
             });
+
+            // Clicking anywhere on the game container hands keyboard focus to the active game
+            // iframe (belt-and-suspenders with the load-time focus + the games' own
+            // pointerdown window.focus()). Helps key-driven games like Pinball receive SPACE.
+            arcadeGameContainer.addEventListener('click', function () {
+                try { arcadeFrame.focus(); if (arcadeFrame.contentWindow) arcadeFrame.contentWindow.focus(); } catch (e) {}
+            });
             
             function switchArcadeGame(pill) {
                 // Skip if already active
@@ -11525,6 +11532,13 @@
                 setTimeout(() => {
                     arcadeFrame.src = gameSrc;
                     arcadeFrame.title = gameTitle;
+                    // Give the swapped-in game keyboard focus once its document loads, so key
+                    // controls (e.g. Pinball's SPACE plunger / arrow flippers) reach the iframe
+                    // instead of the parent page. Mirrors the V1_424 load-driven pane re-hand.
+                    arcadeFrame.addEventListener('load', function focusSwappedGame() {
+                        arcadeFrame.removeEventListener('load', focusSwappedGame);
+                        try { arcadeFrame.focus(); if (arcadeFrame.contentWindow) arcadeFrame.contentWindow.focus(); } catch (e) {}
+                    }, { once: true });
                     arcadeGameContainer.classList.remove('pane-ready'); // V1_276: new game must re-handshake before pane controls show
                     if (typeof resyncPaneFs === 'function') resyncPaneFs(true); // V1_424: re-hand fullscreen state to the incoming game (kills duplicate pause/mute)
                     
