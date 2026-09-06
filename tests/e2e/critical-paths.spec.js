@@ -83,20 +83,15 @@ test.describe('BOO website — critical paths', () => {
     await expect(lightbox).not.toHaveClass(/active/);
   });
 
-  test('8. arcade pills use their sanctioned aspect (V1_97 + pinball portrait)', async ({ page }) => {
-    // V1_97 normalized the landscape-family pills to 640/718. BOO Pinball is an
-    // intentional exception: a portrait table registered at 600/900 (design doc
-    // §0). Regression catch if anyone re-introduces UNsanctioned per-game aspects.
-    const ALLOWED = {
-      'Games/boo-pinball.html': '600/900',
-    };
+  test('8. all arcade pills use the normalized 640/718 aspect (V1_97)', async ({ page }) => {
+    // V1_97 normalized every pill to 640/718. Regression catch if anyone
+    // re-introduces per-game aspects (the V1_458 pinball removal retired the
+    // only sanctioned exception).
     const pills = page.locator('.arcade-pill');
     const count = await pills.count();
     expect(count).toBeGreaterThanOrEqual(6);
     for (let i = 0; i < count; i++) {
-      const game = await pills.nth(i).getAttribute('data-game');
-      const expected = ALLOWED[game] || '640/718';
-      await expect(pills.nth(i)).toHaveAttribute('data-aspect', expected);
+      await expect(pills.nth(i)).toHaveAttribute('data-aspect', '640/718');
     }
   });
 
@@ -233,12 +228,11 @@ test.describe('BOO website — critical paths', () => {
     expect(result.out.height).toBeGreaterThan(0);
   });
 
-  test('19. all 8 arcade game files respond 200', async ({ request }) => {
+  test('19. all 7 arcade game files respond 200', async ({ request }) => {
     // Catches a renamed/missing game (which would ship a 404 black-tile iframe).
     const games = [
       'neon-brickbreaker', 'neon-survivors', 'neon-tower-defense',
       'neon-dig', 'neon-snake', 'clydes-big-jump', 'neon-space-shooter',
-      'boo-pinball',
     ];
     for (const g of games) {
       const res = await request.get(`/Games/${g}.html`);
@@ -265,48 +259,5 @@ test.describe('BOO website — critical paths', () => {
     expect(shooter, 'space-shooter must guard its single gameLoop kick').toContain('gameLoopStarted');
     const brick = await (await request.get('/Games/neon-brickbreaker.html')).text();
     expect(brick, 'brickbreaker startGame must have a re-entry guard').toMatch(/if\s*\(\s*gameRunning\s*\)\s*return/);
-  });
-
-  test('22. BOO Pinball: loads, seams present, physics invariant holds, no JS errors', async ({ page }) => {
-    // Phase-4 smoke path for the roguelike pinball table. Boots the game
-    // directly (not through the arcade iframe), asserts the __PB test seams
-    // exist, and runs a short headless physics sim asserting the ball never
-    // tunnels out of the board polygon (the #1 pinball gotcha) and never NaNs.
-    const errors = [];
-    page.on('pageerror', err => {
-      // Firebase/GA network noise is exempt (offline test env).
-      if (!/firebase|firestore|gstatic|analytics|CORS/i.test(err.message)) errors.push(err.message);
-    });
-    await page.goto('/Games/boo-pinball.html');
-    await page.waitForFunction(() => window.__PB && typeof window.__PB._sim === 'function', { timeout: 8000 });
-
-    const res = await page.evaluate(() => {
-      const PB = window.__PB;
-      PB._reset(); PB._noTilt(true); PB._setState('play');
-      const R = PB._consts.BALL_R;
-      // high-speed serve + random flips through a short sim
-      PB._serveBall(300, 460, 180, -260);
-      let tunnels = 0, nans = 0;
-      for (let i = 0; i < 120; i++) {
-        if (Math.random() < 0.3) PB._flip(Math.random() < 0.5 ? 'L' : 'R', Math.random() < 0.6);
-        PB._sim(50);
-        for (const b of PB._balls()) {
-          if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.vx) || !isFinite(b.vy)) nans++;
-          else if (b.alive && !PB._inside(b.x, b.y, R + 3)) tunnels++;
-        }
-        if (PB._ballCount() === 0) PB._serveBall(300, 460, 120, -240);
-      }
-      // a rising flipper must add speed; a bumper hit must kick
-      PB._reset(); PB._noTilt(true);
-      PB._serveBall(198, 302, 5, 5); // inside the magenta pop bumper (top-left of the triangular nest, P1_3 authentic rebuild)
-      let bumpMax = 0;
-      for (let i = 0; i < 6; i++) { PB._sim(6); const s = PB._ballState().speed; if (s > bumpMax) bumpMax = s; }
-      return { tunnels, nans, bumpMax: Math.round(bumpMax), bumperKick: PB._consts.BUMPER_KICK };
-    });
-
-    expect(res.tunnels, 'ball must never leave the board polygon').toBe(0);
-    expect(res.nans, 'ball position/velocity must never be NaN').toBe(0);
-    expect(res.bumpMax, 'a bumper hit must kick the ball').toBeGreaterThanOrEqual(res.bumperKick * 0.7);
-    expect(errors, errors.join('\n')).toEqual([]);
   });
 });
