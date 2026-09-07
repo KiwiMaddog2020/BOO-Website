@@ -124,20 +124,48 @@
     })();
     </script>
 
-    <!-- Payment integration beta flag — reveals hidden merch when URL has ?beta=pay.
-         Runs synchronously in <head> so html.beta-pay is set before first paint. -->
+    <!-- Merch storefront wiring + payment integration beta flag (V1_467).
+         Runs synchronously in <head> so html.merch-live / html.beta-pay are set
+         before first paint (no flash of COMING SOON on a live store). -->
     <script>
     (function() {
+        // V1_467: Fourthwall storefront. Set FOURTHWALL_STORE to the live shop URL
+        // (e.g. 'https://shop.bunchofothers.com') to go live; the product paths are
+        // relative. Empty string = not live yet (COMING SOON stays up).
+        var FOURTHWALL_STORE = '';
+        // Fourthwall's default product URL pattern is /products/<slug>. These are
+        // derived from the product names — Kevin pastes the real paths from the
+        // live product pages here (merch plan, Section F step 10).
+        var FOURTHWALL_PRODUCTS = {
+            'classic-tee':     '/products/classic-tee',
+            'heavyweight-tee': '/products/heavyweight-tee',
+            'pullover-hoodie': '/products/pullover-hoodie',
+            'dad-hat':         '/products/dad-hat',
+            'die-cut-sticker': '/products/die-cut-sticker'
+        };
         try {
+            var storeBase = String(FOURTHWALL_STORE || '').replace(/\/+$/, '');
+            var isLive = storeBase.length > 0;
+            if (isLive) {
+                document.documentElement.classList.add('merch-live');
+            }
             if (new URLSearchParams(location.search).get('beta') === 'pay') {
                 document.documentElement.classList.add('beta-pay');
             }
             document.addEventListener('DOMContentLoaded', function() {
-                document.querySelectorAll('a[href^="PAYMENT_LINK_"]').forEach(function(link) {
-                    link.setAttribute('aria-disabled', 'true');
-                    link.addEventListener('click', function(e) {
-                        e.preventDefault();
-                    });
+                document.querySelectorAll('.merch-item[data-product]').forEach(function(link) {
+                    var path = FOURTHWALL_PRODUCTS[link.getAttribute('data-product')];
+                    if (isLive && path) {
+                        link.setAttribute('href', storeBase + path);
+                        link.setAttribute('target', '_blank');
+                        link.setAttribute('rel', 'noopener noreferrer');
+                        link.removeAttribute('aria-disabled');
+                    } else {
+                        link.setAttribute('aria-disabled', 'true');
+                        link.addEventListener('click', function(e) {
+                            e.preventDefault();
+                        });
+                    }
                 });
             });
         } catch (e) {}
@@ -2947,7 +2975,8 @@
                The `:not([style*=...])` filter only catches inline styles; without the
                beta-pay prefix this rule's `display: grid !important` would override
                the default `#merch .merch-grid { display: none }` gate. */
-            html.beta-pay .merch-grid:not([style*="display: none"]) {
+            html.beta-pay .merch-grid:not([style*="display: none"]),
+            html.merch-live .merch-grid:not([style*="display: none"]) {
                 display: grid !important;
                 grid-template-columns: repeat(2, 1fr) !important;
                 gap: 0.4rem !important;
@@ -3790,22 +3819,30 @@
             }
         }
 
-        /* ========== PAYMENT INTEGRATION (hidden until ?beta=pay URL flag) ========== */
-        /* V1_77 scaffold for future merch checkout via Stripe Payment Links.
-           html.beta-pay is set by the flag script in <head> when URL has ?beta=pay.
-           Default (no flag): "COMING SOON" banner shows, merch grid hidden.
-           Beta (flag on):   banner hidden, merch grid + heading visible. */
+        /* ========== MERCH GATE (hidden until the store is live, or ?beta=pay) ========== */
+        /* V1_77 scaffold, rewired for Fourthwall in V1_467.
+           html.merch-live is set by the head script when FOURTHWALL_STORE is non-empty.
+           html.beta-pay is set by the same script when the URL has ?beta=pay (preview).
+           Default (neither): "COMING SOON" banner + sub-line show, merch grid hidden.
+           Either flag on:    banner + sub-line hidden, merch grid + heading visible. */
         #merch h2,
         #merch .merch-grid {
             display: none;
         }
-        html.beta-pay #merch h2 {
+        html.beta-pay #merch h2,
+        html.merch-live #merch h2 {
             display: block;
         }
-        html.beta-pay #merch .merch-grid {
-            display: grid;
+        /* V1_467: flex, not grid — the base .merch-grid is a centred flex-wrap row.
+           The old `display: grid` collapsed the cards into one stretched column and
+           clipped .merch-info on desktop. Mobile blocks still force a 2-col grid
+           with !important, so they are unaffected. */
+        html.beta-pay #merch .merch-grid,
+        html.merch-live #merch .merch-grid {
+            display: flex;
         }
-        html.beta-pay #merch .coming-soon-banner {
+        html.beta-pay #merch .coming-soon-banner,
+        html.merch-live #merch .coming-soon-banner {
             display: none;
         }
 
@@ -6647,12 +6684,28 @@
             display: flex; 
             align-items: center; 
             justify-content: center; 
-            background: linear-gradient(135deg, rgba(255, 0, 255, 0.1), rgba(0, 255, 204, 0.1)); 
+            /* V1_467: flat dark plate behind the product tile — the old neon gradient
+               read as letterbox bars once a real (square) image sat on top of it. */
+            background: #0b0b0d; 
             max-height: 120px; 
             width: 100%; /* Ensure full width */
             transition: filter 0.3s ease; 
         }
         .merch-item:hover .merch-image-placeholder { filter: brightness(1.15) saturate(1.0); }
+        /* V1_467: real product tile replaces the emoji placeholder. The tiles in
+           Images/Merch/ are PLACEHOLDERS built from merch/artwork/ — swap them for
+           the Fourthwall product mockups when the shop is published. */
+        .merch-image {
+            display: block;
+            width: 100%;
+            height: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .merch-item:hover .merch-image { transform: scale(1.06); }
+        /* one-line product blurb — desktop only (phone cards run at 0.5rem type) */
+        .merch-desc { display: none; }
         .placeholder-icon { 
             font-size: 3rem; 
             transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -7425,7 +7478,8 @@
             /* 2-column merch grid with invisible container - only when beta-pay flag active.
                V1_79: gated by html.beta-pay so default-hidden merch stays hidden on mobile
                (the `:not([style*=...])` filter only matches inline styles, not the CSS gate). */
-            html.beta-pay .merch-grid:not([style*="display: none"]) {
+            html.beta-pay .merch-grid:not([style*="display: none"]),
+            html.merch-live .merch-grid:not([style*="display: none"]) {
                 display: grid !important;
                 grid-template-columns: repeat(2, 1fr) !important;
                 justify-items: center !important;
@@ -7630,7 +7684,8 @@
             }
             .photo-item { width: 100% !important; max-width: none !important; max-height: none !important; aspect-ratio: 1 !important; }
             /* Smaller merch with smaller icons — gated by html.beta-pay (V1_79) for consistency */
-            html.beta-pay .merch-grid:not([style*="display: none"]) {
+            html.beta-pay .merch-grid:not([style*="display: none"]),
+            html.merch-live .merch-grid:not([style*="display: none"]) {
                 grid-template-columns: repeat(2, 1fr) !important;
                 gap: 0.35rem !important;
                 max-width: 250px !important;
@@ -7784,7 +7839,8 @@
             .photo-item { max-width: none !important; max-height: none !important; aspect-ratio: 1 !important; }
             
             /* Smaller merch — gated by html.beta-pay (V1_79) for consistency */
-            html.beta-pay .merch-grid:not([style*="display: none"]) {
+            html.beta-pay .merch-grid:not([style*="display: none"]),
+            html.merch-live .merch-grid:not([style*="display: none"]) {
                 max-width: 220px !important;
                 gap: 0.25rem !important;
             }
@@ -8601,7 +8657,8 @@
             transform: translate3d(0, 0, 0);
             transition-delay: 0.3s;
         }
-        html.beta-pay #merch .coming-soon-sub {
+        html.beta-pay #merch .coming-soon-sub,
+        html.merch-live #merch .coming-soon-sub {
             display: none;
         }
 
@@ -8789,6 +8846,157 @@
             #events .event-location {
                 font-size: 0.86rem;
                 color: rgba(255, 255, 255, 0.66);
+            }
+
+            /* ---------- MERCH: the five launch products in one row (V1_467) ----------
+               Only reachable behind the gate (html.merch-live / html.beta-pay), so the
+               grid rules carry the same prefixes to out-specify the reveal rule above. */
+            html.beta-pay #merch .merch-grid,
+            html.merch-live #merch .merch-grid {
+                display: grid;
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+                gap: clamp(1rem, 1.4vw, 1.75rem);
+                width: min(84vw, 1500px);
+                max-width: none;
+                max-height: min(66vh, 660px);
+                padding: clamp(1rem, 1.3vw, 1.6rem);
+                align-content: start;
+            }
+            #merch .merch-item {
+                width: 100%;
+                max-width: none;
+                display: flex;
+                flex-direction: column;
+                border-radius: 14px;
+                border-color: rgba(255, 0, 255, 0.28);
+            }
+            #merch .merch-image-placeholder {
+                aspect-ratio: 1;
+                max-height: none;
+            }
+            #merch .merch-info {
+                padding: 0.9rem 0.85rem 1rem;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                flex: 1 1 auto;
+            }
+            #merch .merch-info h3 {
+                font-family: 'Poppins', sans-serif;
+                font-weight: 600;
+                font-size: clamp(0.8rem, 0.88vw, 0.98rem);
+                line-height: 1.25;
+                margin-bottom: 0.4rem;
+            }
+            #merch .merch-desc {
+                display: block;
+                font-family: 'Oxanium', 'Exo 2', sans-serif;
+                font-weight: 300;
+                font-size: clamp(0.66rem, 0.7vw, 0.78rem);
+                line-height: 1.35;
+                color: rgba(255, 255, 255, 0.62);
+                margin: 0 0 0.6rem;
+            }
+            #merch .merch-price {
+                font-family: 'Poppins', sans-serif;
+                font-weight: 600;
+                font-size: clamp(0.78rem, 0.84vw, 0.95rem);
+                letter-spacing: 0.08em;
+                color: #ffd700;
+                text-shadow: 0 0 12px rgba(255, 215, 0, 0.35);
+                margin: auto 0 0.75rem;
+            }
+            /* CTA pill matching the home hero's ghost .home-cta */
+            #merch .merch-cta {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-family: 'Poppins', sans-serif;
+                font-weight: 700;
+                font-size: 0.68rem;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                color: #ffffff;
+                padding: 0.55rem 1.4rem;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.28);
+                background: rgba(8, 8, 14, 0.45);
+                -webkit-backdrop-filter: blur(8px);
+                backdrop-filter: blur(8px);
+                box-shadow: none;
+            }
+            #merch .merch-item:hover .merch-cta {
+                -webkit-transform: none;
+                transform: none;
+                border-color: rgba(255, 255, 255, 0.6);
+                background: rgba(8, 8, 14, 0.7);
+                box-shadow:
+                    0 0 16px rgba(0, 255, 255, 0.45),
+                    0 0 40px rgba(255, 20, 147, 0.3);
+            }
+        }
+
+        /* V1_467: small desktop, just below the 1100px editorial fence. The base
+           flex row wraps 4 + 1 at this width and the grid's 65vh cap then scrolls
+           the fifth card half out of view — trim the card a little so all five
+           stay on one row. Phones / tablets are untouched (hover + fine only). */
+        @media (min-width: 1000px) and (max-width: 1099px) and (orientation: landscape) and (hover: hover) and (pointer: fine) {
+            #merch .merch-grid { gap: 0.8rem; padding: 1rem; }
+            #merch .merch-item { width: 158px; max-width: 158px; }
+        }
+
+        /* V1_467: phone / tablet merch cards size to their content. The fixed
+           `aspect-ratio: 1 / 1.15` card had ~5px less room than its own content
+           needed and clipped the bottom of the CTA pill (visible on the old
+           placeholder cards too). Scoped to #merch and to the same breakpoints
+           the mobile merch rules use, so nothing outside the gated grid moves. */
+        @media (max-width: 768px), (hover: none) {
+            #merch .merch-item {
+                aspect-ratio: auto !important;
+                justify-content: flex-start !important;
+            }
+            #merch .merch-image-placeholder {
+                height: auto !important;
+                max-height: 96px !important;
+                aspect-ratio: 1 !important;
+                flex: 0 0 auto !important;
+            }
+            #merch .merch-info {
+                padding: 0.4rem 0.3rem 0.5rem !important;
+            }
+        }
+        /* ...but landscape tablets and short landscape phones have no vertical room
+           to spare (the music player sits at the bottom), so the tile stays small
+           there and the cards end up shorter than they were before V1_467. */
+        @media (min-width: 769px) and (max-width: 1400px) and (pointer: coarse) and (orientation: landscape) {
+            #merch .merch-image-placeholder { max-height: 72px !important; }
+            #merch .merch-info { padding: 0.3rem !important; }
+        }
+        @media (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+            #merch .merch-image-placeholder { max-height: 64px !important; }
+            #merch .merch-info { padding: 0.25rem !important; }
+            /* short landscape phones: 3 across, and the grid scrolls inside a bounded
+               box instead of running off the top and bottom of the viewport (it did
+               that with the old placeholder cards too — viewport-cutoff law). */
+            #merch .merch-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                width: min(88vw, 430px) !important;
+                max-width: min(88vw, 430px) !important;
+                max-height: 72dvh !important;
+                overflow-y: auto !important;
+                /* rows must size to their content — a bounded grid height would
+                   otherwise stretch the rows and clip the CTA inside the card */
+                align-content: start !important;
+                align-items: start !important;
+                grid-auto-rows: max-content !important;
+            }
+            #merch .merch-grid .merch-item:last-child:nth-child(odd) {
+                grid-column: auto !important;
+                justify-self: stretch !important;
+            }
+            #merch .merch-item {
+                width: 100% !important;
+                max-width: none !important;
             }
         }
 
@@ -9780,14 +9988,17 @@
         </div>
         <div class="coming-soon-banner">COMING SOON</div>
         <p class="coming-soon-sub">Merch drops with the next show &middot; follow along on <a href="https://www.instagram.com/bunch_of_others/" target="_blank" rel="noopener noreferrer">Instagram</a></p>
-        <!-- Merch scaffold — hidden by default, revealed via ?beta=pay URL flag (V1_77) -->
+        <!-- Merch lineup — hidden until the store is live (html.merch-live, set by the
+             FOURTHWALL_STORE constant in the head script) or previewed with ?beta=pay.
+             V1_467: tiles below are PLACEHOLDERS generated from merch/artwork/ — swap them
+             for the real Fourthwall product mockups once Kevin has published the shop. -->
         <h2>Merch</h2>
         <div class="merch-grid">
-            <a href="PAYMENT_LINK_1" target="_blank" rel="noopener noreferrer" class="merch-item"><div class="merch-image-placeholder"><div class="placeholder-icon">👕</div></div><div class="merch-info"><h3>Band T-Shirt</h3><p class="merch-price">$25.00</p><span class="merch-cta">Buy Now</span></div></a>
-            <a href="PAYMENT_LINK_2" target="_blank" rel="noopener noreferrer" class="merch-item"><div class="merch-image-placeholder"><div class="placeholder-icon">🧢</div></div><div class="merch-info"><h3>Psychedelic Hat</h3><p class="merch-price">$20.00</p><span class="merch-cta">Buy Now</span></div></a>
-            <a href="PAYMENT_LINK_3" target="_blank" rel="noopener noreferrer" class="merch-item"><div class="merch-image-placeholder"><div class="placeholder-icon">🎵</div></div><div class="merch-info"><h3>Vinyl Record</h3><p class="merch-price">$30.00</p><span class="merch-cta">Buy Now</span></div></a>
-            <a href="PAYMENT_LINK_4" target="_blank" rel="noopener noreferrer" class="merch-item"><div class="merch-image-placeholder"><div class="placeholder-icon">🎸</div></div><div class="merch-info"><h3>Guitar Pick Set</h3><p class="merch-price">$10.00</p><span class="merch-cta">Buy Now</span></div></a>
-            <a href="PAYMENT_LINK_5" target="_blank" rel="noopener noreferrer" class="merch-item"><div class="merch-image-placeholder"><div class="placeholder-icon">📀</div></div><div class="merch-info"><h3>Album CD</h3><p class="merch-price">$15.00</p><span class="merch-cta">Buy Now</span></div></a>
+            <a href="#" data-product="classic-tee" aria-disabled="true" class="merch-item"><div class="merch-image-placeholder"><img class="merch-image" src="Images/Merch/merch-classic-tee.webp" alt="BOO Logo Tee — white Bunch of Others logo on a black tee" width="600" height="600" loading="lazy" decoding="async"></div><div class="merch-info"><h3>Classic Tee</h3><p class="merch-desc">Soft, fitted black Bella+Canvas 3001. Big white logo.</p><p class="merch-price">$25 USD</p><span class="merch-cta">Shop</span></div></a>
+            <a href="#" data-product="heavyweight-tee" aria-disabled="true" class="merch-item"><div class="merch-image-placeholder"><img class="merch-image" src="Images/Merch/merch-heavyweight-tee.webp" alt="Heavyweight Logo Tee — Bunch of Others logo, black or ivory Comfort Colors tee" width="600" height="600" loading="lazy" decoding="async"></div><div class="merch-info"><h3>Heavyweight Tee</h3><p class="merch-desc">Comfort Colors 1717 — garment-dyed, thick, broken in.</p><p class="merch-price">$32 USD</p><span class="merch-cta">Shop</span></div></a>
+            <a href="#" data-product="pullover-hoodie" aria-disabled="true" class="merch-item"><div class="merch-image-placeholder"><img class="merch-image" src="Images/Merch/merch-pullover-hoodie.webp" alt="BOO Logo Hoodie — white Bunch of Others logo on a black pullover hoodie" width="600" height="600" loading="lazy" decoding="async"></div><div class="merch-info"><h3>Pullover Hoodie</h3><p class="merch-desc">Midweight black pullover, white logo on the chest.</p><p class="merch-price">$49 USD</p><span class="merch-cta">Shop</span></div></a>
+            <a href="#" data-product="dad-hat" aria-disabled="true" class="merch-item"><div class="merch-image-placeholder"><img class="merch-image" src="Images/Merch/merch-dad-hat.webp" alt="BOO Embroidered Dad Hat — Bunch of Others logo stitched on a black six-panel cap" width="600" height="600" loading="lazy" decoding="async"></div><div class="merch-info"><h3>Dad Hat</h3><p class="merch-desc">Low-profile six-panel, logo stitched on the front.</p><p class="merch-price">$30 USD</p><span class="merch-cta">Shop</span></div></a>
+            <a href="#" data-product="die-cut-sticker" aria-disabled="true" class="merch-item"><div class="merch-image-placeholder"><img class="merch-image" src="Images/Merch/merch-die-cut-sticker.webp" alt="BOO Logo Sticker — three-inch die-cut vinyl of the Bunch of Others logo" width="600" height="600" loading="lazy" decoding="async"></div><div class="merch-info"><h3>Die-Cut Sticker</h3><p class="merch-desc">Three-inch die-cut vinyl. Weatherproof.</p><p class="merch-price">$7 USD</p><span class="merch-cta">Shop</span></div></a>
         </div>
     </section>
 
