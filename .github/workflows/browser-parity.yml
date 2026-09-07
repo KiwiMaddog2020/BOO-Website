@@ -1,0 +1,140 @@
+name: Browser parity probe
+
+# Phase 1 measurement workflow for the cross-browser wallpaper/effects parity
+# investigation. Deliberately named differently from "E2E tests" and scoped
+# to this branch only — static.yml's deploy trigger watches for a successful
+# workflow_run of "E2E tests" on main (branches: ["main"]), and this workflow
+# must never satisfy that (it is not that workflow, and its jobs are guarded
+# below to only ever execute for THIS branch).
+#
+# NOTE on the pull_request trigger: GitHub does not run a brand-new workflow
+# file for push events on a non-default branch until that file has been
+# merged to the default branch (confirmed empirically here — a push to this
+# branch registered no run and workflow_dispatch 404'd because GitHub hadn't
+# indexed the workflow at all). pull_request is the documented exception that
+# GitHub DOES evaluate pre-merge, so a pull_request into main is used purely
+# as a way to get this workflow to execute without merging anything. Because
+# pull_request-into-main fires for every PR, the `if:` guard on each job below
+# restricts actual execution to PRs whose head branch is this probe branch —
+# any other PR matches the trigger but both jobs immediately no-op. A
+# workflow_run for a pull_request build reports head_branch as the PR's
+# source branch (not "main"), so static.yml's `branches: ["main"]` filter
+# cannot match it even before considering the name mismatch.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [claude/browser-parity-probe]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Render (${{ matrix.engine }})
+    if: github.event_name != 'pull_request' || github.head_ref == 'claude/browser-parity-probe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/browser-parity-probe
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Install Playwright engine (${{ matrix.engine }})
+        run: npx playwright install --with-deps ${{ matrix.engine }}
+
+      - name: Install pngjs (probe-only dependency)
+        run: npm i -D pngjs
+
+      - name: Start static server
+        run: |
+          npx serve -l 4747 --no-clipboard . &
+          echo "Waiting for http://localhost:4747 ..."
+          for i in $(seq 1 30); do
+            if curl -sSf http://localhost:4747/ -o /dev/null; then
+              echo "Server is up."
+              break
+            fi
+            sleep 1
+          done
+          curl -sSf http://localhost:4747/ -o /dev/null
+
+      - name: Run browser parity probe
+        env:
+          PROBE_ENGINE: ${{ matrix.engine }}
+          PROBE_BASE_URL: http://localhost:4747
+        run: node tests/probe/browser-parity.js
+
+      - name: Upload probe results (${{ matrix.engine }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.engine }}
+          path: probe-results/${{ matrix.engine }}/**
+          retention-days: 30
+          if-no-files-found: error
+
+  collect:
+    name: Commit results back to branch
+    needs: probe
+    if: github.event_name != 'pull_request' || github.head_ref == 'claude/browser-parity-probe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/browser-parity-probe
+          persist-credentials: true
+
+      - name: Download all probe artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: probe-results
+          pattern: probe-*
+          merge-multiple: false
+
+      - name: Flatten artifact layout
+        # Each probe job uploaded artifact "probe-<engine>" from the path
+        # probe-results/<engine>/** — actions/upload-artifact strips the
+        # common ancestor, so the artifact's own root IS that engine's
+        # natural/forced-*/summary.json content. download-artifact then
+        # extracts each artifact into probe-results/probe-<engine>/. Rename
+        # those directories back to probe-results/<engine>/ so the committed
+        # tree matches exactly what the probe script produced.
+        run: |
+          set -eux
+          cd probe-results
+          find . -maxdepth 2
+          for d in probe-*; do
+            engine="${d#probe-}"
+            rm -rf "$engine"
+            mv "$d" "$engine"
+          done
+          find . -maxdepth 2
+
+      - name: Commit and push results
+        run: |
+          set -eux
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add probe-results
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "[skip ci] Browser parity probe results ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git push origin HEAD:claude/browser-parity-probe
