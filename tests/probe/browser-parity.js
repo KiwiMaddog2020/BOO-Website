@@ -477,6 +477,37 @@ async function main() {
       await page.addStyleTag({ content: FREEZE_CSS });
       await page.waitForTimeout(300);
 
+      // WebKit does not have every animation registered by this point on the
+      // landing page ("/"): a run measured document.getAnimations().length == 1
+      // there against 58 on a deep-linked section, which left the overlayFadeIn
+      // layers frozen at their opacity:0 start and made that one cell look like
+      // a rendering difference when it was a probe timing artifact. Wait for the
+      // count to stop growing before freezing anything.
+      const animSettle = await page.evaluate(async () => {
+        const count = () => (document.getAnimations ? document.getAnimations().length : 0);
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        let prev = -1;
+        let stable = 0;
+        let n = 0;
+        for (let i = 0; i < 24; i++) {
+          n = count();
+          if (n > 1 && n === prev) {
+            if (++stable >= 2) break;
+          } else {
+            stable = 0;
+          }
+          prev = n;
+          await sleep(250);
+        }
+        return { count: n, settled: stable >= 2 };
+      });
+      if (!animSettle.settled) {
+        console.warn(
+          `[probe:${ENGINE}] ${pass.name}/${sectionId}: animation count never settled ` +
+            `(last=${animSettle.count})`
+        );
+      }
+
       // Freeze every running animation on the SAME timeline position in every
       // engine. `a.currentTime = t` is exact; the old CSS animation-delay trick
       // was not (see FREEZE_TIME_MS comment above).
@@ -591,7 +622,7 @@ async function main() {
           fenceOk,
           fence,
           freezeSynced,
-          freeze: { ...freezeReport, offBy: freezeOffBy.slice(0, 12) },
+          freeze: { ...freezeReport, settle: animSettle, offBy: freezeOffBy.slice(0, 12) },
         },
         wholeFrame,
         patchAvgSaturation: patchData.patchAvgSaturation,
