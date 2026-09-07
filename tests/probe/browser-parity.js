@@ -483,32 +483,52 @@ async function main() {
       const freezeReport = await page.evaluate((t) => {
         const anims = document.getAnimations ? document.getAnimations() : [];
         let paused = 0;
+        let clamped = 0;
         let failed = 0;
+        const targets = [];
         anims.forEach((a) => {
           try {
+            // One-shot fill-forwards animations (the overlayFadeIn /
+            // oilSlickFadeIn layer reveals) end long before t. Seeking a
+            // finished animation past its end is not uniformly interpolated
+            // across engines, so those are clamped to their own end time —
+            // which is the same visual state, just addressed exactly.
+            let target = t;
+            const ct = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null;
+            const end = ct && ct.endTime != null ? Number(ct.endTime) : Infinity;
+            if (Number.isFinite(end) && end <= t) {
+              target = end;
+              clamped++;
+            }
             a.pause();
-            a.currentTime = t;
+            a.currentTime = target;
+            targets.push(Math.round(target));
             paused++;
           } catch (e) {
+            targets.push(null);
             failed++;
           }
         });
-        return { total: anims.length, paused, failed };
+        window.__probeFreezeTargets = targets;
+        return { total: anims.length, paused, clamped, failed };
       }, FREEZE_TIME_MS);
       await page.waitForTimeout(200);
 
-      const freezeTimes = await page.evaluate(() =>
-        (document.getAnimations ? document.getAnimations() : []).map((a) =>
-          a.currentTime == null ? null : Math.round(Number(a.currentTime))
-        )
-      );
-      const freezeOffBy = freezeTimes.filter((v) => v !== FREEZE_TIME_MS);
+      const freezeCheck = await page.evaluate(() => {
+        const targets = window.__probeFreezeTargets || [];
+        return (document.getAnimations ? document.getAnimations() : []).map((a, i) => ({
+          at: a.currentTime == null ? null : Math.round(Number(a.currentTime)),
+          want: targets[i] == null ? null : targets[i],
+        }));
+      });
+      const freezeTimes = freezeCheck.map((c) => c.at);
+      const freezeOffBy = freezeCheck.filter((c) => c.want != null && c.at !== c.want);
       const freezeSynced = freezeOffBy.length === 0;
       if (!freezeSynced) {
         console.error(
           `[probe:${ENGINE}] FREEZE DESYNC ${pass.name}/${sectionId}: ` +
-            `${freezeOffBy.length}/${freezeTimes.length} animations not at ${FREEZE_TIME_MS}ms ` +
-            `(sample: ${freezeOffBy.slice(0, 8).join(',')})`
+            `${freezeOffBy.length}/${freezeTimes.length} animations not at their frozen time ` +
+            `(sample: ${JSON.stringify(freezeOffBy.slice(0, 6))})`
         );
       }
 
