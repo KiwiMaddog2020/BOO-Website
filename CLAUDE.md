@@ -120,6 +120,11 @@ Seven HTML5 games, iframe-embedded into main site. All use Oxanium font (unified
 ### Iframe sizing
 - `enforceGameAspectRatio()` reads `data-aspect` from active arcade pill on mobile
 - Desktop path hardcoded to `640/718` (brickbreaker ratio)
+- **Desktop width cap scales with the display (V1_469):** was a fixed 560px on every monitor
+  (29% of a 1080p window, 22% at 1440p, 15% at 4K). Now `min(1000, max(560, (screen.height - 452)
+  * gameRatio))` — keyed to `screen.height`, NOT viewport height, so the tab bar showing/hiding
+  can't change the rendered size (the V1_278→V1_285 consistency requirement). 1080p stays exactly
+  560; MacBook 16" 593; 1440p 881; 4K clamps at 1000.
 - Mobile game overhead: `155px` (reduced from earlier value)
 - Per-game aspect ratios coordinated between CSS and JS — aspect ratio consistency is the #1 priority here
 

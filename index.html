@@ -11848,7 +11848,27 @@
                 // tab-bar window fell into the height-constrained branch and rendered smaller —
                 // so they diverged. 560 drops that threshold to ~848px vh so BOTH windows hit
                 // the cap and render identically (= the smaller zoomed-out size).
-                const maxWidthCap = 560;
+                // V1_469 (Kevin: "on larger displays the games are really small even at 100%
+                // zoom"): this cap was a FIXED 560px, so EVERY desktop rendered the same
+                // 560x628 box no matter the monitor — measured 29% of a 1080p window, 22% at
+                // 1440p, 16% ultrawide, 15% at 4K. The cap now scales with the DISPLAY.
+                //
+                // It keys off screen.height, NOT viewport height, on purpose: screen.height
+                // doesn't change when the tab bar shows/hides, so a given monitor still renders
+                // ONE identical size — preserving exactly the window-to-window consistency that
+                // drove V1_278 -> V1_281 -> V1_285 down to 560 in the first place. (Sizing off
+                // viewport height instead would re-introduce that divergence: the same 1440p
+                // display measures 918px with a tab bar vs 963px without.)
+                //
+                // The -452 offset is chosen so a 1080p screen evaluates to exactly 560 — V1_285's
+                // tuned size is byte-identical there — and only larger displays grow:
+                // 1080p 560 (unchanged) · MacBook 16" 593 · 1440p 881 · 4K clamps to the 1000
+                // ceiling. Each tier stays ~5% under what the height could allow; that margin is
+                // what keeps the width cap (not the height) the binding constraint.
+                // All games re-render their canvas backing store on resize (verified), so a
+                // bigger box is genuinely sharper, not an upscaled/blurry canvas.
+                const screenH = (window.screen && window.screen.height) || viewportHeight;
+                const maxWidthCap = Math.round(Math.min(1000, Math.max(560, (screenH - 452) * gameRatio)));
                 const widthMargin = 0.95;
                 const overhead = 220;
                 availableWidth = Math.min(maxWidthCap, viewportWidth * widthMargin);
