@@ -1862,6 +1862,27 @@
         .disabled-count-right {
             text-align: left;
         }
+
+        /* V1_478: phone widths — the one-line edit row (two fixed 85px "(0/1 disabled)"
+           labels + three buttons = 449px) set the column's width, so at 412/360px the whole
+           weapon-select column overflowed: both labels and the dossier card clipped off the
+           screen edges. Cap the column to the viewport and drop the two labels onto their own
+           line, each centred under its button (Edit Weapons / Edit Tomes). */
+        .weapon-select-content { max-width: 100%; }
+        @media (max-width: 480px) {
+            .edit-btn-row { flex-wrap: wrap; row-gap: 3px; }
+            .edit-btn-row .disabled-count {
+                order: 1;
+                width: calc(50% - 3px);
+                text-align: center;
+                font-size: 10px;
+            }
+        }
+        /* V1_478: 360px-class phones — keep "⚔️ CHOOSE YOUR WEAPON ⚔️" on one line (the
+           trailing swords orphaned onto a second line once the column was viewport-capped). */
+        @media (max-width: 380px) {
+            .weapon-select-title { font-size: 16px; letter-spacing: 2px; }
+        }
             right: 10%;
             text-align: left;
         }
@@ -3555,6 +3576,10 @@
         .upgrade-overlay.active .upgrade-card:nth-child(3) {
             animation: upgradeCardEnter 0.4s ease-out 0.4s forwards;
         }
+        /* V1_478: Bootleg Recording's 4th card joins the cascade (it popped in unanimated) */
+        .upgrade-overlay.active .upgrade-card:nth-child(4) {
+            animation: upgradeCardEnter 0.4s ease-out 0.5s forwards;
+        }
         
         @keyframes upgradeCardEnter {
             0% {
@@ -3763,6 +3788,9 @@
         }
         .upgrade-overlay.active .upgrade-card:nth-child(3)::after {
             animation: cardSheen 0.6s ease-out 0.65s 1;
+        }
+        .upgrade-overlay.active .upgrade-card:nth-child(4)::after { /* V1_478: 4th card sheen */
+            animation: cardSheen 0.6s ease-out 0.75s 1;
         }
         @keyframes cardSheen {
             0%   { transform: translateX(-180%) skewX(-18deg) translateZ(0); }
@@ -5157,6 +5185,17 @@
             opacity: 1;
             pointer-events: auto;
             transform: translate(-50%, -50%) scale(1);
+        }
+        /* V1_478: viewport-cutoff law — centred at 40% height, the statue card's title
+           clipped off the top of the in-site phone iframe (~380x426). Short viewports centre
+           it at 50%, and it is bounded + scrollable so nothing can ever sit off-screen. */
+        #skullStatueModal {
+            max-height: calc(100vh - 16px);
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        @media (max-height: 560px) {
+            #skullStatueModal { top: 50%; }
         }
         
         .statue-title {
@@ -7889,6 +7928,16 @@
             }
         }
 
+        /* V1_478: a11y — keyboard focus ring in the site's neon cyan (matches the main page's
+           V1_151 :focus-visible ring). Keyboard-only: mouse/touch clicks never show it. */
+        button:focus-visible,
+        [role="button"]:focus-visible,
+        [role="switch"]:focus-visible,
+        .settings-slider:focus-visible {
+            outline: 2px solid #00ffff;
+            outline-offset: 2px;
+        }
+
         /* Respect reduced-motion: disable decorative menu/overlay entrance + pulse
            animations only. Canvas gameplay is JS-driven and untouched. */
         @media (prefers-reduced-motion: reduce) {
@@ -8745,7 +8794,7 @@
             return {
                 get muted() { return muted; },
                 audioCtx: ensure, // V1_386: shared context for the music engine (one ctx total — iOS limit)
-                unlock: function () { const a = ensure(); if (a && a.state === 'suspended') a.resume().catch(function () {}); },
+                unlock: function () { const a = ensure(); if (a && a.state !== 'running' && a.state !== 'closed') a.resume().catch(function () {}); }, // V1_478: also revive iOS 'interrupted' (call / backgrounding)
                 setMuted: function (m) { muted = !!m; try { localStorage.setItem('survivors_muted', muted ? '1' : '0'); } catch (e) {} if (master) master.gain.value = muted ? 0 : 0.32 * vol; if (window.MUSIC) MUSIC.setMuted(muted); }, // V1_386: mute silences music too
                 toggle: function () { this.setMuted(!muted); return muted; },
                 setVolume: function (v) { vol = Math.max(0, Math.min(1, (v || 0))); if (master && !muted) master.gain.value = 0.32 * vol; },
@@ -8811,6 +8860,19 @@
         window.SFX = SFX;
         ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
             window.addEventListener(ev, function () { SFX.unlock(); }, { once: true, passive: true });
+        });
+        // V1_478: mobile browsers suspend/interrupt the AudioContext when the app is
+        // backgrounded or a call comes in, and the one-shot unlock above never re-fires — so
+        // all SFX + music stayed silent for the rest of the session. Re-resume on later
+        // gestures (a cheap state check; no-op while running) and when the page is shown again.
+        ['pointerdown', 'touchend', 'keydown'].forEach(function (ev) {
+            window.addEventListener(ev, function () {
+                try { const a = SFX.audioCtx(); if (a && a.state !== 'running' && a.state !== 'closed') a.resume().catch(function () {}); } catch (e) {}
+            }, { passive: true });
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) return;
+            try { const a = SFX.audioCtx(); if (a && a.state !== 'running' && a.state !== 'closed') a.resume().catch(function () {}); } catch (e) {}
         });
         // Delegated UI-click cue (avoids editing every button handler)
         document.addEventListener('click', function (e) {
@@ -11566,8 +11628,12 @@
                     bufferHeight = Math.round(totalLogicalHeight * bufferScale);
                 }
                 
-                canvas.width = bufferWidth;
-                canvas.height = bufferHeight;
+                // V1_478: only touch the backing store when its size actually changes — the
+                // visualViewport 'scroll' listener re-runs this on every iOS scroll/zoom tick, and
+                // re-assigning even the same size reallocates + blanks the canvas. Output identical
+                // (the transform is re-applied below either way).
+                if (canvas.width !== bufferWidth) canvas.width = bufferWidth;
+                if (canvas.height !== bufferHeight) canvas.height = bufferHeight;
                 canvas.style.width = cssWidth + 'px';
                 canvas.style.height = cssHeight + 'px';
                 
@@ -11628,8 +11694,12 @@
                     bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
-                canvas.width = bufferWidth;
-                canvas.height = bufferHeight;
+                // V1_478: only touch the backing store when its size actually changes — the
+                // visualViewport 'scroll' listener re-runs this on every iOS scroll/zoom tick, and
+                // re-assigning even the same size reallocates + blanks the canvas. Output identical
+                // (the transform is re-applied below either way).
+                if (canvas.width !== bufferWidth) canvas.width = bufferWidth;
+                if (canvas.height !== bufferHeight) canvas.height = bufferHeight;
                 canvas.style.width = Math.round(cssWidth) + 'px';
                 canvas.style.height = Math.round(cssHeight) + 'px';
                 
@@ -11683,8 +11753,12 @@
                     bufferHeight = Math.round(BASE_HEIGHT * dprScale);
                 }
                 
-                canvas.width = bufferWidth;
-                canvas.height = bufferHeight;
+                // V1_478: only touch the backing store when its size actually changes — the
+                // visualViewport 'scroll' listener re-runs this on every iOS scroll/zoom tick, and
+                // re-assigning even the same size reallocates + blanks the canvas. Output identical
+                // (the transform is re-applied below either way).
+                if (canvas.width !== bufferWidth) canvas.width = bufferWidth;
+                if (canvas.height !== bufferHeight) canvas.height = bufferHeight;
                 canvas.style.width = Math.round(cssWidth) + 'px';
                 canvas.style.height = Math.round(cssHeight) + 'px';
                 
@@ -14124,7 +14198,7 @@
                     // particle pools.
                     addRing(this.x, this.y, this.radius * 2, COLORS.gold);
                     spawnParticles(this.x, this.y - this.radius, COLORS.gold, 10);
-                    showUpgradeSelection();
+                    requestUpgradeSelection(); // V1_478: queued — one offer per level gained
                 }
             }
 
@@ -14321,7 +14395,7 @@
                     this.y += this.knockbackVelY * (dt / 16);
                     
                     // Apply friction to slow down knockback (higher = slower decay = smoother)
-                    const friction = 0.88;
+                    const friction = dt > 0 ? Math.pow(0.88, dt / 16.667) : 0.88; // V1_478: per-60fps-frame decay made frame-rate independent (120Hz halved every knockback); dt=0 (time stop) keeps the old per-frame decay
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
                     
@@ -18989,7 +19063,7 @@
                     this.y += this.knockbackVelY * dtScale;
                     
                     // Apply friction (higher = slower decay = smoother)
-                    const friction = 0.88;
+                    const friction = dt > 0 ? Math.pow(0.88, dt / 16.667) : 0.88; // V1_478: per-60fps-frame decay made frame-rate independent (120Hz halved every knockback); dt=0 (time stop) keeps the old per-frame decay
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
                     
@@ -20156,7 +20230,7 @@
                     this.x += this.knockbackVelX * dtScale2;
                     this.y += this.knockbackVelY * dtScale2;
                     
-                    const friction = 0.88;
+                    const friction = dt > 0 ? Math.pow(0.88, dt / 16.667) : 0.88; // V1_478: per-60fps-frame decay made frame-rate independent (120Hz halved every knockback); dt=0 (time stop) keeps the old per-frame decay
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
                     
@@ -21470,7 +21544,7 @@
                     const kby = this.y + this.knockbackVelY * dtScale2;
                     if (!isInTerrain(kbx, kby, this.radius)) { this.x = kbx; this.y = kby; }
 
-                    const friction = 0.88;
+                    const friction = dt > 0 ? Math.pow(0.88, dt / 16.667) : 0.88; // V1_478: per-60fps-frame decay made frame-rate independent (120Hz halved every knockback); dt=0 (time stop) keeps the old per-frame decay
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
 
@@ -21561,7 +21635,7 @@
 
                 // Grant 1 level up reward
                 setTimeout(() => {
-                    if (gameRunning) showUpgradeSelection();
+                    if (gameRunning) requestUpgradeSelection(); // V1_478: queued (was lost if a level-up / pause was up)
                 }, 500);
             }
             
@@ -21920,7 +21994,7 @@
                     const kby = this.y + this.knockbackVelY * dtScale2;
                     if (!isInTerrain(kbx, kby, this.radius)) { this.x = kbx; this.y = kby; }
 
-                    const friction = 0.88;
+                    const friction = dt > 0 ? Math.pow(0.88, dt / 16.667) : 0.88; // V1_478: per-60fps-frame decay made frame-rate independent (120Hz halved every knockback); dt=0 (time stop) keeps the old per-frame decay
                     this.knockbackVelX *= friction;
                     this.knockbackVelY *= friction;
 
@@ -22052,7 +22126,7 @@
                 const giveReward = () => {
                     if (gameRunning && rewardsGiven < 2) {
                         rewardsGiven++;
-                        showUpgradeSelection();
+                        requestUpgradeSelection(); // V1_478: the 1500ms reward used to supersede the first mid-spin (only 1 of 2 landed)
                     }
                 };
                 setTimeout(giveReward, 500);
@@ -23511,7 +23585,14 @@
                 }
 
                 // V1_434: roll the RELIC reward now, at open — live luck + correct pity streak.
-                this.contents = this.rollContents();
+                // V1_478: roll ONCE per chest. Re-rolling on every open let LEAVE → step 60px away
+                // → come back re-roll a chest (free ones included) until a legendary showed, and
+                // each peek also pumped the common-pity streak. Only re-roll if the kept relic
+                // has since hit max stacks elsewhere (so a reopened chest never offers a dud).
+                const _kept = this.contents;
+                if (!_kept || (_kept.type === 'relic' && RELICS[_kept.relicId] && (relicState.get(_kept.relicId) || 0) >= RELICS[_kept.relicId].maxStacks)) {
+                    this.contents = this.rollContents();
+                }
 
                 const color = this.isFree ? COLORS.gold : '#c0c0c0';
                 spawnParticles(this.x, this.y, color, 15);
@@ -30527,6 +30608,9 @@
         }
         
         function selectShrinePowerup(powerup) {
+            // V1_478: the cards stay live through the 400ms close animation — a double-tap (or a
+            // second click) granted a SECOND blessing from one shrine. One pick per activation.
+            if (DOM.shrineOverlay.classList.contains('closing')) return;
             player.addShrineBonus(powerup.stat, powerup.value);
             
             // Add closing animation
@@ -30746,6 +30830,9 @@
         }
 
         function spawnDamageNumber(x, y, damage, isCrit = false) {
+            // V1_478: honor Settings → "Damage Numbers" (persisted + toggled in the settings
+            // IIFE, but never read — flagged dead since the V1_201 visual pass). Visual only.
+            if (window.GameSettings && window.GameSettings.showDamageNumbers === false) return;
             damageNumbers.push({
                 x: x + (Math.random() - 0.5) * 20,
                 y,
@@ -31681,8 +31768,21 @@
 
         // ===== UPGRADE SELECTION =====
         let upgradeSlotResults = [];
-        
+
         let slotGeneration = 0;
+
+        // V1_478: level-up offer queue. Every earned offer used to call showUpgradeSelection()
+        // directly, and a second call while one was already up SUPERSEDED it (slotGeneration) —
+        // so multi-level gem vacuums, big boss gems, and the major boss's "2 rewards" (the 2nd
+        // timer fired mid-spin) silently lost upgrades. Offers requested while anything owns the
+        // pause are counted here and dealt one at a time by the game loop once play resumes.
+        let pendingLevelUps = 0;
+        function requestUpgradeSelection() {
+            if (!gameRunning) return;
+            if (gamePaused || DOM.upgradeOverlay.classList.contains('active')) { pendingLevelUps++; return; }
+            showUpgradeSelection();
+        }
+
         function showUpgradeSelection() {
             // V1_257: bump a generation token so any pending reel/reveal timeouts from a
             // prior spin no-op — overlapping calls (rapid level-ups, reroll/banish) can't
@@ -31809,6 +31909,7 @@
             if (upgradeSlotResults.length === 0) {
                 DOM.upgradeOverlay.classList.remove('active');
                 gamePaused = false;
+                pendingLevelUps = 0; // V1_478: nothing left to offer — don't re-deal empties every frame
                 return;
             }
             
@@ -32421,8 +32522,8 @@
 
         // V1_431: SKIP — close the level-up overlay with NO upgrade, banking a gold bounty
         // (25 + 5*level). Mirrors selectUpgrade's close path so the frame loop resumes and any
-        // (rare) queued warning still processes; it does not re-open an offer (the gainXP while-
-        // loop collapses multi-level XP into one overlay, so there is no pending next offer).
+        // (rare) queued warning still processes; a queued next offer (V1_478 pendingLevelUps)
+        // is dealt by the game loop on the next unpaused frame, exactly as after a pick.
         function skipUpgrade() {
             if (skipsRemaining <= 0) return;
             skipsRemaining--;
@@ -32812,9 +32913,38 @@
             if (e.key === 'ArrowUp' || key === 'w') input.up = true;
             if (e.key === 'ArrowDown' || key === 's') input.down = true;
             if (e.code === 'Space') {
+                const _t = e.target; // V1_478: let Space type into the name / master-code inputs
+                if (_t && (_t.tagName === 'INPUT' || _t.tagName === 'TEXTAREA')) return;
                 e.preventDefault();
-                if (!spaceHeld) { input.boostQueued = true; spaceHeld = true; }
+                // V1_478: only queue a dash during live play — a Space pressed on a level-up /
+                // pause / chest screen used to fire a surprise dash the instant play resumed.
+                if (!spaceHeld && gameRunning && !gamePaused) input.boostQueued = true;
+                spaceHeld = true;
             }
+        });
+
+        // V1_478: a11y — keys 1-4 pick the matching card on the level-up, shrine and legendary
+        // screens (the cards are click/tap-only divs, so keyboard players had no way to choose).
+        // Clicks the card itself, so banish mode / legendary handlers behave exactly as a tap.
+        document.addEventListener('keydown', e => {
+            const n = parseInt(e.key, 10);
+            if (!(n >= 1 && n <= 4) || e.repeat) return;
+            let cards = null;
+            if (DOM.upgradeOverlay && DOM.upgradeOverlay.classList.contains('active')) cards = DOM.upgradeOptions.querySelectorAll('.upgrade-card');
+            else if (DOM.shrineOverlay && DOM.shrineOverlay.classList.contains('active')) cards = DOM.shrineOptions.querySelectorAll('.shrine-card');
+            else { const lo = document.getElementById('legendaryOverlay'); if (lo && lo.classList.contains('active')) cards = lo.querySelectorAll('.legendary-card'); }
+            if (!cards || !cards[n - 1]) return;
+            e.preventDefault();
+            cards[n - 1].click();
+        });
+
+        // V1_478: release every held key when the page/iframe loses focus (alt-tab, clicking
+        // the parent site, a system dialog) — the keyup never arrives, so the player used to
+        // keep running in the last held direction until that key was pressed again.
+        window.addEventListener('blur', () => {
+            input.left = input.right = input.up = input.down = false;
+            spaceHeld = false;
+            booKeysPressed = { b: false, o: false, zero: false };
         });
 
         document.addEventListener('keyup', e => {
@@ -33009,6 +33139,7 @@
 
         // ===== GAME LOOP =====
         let lastTime = performance.now(); // Fix: Initialize properly to avoid first-frame spike
+        let _pauseWallLast = 0; // V1_478: last paused-frame wall clock (buff-timer freeze in gameLoop)
 
         // Cache DOM elements for performance
         const DOM = {
@@ -33438,6 +33569,31 @@
             // so can't react until the game resumes).
             updateSurvivalCountdownHUD();
 
+            // V1_478: the timed power-ups run on Date.now(), so a pause (level-up cards, chest,
+            // pause menu) silently burned their duration — e.g. picking upgrades during a 7s
+            // TIME STOP could eat most of it. While paused, slide their end stamps forward by
+            // the wall time that passed so they resume with the time they had left.
+            if (gameRunning && gamePaused && player && !deathAnimationActive) {
+                const _wNow = Date.now();
+                if (_pauseWallLast) {
+                    const _d = _wNow - _pauseWallLast;
+                    if (timeStopActive) timeStopEndTime += _d;
+                    if (speedBoostActive) speedBoostEndTime += _d;
+                    const _ts = legendaryEffects.timeSlow;
+                    if (_ts && _ts.isSlowed) { _ts.effectEnd += _d; _ts.regenBoostEnd += _d; }
+                }
+                _pauseWallLast = _wNow;
+            } else {
+                _pauseWallLast = 0;
+            }
+
+            // V1_478: deal the next queued level-up offer the first frame nothing owns the
+            // pause (see requestUpgradeSelection). It pauses again, so this frame skips updates.
+            if (gameRunning && !gamePaused && player && pendingLevelUps > 0 && !deathAnimationActive) {
+                pendingLevelUps--;
+                showUpgradeSelection();
+            }
+
             if (gameRunning && !gamePaused && player) {
                 // Apply time slow effect (Temporal Shield)
                 let effectiveDt = dt;
@@ -33723,11 +33879,14 @@
                 }
                 
                 // Update particles with limit
+                // V1_478: particles + damage numbers now advance per 60fps-frame of real time
+                // (identical at 60Hz) — on 120Hz phones they flew/faded in half the time.
+                const _fxK = dt / 16.667;
                 for (let i = particles.length - 1; i >= 0; i--) {
                     const p = particles[i];
-                    p.x += p.vx;
-                    p.y += p.vy;
-                    p.life -= 0.03;
+                    p.x += p.vx * _fxK;
+                    p.y += p.vy * _fxK;
+                    p.life -= 0.03 * _fxK;
                     if (p.life <= 0) {
                         particles[i] = particles[particles.length - 1];
                         particles.pop();
@@ -33765,11 +33924,11 @@
                 // Update damage numbers with limit
                 for (let i = damageNumbers.length - 1; i >= 0; i--) {
                     const d = damageNumbers[i];
-                    d.y += d.vy;
-                    d.life -= 0.02;
+                    d.y += d.vy * _fxK;
+                    d.life -= 0.02 * _fxK;
                     // Combat-feel punch: ease scale toward 1.0 (fast settle ~100ms)
                     if (d.scale > 1) {
-                        d.scale += (1 - d.scale) * 0.35;
+                        d.scale += (1 - d.scale) * Math.min(1, 0.35 * _fxK);
                         if (d.scale < 1.02) d.scale = 1;
                     }
                     if (d.life <= 0) {
@@ -39982,6 +40141,8 @@
             
             // Reset upgrade variety tracking
             offerHistory = {};
+            pendingLevelUps = 0; // V1_478: fresh level-up offer queue
+            spawnTimer = 0;      // V1_478: the previous run's partial spawn accumulator no longer bleeds into t=0
             // V1_431: per-run consumable charges scale with the shop capacity rows (base + rank).
             rerollsRemaining  = 1 + _shopRankSafe('rerolls');
             banishesRemaining = 1 + _shopRankSafe('banishes');
@@ -40301,6 +40462,7 @@
         }
 
         function gameOver(viaVictory) {
+            if (!gameRunning) return; // V1_478: re-entry guard — a second call would bank the run into META twice
             gameRunning = false;
             // V1_409: if the player perished mid-Maw-fight, tear the fight down cleanly
             // (the level clear was already banked; this run simply ends normally).
@@ -41063,13 +41225,30 @@
             return false;
         }
 
+        // V1_478: true when a non-pause-menu surface currently owns gamePaused.
+        function _pauseOwnedElsewhere() {
+            if (deathAnimationActive) return true;
+            if (pendingChest && pendingChest.isPotReward) return true; // the 300ms gap between pot-of-gold cards (modal hidden, still paused)
+            return !!document.querySelector('#legendaryOverlay.active, #startingBonusOverlay.active, #skullStatueModal.visible, #tombstoneModal.visible, #shopModal.visible, #chestModal.visible, #upgradeOverlay.active, #shrineOverlay.active, #victoryOverlay.active, #leaderboardOverlay.active, #settingsOverlay.active');
+        }
+
         function togglePause() {
             if (!gameRunning || DOM.upgradeOverlay.classList.contains('active') ||
                 DOM.shrineOverlay.classList.contains('active') ||
                 DOM.chestModal.classList.contains('visible')) return;
             // V1_399: never toggle pause behind the victory overlay (it owns the pause state)
             if (DOM.victoryOverlay && DOM.victoryOverlay.classList.contains('active')) return;
-            
+            // V1_478: only the pause menu may un-pause from here. Legendary picks, statue /
+            // tombstone / merchant modals, pot-of-gold gaps and the death animation all set
+            // gamePaused without the pause overlay — P / Escape / the ⏸ button used to flip it
+            // false and run the fight live behind the modal (or revive a dead player's frame).
+            if (gamePaused && !DOM.pauseOverlay.classList.contains('active')) {
+                if (_pauseOwnedElsewhere()) return;
+                // Stray pause with nothing on screen (should not happen): surface the pause
+                // menu rather than resuming blind, so the player is never stuck.
+                gamePaused = false;
+            }
+
             gamePaused = !gamePaused;
             SFX.pause(!gamePaused); // resume tone when unpausing
             DOM.pauseBtn.textContent = gamePaused ? '▶' : '⏸';
@@ -41108,6 +41287,8 @@
         function exitToMenu() {
             gameRunning = false;
             gamePaused = false;
+            deathAnimationActive = false; // V1_478: a death animation left running would fire gameOver() (score modal + meta bank) on the menu
+            pendingLevelUps = 0;          // V1_478: drop any queued level-up offers
             // V1_399: defensively tear down any victory state so a fresh run isn't wedged
             if (DOM.victoryOverlay) DOM.victoryOverlay.classList.remove('active');
             // V1_409: fully tear down any in-progress Maw fight so the next run is pristine
@@ -41142,14 +41323,19 @@
             resumeGame();
         });
         
+        let _leaderboardFromPause = false; // V1_478
         // Leaderboard button in pause menu
+        // V1_478: remember the leaderboard was opened from the pause menu so closing it
+        // brings the pause menu back (it used to leave the run paused with no menu at all).
         DOM.pauseLeaderboardBtn.addEventListener('click', () => {
             DOM.pauseOverlay.classList.remove('active');
+            _leaderboardFromPause = true;
             showLeaderboard();
         });
         DOM.pauseLeaderboardBtn.addEventListener('touchend', (e) => {
             e.preventDefault();
             DOM.pauseOverlay.classList.remove('active');
+            _leaderboardFromPause = true;
             showLeaderboard();
         });
         
@@ -41194,6 +41380,19 @@
             if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
                 const t = e.target;
                 if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return; // don't pause while typing
+                // V1_478: Escape also backs out of Settings / Leaderboard / How-to-Play (menu or
+                // pause). They had no key exit, and over the pause menu Escape fell through to
+                // togglePause and resumed the run out from under the popup.
+                if (e.key === 'Escape') {
+                    const _so = document.getElementById('settingsOverlay');
+                    if (_so && _so.classList.contains('active')) {
+                        e.preventDefault();
+                        const _sc = document.getElementById('settingsCloseBtn'); if (_sc) _sc.click();
+                        return;
+                    }
+                    if (leaderboardOverlay && leaderboardOverlay.classList.contains('active')) { e.preventDefault(); hideLeaderboard(); return; }
+                    if (tutorialOverlay && tutorialOverlay.classList.contains('active')) { e.preventDefault(); hideTutorial(); return; }
+                }
                 // V1_432: Escape on the results screen = CONTINUE (its only exit — see the
                 // screen's own comments for why there's no backdrop-tap / ✕ dismiss).
                 if (e.key === 'Escape' && DOM.resultsOverlay && !DOM.resultsOverlay.classList.contains('hidden')) {
@@ -41256,6 +41455,18 @@
             }
         });
         
+        // V1_478: auto-open the pause menu when the tab/app is hidden mid-run (app switch, phone
+        // call, tab change). The frame loop freezes while hidden anyway, but on return the run
+        // resumed instantly under the player's thumb; now it waits on the pause menu. Only from
+        // live play — never over a level-up/chest/other modal (togglePause guards those too).
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) return;
+            if (gameRunning && !gamePaused && !deathAnimationActive) {
+                togglePause();
+                if (gamePaused) _pauseWallLast = Date.now(); // buff timers then also hold through the hidden stretch
+            }
+        });
+
         // Chest modal buttons now use onclick in HTML (div elements work, buttons don't)
         
         // Move minimap to trackpad area
@@ -41422,12 +41633,17 @@
         scoreModal.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
         
         function hideScoreModal() {
+            // V1_478: idempotent — Skip during a slow submit (or a late resolve) used to run
+            // this twice, and the 2nd showResultsScreen() had already-consumed victory flags,
+            // re-titling a VICTORY!/SEALED! results screen back to GAME OVER.
+            if (!scoreModal.classList.contains('active')) return;
             scoreModal.classList.remove('active');
             usernameInput.blur();
             showResultsScreen(); // V1_432: results screen (stats + plasm) now comes first; CONTINUE there hands off to the game-over menu
         }
         
         async function submitScore() {
+            if (submitScoreBtn.disabled) return; // V1_478: in-flight guard — Enter key-repeat / Enter+click wrote duplicate leaderboard rows (Snake V1_196 pattern)
             const rawName = usernameInput.value;
             const username = sanitizeUsername(rawName);
             
@@ -41577,6 +41793,15 @@
         
         function hideLeaderboard() {
             leaderboardOverlay.classList.remove('active');
+            // V1_478: return to the pause menu when the board was opened from it.
+            if (_leaderboardFromPause) {
+                _leaderboardFromPause = false;
+                if (gameRunning && gamePaused) {
+                    renderPauseLoadout();
+                    DOM.pauseOverlay.classList.add('active');
+                    mountPauseLoadoutPreviews();
+                }
+            }
         }
         
         // Leaderboard button listeners
@@ -41787,6 +42012,10 @@
             if (damageToggle) damageToggle.classList.toggle('active', settings.showDamageNumbers);
             if (fpsToggle) fpsToggle.classList.toggle('active', settings.showFps);
             if (particlesToggle) particlesToggle.classList.toggle('active', settings.reducedParticles);
+            // V1_478: a11y — mirror each switch's state for screen readers
+            if (damageToggle) damageToggle.setAttribute('aria-checked', settings.showDamageNumbers ? 'true' : 'false');
+            if (fpsToggle) fpsToggle.setAttribute('aria-checked', settings.showFps ? 'true' : 'false');
+            if (particlesToggle) particlesToggle.setAttribute('aria-checked', settings.reducedParticles ? 'true' : 'false');
             if (fpsCounter) fpsCounter.classList.toggle('active', settings.showFps);
             if (window.SFX) SFX.setVolume((settings.sfxVolume || 100) / 100);
             if (window.MUSIC) MUSIC.setVolume((typeof settings.musicVolume === 'number' ? settings.musicVolume : 50) / 100); // V1_386
@@ -41889,6 +42118,22 @@
             updateUI();
         });
         
+        // V1_478: a11y — the three toggles were bare divs (no role, not focusable, no name) and
+        // the sliders' visible labels were unassociated spans. Name them, make the switches
+        // keyboard-operable (Enter / Space), and let updateUI keep aria-checked in sync.
+        [['musicVolumeSlider', 'Music volume'], ['sfxVolumeSlider', 'Sound effects volume'], ['zoomSlider', 'Camera zoom']].forEach(function (p) {
+            var el = document.getElementById(p[0]); if (el) el.setAttribute('aria-label', p[1]);
+        });
+        [[damageToggle, 'Damage numbers'], [fpsToggle, 'Show FPS'], [particlesToggle, 'Reduced particles']].forEach(function (p) {
+            var el = p[0]; if (!el) return;
+            el.setAttribute('role', 'switch');
+            el.setAttribute('tabindex', '0');
+            el.setAttribute('aria-label', p[1]);
+            el.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); el.click(); }
+            });
+        });
+
         // Expose settings globally for game to use
         window.GameSettings = settings;
         
