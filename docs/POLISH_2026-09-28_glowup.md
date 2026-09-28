@@ -1,4 +1,4 @@
-# Glow-up Audit — 2026-09-28 (V1_470 → V1_481)
+# Glow-up Audit — 2026-09-28 (V1_470 → V1_482)
 
 Full self-directed audit + polish of the main site and all 7 arcade games, done overnight on branch
 `claude/website-glowup-opus-9y3o2y` (NOT pushed to `main` — review, then merge).
@@ -32,6 +32,7 @@ projects incl. WebKit iPhone/iPad).
 | V1_479 | Main site | Stacked sections on rapid nav, arcade hidden under the bottom bar in landscape, a11y/SEO |
 | V1_480 | review fixes | Regressions caught by the adversarial review pass (see bottom) |
 | V1_481 | docs | This report + CLAUDE.md truth pass |
+| V1_482 | Snake | Review follow-up: a focused menu button handles its own Enter/Space |
 
 ## Decisions for Kevin (ranked — nothing here was changed)
 
@@ -569,3 +570,31 @@ Test 21 still passes: the `gameLoopStarted` V1_162 guard is intact, 3 occurrence
 
 ---
 
+# Adversarial review pass (V1_480 / V1_482)
+
+Two independent review agents re-read every hunk of V1_471–V1_479 against its surrounding code and
+re-ran the risky flows in headless Chromium (side by side with the pre-fix builds where relevant).
+
+**Confirmed regressions: none.** Verified, among others: Survivors offer queue across pause / victory /
+death / restart; TD `gameClock` frozen while paused and reset per run, no stray `performance.now()`
+comparisons; Dig TDZ ordering, boss LEAVE, touch pass-through not double-firing; site rapid nav always ends
+with exactly one active section, deep links land correctly on iOS / mac Safari / desktop UAs, hamburger
+tiles navigate after `inert` is cleared, iPhone pseudo-fullscreen unaffected by the landscape bottom-bar
+change; Snake tick exactly 166.7ms at 60Hz with speed boost still applied; Space Shooter single upgrade
+screen per boss and `bossRewardPending` cleared on death; Brickbreaker `paddleRestWidth` matches the
+level-start formula; Clyde overlays fully visible again after Skip / Play Again.
+
+**Follow-ups applied:**
+- V1_480 — TD `exitToMenu` now bumps `runToken` and drops `#mapTransitionOverlay`, so exiting during the
+  2.5s campaign stage transition no longer opens the upgrade selector over the menu (pre-existing).
+- V1_482 — Snake: Enter/Space on a focused menu button (HOW TO PLAY, LEADERBOARD) activates that button
+  instead of starting a run (V1_472 had made it start a run only).
+
+**Low-impact notes, unchanged:** Survivors pause surfaces not listed in `_pauseOwnedElsewhere` (Stats
+sub-overlay, possibly the evolution reveal) still get the pause menu on top (same leak as before, not
+worse); Dig: pausing in the 1.5s between a boss kill and the victory card lets the card sit above the pause
+menu (TELEPORT then Resume still works); site: a nav click during the ~1.25s loader fade is now overridden
+by the deep-link section instead of stacking with it.
+
+CI: the GitHub Actions E2E suite (all 5 projects incl. WebKit iPhone + iPad) passed on V1_479 via manual
+dispatch on the branch.
