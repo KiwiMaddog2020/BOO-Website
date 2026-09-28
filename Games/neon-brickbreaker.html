@@ -305,6 +305,17 @@
             color: #000;
         }
 
+        /* V1_471: keyboard focus ring in the game's own neon (matches the site's V1_151
+           :focus-visible treatment) instead of the browser's default outline */
+        .menu-btn:focus-visible,
+        .score-btn:focus-visible,
+        .tutorial-nav-btn:focus-visible,
+        .tutorial-close:focus-visible,
+        .leaderboard-close:focus-visible {
+            outline: 2px solid #0ff;
+            outline-offset: 3px;
+        }
+
         .menu-buttons {
             display: flex;
             flex-direction: column;
@@ -885,6 +896,9 @@
             box-sizing: border-box;
             touch-action: manipulation;
             pointer-events: auto;
+            /* V1_471: short/landscape windows — keep the title + buttons reachable */
+            justify-content: safe center;
+            overflow-y: auto;
         }
         
         .score-modal.active {
@@ -1519,7 +1533,7 @@
     </div>
 
     <div class="game-container">
-        <canvas id="gameCanvas" width="653" height="700"></canvas>
+        <canvas id="gameCanvas" width="653" height="700" role="img" aria-label="BOO Brickbreaker game area"></canvas>
         
         <!-- Upgrade Selector Overlay -->
         <div class="upgrade-overlay" id="upgradeOverlay">
@@ -1560,7 +1574,7 @@
         <div class="score-modal-score">Score: <span id="finalScoreDisplay">0</span></div>
         <div class="score-modal-level">Level <span id="finalLevelDisplay">1</span></div>
         <div class="score-input-container">
-            <label class="score-input-label">Enter your name for the leaderboard:</label>
+            <label class="score-input-label" for="usernameInput">Enter your name for the leaderboard:</label>
             <input type="text" class="score-input" id="usernameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off" spellcheck="false">
             <div class="score-error-msg" id="scoreErrorMsg"></div>
         </div>
@@ -1575,7 +1589,7 @@
         <div class="tutorial-container">
             <div class="tutorial-header">
                 <div class="tutorial-title">📖 HOW TO PLAY</div>
-                <button class="tutorial-close" id="tutorialClose">✕</button>
+                <button class="tutorial-close" id="tutorialClose" aria-label="Close how to play">✕</button>
             </div>
             <div class="tutorial-content" id="tutorialContent">
                 <!-- Step 1: Controls -->
@@ -1660,7 +1674,7 @@
         <div class="leaderboard-container">
             <div class="leaderboard-header">
                 <div class="leaderboard-title">🏆 TOP 100</div>
-                <button class="leaderboard-close" id="leaderboardClose">✕</button>
+                <button class="leaderboard-close" id="leaderboardClose" aria-label="Close leaderboard">✕</button>
             </div>
             <div class="leaderboard-list" id="leaderboardList">
                 <div class="leaderboard-loading">Loading scores...</div>
@@ -1863,6 +1877,7 @@
         const MUSIC = createBooMusic({
             audioCtx: SFX.audioCtx,
             isPaused: function () { return upgradeSelectionActive; },
+            startMuted: SFX.muted, // V1_471: honour the saved mute — HUD showed muted but music still played
             tracks: BOO_TRACKS,
             playlist: ['paddle', 'bricks']
         });
@@ -2301,6 +2316,8 @@
                 apply: () => { permanentUpgrades.multiBallBounceBonus += 1; }
             }
         ];
+        
+        const SPEED_REDUCTION_CAP = 80; // V1_471: max total Slower Ball reduction (%), see resetBall
         
         // Smart RNG tracking for upgrade selection
         // Tracks how many rounds since each upgrade was last offered (higher = more likely to appear)
@@ -2809,7 +2826,8 @@
                         direction: 1, // All bosses move together
                         color: bossConfig.colors[i % bossConfig.colors.length],
                         flashUntil: 0,
-                        nextLaserTime: now + initialCooldown
+                        nextLaserTime: now + initialCooldown,
+                        homeX: topPositions[i], homeY: baseY // V1_471: spawn slot for resetBossPositions
                     });
                 }
                 
@@ -2851,7 +2869,8 @@
                             direction: 1, // All bosses move together
                             color: bossConfig.colors[(topRowCount + i) % bossConfig.colors.length],
                             flashUntil: 0,
-                            nextLaserTime: now + initialCooldown
+                            nextLaserTime: now + initialCooldown,
+                            homeX: bottomPositions[i], homeY: baseY + rowSpacing // V1_471
                         });
                     }
                 }
@@ -3014,7 +3033,9 @@
             }
             
             // Check if bosses reached the bottom (game over condition)
-            bosses.forEach(boss => {
+            // V1_471: for...break — the whole row lands together, so forEach charged one
+            // life PER boss on the game-over frame (lives went negative, gameOver re-ran).
+            for (const boss of bosses) {
                 if (boss.alive && boss.y + boss.height >= paddle.y - 20) {
                     lives--;
                     uiState.lives = lives;
@@ -3025,8 +3046,9 @@
                         showLifeLostMessage();
                         resetBossPositions();
                     }
+                    break;
                 }
-            });
+            }
         }
         
         function resetBossPositions() {
@@ -3045,8 +3067,16 @@
             // Reset laser cooldowns with staggered timing
             const now = performance.now();
             aliveBosses.forEach((boss, i) => {
-                boss.x = spacing * (i + 1) - boss.width / 2;
-                boss.y = 50;
+                if (boss.homeX !== undefined) {
+                    // V1_471: level 10+ two-row formation — the single-row respacing below
+                    // overlapped bosses from level 13 on (653px / 14+ bosses < 50px width).
+                    // Send each boss back to its own spawn slot instead.
+                    boss.x = boss.homeX;
+                    boss.y = boss.homeY;
+                } else {
+                    boss.x = spacing * (i + 1) - boss.width / 2;
+                    boss.y = 50;
+                }
                 boss.direction = 1;
                 // Stagger laser cooldowns again after reset
                 boss.nextLaserTime = now + 2000 + Math.random() * 4000;
@@ -3109,6 +3139,7 @@
         
         function updateBossDeathParticles() {
             const now = performance.now();
+            const drag = Math.pow(0.98, deltaMultiplier); // V1_471: was a flat 0.98/frame (2x drag at 120Hz); identical at 60Hz
             
             bossDeathParticles = bossDeathParticles.filter(p => {
                 const age = now - p.createdAt;
@@ -3124,8 +3155,8 @@
                 }
                 
                 // Slow down
-                p.vx *= 0.98;
-                p.vy *= 0.98;
+                p.vx *= drag;
+                p.vy *= drag;
                 
                 // Update rotation
                 p.rotation += p.rotationSpeed * deltaMultiplier;
@@ -3359,7 +3390,7 @@
             
             // Update immunity timer
             if (paddleImmunity.active) {
-                paddleImmunity.timeLeft -= (frameTime - lastPowerUpTime) / 1000;
+                paddleImmunity.timeLeft -= powerUpDeltaMs() / 1000; // V1_471: clamped (see powerUpDeltaMs)
                 if (paddleImmunity.timeLeft <= 0) {
                     paddleImmunity.active = false;
                     paddleImmunity.timeLeft = 0;
@@ -3850,6 +3881,7 @@
                     continue;
                 }
                 
+                const prevBottom = ball.y + ball.radius; // V1_471: for the swept paddle test
                 // Apply delta time for frame-rate independent movement
                 ball.x += ball.dx * deltaMultiplier;
                 ball.y += ball.dy * deltaMultiplier;
@@ -3878,8 +3910,12 @@
                 }
 
                 // Paddle collision
-                if (ball.y + ball.radius > paddle.y &&
-                    ball.y - ball.radius < paddle.y + paddle.height &&
+                // V1_471: + swept test — a long step (frame hitch / 30fps / fast late levels,
+                // up to 3x delta) could jump the ball clean past the 11px paddle. Only adds
+                // hits the overlap test missed; normal 60Hz steps behave exactly as before.
+                if (((ball.y + ball.radius > paddle.y &&
+                      ball.y - ball.radius < paddle.y + paddle.height) ||
+                     (ball.dy > 0 && prevBottom <= paddle.y && ball.y + ball.radius > paddle.y)) &&
                     ball.x > paddle.x &&
                     ball.x < paddle.x + paddle.width) {
                     
@@ -4281,7 +4317,8 @@
                 }
                 
                 // Pick 3 upgrades using weighted selection
-                currentUpgradeChoices = weightedRandomSelect(upgradeDefinitions, 3);
+                currentUpgradeChoices = weightedRandomSelect(upgradeDefinitions.filter(u =>
+                    !(u.id === 'speed' && permanentUpgrades.speedReduction >= SPEED_REDUCTION_CAP)), 3); // V1_471
                 
                 // Update history: reset offered upgrades to 0, increment others
                 upgradeDefinitions.forEach(u => {
@@ -4640,8 +4677,25 @@
 
         let lastPowerUpTime = 0;
         
+        // V1_471: power-up clocks tick in GAME time, capped like deltaMultiplier (3 frames).
+        // Unclamped, returning from a hidden tab (rAF stops, ball freezes) expired every
+        // timer at once, and immunity drained through the life-lost pause. 60Hz unchanged.
+        function powerUpDeltaMs() {
+            return Math.max(0, Math.min(frameTime - lastPowerUpTime, targetFrameTime * 3));
+        }
+        
+        // V1_471: width the paddle should rest at right now — level base + permanent bonus,
+        // times whichever size effect is still running. Replaces the width captured at pickup
+        // on expiry: overlapping Huge Paddle + skull (or two Huge Paddles) used to restore a
+        // stale width and leave the paddle permanently huge/small until the next level.
+        // Single-effect case resolves to exactly the old originalWidth.
+        function paddleRestWidth() {
+            const base = Math.round(Math.max(66, 107 - (level - 1) * 6) * (1 + permanentUpgrades.paddleSizeBonus / 100));
+            return base * (activePowerUps.bigPaddle.active ? 2.04 : 1) * (activePowerUps.smallPaddle.active ? 0.7 : 1);
+        }
+        
         function updatePowerUps() {
-            const delta = (frameTime - lastPowerUpTime) / 1000; // Use frameTime
+            const delta = powerUpDeltaMs() / 1000; // Use frameTime (V1_471: clamped)
             lastPowerUpTime = frameTime;
             
             // Big paddle timer
@@ -4650,7 +4704,7 @@
                 if (activePowerUps.bigPaddle.timeLeft <= 0) {
                     activePowerUps.bigPaddle.active = false;
                     // Animate paddle shrinking back (3x slower = 900ms for gradual shrink)
-                    animatePaddleSize(activePowerUps.bigPaddle.originalWidth, 900);
+                    animatePaddleSize(paddleRestWidth(), 900); // V1_471: was bigPaddle.originalWidth
                 }
             }
             
@@ -4668,7 +4722,7 @@
                 if (activePowerUps.smallPaddle.timeLeft <= 0) {
                     activePowerUps.smallPaddle.active = false;
                     // Animate paddle growing back
-                    animatePaddleSize(activePowerUps.smallPaddle.originalWidth);
+                    animatePaddleSize(paddleRestWidth()); // V1_471: was smallPaddle.originalWidth
                 }
             }
         }
@@ -4810,13 +4864,17 @@
             resetBall();
         }
 
+        let resetBallGen = 0; // V1_471: invalidates pending Multi-Launch timers from an older serve
         function resetBall() {
             // Clear any magnet-caught ball and reset catch toggle
             magnetCaughtBall = null;
             magnetNextCatch = true; // First hit after reset will catch
             
             // Apply permanent speed reduction bonus
-            const speedMultiplier = 1 - (permanentUpgrades.speedReduction / 100);
+            // V1_471: cap at -80% (10 stacks). Uncapped, 13+ Slower Ball picks made the
+            // multiplier <= 0: the ball froze in place or launched straight down (endless
+            // life loss). Also dropped from the offer pool once capped (showUpgradeSelector).
+            const speedMultiplier = 1 - (Math.min(permanentUpgrades.speedReduction, SPEED_REDUCTION_CAP) / 100);
             const speed = ballTemplate.speed * speedMultiplier;
             // Launch at 45-degree angle with NORMALIZED velocity
             // At 45°: sin(45°) = cos(45°) = 0.707, so dx² + dy² = speed²
@@ -4833,12 +4891,16 @@
             )];
             
             // Spawn extra balls from dual ball start upgrade (staggered deployment)
+            const gen = ++resetBallGen; // V1_471
             if (permanentUpgrades.dualBallStart > 0) {
                 const extraBalls = permanentUpgrades.dualBallStart;
                 for (let i = 0; i < extraBalls; i++) {
                     // Stagger each extra ball by 800ms
                     setTimeout(() => {
                         if (!gameRunning) return; // Don't spawn if game ended
+                        // V1_471: drop launches from a superseded serve, or into a frozen
+                        // life-lost / stage-clear screen (they appeared as stuck balls)
+                        if (gen !== resetBallGen || lifeLostPause || stageClearPending) return;
                         const extraDirection = (i % 2 === 0) ? -direction : direction; // Alternate directions
                         const extraAngle = 0.6 + (Math.random() * 0.2); // Slight angle variation
                         const extraBall = createBall(
@@ -4855,6 +4917,10 @@
         }
 
         function gameOver() {
+            // V1_471: re-entry guard — several life-loss paths can fire in the same frame
+            // (two bosses reaching the floor, boss + laser), which ran gameOver twice:
+            // doubled game-over sting and two score-modal timers.
+            if (!gameRunning) return;
             gameRunning = false;
             SFX.gameOver();
             if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music
@@ -5400,7 +5466,13 @@
         }
 
         // Controls (combined keyboard handler)
+        // V1_471: held-direction state so releasing one arrow while the other is still
+        // held keeps the paddle moving (was: any keyup zeroed dx). Last-pressed still wins.
+        const heldKeys = { left: false, right: false };
         document.addEventListener('keydown', (e) => {
+            // V1_471: never hijack typing — A/D (and arrows) were preventDefault'd here,
+            // so leaderboard names containing A or D could not be typed at all.
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
             // Dismiss instruction or boss overlay on any key
             if (instructionPause || (bossSpawnPause && showFirstBossInstructions && level === 1 && bossSpawnPauseEnd === 0)) {
                 if (instructionPause) {
@@ -5416,14 +5488,26 @@
                 return;
             }
             
+            // V1_471: keyboard upgrade pick — 1 / 2 / 3 choose a revealed slot
+            if (upgradeSelectionActive && (e.key === '1' || e.key === '2' || e.key === '3')) {
+                const slotIdx = Number(e.key) - 1;
+                if (slotIdx < currentUpgradeChoices.length && slots[slotIdx].classList.contains('revealed')) {
+                    selectUpgrade(slotIdx);
+                }
+                e.preventDefault();
+                return;
+            }
+
             // Left movement: Arrow Left or A
             if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
                 e.preventDefault();
+                heldKeys.left = true;
                 paddle.dx = -paddle.speed;
             }
             // Right movement: Arrow Right or D
             if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
                 e.preventDefault();
+                heldKeys.right = true;
                 paddle.dx = paddle.speed;
             }
             if (e.key === 'Escape') {
@@ -5433,14 +5517,27 @@
                 if (scoreModal.classList.contains('active')) {
                     hideScoreModal();
                 }
+                if (tutorialOverlay.classList.contains('active')) { // V1_471
+                    hideTutorial();
+                }
             }
         });
 
         document.addEventListener('keyup', (e) => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || 
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') heldKeys.left = false;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') heldKeys.right = false;
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
                 e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') {
-                paddle.dx = 0;
+                // V1_471: fall back to the direction still held instead of stopping
+                paddle.dx = heldKeys.right ? paddle.speed : (heldKeys.left ? -paddle.speed : 0);
             }
+        });
+        // V1_471: focus loss swallows keyup (e.g. clicking the parent page mid-press) —
+        // without this the paddle kept sliding with no key held.
+        window.addEventListener('blur', () => {
+            heldKeys.left = false;
+            heldKeys.right = false;
+            paddle.dx = 0;
         });
 
         // Track if mouse is controlling paddle (only when inside game area)
@@ -5827,12 +5924,12 @@
                         .limit(100)
                         .get();
                     snapshot.forEach(doc => {
-                        scores.push(doc.data().score);
+                        scores.push(Number(doc.data().score) || 0); // V1_471: malformed docs can't skew rank
                     });
                 } else {
                     // Use local scores
                     const localScores = getLocalScores();
-                    scores = localScores.map(s => s.score);
+                    scores = localScores.map(s => Number(s.score) || 0); // V1_471
                 }
                 
                 // Find where this score would rank
@@ -5869,6 +5966,9 @@
         }
         
         async function submitScore() {
+            // V1_471: Enter + tap (or double Enter) wrote duplicate rows — ignore while a
+            // save is in flight or once the modal has closed
+            if (submitScoreBtn.disabled || !scoreModal.classList.contains('active')) return;
             const rawName = usernameInput.value;
             const username = sanitizeUsername(rawName);
             
@@ -5920,7 +6020,7 @@
         // Local storage fallback
         function saveLocalScore(name, score, level) {
             try {
-                const scores = JSON.parse(localStorage.getItem('brickbreaker_scores') || '[]');
+                const scores = getLocalScores(); // V1_471: same corrupt-storage guard
                 scores.push({ name, score, level, timestamp: Date.now() });
                 scores.sort((a, b) => b.score - a.score);
                 localStorage.setItem('brickbreaker_scores', JSON.stringify(scores.slice(0, 100)));
@@ -5931,7 +6031,10 @@
         
         function getLocalScores() {
             try {
-                return JSON.parse(localStorage.getItem('brickbreaker_scores') || '[]');
+                // V1_471: valid-but-wrong JSON (e.g. "{}" or [null]) used to throw in the
+                // leaderboard render and leave it stuck on "Loading scores..."
+                const parsed = JSON.parse(localStorage.getItem('brickbreaker_scores') || '[]');
+                return Array.isArray(parsed) ? parsed.filter(s => s && typeof s === 'object') : [];
             } catch (e) {
                 return [];
             }
