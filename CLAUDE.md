@@ -19,7 +19,7 @@ Psychedelic rock band website for **Bunch of Others (BOO)** — Kelowna, BC. Sin
 - **Analytics:** Google Analytics — ID `G-ELVHNXC9MJ`
 - **Hosting:** GitHub Pages
 - **Version control:** Git + GitHub Desktop (Windows)
-- **Tests (V1_104+):** Playwright E2E (`tests/e2e/critical-paths.spec.js`); 18 tests across 3 viewports (chromium / mobile-android / mobile-ios). CI deploy is gated on this suite passing (V1_166)
+- **Tests (V1_104+):** Playwright E2E — `tests/e2e/critical-paths.spec.js` (21 tests) + `tests/e2e/arcade-games.spec.js` (V1_470: every game boots with zero uncaught errors + a sized canvas; phone no-overflow) across 5 projects (chromium / mobile-android / mobile-ios / ipad-mini-landscape / ipad-pro-portrait). CI deploy is gated on this suite passing (V1_166). Local runs without WebKit: `--project=chromium --project=mobile-android`
 - **CI:** GitHub Actions — `.github/workflows/test.yml` runs Playwright on push/PR to `main`
 - **PWA (V1_116+):** `manifest.webmanifest` makes the site installable on Android + iOS Add-to-Home-Screen
 - **SEO/discovery (V1_108):** `sitemap.xml`, `robots.txt`, JSON-LD `MusicGroup` schema; `humans.txt` credits (V1_121)
@@ -289,6 +289,15 @@ firebase deploy
 - **Safari wallpaper workaround retired.** Commit `2ed7d92` ("Working on Safari Version… lack of background images showing up at all") blamed `::before` + `mask-image` + animation. A minimal repro of that exact recipe now paints **byte-identically** in all three engines (centre 255,0,255; masked edge 55,0,55), so the workaround, its duplicate section backgrounds and its JS re-application were removed. Safari uses the shared `section::before` wallpaper. **Flag for Kevin: this also changes iOS Safari**, which now takes the same mobile `::before` path Android already uses — worth a look on the phone.
 - **Kept on purpose:** the Chrome/Mac `animation: none` anti-flicker freezes (they are stability fixes). Where a freeze killed a one-shot `overlayFadeIn`/`oilSlickFadeIn`, the end state is now stated explicitly instead of leaving the layer at `opacity: 0` — that bug had `.color-splotches` invisible in Chrome and Safari and `.liquid-overlay` at 0.18 in Chrome.
 - **Do not re-fork the grading per browser.** Firefox's values live on each layer's base rule: `section` saturate(.9), `section::before` saturate(.85) contrast(1.02), `.color-mist` saturate(.8) brightness(.95), `.liquid-overlay`/`.oil-slick` saturate(.85) brightness(.95), `.color-splotches` saturate(.8), `.darken-overlay` rgba(10,10,14,.82). `.oil-slick` is `color-dodge` everywhere. Mobile/iPad layouts and the sacred timings are untouched.
+
+**V1_470 → V1_481 (glow-up audit, branch `claude/website-glowup-opus-9y3o2y`):** full audit + polish of the site and all 7 games under Kevin's interview scope (polish + small elevations, clear balance bugs only, perf/a11y/SEO/tests/docs). Full report + ranked decisions list: `docs/POLISH_2026-09-28_glowup.md`. Rules learned that apply to future work:
+
+- **Saved mute must reach the music.** `createBooMusic` now falls back to `window.SFX.muted` when `startMuted` is omitted (V1_474), and every game passes `startMuted: SFX.muted` explicitly — keep both when adding a game.
+- **Frame-rate independence is the default.** Space Shooter is fully dt-scaled (V1_475, `dt = 1` at 60Hz, 50ms clamp); Snake ticks on the 60Hz-quantised interval with an accumulator (V1_472); Dig invulnerability, Clyde decays, Brickbreaker drag and Survivors knockback friction use `Math.pow(f, dt)`. New per-frame increments must scale with dt and stay bit-identical at 60Hz.
+- **Tower Defense timed effects run on `gameClock`** (game time, V1_476): freeze/poison/inferno/Beam never compare against `performance.now()`. Speed buttons are a true time-scale.
+- **Every game guards against double game-over and duplicate leaderboard submits** (re-entry guard + `submitBtn.disabled` / submit token), and never lets Space/Enter/letter hotkeys fire while an `INPUT` has focus. Keep these guards when touching score flows.
+- **Survivors level-up offers go through `requestUpgradeSelection()`** (queue, V1_478) — never call `showUpgradeSelection()` directly from a reward path. Only the pause menu may un-pause; reward screens own the pause.
+- **Site nav: a click during a section transition is ignored** (V1_479; the 2s safety reset still recovers), and exactly one section may carry `.section-active`. On touch landscape (<=834px tall) the `body::before` bottom bar is hidden while the arcade is active.
 
 ---
 
