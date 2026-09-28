@@ -688,6 +688,12 @@
                 display: none !important;
             }
         }
+
+        /* V1_475: when the touch bar is shown, the WAVE/SCORE HUD (bottom: 18px)
+           sat on top of the right d-pad button. Lift it just above the bar. */
+        @media (hover: none) {
+            .hud { bottom: 116px; }
+        }
         
         /* Extra compact mode for very small screens */
         @media (max-height: 550px) {
@@ -714,18 +720,24 @@
                 bottom: 14px;
                 padding: 0 10px;
             }
+            @media (hover: none) {
+                .hud { bottom: 96px; } /* V1_475: above the 90px compact touch bar */
+            }
             .hud-label { font-size: 9px; }
             .hud-value { font-size: 12px; }
             .title { font-size: 30px; }
             .subtitle { font-size: 14px; margin-bottom: 20px; }
             .btn { padding: 10px 30px; font-size: 16px; }
+            /* V1_475: on short (landscape-phone) windows the absolutely pinned hint
+               wrapped up into the LEADER BOARD button — flow it under the menu instead */
+            .controls-hint { position: static; margin-top: 14px; }
         }
     </style>
 </head>
 <body>
     <div class="game-container">
         <canvas id="gameCanvas"></canvas>
-        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:8px;left:8px;z-index:60;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
+        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:8px;left:8px;z-index:150;width:36px;height:36px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
 
         <div class="hud">
             <div class="hud-left">
@@ -1038,6 +1050,7 @@
         const MUSIC = createBooMusic({
             audioCtx: SFX.audioCtx,
             isPaused: function () { return false; },
+            startMuted: SFX.muted, // V1_475: honour the saved mute — the button showed muted but the music still played after reload
             tracks: BOO_TRACKS,
             playlist: ['starrun', 'photon']
         });
@@ -1255,6 +1268,7 @@
             }
             
             // Update CONFIG with display dimensions (for game logic)
+            const prevW = CONFIG.canvasWidth, prevH = CONFIG.canvasHeight; // V1_475
             CONFIG.canvasWidth = displayWidth;
             CONFIG.canvasHeight = displayHeight;
             CONFIG.scale = displayWidth / baseWidth;
@@ -1264,6 +1278,17 @@
             CONFIG.playerHeight = Math.floor(42 * CONFIG.scale);
             CONFIG.bulletWidth = Math.floor(8 * CONFIG.scale);
             CONFIG.bulletHeight = Math.floor(18 * CONFIG.scale);
+
+            // V1_475: re-anchor the ship on a mid-run resize (fullscreen toggle /
+            // rotation). Its y was fixed at spawn, so leaving fullscreen parked it
+            // below the new canvas edge — invisible, and unreachable by enemies.
+            if (resizeCanvas.stateReady && player && prevW > 0 && prevH > 0 && (prevW !== displayWidth || prevH !== displayHeight)) {
+                player.width = CONFIG.playerWidth;
+                player.height = CONFIG.playerHeight;
+                player.x = Math.max(5, Math.min(displayWidth - player.width - 5, player.x * displayWidth / prevW));
+                player.y = displayHeight - 110;
+                stars.forEach(st => { st.x *= displayWidth / prevW; st.y *= displayHeight / prevH; });
+            }
             
             // Set canvas buffer with DPR scaling for sharp rendering
             canvas.width = Math.round(displayWidth * dprScale);
@@ -1308,6 +1333,7 @@
         let bossProjectiles = [];
         let bossAOEWarning = null;
         let isBossWave = false;
+        let bossRewardPending = false; // V1_475: between boss death and its 500ms-delayed upgrade screen
 
         // Player stats (upgradeable)
         let playerStats = {};
@@ -1335,6 +1361,7 @@
         let particles = [];
         let stars = [];
         let damageNumbers = [];
+        resizeCanvas.stateReady = true; // V1_475: the first resizeCanvas() runs before these lets exist (TDZ) — only re-anchor after this point
 
         // Timing
         let lastTime = 0;
@@ -1342,6 +1369,14 @@
         let lastFireTime = 0;
         let lastSpawnTime = 0;
         let lastRegenTime = 0;
+        // V1_475: frame-rate independence. All per-frame motion/animation is
+        // scaled by dt = deltaTime / FRAME_MS, so dt === 1 at 60Hz (identical to the
+        // old fixed per-frame steps) and ~0.5 at 120Hz (same real-time speed instead
+        // of 2x). deltaTime keeps the V1_196 50ms clamp, so dt never exceeds 3.
+        const FRAME_MS = 1000 / 60;
+        let dt = 1;
+        function stepFactor(f) { return dt === 1 ? f : Math.pow(f, dt); } // per-frame multiplier (damping) -> per-dt
+        function stepLerp(k) { return dt === 1 ? k : 1 - Math.pow(1 - k, dt); } // per-frame lerp fraction -> per-dt
 
         // Input state
         let keys = {};
@@ -1384,6 +1419,7 @@
             bossProjectiles = [];
             bossAOEWarning = null;
             isBossWave = false;
+            bossRewardPending = false; // V1_475
             
             resetPlayerStats();
             upgradeOfferHistory = {};
@@ -1442,6 +1478,9 @@
         document.addEventListener('keyup', (e) => {
             keys[e.code] = false;
         });
+        // V1_475: a keyup lost to focus change (click into the parent page / alt-tab
+        // while holding an arrow) left the ship drifting until the key was re-pressed.
+        window.addEventListener('blur', () => { keys = {}; touchLeft = false; touchRight = false; });
 
         function setupTouchButton(btn, onPress, onRelease) {
             btn.addEventListener('touchstart', (e) => {
@@ -1529,17 +1568,17 @@
             
             // Keyboard horizontal movement
             if (keys['ArrowLeft'] || keys['KeyA'] || touchLeft) {
-                player.x -= speed;
+                player.x -= speed * dt;
             }
             if (keys['ArrowRight'] || keys['KeyD'] || touchRight) {
-                player.x += speed;
+                player.x += speed * dt;
             }
 
             // Mouse movement (horizontal only, no click needed)
             if (mouseX !== null) {
                 const targetX = mouseX - player.width / 2;
                 const diffX = targetX - player.x;
-                player.x += diffX * 0.12;
+                player.x += diffX * stepLerp(0.12);
             }
 
             // Clamp position (horizontal only)
@@ -1563,8 +1602,8 @@
             }
 
             // Animation
-            player.engineGlow = (player.engineGlow + 0.15) % (TWO_PI);
-            player.thrusterPhase = (player.thrusterPhase + 0.3) % (TWO_PI);
+            player.engineGlow = (player.engineGlow + 0.15 * dt) % (TWO_PI);
+            player.thrusterPhase = (player.thrusterPhase + 0.3 * dt) % (TWO_PI);
 
             if (player.invincible && now > player.invincibleUntil) {
                 player.invincible = false;
@@ -1763,12 +1802,18 @@
 
         function updateBullets() {
             bullets = bullets.filter(b => {
-                b.trail.unshift({ x: b.x + b.width / 2, y: b.y + b.height, phase: b.phase });
-                if (b.trail.length > 8) b.trail.pop();
+                // V1_475: sample the trail ~60x/s (every frame at 60Hz, every other
+                // frame at 120Hz) so the 8-point trail keeps its on-screen length.
+                b.trailAcc = (b.trailAcc || 0) + dt;
+                if (b.trailAcc >= 0.5) {
+                    b.trailAcc = Math.min(b.trailAcc - 1, 0.5);
+                    b.trail.unshift({ x: b.x + b.width / 2, y: b.y + b.height, phase: b.phase });
+                    if (b.trail.length > 8) b.trail.pop();
+                }
 
-                b.y -= CONFIG.bulletSpeed;
-                b.x += b.vx || 0;
-                b.phase += 0.3; // Animate plasma wobble
+                b.y -= CONFIG.bulletSpeed * dt;
+                b.x += (b.vx || 0) * dt;
+                b.phase += 0.3 * dt; // Animate plasma wobble
                 
                 return b.y + b.height > 0 && b.x > -10 && b.x < CONFIG.canvasWidth + 10;
             });
@@ -1932,7 +1977,7 @@
                 if (e.type === 'hunter') {
                     // Hunter AI - move to position then hover and track player
                     if (e.y < e.targetY) {
-                        e.y += speed * 1.5; // Move down faster initially
+                        e.y += speed * 1.5 * dt; // Move down faster initially
                     } else {
                         // Smooth player tracking with dead zone
                         const playerCX = player.x + player.width / 2;
@@ -1942,11 +1987,11 @@
                         // Dead zone - don't move if already close enough
                         if (Math.abs(diff) > 15) {
                             // Smooth lerp-style tracking (eases in/out naturally)
-                            e.x += diff * 0.015;
+                            e.x += diff * stepLerp(0.015);
                         }
                         
                         // Gentle vertical wobble
-                        e.wobble += e.wobbleSpeed * 0.7;
+                        e.wobble += e.wobbleSpeed * 0.7 * dt;
                         e.y = e.targetY + Math.sin(e.wobble) * 4;
                     }
                     
@@ -1957,9 +2002,9 @@
                     }
                 } else {
                     // Regular enemy movement
-                    e.y += speed;
-                    e.wobble += e.wobbleSpeed;
-                    e.x += Math.sin(e.wobble) * 0.6;
+                    e.y += speed * dt;
+                    e.wobble += e.wobbleSpeed * dt;
+                    e.x += Math.sin(e.wobble) * 0.6 * dt;
                 }
                 
                 e.x = Math.max(5, Math.min(CONFIG.canvasWidth - e.width - 5, e.x));
@@ -2026,9 +2071,9 @@
             const now = performance.now();
             
             enemyProjectiles = enemyProjectiles.filter(p => {
-                p.x += p.vx;
-                p.y += p.vy;
-                p.phase += 0.2;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.phase += 0.2 * dt;
                 
                 // Check collision with player
                 if (!player.invincible && circleRectCollision(p.x, p.y, p.radius, player)) {
@@ -2210,9 +2255,9 @@
 
         function updateDamageNumbers() {
             damageNumbers = damageNumbers.filter(d => {
-                d.y += d.vy;
-                d.vy += 0.05;
-                d.life -= 0.025;
+                d.y += d.vy * dt;
+                d.vy += 0.05 * dt;
+                d.life -= 0.025 * dt;
                 return d.life > 0;
             });
             
@@ -2319,6 +2364,7 @@
         // ========== WAVE TIMER SYSTEM ==========
         function checkWaveTimer() {
             if (isBossWave) return; // Don't check timer during boss
+            if (bossRewardPending || gameState !== 'playing') return; // V1_475: see defeatBoss / endGame
             
             const elapsed = performance.now() - waveStartTime;
             if (elapsed >= WAVE_DURATION) {
@@ -2400,7 +2446,7 @@
             
             // Entry animation
             if (boss.entering) {
-                boss.y += 1;
+                boss.y += dt;
                 if (boss.y >= boss.targetY) {
                     boss.y = boss.targetY;
                     boss.entering = false;
@@ -2409,7 +2455,7 @@
             }
             
             // Horizontal movement
-            boss.x += boss.speed * boss.direction;
+            boss.x += boss.speed * boss.direction * dt;
             if (boss.x <= 20) {
                 boss.direction = 1;
             } else if (boss.x + boss.width >= CONFIG.canvasWidth - 20) {
@@ -2417,7 +2463,7 @@
             }
             
             // Animation phase
-            boss.phase += 0.05;
+            boss.phase += 0.05 * dt;
             
             // Fire electric orbs
             if (now - boss.lastOrbTime > boss.orbCooldown) {
@@ -2441,9 +2487,9 @@
             
             // Update boss projectiles
             bossProjectiles = bossProjectiles.filter(p => {
-                p.y += p.vy;
-                p.x += p.vx || 0;
-                p.phase += 0.2;
+                p.y += p.vy * dt;
+                p.x += (p.vx || 0) * dt;
+                p.phase += 0.2 * dt;
                 
                 // Check collision with player
                 if (!player.invincible && circleRectCollision(p.x, p.y, p.radius, player)) {
@@ -2467,7 +2513,7 @@
             
             // Check bullets vs boss
             bullets = bullets.filter(b => {
-                if (rectCollision(b, boss)) {
+                if (boss && rectCollision(b, boss)) { // V1_475: boss is nulled by defeatBoss() mid-filter — later bullets threw on every boss kill
                     const baseDmg = CONFIG.baseDamage * (1 + playerStats.damageBonus);
                     const critChance = CONFIG.baseCritChance + playerStats.critBonus;
                     const isCrit = Math.random() < critChance;
@@ -2605,10 +2651,17 @@
             bossProjectiles = [];
             bossAOEWarning = null;
             isBossWave = false;
+            // V1_475: the wave timer had already expired (that's what started the
+            // boss), so on the very next frame checkWaveTimer spawned a SECOND boss on
+            // waves 3/6/9... (or double-opened the upgrade roll). Hold it until the
+            // delayed upgrade screen opens; skip that screen if the player died meanwhile.
+            bossRewardPending = true;
             
             // Show upgrade selector after boss
             setTimeout(() => {
-                showUpgradeSelector();
+                if (!bossRewardPending) return; // run was restarted meanwhile
+                bossRewardPending = false;
+                if (gameState === 'playing') showUpgradeSelector();
             }, 500);
         }
         
@@ -2939,13 +2992,14 @@
         }
 
         function updateParticles() {
+            const drag = stepFactor(0.96), shrink = stepFactor(0.97); // V1_475: dt-scaled
             particles = particles.filter(p => {
-                p.x += p.vx;
-                p.y += p.vy;
-                p.vx *= 0.96;
-                p.vy *= 0.96;
-                p.life -= p.decay;
-                p.size *= 0.97;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vx *= drag;
+                p.vy *= drag;
+                p.life -= p.decay * dt;
+                p.size *= shrink;
                 return p.life > 0;
             });
             
@@ -2970,9 +3024,9 @@
         }
 
         // ========== STARFIELD ==========
-        function updateStars() {
+        function updateStars(f) {
             stars.forEach(s => {
-                s.y += s.speed;
+                s.y += s.speed * f; // V1_475: f = dt of the calling loop
                 if (s.y > CONFIG.canvasHeight) {
                     s.y = 0;
                     s.x = Math.random() * CONFIG.canvasWidth;
@@ -2998,12 +3052,22 @@
             requestAnimationFrame(gameLoop);
             
             // Only update/draw when playing
-            if (gameState !== 'playing') return;
+            // V1_475: keep lastTime current while idle so resuming after the upgrade
+            // screen steps one frame, not a clamped 50ms jump.
+            if (gameState !== 'playing') { lastTime = currentTime; return; }
 
-            deltaTime = Math.min(currentTime - lastTime, 50); // clamp: a backgrounded-tab return must not instant-fire the boss AOE telegraph
+            const rawDelta = currentTime - lastTime;
+            deltaTime = Math.max(0, Math.min(rawDelta, 50)); // clamp: a backgrounded-tab return must not instant-fire the boss AOE telegraph (V1_475: floor 0 — the first rAF stamp can precede startGame's performance.now())
             lastTime = currentTime;
+            dt = deltaTime / FRAME_MS; // V1_475
+            // V1_475: the wave timer is wall-clock; don't let time the game didn't
+            // simulate (backgrounded tab / app switch / >50ms stall) count toward it —
+            // tabbing away for 30s used to hand out a free wave clear + upgrade.
+            // (Only the un-simulated span after the wave began counts — the upgrade
+            // screen's delayed wave start can land inside a hidden-tab gap.)
+            if (rawDelta > 50 && !isBossWave) waveStartTime += Math.max(0, currentTime - Math.max(waveStartTime, currentTime - rawDelta + 50));
 
-            updateStars();
+            updateStars(dt);
             updatePlayer();
             updateBullets();
             updateEnemies();
@@ -3029,6 +3093,7 @@
         }
 
         function endGame() {
+            if (gameState === 'gameover') return; // V1_475: two hits in one frame (e.g. orb + AOE) used to fire the gameover SFX/modal twice
             gameState = 'gameover';
             if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music — Re-Entry sting, then the title theme
             SFX.gameover();
@@ -3042,8 +3107,11 @@
         // ========== INIT ==========
         createStarfield();
 
-        function drawStartScreen() {
-            updateStars();
+        let startScreenLast = 0; // V1_475: start-screen starfield is dt-scaled too
+        function drawStartScreen(ts) {
+            const startDt = (ts !== undefined && startScreenLast) ? Math.max(0, Math.min(ts - startScreenLast, 50)) / FRAME_MS : 1;
+            if (ts !== undefined) startScreenLast = ts;
+            updateStars(startDt);
             ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(0, 0, CONFIG.canvasWidth, CONFIG.canvasHeight);
             drawStars();
@@ -3127,7 +3195,9 @@
         function showScoreModal(score, wave) {
             pendingScore = score;
             pendingWave = wave;
-            usernameInput.value = localStorage.getItem('playerName') || '';
+            let savedName = ''; // V1_475: storage can throw (iOS WebView / blocked site data) — never break the modal
+            try { savedName = localStorage.getItem('playerName') || ''; } catch (e) {}
+            usernameInput.value = savedName;
             scoreErrorMsg.textContent = '';
             scoreModal.classList.add('active');
             setTimeout(() => usernameInput.focus(), 100);
@@ -3138,6 +3208,7 @@
         }
         
         async function submitScore() {
+            if (submitScoreBtn.disabled) return; // V1_475: Enter + click (or repeated Enter) during the await wrote duplicate rows
             const username = usernameInput.value.trim();
             
             if (username.length < 2 || username.length > 12) {
@@ -3152,7 +3223,7 @@
                 return;
             }
             
-            localStorage.setItem('playerName', username);
+            try { localStorage.setItem('playerName', username); } catch (e) {} // V1_475
             submitScoreBtn.disabled = true;
             submitScoreBtn.textContent = 'Saving...';
             
@@ -3179,7 +3250,7 @@
         
         function saveLocalScore(name, score, wave) {
             try {
-                const scores = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+                const scores = getLocalScores(); // V1_475: array-guarded
                 scores.push({ name, score, wave, timestamp: Date.now() });
                 scores.sort((a, b) => b.score - a.score);
                 localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(scores.slice(0, 100)));
@@ -3188,7 +3259,8 @@
         
         function getLocalScores() {
             try {
-                return JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+                const list = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+                return Array.isArray(list) ? list : []; // V1_475: corrupt non-array value
             } catch (e) {
                 return [];
             }
@@ -3233,6 +3305,8 @@
         }
         
         function renderLeaderboard(scores) {
+            // V1_475: drop malformed docs (null / non-object) instead of throwing mid-render
+            scores = (Array.isArray(scores) ? scores : []).filter(entry => entry && typeof entry === 'object');
             if (scores.length === 0) {
                 leaderboardList.innerHTML = '<div class="leaderboard-empty">No scores yet!</div>';
                 return;
@@ -3245,7 +3319,7 @@
                 html += `
                     <div class="leaderboard-row ${rankClass}">
                         <div class="leaderboard-rank">#${rank}</div>
-                        <div class="leaderboard-name">${escapeHtml(entry.name)}</div>
+                        <div class="leaderboard-name">${escapeHtml(String(entry.name == null ? '' : entry.name))}</div>
                         <div class="leaderboard-score">${(Number(entry.score) || 0).toLocaleString()}</div>
                         <div class="leaderboard-wave">W${Number(entry.wave) || '?'}</div>
                     </div>
