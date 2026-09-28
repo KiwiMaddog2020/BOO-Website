@@ -2027,6 +2027,18 @@
             color: #0ff;
             font-weight: bold;
         }
+
+        /* V1_484: Tower Types (2/2) grew two lines (Rail Gun + Nova). On short landscape screens, trim the
+           step icon + text leading so Next still sits inside the box without scrolling. Other viewports unchanged. */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .tutorial-icon {
+                font-size: 26px;
+                margin-bottom: 4px;
+            }
+            .tutorial-text {
+                line-height: 1.45;
+            }
+        }
         
         .tutorial-nav {
             display: flex;
@@ -3084,8 +3096,9 @@
                 <div class="tutorial-icon">🎮</div>
                 <div class="tutorial-heading">Controls</div>
                 <div class="tutorial-text">
-                    <strong>Mobile:</strong> Tap a tower icon, then drag on the map to position it. Tap placed towers to upgrade.<br><br>
-                    <strong>Desktop:</strong> Click to select and place towers. Click placed towers to view stats and upgrade.
+                    <!-- V1_484: upgrades live in the UPGRADES shop; tapping a placed tower inspects / moves it -->
+                    <strong>Mobile:</strong> Tap a tower icon, then drag on the map to position it. Tap placed towers to inspect or move them.<br><br>
+                    <strong>Desktop:</strong> Click to select and place towers. Click placed towers to inspect or move them. Upgrade towers in the <span class="tutorial-highlight">UPGRADES</span> shop.
                 </div>
             </div>
             
@@ -3129,7 +3142,10 @@
                     <span class="tutorial-highlight">🌋 Inferno</span> - Burning ground zones<br>
                     <span class="tutorial-highlight">💣 Cannon</span> - Piercing line shot<br>
                     <span class="tutorial-highlight">⚡️ Tesla</span> - Zaps multiple enemies<br>
-                    <span class="tutorial-highlight">✨ Buff</span> - Boosts nearby towers
+                    <span class="tutorial-highlight">✨ Buff</span> - Boosts nearby towers<br>
+                    <!-- V1_484: Rail Gun + Nova were missing from the list -->
+                    <span class="tutorial-highlight">💠 Rail Gun</span> - Instant piercing beam<br>
+                    <span class="tutorial-highlight">💫 Nova</span> - Massive AOE blast
                 </div>
             </div>
             
@@ -4543,9 +4559,9 @@
             { id: 'discount', icon: '🏷️', name: 'Discount', descTemplate: '-{val}% tower costs', baseVal: 5, key: 'costReduction', isPercent: true },
             { id: 'poison', icon: '☠️', name: 'Toxic', descTemplate: '+{val}% poison damage', baseVal: 12, key: 'poisonBonus', isPercent: true },
             { id: 'crit', icon: '💢', name: 'Critical Hit', descTemplate: '+{val}% crit chance', baseVal: 3, key: 'critChance', isPercent: true },
-            // V1_476: enemies have no armor stat, so this card did nothing — kept defined but pulled from the
-            // offer pool (OFFERABLE_UPGRADES) until an armor mechanic exists. Delete `disabled` to re-enable.
-            { id: 'armor', icon: '🛡️', name: 'Armor Pierce', descTemplate: '+{val}% armor shred', baseVal: 6, key: 'armorShred', isPercent: true, disabled: true },
+            // V1_484: re-enabled. Armor shred = +X% damage against the armored kinds (ARMORED_ENEMY_TYPES:
+            // tank, boss, megaboss), applied in damageEnemy(). (V1_476 had parked it: nothing read it.)
+            { id: 'armor', icon: '🛡️', name: 'Armor Pierce', descTemplate: '+{val}% armor shred', baseVal: 6, key: 'armorShred', isPercent: true },
             { id: 'life', icon: '❤️', name: 'Extra Life', descTemplate: '+{val} lives', baseVal: 2, key: 'lives', isPercent: false },
             { id: 'interest', icon: '📈', name: 'Interest', descTemplate: '+{val}% gold per wave', baseVal: 3, key: 'interest', isPercent: true },
             { id: 'chain', icon: '⚡️', name: 'Chain Power', descTemplate: '+{val} chain bounce', baseVal: 1, key: 'chainBonus', isPercent: false },
@@ -4553,6 +4569,20 @@
             { id: 'luck', icon: '🍀', name: 'Lucky', descTemplate: '+{val}% luck', baseVal: 5, key: 'luck', isPercent: true }
         ];
         const OFFERABLE_UPGRADES = UPGRADE_BASES.filter(b => !b.disabled); // V1_476
+
+        // V1_484: Discount is capped at 75% total (tower cost multiplier never below 0.25)
+        const COST_REDUCTION_CAP = 0.75;
+        // V1_484: enemy kinds that count as armored for Armor Pierce
+        const ARMORED_ENEMY_TYPES = new Set(['tank', 'boss', 'megaboss']);
+        // V1_484: an upgrade is exhausted once its stat can't grow any more (only Discount has a cap today)
+        function isUpgradeExhausted(base) {
+            if (base.key === 'costReduction') return (permUpgrades.costReduction || 0) >= COST_REDUCTION_CAP - 1e-9;
+            return false;
+        }
+        // V1_484: the live offer pool = offerable minus exhausted
+        function getOfferableUpgrades() {
+            return OFFERABLE_UPGRADES.filter(b => !isUpgradeExhausted(b));
+        }
         
         // Rarity multipliers for upgrade values
         const RARITY_MULTIPLIERS = {
@@ -4668,9 +4698,14 @@
             }
             
             const multiplier = RARITY_MULTIPLIERS[rarity];
-            const scaledVal = base.isPercent 
+            let scaledVal = base.isPercent 
                 ? Math.round(base.baseVal * multiplier) 
                 : Math.round(base.baseVal * multiplier);
+            // V1_484: the last Discount card before the 75% cap only shows (and grants) what's left
+            if (base.key === 'costReduction') {
+                const leftPts = Math.round((COST_REDUCTION_CAP - (permUpgrades.costReduction || 0)) * 100);
+                if (leftPts > 0) scaledVal = Math.min(scaledVal, leftPts);
+            }
             const desc = base.descTemplate.replace('{val}', scaledVal);
             
             return {
@@ -4687,6 +4722,9 @@
                     } else {
                         const val = base.isPercent ? scaledVal / 100 : scaledVal;
                         permUpgrades[base.key] = (permUpgrades[base.key] || 0) + val;
+                        if (base.key === 'costReduction') { // V1_484: hard cap at 75%
+                            permUpgrades.costReduction = Math.min(COST_REDUCTION_CAP, permUpgrades.costReduction);
+                        }
                     }
                 }
             };
@@ -5181,6 +5219,7 @@
         let leprechaunAlive = false; // Track if leprechaun is currently on field
         let leprechaunDamaged = false; // Track if leprechaun has been hit
         let preleprechaunSpeed = 1; // Store game speed before leprechaun slowdown
+        let playerSpeed = 1; // V1_484: the speed the player last picked (the leprechaun slowdown is temporary on top)
         
         // Tower limit bonus (unused in classic, used in campaign for stage progression)
         let endlessTowerLimitBonus = 0;
@@ -5196,6 +5235,7 @@
         let placementRotation = 0; // For rotatable towers like railgun (0=right, 1=down, 2=left, 3=up)
         let inspectedChampion = null; // Champion being inspected (clicked on map)
         let towers = [];
+        let totalTowersBuilt = 0; // V1_484: towers placed this run, across campaign stages (game-over stat)
         let towerIdCounter = 0; // Unique ID for each tower
         let towerCounts = {}; // Track number of each tower type placed
         let enemies = [];
@@ -5453,6 +5493,7 @@
                 } else {
                     gameSpeed = 1;
                 }
+                playerSpeed = gameSpeed; // V1_484
                 const btn = document.getElementById('speedBtn');
                 btn.textContent = '▶▶ ' + gameSpeed + 'x';
                 btn.classList.toggle('active', gameSpeed > 1);
@@ -5664,6 +5705,7 @@
             kills = 0;
             rerollsRemaining = 3;
             towers = [];
+            totalTowersBuilt = 0; // V1_484
             towerCounts = {}; // Reset tower counts
             enemies = [];
             projectiles = [];
@@ -5689,6 +5731,7 @@
             slotRollIntervals = [];
             upgradeOverlay.classList.remove('active');
             gameSpeed = 1;
+            playerSpeed = 1; // V1_484
             document.getElementById('speedBtn').textContent = '▶▶ 1x';
             document.getElementById('speedBtn').classList.remove('active');
             document.getElementById('towerActionPanel').classList.remove('active', 'move-mode');
@@ -6228,11 +6271,13 @@
                     leprechaunAlive = false;
                     leprechaunDamaged = false;
                     // Resume previous game speed
+                    // V1_484: restore the speed the player has selected NOW (playerSpeed), not the
+                    // pre-slowdown one, so a speed change made during the slowdown isn't overridden.
                     if (preleprechaunSpeed > 1) {
-                        gameSpeed = preleprechaunSpeed;
+                        gameSpeed = playerSpeed;
                         const btn = document.getElementById('speedBtn');
                         btn.textContent = '▶▶ ' + gameSpeed + 'x';
-                        btn.classList.add('active');
+                        btn.classList.toggle('active', gameSpeed > 1);
                         preleprechaunSpeed = 1;
                     }
                     createParticles(enemy.x, enemy.y, '#00ff66', 15);
@@ -6299,6 +6344,11 @@
                 }
             }
             
+            // V1_484: Armor Pierce — +X% damage against armored kinds (tank / boss / megaboss)
+            if (permUpgrades.armorShred > 0 && ARMORED_ENEMY_TYPES.has(enemy.type)) {
+                damage *= 1 + permUpgrades.armorShred;
+            }
+            
             enemy.health -= damage;
             createDamageNumber(enemy.x, enemy.y - enemy.size, damage, isCrit);
             
@@ -6314,11 +6364,13 @@
                     leprechaunAlive = false;
                     leprechaunDamaged = false;
                     // Resume previous game speed
+                    // V1_484: restore the speed the player has selected NOW (playerSpeed), not the
+                    // pre-slowdown one, so a speed change made during the slowdown isn't overridden.
                     if (preleprechaunSpeed > 1) {
-                        gameSpeed = preleprechaunSpeed;
+                        gameSpeed = playerSpeed;
                         const btn = document.getElementById('speedBtn');
                         btn.textContent = '▶▶ ' + gameSpeed + 'x';
-                        btn.classList.add('active');
+                        btn.classList.toggle('active', gameSpeed > 1);
                         preleprechaunSpeed = 1;
                     }
                     createParticles(enemy.x, enemy.y, '#00ff66', 30);
@@ -6763,7 +6815,7 @@
             // 1st: 0.65x, 2nd: ~1x, 3rd: ~1.56x, 5th: ~3.75x, 10th: ~26x
             const scaledCost = def.cost * 0.65 * Math.pow(1.55, count);
             // V1_476: clamp — stacked Discount picks past 100% made towers cost negative gold (placing paid you)
-            return Math.floor(scaledCost * Math.max(0, 1 - permUpgrades.costReduction));
+            return Math.floor(scaledCost * Math.max(1 - COST_REDUCTION_CAP, 1 - permUpgrades.costReduction)); // V1_484: floor 0.25x (was 0)
         }
         
         // Check if tower type has reached its placement limit
@@ -6823,6 +6875,7 @@
                 }
                 
                 towers.push(newTower);
+                totalTowersBuilt++; // V1_484: whole-run count (campaign clears towers every stage)
                 updateHUD();
                 updateTowerButtons();
                 createParticles(x, y, def.color, 8);
@@ -6937,6 +6990,60 @@
             return shop.effects[level];
         }
         
+        // V1_484: most shots one tower may fire in a single frame when catching up (6x speed / fast
+        // towers / a slow frame). Beyond this the leftover cooldown debt is dropped, not banked.
+        const FIRE_CATCHUP_MAX = 4;
+
+        // V1_484: target priority, pulled out of the updateTower scan so pickLiveTarget ranks identically
+        function getTargetPriority(def, enemy) {
+            // Default priority is 1
+            let priority = 1;
+            if (def.isBeam) {
+                // Beam prioritizes slow, high-health enemies that stay in range longer
+                // megaboss (5) > boss (4) > tank (3) > normal (1) > fast (0)
+                if (enemy.type === 'megaboss') priority = 5;
+                else if (enemy.type === 'boss') priority = 4;
+                else if (enemy.type === 'tank') priority = 3;
+                else if (enemy.type === 'fast') priority = 0;
+            } else if (def.isCannon) {
+                // Cannon prioritizes fast, high-health enemies
+                // fast (4) > megaboss (3) > boss (2) > tank (1) > normal (0)
+                if (enemy.type === 'fast') priority = 4;
+                else if (enemy.type === 'megaboss') priority = 3;
+                else if (enemy.type === 'boss') priority = 2;
+                else if (enemy.type === 'tank') priority = 1;
+                else priority = 0;
+            }
+            return priority;
+        }
+
+        // V1_484: a target is "doomed" when shots already in flight will kill it
+        function isTargetDoomed(enemy) {
+            return enemy.health - (enemy.incomingDamage || 0) <= 0;
+        }
+
+        // V1_484: best in-range target that is NOT already doomed (same priority / path-progress order
+        // as the main scan). Used so a projectile tower re-targets instead of wasting its cooldown.
+        function pickLiveTarget(tower, def, rangeSq) {
+            let best = null;
+            let bestProgress = -1;
+            let bestPriority = 0;
+            for (const enemy of enemies) {
+                if (!enemy.alive || isTargetDoomed(enemy)) continue;
+                const dx = enemy.x - tower.x;
+                const dy = enemy.y - tower.y;
+                if (dx * dx + dy * dy > rangeSq) continue;
+                const progress = enemy.pathIndex + enemy.pathProgress;
+                const priority = getTargetPriority(def, enemy);
+                if (priority > bestPriority || (priority === bestPriority && progress > bestProgress)) {
+                    bestProgress = progress;
+                    bestPriority = priority;
+                    best = enemy;
+                }
+            }
+            return best;
+        }
+
         function updateTower(tower, dt) {
             const def = TOWERS[tower.type];
             const upgrades = getTowerUpgrades(tower.type);
@@ -6980,8 +7087,10 @@
             
             const range = def.range * rangeMultiplier * (1 + permUpgrades.rangeBonus);
             const rangeSq = range * range; // V1_476 perf
-            // Fire rate bonus reduces interval (makes it faster), gameSpeed also speeds up firing
-            const fireInterval = def.fireRate / (fireRateMultiplier * (1 + permUpgrades.fireRateBonus + buffFireRateBonus) * gameSpeed);
+            // Fire rate bonus reduces interval (makes it faster)
+            // V1_484: interval is in game-ms and measured on gameClock (which already scales with game
+            // speed), so it no longer divides by gameSpeed against the wall clock.
+            const fireInterval = def.fireRate / (fireRateMultiplier * (1 + permUpgrades.fireRateBonus + buffFireRateBonus));
             
             // Find target (furthest along path within range)
             // Beam towers prefer slow high-health enemies (megaboss > boss > tank)
@@ -7003,26 +7112,8 @@
                 
                 if (distSq <= rangeSq) {
                     const progress = enemy.pathIndex + enemy.pathProgress;
-                    // Default priority is 1
-                    let priority = 1;
-                    
-                    if (def.isBeam) {
-                        // Beam prioritizes slow, high-health enemies that stay in range longer
-                        // megaboss (5) > boss (4) > tank (3) > normal (1) > fast (0)
-                        if (enemy.type === 'megaboss') priority = 5;
-                        else if (enemy.type === 'boss') priority = 4;
-                        else if (enemy.type === 'tank') priority = 3;
-                        else if (enemy.type === 'fast') priority = 0;
-                    } else if (def.isCannon) {
-                        // Cannon prioritizes fast, high-health enemies
-                        // fast (4) > megaboss (3) > boss (2) > tank (1) > normal (0)
-                        if (enemy.type === 'fast') priority = 4;
-                        else if (enemy.type === 'megaboss') priority = 3;
-                        else if (enemy.type === 'boss') priority = 2;
-                        else if (enemy.type === 'tank') priority = 1;
-                        else priority = 0;
-                    }
-                    
+                    const priority = getTargetPriority(def, enemy); // V1_484: shared with pickLiveTarget
+
                     // Pick target with highest priority, or furthest progress if same priority
                     if (priority > bestPriority || (priority === bestPriority && progress > bestProgress)) {
                         bestProgress = progress;
@@ -7081,9 +7172,33 @@
                 // Inferno can fire preemptively as soon as wave starts, doesn't need enemies in range
                 canFire = waveInProgress && myTotalActive < maxZones;
             }
-            if (canFire && now - tower.lastFire >= fireInterval) {
-                tower.lastFire = now;
-                
+            // V1_484: fire-rate quantization fix. The cooldown used to reset to the current frame
+            // (lastFire = now), so leftover time was thrown away: Minigun (120ms) fired every 133ms at
+            // 60Hz and anything faster than a frame capped at 1 shot/frame at 6x. Now the remainder
+            // carries over (lastFire += interval) and a frame fires as many shots as its game time
+            // justifies, capped at FIRE_CATCHUP_MAX. A tower that had nothing to shoot is held at
+            // "ready" (one interval + this frame) so it fires at once when a target arrives but never
+            // banks a burst while idle.
+            if (!canFire) tower.fireEngaged = false;
+            let shots = 0;
+            if (canFire && fireInterval > 0) {
+                if (!tower.fireEngaged) {
+                    const readyAt = gameClock - fireInterval - dt * FRAME_TIME;
+                    if (tower.lastFire < readyAt) tower.lastFire = readyAt;
+                }
+                shots = Math.floor((gameClock - tower.lastFire) / fireInterval);
+                const maxShots = def.isInferno ? 1 : FIRE_CATCHUP_MAX; // inferno's zone cap is counted once per frame
+                if (shots > maxShots) {
+                    shots = maxShots;
+                    tower.lastFire = gameClock - ((gameClock - tower.lastFire) % fireInterval); // drop the debt, keep the phase
+                } else if (shots > 0) {
+                    tower.lastFire += shots * fireInterval;
+                }
+                if (shots > 0) tower.fireEngaged = true;
+            }
+            for (let shot = 0; shot < shots; shot++) { // V1_484: body below is one shot (indent kept for a surgical diff)
+                if (def.isBeam && !bestTarget.alive) break; // V1_484: killed by an earlier tick this frame
+
                 if (def.isBeam) {
                     // Track beam target for damage ramping
                     if (tower.beamTarget !== bestTarget) {
@@ -7553,7 +7668,15 @@
                         }
                     }
                 } else {
-                    fireProjectile(tower, bestTarget);
+                    // V1_484: if the best target is already doomed by shots in flight, take the next-best
+                    // live target in range. If there is none, refund this shot (and any left this frame)
+                    // so the cooldown isn't wasted; the tower tries again next frame.
+                    const shotTarget = isTargetDoomed(bestTarget) ? pickLiveTarget(tower, def, rangeSq) : bestTarget;
+                    if (!shotTarget || !fireProjectile(tower, shotTarget)) {
+                        tower.lastFire -= (shots - shot) * fireInterval;
+                        tower.fireEngaged = false;
+                        break;
+                    }
                 }
             }
         }
@@ -7562,7 +7685,8 @@
             const def = TOWERS[tower.type];
             
             // Inferno/SquirrelTree/Nova/Railgun towers don't fire regular projectiles
-            if (def.isInferno || def.isSquirrelTree || def.isNova || def.isRailgun) return;
+            // V1_484: returns true when a shot was fired, false when it declined (caller keeps the cooldown)
+            if (def.isInferno || def.isSquirrelTree || def.isNova || def.isRailgun) return false;
             
             const upgrades = tower.upgrades || getTowerUpgrades(tower.type);
             
@@ -7574,7 +7698,7 @@
             // Check if target will die from already in-flight projectiles
             const incomingDamage = target.incomingDamage || 0;
             if (target.health - incomingDamage <= 0) {
-                return; // Target already doomed, don't waste the shot
+                return false; // Target already doomed, don't waste the shot (V1_484: caller re-targets / keeps cooldown)
             }
             
             // Track this damage as incoming
@@ -7600,7 +7724,10 @@
             const dy = targetY - tower.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
             
-            if (dist === 0) return;
+            if (dist === 0) {
+                target.incomingDamage = incomingDamage; // V1_484: no shot left, so don't leave it marked doomed
+                return false;
+            }
             
             // Tower firing pulse effect
             tower.lastFired = performance.now();
@@ -7645,6 +7772,7 @@
             if (def.isPiercing) {
                 createRailgunLine(tower.x, tower.y, dx, dy, def.projectileColor);
             }
+            return true; // V1_484
         }
 
         // ========== CHAMPION SYSTEM UPDATE ==========
@@ -8133,8 +8261,10 @@
                 }
 
                 // Clear incoming damage tracking from intended target
-                if (proj.intendedTarget && proj.intendedTarget.incomingDamage) {
+                // V1_484: only if the shot hasn't already cleared it (a piercing/chain hit clears once)
+                if (proj.intendedTarget && proj.intendedTarget.incomingDamage && !proj.incomingCleared) {
                     proj.intendedTarget.incomingDamage = Math.max(0, proj.intendedTarget.incomingDamage - proj.damage);
+                    proj.incomingCleared = true;
                 }
                 return;
             }
@@ -8307,6 +8437,20 @@
                         }
                     }
                     break;
+                }
+            }
+
+            // V1_484: a straight shot that has flown past its intended target without touching it has
+            // missed. Release its incomingDamage now (not when it finally leaves the screen) so towers
+            // stop treating that enemy as doomed.
+            if (proj.alive && !proj.incomingCleared && proj.intendedTarget && proj.intendedTarget.alive) {
+                const t = proj.intendedTarget;
+                const tdx = t.x - proj.x;
+                const tdy = t.y - proj.y;
+                const hitR = t.size + 6;
+                if (tdx * proj.vx + tdy * proj.vy < 0 && tdx * tdx + tdy * tdy > hitR * hitR) {
+                    t.incomingDamage = Math.max(0, (t.incomingDamage || 0) - proj.damage);
+                    proj.incomingCleared = true;
                 }
             }
         }
@@ -8753,7 +8897,8 @@
                     if (!upgrade) {
                         console.error('Missing upgrade at index', i, 'choices:', currentUpgradeChoices);
                         // Still show something - pick a random one
-                        const fallback = generateUpgrade(OFFERABLE_UPGRADES[Math.floor(Math.random() * OFFERABLE_UPGRADES.length)]);
+                        const fallbackPool = getOfferableUpgrades(); // V1_484
+                        const fallback = generateUpgrade(fallbackPool[Math.floor(Math.random() * fallbackPool.length)]);
                         currentUpgradeChoices[i] = fallback;
                     }
                     const finalUpgrade = currentUpgradeChoices[i];
@@ -8788,12 +8933,12 @@
             // Always generate exactly 'count' upgrades
             while (selected.length < count) {
                 // Pick a random upgrade type that hasn't been used yet this selection
-                let pool = OFFERABLE_UPGRADES.filter(b => !usedIds.has(b.id));
+                let pool = getOfferableUpgrades().filter(b => !usedIds.has(b.id)); // V1_484: skip exhausted (capped Discount)
                 
                 // Safety check - if pool is somehow empty, reset usedIds
                 if (pool.length === 0) {
                     usedIds.clear();
-                    pool = [...OFFERABLE_UPGRADES];
+                    pool = getOfferableUpgrades(); // V1_484
                 }
                 
                 // Weight by "not seen recently"
@@ -8870,7 +9015,8 @@
                     
                     const upgrade = currentUpgradeChoices[i];
                     if (!upgrade) {
-                        const fallback = generateUpgrade(OFFERABLE_UPGRADES[Math.floor(Math.random() * OFFERABLE_UPGRADES.length)]);
+                        const fallbackPool = getOfferableUpgrades(); // V1_484
+                        const fallback = generateUpgrade(fallbackPool[Math.floor(Math.random() * fallbackPool.length)]);
                         currentUpgradeChoices[i] = fallback;
                     }
                     const finalUpgrade = currentUpgradeChoices[i];
@@ -8994,13 +9140,13 @@
                     Stage Reached: <span>${campaignStage}</span><br>
                     Total Waves: <span>${wave}</span><br>
                     Enemies Killed: <span>${kills}</span><br>
-                    Towers Built: <span>${towers.length}</span>
+                    Towers Built: <span>${totalTowersBuilt}</span>
                 `;
             } else {
                 statsHtml = `
                     Waves Survived: <span>${wave}</span><br>
                     Enemies Killed: <span>${kills}</span><br>
-                    Towers Built: <span>${towers.length}</span>
+                    Towers Built: <span>${totalTowersBuilt}</span>
                 `;
             }
             document.getElementById('gameoverStats').innerHTML = statsHtml;
@@ -9456,6 +9602,7 @@
                 { key: 'costReduction', name: '🏷️ Cost Reduction', suffix: '%' },
                 { key: 'poisonBonus', name: '☠️ Poison', suffix: '%' },
                 { key: 'critChance', name: '💢 Crit Chance', suffix: '%' },
+                { key: 'armorShred', name: '🛡️ Armor Shred', suffix: '%' }, // V1_484: restored (Armor Pierce is live again)
                 { key: 'interest', name: '📈 Interest', suffix: '%' },
                 { key: 'multishot', name: '🎯 Multi-Shot', suffix: '%' },
                 { key: 'chainBonus', name: '⚡️ Chain Bonus', suffix: '', isFlat: true }
@@ -9827,6 +9974,7 @@
             if (speedBtn.visible && x >= speedBtn.x && x <= speedBtn.x + speedBtn.w && y >= speedBtn.y && y <= speedBtn.y + speedBtn.h) {
                 // Cycle game speed: 1x -> 2x -> 4x -> 6x -> 1x
                 gameSpeed = gameSpeed === 1 ? 2 : gameSpeed === 2 ? 4 : gameSpeed === 4 ? 6 : 1;
+                playerSpeed = gameSpeed; // V1_484
                 // Update DOM button text (for consistency if it becomes visible)
                 const domSpeedBtn = document.getElementById('speedBtn');
                 if (domSpeedBtn) {
