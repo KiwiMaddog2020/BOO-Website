@@ -28,11 +28,15 @@
 window.createBooMusic = function (cfg) {
     let a = null, master = null, duckLP = null, chans = null, noiseBuf = null;
     let waves = null;
-    let muted = !!cfg.startMuted, vol = (cfg.volume === undefined ? 0.5 : cfg.volume);
+    // V1_474: games never passed startMuted, so a persisted mute left the music
+    // playing after a reload (the Survivors original seeds from SFX.muted). Fall back
+    // to the host game's SFX engine when the option is omitted.
+    let muted = cfg.startMuted !== undefined ? !!cfg.startMuted : !!(window.SFX && window.SFX.muted);
+    let vol = (cfg.volume === undefined ? 0.5 : cfg.volume);
     let suppressed = false, running = false;
     let state = 'off', track = null, stepIdx = 0, nextTime = 0, loopsDone = 0;
     let playlist = [], plIdx = 0, tickTimer = null, lastSiteCheck = 0, echoWetNode = null, overrideKey = null;
-    const LOOKAHEAD = 0.24, TICK_MS = 90;
+    const LOOKAHEAD = 0.24, TICK_MS = 90, STALE_S = 0.1; // V1_474: STALE_S = late-note tolerance before a step is skipped
     const MASTER_LVL = cfg.masterLevel === undefined ? 0.42 : cfg.masterLevel;
     const LOOPS_PER = cfg.loopsPerTrack === undefined ? 2 : cfg.loopsPerTrack;
     const TITLE_KEY = cfg.titleKey || 'title', OVER_KEY = cfg.overKey || 'over';
@@ -225,8 +229,15 @@ window.createBooMusic = function (cfg) {
         }
         if (suppressed || muted || !track || a.state !== 'running') return;
         const stepDur = spb(track);
+        const staleBefore = a.currentTime - STALE_S;
         while (nextTime < a.currentTime + LOOKAHEAD) {
-            scheduleStep(track, stepIdx, nextTime);
+            // V1_474: after a mute, a throttled background tab or a long main-thread
+            // stall, nextTime lags behind the clock and every missed step used to be
+            // scheduled "in the past" at once — a pile-up of dozens of notes firing
+            // together. Walk the grid past stale steps silently (bar/rotation logic
+            // below still runs) so playback resumes in time. Never hit in normal play:
+            // the 240ms lookahead keeps nextTime ahead of the clock.
+            if (nextTime >= staleBefore) scheduleStep(track, stepIdx, nextTime);
             stepIdx++; nextTime += stepDur;
             if (stepIdx >= track.steps) {
                 stepIdx = 0; loopsDone++;
@@ -247,7 +258,7 @@ window.createBooMusic = function (cfg) {
         get state() { return state; },
         unlock: function () {
             if (!ensure()) return;
-            if (a.state === 'suspended') a.resume().catch(function () {});
+            if (a.state === 'suspended' || a.state === 'interrupted') a.resume().catch(function () {}); // V1_474: iOS reports 'interrupted' after a call/Siri
             if (!running) {
                 running = true;
                 tickTimer = setInterval(tick, TICK_MS);
