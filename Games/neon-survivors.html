@@ -12304,6 +12304,10 @@
         // Render-only — never participate in collision or balance.
         const FX_RINGS_MAX = 16;
         const fxRings = [];
+        // V1_483: per-frame motion scale = min(dt/16.667, 1), set once per gameLoop frame.
+        // 1 at 60Hz (and below — low-FPS keeps today's per-frame step), 0.5 at 120Hz. Used by
+        // shotgun pellets, the draw-path boom-box notes + fxRings ease so high-refresh matches 60Hz.
+        let fxFrameK = 1;
         function addRing(x, y, r, color) {
             if (fxRings.length < FX_RINGS_MAX) {
                 fxRings.push({ x, y, r, maxR: r * 2.5, life: 1, color: color || '#ffffff' });
@@ -14310,13 +14314,19 @@
                 if (inputObj.down) dy += 1;
                 
                 // Joystick input
+                // V1_483: analog stick keeps its own magnitude (clamped to 1) and skips the
+                // keyboard diagonal x0.707 below — it was slowing touch play to ~71% at most angles.
+                let analog = false;
                 if (inputObj.joystickX !== 0 || inputObj.joystickY !== 0) {
                     dx = inputObj.joystickX;
                     dy = inputObj.joystickY;
+                    analog = true;
+                    const jm = Math.hypot(dx, dy);
+                    if (jm > 1) { dx /= jm; dy /= jm; }
                 }
                 
-                // Normalize diagonal
-                if (dx && dy) {
+                // Normalize diagonal (keyboard/digital input only — V1_483)
+                if (!analog && dx && dy) {
                     dx *= 0.707;
                     dy *= 0.707;
                 }
@@ -16330,9 +16340,11 @@
                     if (pellet.hit) continue;
                     
                     // Move pellet
-                    pellet.x += pellet.vx;
-                    pellet.y += pellet.vy;
-                    pellet.distTraveled += Math.hypot(pellet.vx, pellet.vy);
+                    // V1_483: scaled by fxFrameK (min(dt/16.667,1)) — 120Hz no longer flies 2x fast;
+                    // capped at 1 so low-FPS devices keep the per-frame step (no new tunnelling).
+                    pellet.x += pellet.vx * fxFrameK;
+                    pellet.y += pellet.vy * fxFrameK;
+                    pellet.distTraveled += Math.hypot(pellet.vx, pellet.vy) * fxFrameK;
                     
                     // Check if max range reached
                     if (pellet.distTraveled > maxRange) {
@@ -17307,11 +17319,12 @@
                         ctx.shadowColor = def.color;
                         
                         for (const note of state.musicNotes) {
-                            note.x += note.vx;
-                            note.y += note.vy;
-                            note.vy += 0.02; // Slight gravity
-                            note.angle += note.rotation;
-                            note.life -= 0.015;
+                            // V1_483: cosmetic per-frame motion scaled by fxFrameK (identical at 60Hz)
+                            note.x += note.vx * fxFrameK;
+                            note.y += note.vy * fxFrameK;
+                            note.vy += 0.02 * fxFrameK; // Slight gravity
+                            note.angle += note.rotation * fxFrameK;
+                            note.life -= 0.015 * fxFrameK;
                             
                             if (note.life > 0) {
                                 const nx = camera.screenX(note.x);
@@ -33560,6 +33573,7 @@
         function gameLoop(timestamp) {
             const dt = Math.min(timestamp - lastTime, 50); // Cap dt to prevent spiral of death
             lastTime = timestamp;
+            fxFrameK = Math.max(0, Math.min(dt / 16.667, 1)); // V1_483: see fxFrameK decl
             frameCount++; // Increment for optimization frame skipping
             camera.updateShake(dt); // Decay screen-shake on real dt (even when paused/time-stopped)
             updateMawWhiteout(dt);  // V1_409: entry white-out advances on real dt
@@ -33917,7 +33931,7 @@
                         fxRings.splice(i, 1);
                     } else {
                         // Ease radius toward maxR
-                        ring.r += (ring.maxR - ring.r) * 0.18;
+                        ring.r += (ring.maxR - ring.r) * 0.18 * fxFrameK; // V1_483: per-frame ease scaled (identical at 60Hz)
                     }
                 }
 
@@ -40783,6 +40797,20 @@
                 return;
             }
             const back = META.refundAll();
+            // V1_483: an explicit Refund All returns the Weapon/Tome Ban rows, so trim the saved
+            // ban lists to the post-refund caps (keep the first N = oldest; Sets keep insertion
+            // order). ONLY here — older pre-V1_431 5/3 saves keep their bans until they refund.
+            try {
+                recomputeBanCaps();
+                if (disabledWeapons.size > MAX_DISABLED_WEAPONS) {
+                    disabledWeapons = new Set([...disabledWeapons].slice(0, MAX_DISABLED_WEAPONS));
+                    localStorage.setItem('disabledWeapons', JSON.stringify([...disabledWeapons]));
+                }
+                if (disabledTomes.size > MAX_DISABLED_TOMES) {
+                    disabledTomes = new Set([...disabledTomes].slice(0, MAX_DISABLED_TOMES));
+                    localStorage.setItem('disabledTomes', JSON.stringify([...disabledTomes]));
+                }
+            } catch (e) {}
             _shopDisarmRefund();
             if (DOM.shopRefundHint) DOM.shopRefundHint.textContent = 'Refunded ' + PLASM_GLYPH + ' ' + back + '.';
             try { if (window.SFX && SFX.gem) SFX.gem(); } catch (e) {}
@@ -41305,6 +41333,11 @@
             DOM.pauseBtn.textContent = '⏸';
             DOM.pauseBtn.classList.remove('paused');
             DOM.menuOverlay.classList.remove('hidden');
+            // V1_483: a quit/exit is not a death — restore the default menu title/buttons so an
+            // earlier death's GAME OVER / TRY AGAIN doesn't linger (showGameOverMenu owns deaths).
+            DOM.menuOverlay.querySelector('.game-title').textContent = 'BOO SURVIVORS';
+            DOM.menuOverlay.querySelector('.game-subtitle').textContent = 'Survive the neon horde';
+            DOM.startBtn.textContent = 'START GAME';
             if (DOM.finalStats) DOM.finalStats.style.display = 'none';
             updateMenuMetaStrip(); // V1_398
         }
