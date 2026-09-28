@@ -904,6 +904,41 @@
         .score-modal.active {
             display: flex;
         }
+
+        /* V1_486: pause overlay — covers the game box like the upgrade overlay */
+        .pause-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.72);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 14px;
+            z-index: 550;
+            font-family: 'Oxanium', monospace;
+            touch-action: manipulation;
+        }
+        .pause-overlay.active {
+            display: flex;
+        }
+        .pause-title {
+            font-size: 38px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            color: #ff1493;
+            text-shadow: 0 0 20px #ff1493, 0 0 40px #ff1493;
+        }
+        .pause-hint {
+            font-size: 13px;
+            color: #0ff;
+            opacity: 0.85;
+            text-shadow: 0 0 8px #0ff;
+            letter-spacing: 1px;
+        }
         
         .score-modal-title {
             font-size: 38px;
@@ -1566,6 +1601,13 @@
                 </div>
             </div>
         </div>
+
+        <!-- V1_486: Pause Overlay -->
+        <div class="pause-overlay" id="pauseOverlay" role="dialog" aria-label="Game paused">
+            <div class="pause-title">PAUSED</div>
+            <button class="menu-btn" id="pauseResumeBtn">RESUME</button>
+            <div class="pause-hint">P / ESC to resume</div>
+        </div>
     </div>
     
     <!-- Score Submission Modal -->
@@ -1649,14 +1691,14 @@
                 <div class="tutorial-step" data-step="5">
                     <div class="tutorial-step-title">👹 BOSSES</div>
                     <div class="tutorial-step-content">
-                        <p>Every few levels, <span class="highlight boss">bosses</span> appear!</p>
+                        <p>Clear the bricks and <span class="highlight boss">bosses</span> appear — every level! Level 1 has 1 boss, level 2 has 2, and so on.</p><!-- V1_486: was "Every few levels" -->
                         <p>Bosses are large targets that:</p>
                         <ul>
                             <li>Move side to side</li>
                             <li>Fire lasers at your paddle</li>
                             <li>Take multiple hits to defeat</li>
                         </ul>
-                        <p>Defeat them to earn bonus points and a <strong>legendary upgrade</strong>!</p>
+                        <p>Defeat them all to clear the level and earn bonus points. Every 5th level also earns a <strong>legendary upgrade</strong>!</p><!-- V1_486: legendary is every 5th level, not every boss fight -->
                         <p class="tip">💡 Look for the ⭐ immunity star during boss fights!</p>
                     </div>
                 </div>
@@ -1876,7 +1918,7 @@
         };
         const MUSIC = createBooMusic({
             audioCtx: SFX.audioCtx,
-            isPaused: function () { return upgradeSelectionActive; },
+            isPaused: function () { return upgradeSelectionActive || gamePaused; }, // V1_486: duck while paused too
             startMuted: SFX.muted, // V1_471: honour the saved mute — HUD showed muted but music still played
             tracks: BOO_TRACKS,
             playlist: ['paddle', 'bricks']
@@ -1902,10 +1944,21 @@
         }
         canvas.addEventListener('click', function (e) {
             if (hitMute(e)) { e.stopImmediatePropagation(); SFX.unlock(); SFX.toggle(); }
+            else if (hitPause(e)) { e.stopImmediatePropagation(); setPaused(true); } // V1_486
         });
         canvas.addEventListener('touchend', function (e) {
             if (hitMute(e)) { e.preventDefault(); e.stopImmediatePropagation(); SFX.unlock(); SFX.toggle(); }
+            else if (hitPause(e)) { e.preventDefault(); e.stopImmediatePropagation(); setPaused(true); } // V1_486
         }, { passive: false });
+        // V1_486: canvas-drawn pause button, right of the mute toggle (rect set in drawHUD()).
+        // Zero-size until drawn during a run, so it can't be hit from the menu.
+        let pauseBtnRect = { x: 0, y: 0, w: 0, h: 0 };
+        function hitPause(e) {
+            if (!pauseBtnRect.w) return false;
+            const p = eventToGameCoords(e);
+            return !!p && p.x >= pauseBtnRect.x - 6 && p.x <= pauseBtnRect.x + pauseBtnRect.w + 6 &&
+                   p.y >= pauseBtnRect.y - 6 && p.y <= pauseBtnRect.y + pauseBtnRect.h + 6;
+        }
 
         const startBtn = document.getElementById('menuStartBtn');
         const leaderboardBtn = document.getElementById('menuLeaderboardBtn');
@@ -2254,6 +2307,7 @@
         
         // Upgrade selection state
         let upgradeSelectionActive = false;
+        let gamePaused = false; // V1_486: player pause (P / Esc / HUD button / tab hidden)
         let currentUpgradeChoices = [];
         let preBossUpgrade = false; // True when showing upgrade after bricks cleared (before boss)
         
@@ -2780,7 +2834,7 @@
                 const centerX = gameWidth / 2;
                 const bossSpacing = bossConfig.width + 20; // Boss width + gap
                 const rowSpacing = bossConfig.height + 15; // Vertical gap between rows
-                const maxBossesPerRow = 10; // Max bosses that fit on top row
+                const maxBossesPerRow = 9; // V1_486: was 10, but only 9 fit (center + 4 per side inside the 10px margins) — level 10 spawned 9 and every level 10-18 was one short
                 
                 // Split bosses between rows
                 const topRowCount = Math.min(numBosses, maxBossesPerRow);
@@ -4922,6 +4976,7 @@
             // doubled game-over sting and two score-modal timers.
             if (!gameRunning) return;
             gameRunning = false;
+            gamePaused = false; pauseOverlay.classList.remove('active'); // V1_486
             SFX.gameOver();
             if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music
 
@@ -5028,6 +5083,19 @@
             ctx.shadowBlur = 8;
             ctx.fillStyle = SFX.muted ? 'rgba(255,90,130,0.95)' : '#0ff';
             ctx.fillText(SFX.muted ? '🔇' : '🔊', muteBtnRect.x + muteBtnRect.w / 2, hudY);
+
+            // V1_486: pause button next to mute — same size/glow, only during a run
+            if (gameRunning) {
+                pauseBtnRect = { x: muteBtnRect.x + muteBtnRect.w + 8, y: muteBtnRect.y, w: 30, h: 26 };
+                const pcx = pauseBtnRect.x + pauseBtnRect.w / 2;
+                ctx.shadowColor = '#0ff';
+                ctx.shadowBlur = 8;
+                ctx.fillStyle = '#0ff';
+                ctx.fillRect(pcx - 6, hudY - 8, 4, 16);
+                ctx.fillRect(pcx + 2, hudY - 8, 4, 16);
+            } else {
+                pauseBtnRect = { x: 0, y: 0, w: 0, h: 0 };
+            }
 
             // HUD bottom border
             ctx.shadowBlur = 4;
@@ -5226,6 +5294,17 @@
             // delta spikes and would lurch the ball/boss forward ("screen jump"). Skip the
             // catch-up for that one frame. No steady-state change.
             if (suppressDeltaSpike) { deltaMultiplier = 1; suppressDeltaSpike = false; }
+
+            // V1_486: player pause — nothing advances; keep drawing (a resize clears the canvas)
+            if (gamePaused) {
+                draw();
+                drawInstructionOverlay();
+                drawBossSpawnMessage();
+                drawLevelTransitionMessage();
+                drawExtraLifeMessage();
+                requestAnimationFrame(update);
+                return;
+            }
             
             // Check if life lost pause is over
             if (lifeLostPause) {
@@ -5346,6 +5425,7 @@
             // AND a synthesized click on some Android WebViews; without this each
             // tap kicked a second update() loop → permanent ~2x ball/paddle speed.
             if (gameRunning) return;
+            gamePaused = false; pauseOverlay.classList.remove('active'); // V1_486
             score = 0;
             lives = 3;
             level = 1;
@@ -5465,6 +5545,52 @@
             requestAnimationFrame(update);
         }
 
+        // ========== PAUSE (V1_486) ==========
+        const pauseOverlay = document.getElementById('pauseOverlay');
+        const pauseResumeBtn = document.getElementById('pauseResumeBtn');
+        let pauseStartedAt = 0;
+        function canPause() {
+            return gameRunning && !upgradeSelectionActive && !scoreModal.classList.contains('active');
+        }
+        // Every wall-clock deadline moves forward by the pause length, so no ball, boss,
+        // laser, star, message or power-up timer progresses while paused.
+        function shiftTimersForPause(ms) {
+            if (!(ms > 0)) return;
+            if (lifeLostPause) lifeLostPauseEnd += ms;
+            if (bossSpawnPause && bossSpawnPauseEnd) bossSpawnPauseEnd += ms;
+            if (levelTransitionPause) levelTransitionPauseEnd += ms;
+            if (extraLifePause) extraLifePauseEnd += ms;
+            if (waitingForBossDeathAnimation) bossDeathAnimationEnd += ms;
+            bosses.forEach(b => { b.nextLaserTime += ms; if (b.flashUntil) b.flashUntil += ms; });
+            bossDeathParticles.forEach(p => { p.createdAt += ms; });
+            if (lastGlobalLaserTime) lastGlobalLaserTime += ms;
+            if (lastStarSpawnTime) lastStarSpawnTime += ms;
+            if (bossHitCooldownEnd) bossHitCooldownEnd += ms;
+            if (paddleAnimation.startTime) paddleAnimation.startTime += ms;
+            lastPowerUpTime += ms; // power-up clocks (powerUpDeltaMs) don't drain across the pause
+        }
+        function setPaused(on) {
+            if (on === gamePaused) return;
+            if (on && !canPause()) return;
+            gamePaused = on;
+            if (on) {
+                pauseStartedAt = performance.now();
+                heldKeys.left = heldKeys.right = false;
+                paddle.dx = 0;
+                pauseOverlay.classList.add('active');
+                try { pauseResumeBtn.focus({ preventScroll: true }); } catch (err) {}
+            } else {
+                shiftTimersForPause(performance.now() - pauseStartedAt);
+                pauseOverlay.classList.remove('active');
+                pauseResumeBtn.blur();
+            }
+        }
+        pauseResumeBtn.addEventListener('click', () => setPaused(false));
+        pauseResumeBtn.addEventListener('touchend', (e) => { e.preventDefault(); setPaused(false); }, { passive: false });
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) setPaused(true); // auto-pause; resume is the player's call
+        });
+
         // Controls (combined keyboard handler)
         // V1_471: held-direction state so releasing one arrow while the other is still
         // held keeps the paddle moving (was: any keyup zeroed dx). Last-pressed still wins.
@@ -5473,6 +5599,18 @@
             // V1_471: never hijack typing — A/D (and arrows) were preventDefault'd here,
             // so leaderboard names containing A or D could not be typed at all.
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+            // V1_486: P / Escape toggle pause during a run. Escape still closes an open modal
+            // first (handled below); while paused every other key is ignored.
+            if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+                const modalOpen = leaderboardOverlay.classList.contains('active') ||
+                    scoreModal.classList.contains('active') || tutorialOverlay.classList.contains('active');
+                if (!modalOpen && (gamePaused || canPause())) {
+                    e.preventDefault();
+                    setPaused(!gamePaused);
+                    return;
+                }
+            }
+            if (gamePaused) return;
             // Dismiss instruction or boss overlay on any key
             if (instructionPause || (bossSpawnPause && showFirstBossInstructions && level === 1 && bossSpawnPauseEnd === 0)) {
                 if (instructionPause) {
