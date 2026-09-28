@@ -830,6 +830,12 @@
             width: 600px;
             max-width: 95%;
             box-shadow: 0 0 40px rgba(255, 215, 0, 0.3);
+            /* V1_476: bounded height + scroll so STATS/EXIT stay reachable on short landscape screens */
+            max-height: calc(100% - 16px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 215, 0, 0.6) transparent;
         }
         
         .shop-header {
@@ -1961,6 +1967,12 @@
             width: 90%;
             text-align: center;
             box-shadow: 0 0 40px rgba(0, 255, 255, 0.3);
+            /* V1_476: bounded height + scroll so the header/close and Next stay reachable on short landscape screens */
+            max-height: calc(100% - 16px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0, 255, 255, 0.6) transparent;
         }
         
         .tutorial-header {
@@ -2825,7 +2837,7 @@
         .leaderboard-list {
             flex: 1;
             overflow-y: auto;
-            padding-ight: 5px;
+            padding-right: 5px; /* V1_476: was 'padding-ight' (typo, rule ignored) */
         }
         
         .leaderboard-list::-webkit-scrollbar {
@@ -2953,8 +2965,11 @@
             }
             
             .leaderboard-close {
-                padding: 10px 30px;
-                font-size: 12px;
+                /* V1_476: was padding 10px 30px, which squashed the 36px circle into an oval with a tiny ✕ */
+                width: 32px;
+                height: 32px;
+                padding: 0;
+                font-size: 16px;
             }
         }
         
@@ -2989,6 +3004,12 @@
                 padding: 10px 25px;
                 font-size: 13px;
             }
+        }
+
+        /* V1_476: themed keyboard focus ring (matches the main site's neon :focus-visible ring; mouse/touch unaffected) */
+        button:focus-visible {
+            outline: 2px solid #0ff;
+            outline-offset: 2px;
         }
 
         /* Accessibility: honor reduced-motion for decorative CSS animations.
@@ -3107,7 +3128,7 @@
                     <span class="tutorial-highlight">📡 Beam</span> - Damage ramps over time<br>
                     <span class="tutorial-highlight">🌋 Inferno</span> - Burning ground zones<br>
                     <span class="tutorial-highlight">💣 Cannon</span> - Piercing line shot<br>
-                    <span class="tutorial-highlight">⚡ Tesla</span> - Zaps multiple enemies<br>
+                    <span class="tutorial-highlight">⚡️ Tesla</span> - Zaps multiple enemies<br>
                     <span class="tutorial-highlight">✨ Buff</span> - Boosts nearby towers
                 </div>
             </div>
@@ -3382,7 +3403,7 @@
                     <div class="tower-cost">$160</div>
                 </div>
                 <div class="tower-btn" data-tower="tesla" title="Tesla Coil - Zaps multiple enemies (Wave 15)">
-                    <div class="tower-icon">⚡</div>
+                    <div class="tower-icon">⚡️</div><!-- V1_476: +U+FE0F so it renders as the emoji, not a monochrome text glyph -->
                     <div class="tower-cost">$180</div>
                 </div>
                 <div class="tower-btn" data-tower="buff" title="Buff Tower - Boosts nearby towers (Wave 18)">
@@ -4522,13 +4543,16 @@
             { id: 'discount', icon: '🏷️', name: 'Discount', descTemplate: '-{val}% tower costs', baseVal: 5, key: 'costReduction', isPercent: true },
             { id: 'poison', icon: '☠️', name: 'Toxic', descTemplate: '+{val}% poison damage', baseVal: 12, key: 'poisonBonus', isPercent: true },
             { id: 'crit', icon: '💢', name: 'Critical Hit', descTemplate: '+{val}% crit chance', baseVal: 3, key: 'critChance', isPercent: true },
-            { id: 'armor', icon: '🛡️', name: 'Armor Pierce', descTemplate: '+{val}% armor shred', baseVal: 6, key: 'armorShred', isPercent: true },
+            // V1_476: enemies have no armor stat, so this card did nothing — kept defined but pulled from the
+            // offer pool (OFFERABLE_UPGRADES) until an armor mechanic exists. Delete `disabled` to re-enable.
+            { id: 'armor', icon: '🛡️', name: 'Armor Pierce', descTemplate: '+{val}% armor shred', baseVal: 6, key: 'armorShred', isPercent: true, disabled: true },
             { id: 'life', icon: '❤️', name: 'Extra Life', descTemplate: '+{val} lives', baseVal: 2, key: 'lives', isPercent: false },
             { id: 'interest', icon: '📈', name: 'Interest', descTemplate: '+{val}% gold per wave', baseVal: 3, key: 'interest', isPercent: true },
-            { id: 'chain', icon: '⚡', name: 'Chain Power', descTemplate: '+{val} chain bounce', baseVal: 1, key: 'chainBonus', isPercent: false },
+            { id: 'chain', icon: '⚡️', name: 'Chain Power', descTemplate: '+{val} chain bounce', baseVal: 1, key: 'chainBonus', isPercent: false },
             { id: 'multishot', icon: '🎯', name: 'Multi-Shot', descTemplate: '+{val}% double shot', baseVal: 6, key: 'multishot', isPercent: true },
             { id: 'luck', icon: '🍀', name: 'Lucky', descTemplate: '+{val}% luck', baseVal: 5, key: 'luck', isPercent: true }
         ];
+        const OFFERABLE_UPGRADES = UPGRADE_BASES.filter(b => !b.disabled); // V1_476
         
         // Rarity multipliers for upgrade values
         const RARITY_MULTIPLIERS = {
@@ -4578,7 +4602,10 @@
             };
             
             // Apply player luck stat - boosts uncommon+ weights with scaling effect
-            const luckBonus = permUpgrades.luck || 0;
+            // V1_476: permUpgrades.luck is stored as a decimal (apply() divides isPercent values
+            // by 100), but this block expects percent points — it was dividing by 100 twice, so
+            // Lucky did ~1% of its intended effect. Convert back to points (0.05 -> 5).
+            const luckBonus = (permUpgrades.luck || 0) * 100;
             if (luckBonus > 0) {
                 // Luck scales 5:1, with boost for rare+
                 const luckPercent = luckBonus / 100; // Convert to decimal (e.g., 5% -> 0.05)
@@ -4710,7 +4737,7 @@
             },
             minigun: {
                 name: 'Minigun',
-                icon: '⚡',
+                icon: '🔥', // V1_476: match the tower-bar icon (was ⚡, which is Tesla's)
                 maxLevel: 10,
                 baseCost: 90,
                 costMult: 1.55,
@@ -4872,7 +4899,7 @@
             },
             tesla: {
                 name: 'Tesla',
-                icon: '🗼',
+                icon: '⚡️', // V1_476: match the tower-bar icon (was 🗼); U+FE0F forces emoji presentation
                 maxLevel: 10,
                 baseCost: 150,
                 costMult: 1.65,
@@ -4932,7 +4959,7 @@
             },
             nova: {
                 name: 'Nova',
-                icon: '💥',
+                icon: '💫', // V1_476: match the tower-bar icon (was 💥, identical to Bomber)
                 maxLevel: 10,
                 baseCost: 300,
                 costMult: 1.75,
@@ -5183,6 +5210,14 @@
         let enemiesToSpawn = 0;
         let spawnTimer = 0;
         let lastTime = 0;
+        // V1_476: game-time clock (ms). Advances only while unpaused and scales with the speed
+        // button, so timed effects (slow, poison, inferno zones, beam ramp) last the same GAME time
+        // at 1x/2x/4x/6x. They used performance.now(): at 6x a 2s freeze lasted 12 game-seconds,
+        // poison did 6x its damage, inferno pools ticked 6x slower, and the beam ramped 6x slower.
+        let gameClock = 0;
+        let runToken = 0;              // V1_476: bumps per run so stale timeouts can't leak into a new game
+        let queuedUpgradeSelections = 0; // V1_476: upgrade picks waiting behind the one on screen
+        let uiDirty = false;           // V1_476: kill-driven HUD/tower-bar refresh, flushed once per frame
 
         // Mouse state
         let mouseX = -1000;
@@ -5517,6 +5552,10 @@
                 const touch = e.touches[0];
                 const pos = getCanvasCoords(touch.clientX, touch.clientY);
                 
+                // V1_476: a tap on the canvas-drawn speed/exit button (fullscreen/iframe HUD) is handled
+                // on touchend — don't also start a ghost placement preview under it
+                if (LAYOUT.isFullscreen && isOnCanvasButton(pos.x, pos.y)) return;
+                
                 // Check if touching a placed tower first
                 const tappedTower = getTowerAtPoint(pos.x, pos.y);
                 if (tappedTower) return; // Let touchend handle tower inspection
@@ -5639,6 +5678,14 @@
             movingTower = null;
             placementRotation = 0;
             gamePaused = false;
+            gameClock = 0; // V1_476
+            runToken++; // V1_476
+            inspectedChampion = null; // V1_476: was never cleared on restart
+            // V1_476: drop any upgrade pick left over from the previous run
+            queuedUpgradeSelections = 0;
+            slotRollIntervals.forEach(id => clearInterval(id));
+            slotRollIntervals = [];
+            upgradeOverlay.classList.remove('active');
             gameSpeed = 1;
             document.getElementById('speedBtn').textContent = '▶▶ 1x';
             document.getElementById('speedBtn').classList.remove('active');
@@ -5801,6 +5848,7 @@
         }
 
         function update(dt, rawDt) {
+            gameClock += rawDt; // V1_476
             // Spawn enemies
             if (waveInProgress && enemiesToSpawn > 0) {
                 spawnTimer -= rawDt;
@@ -5873,6 +5921,13 @@
             
             // Update inferno zones
             updateInfernoZones(dt);
+
+            // V1_476: one HUD/tower-bar refresh per frame instead of one per kill (DOM churn at 6x)
+            if (uiDirty) {
+                uiDirty = false;
+                updateHUD();
+                updateTowerButtons();
+            }
         }
 
         // ========== ENEMY SYSTEM ==========
@@ -6131,8 +6186,8 @@
             // If stunned or pinned, don't move
             if (enemy.stunned || enemy.pinned) {
                 // Still take poison damage while stunned
-                if (now < enemy.poisonUntil && now - enemy.lastPoisonTick >= 500 / gameSpeed) {
-                    enemy.lastPoisonTick = now;
+                if (gameClock < enemy.poisonUntil && gameClock - enemy.lastPoisonTick >= 500) { // V1_476: game clock
+                    enemy.lastPoisonTick = gameClock;
                     damageEnemy(enemy, enemy.poisonDamage, false);
                     createParticles(enemy.x, enemy.y, '#44ff44', 3);
                 }
@@ -6140,15 +6195,15 @@
             }
             
             // Apply poison damage
-            if (now < enemy.poisonUntil && now - enemy.lastPoisonTick >= 500 / gameSpeed) {
-                enemy.lastPoisonTick = now;
+            if (gameClock < enemy.poisonUntil && gameClock - enemy.lastPoisonTick >= 500) { // V1_476: game clock
+                enemy.lastPoisonTick = gameClock;
                 damageEnemy(enemy, enemy.poisonDamage, false);
                 createParticles(enemy.x, enemy.y, '#44ff44', 3);
             }
             
             // Apply slow effect
             let speedMult = 1;
-            if (now < enemy.slowUntil) {
+            if (gameClock < enemy.slowUntil) { // V1_476: game clock
                 speedMult = enemy.slowAmount;
             }
             
@@ -6250,8 +6305,7 @@
                 const goldEarned = Math.floor(enemy.gold * (1 + permUpgrades.goldBonus));
                 gold += goldEarned;
                 kills++;
-                updateHUD();
-                updateTowerButtons();
+                uiDirty = true; // V1_476: flushed once at the end of update() (was a full HUD + 14-button DOM pass per kill)
                 
                 // Leprechaun death: special reward!
                 if (enemy.type === 'leprechaun') {
@@ -6272,8 +6326,11 @@
                     createSplashRing(enemy.x, enemy.y, '#ffd700', 70);
                     SFX.leprechaun();
                     // Delay upgrade selector slightly for visual effect
+                    // V1_476: only if this run is still live (it popped over the game-over/menu screens and
+                    // could be picked in the NEXT run); showUpgradeSelector() queues if a pick is already open
+                    const token = runToken;
                     setTimeout(() => {
-                        showUpgradeSelector();
+                        if (gameRunning && token === runToken) showUpgradeSelector();
                     }, 300);
                 // Megaboss death: massive explosion effect
                 } else if (enemy.type === 'megaboss') {
@@ -6703,7 +6760,8 @@
             // First tower is 35% cheaper, then scales exponentially
             // 1st: 0.65x, 2nd: ~1x, 3rd: ~1.56x, 5th: ~3.75x, 10th: ~26x
             const scaledCost = def.cost * 0.65 * Math.pow(1.55, count);
-            return Math.floor(scaledCost * (1 - permUpgrades.costReduction));
+            // V1_476: clamp — stacked Discount picks past 100% made towers cost negative gold (placing paid you)
+            return Math.floor(scaledCost * Math.max(0, 1 - permUpgrades.costReduction));
         }
         
         // Check if tower type has reached its placement limit
@@ -6883,49 +6941,11 @@
             
             // Smooth tower tracking for blaster and cannon
             // They track enemies anywhere on screen, not just in range
-            if (tower.type === 'basic' || tower.type === 'cannon') {
-                // Find nearest enemy on screen to track
-                let trackTarget = null;
-                let nearestDist = Infinity;
-                
-                for (const enemy of enemies) {
-                    if (!enemy.alive) continue;
-                    const dx = enemy.x - tower.x;
-                    const dy = enemy.y - tower.y;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < nearestDist) {
-                        nearestDist = dist;
-                        trackTarget = enemy;
-                    }
-                }
-                
-                // Calculate target angle
-                if (trackTarget) {
-                    tower.targetAngle = Math.atan2(trackTarget.y - tower.y, trackTarget.x - tower.x);
-                }
-                
-                // Smooth rotation towards target angle
-                if (tower.angle === undefined) tower.angle = -Math.PI / 2;
-                if (tower.targetAngle === undefined) tower.targetAngle = -Math.PI / 2;
-                
-                // Calculate shortest rotation direction
-                let angleDiff = tower.targetAngle - tower.angle;
-                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-                
-                // Rotation speed (radians per frame at 60fps)
-                const rotationSpeed = 0.15 * dt;
-                
-                if (Math.abs(angleDiff) < rotationSpeed) {
-                    tower.angle = tower.targetAngle;
-                } else {
-                    tower.angle += Math.sign(angleDiff) * rotationSpeed;
-                }
-                
-                // Normalize angle
-                while (tower.angle > Math.PI) tower.angle -= Math.PI * 2;
-                while (tower.angle < -Math.PI) tower.angle += Math.PI * 2;
-            }
+            // V1_476 perf: the nearest-enemy scan now rides the targeting loop below (one pass over
+            // enemies instead of two, squared distances instead of Math.sqrt) — same picks, same order.
+            const tracksNearest = tower.type === 'basic' || tower.type === 'cannon';
+            let trackTarget = null;
+            let nearestDistSq = Infinity;
             
             // Buff towers don't fire, they just boost nearby towers
             if (def.buffRange) {
@@ -6946,7 +6966,7 @@
                 
                 const dx = tower.x - other.x;
                 const dy = tower.y - other.y;
-                if (Math.sqrt(dx * dx + dy * dy) <= buffRange) {
+                if (dx * dx + dy * dy <= buffRange * buffRange) { // V1_476 perf: squared distance
                     buffDamageBonus += otherUpgrades.buffDamage || otherDef.buffDamage;
                     buffFireRateBonus += otherUpgrades.buffFireRate || otherDef.buffFireRate;
                 }
@@ -6957,6 +6977,7 @@
             const fireRateMultiplier = upgrades.fireRate || 1;
             
             const range = def.range * rangeMultiplier * (1 + permUpgrades.rangeBonus);
+            const rangeSq = range * range; // V1_476 perf
             // Fire rate bonus reduces interval (makes it faster), gameSpeed also speeds up firing
             const fireInterval = def.fireRate / (fireRateMultiplier * (1 + permUpgrades.fireRateBonus + buffFireRateBonus) * gameSpeed);
             
@@ -6971,9 +6992,14 @@
                 if (!enemy.alive) continue;
                 const dx = enemy.x - tower.x;
                 const dy = enemy.y - tower.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
+                const distSq = dx * dx + dy * dy; // V1_476 perf: squared distance
                 
-                if (dist <= range) {
+                if (tracksNearest && distSq < nearestDistSq) {
+                    nearestDistSq = distSq;
+                    trackTarget = enemy;
+                }
+                
+                if (distSq <= rangeSq) {
                     const progress = enemy.pathIndex + enemy.pathProgress;
                     // Default priority is 1
                     let priority = 1;
@@ -7004,6 +7030,36 @@
                 }
             }
             
+            // Smooth rotation towards the nearest enemy (blaster + cannon; scan merged above — V1_476)
+            if (tracksNearest) {
+                // Calculate target angle
+                if (trackTarget) {
+                    tower.targetAngle = Math.atan2(trackTarget.y - tower.y, trackTarget.x - tower.x);
+                }
+                
+                // Smooth rotation towards target angle
+                if (tower.angle === undefined) tower.angle = -Math.PI / 2;
+                if (tower.targetAngle === undefined) tower.targetAngle = -Math.PI / 2;
+                
+                // Calculate shortest rotation direction
+                let angleDiff = tower.targetAngle - tower.angle;
+                while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+                while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+                
+                // Rotation speed (radians per frame at 60fps)
+                const rotationSpeed = 0.15 * dt;
+                
+                if (Math.abs(angleDiff) < rotationSpeed) {
+                    tower.angle = tower.targetAngle;
+                } else {
+                    tower.angle += Math.sign(angleDiff) * rotationSpeed;
+                }
+                
+                // Normalize angle
+                while (tower.angle > Math.PI) tower.angle -= Math.PI * 2;
+                while (tower.angle < -Math.PI) tower.angle += Math.PI * 2;
+            }
+            
             tower.target = bestTarget;
             tower.buffBonus = buffDamageBonus; // Store for damage calculation
             tower.upgrades = upgrades; // Store for projectile/beam damage
@@ -7016,9 +7072,10 @@
             if (def.isInferno) {
                 const maxZones = def.infernoMaxZones || 3;
                 // Count zones and boulders owned by THIS tower only
-                const myZones = infernoZones.filter(z => z.towerId === tower.id).length;
-                const myBoulders = projectiles.filter(p => p.isBoulder && p.alive && p.towerId === tower.id).length;
-                const myTotalActive = myZones + myBoulders;
+                // V1_476 perf: counted in place (was two .filter() array allocations per inferno tower per frame)
+                let myTotalActive = 0;
+                for (const z of infernoZones) if (z.towerId === tower.id) myTotalActive++;
+                for (const p of projectiles) if (p.isBoulder && p.alive && p.towerId === tower.id) myTotalActive++;
                 // Inferno can fire preemptively as soon as wave starts, doesn't need enemies in range
                 canFire = waveInProgress && myTotalActive < maxZones;
             }
@@ -7029,21 +7086,21 @@
                     // Track beam target for damage ramping
                     if (tower.beamTarget !== bestTarget) {
                         tower.beamTarget = bestTarget;
-                        tower.beamLockTime = now;
-                        tower.beamRetargetTime = now; // Track when we switched targets
+                        tower.beamLockTime = gameClock; // V1_476: game clock (ramp/acquire no longer 6x slower at 6x)
+                        tower.beamRetargetTime = gameClock; // Track when we switched targets
                         SFX.fire('laser'); // sound on lock-change only (gate also protects)
                     }
                     
                     // Retargeting delay - beam needs 800ms to acquire new target before dealing damage
                     const retargetDelay = 800;
-                    if (now - tower.beamRetargetTime < retargetDelay) {
+                    if (gameClock - tower.beamRetargetTime < retargetDelay) {
                         // Still acquiring target, no damage yet
                         return;
                     }
                     
                     // Calculate ramp multiplier - starts at 0.4x, accelerates to massive damage
                     // Reaches ~1.4x at 1 second, ~4.4x at 2 seconds, ~9.4x at 3 seconds
-                    const lockDuration = (now - tower.beamLockTime - retargetDelay) / 1000; // seconds (subtract delay)
+                    const lockDuration = (gameClock - tower.beamLockTime - retargetDelay) / 1000; // seconds (subtract delay)
                     const rampSpeed = upgrades.rampSpeed || 1;
                     const rampMultiplier = 0.4 + Math.pow(Math.max(0, lockDuration) * rampSpeed, 2.0);
                     
@@ -7064,8 +7121,8 @@
                         if (!enemy.alive) continue;
                         const dx = enemy.x - tower.x;
                         const dy = enemy.y - tower.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        if (dist <= range) {
+                        const dist = dx * dx + dy * dy; // V1_476 perf: squared (same ordering, no sqrt)
+                        if (dist <= rangeSq) {
                             targets.push({ enemy, dist });
                         }
                     }
@@ -7547,7 +7604,7 @@
             tower.lastFired = performance.now();
             SFX.fire(tower.type);
 
-            projectiles.push({
+            const shot = {
                 x: tower.x,
                 y: tower.y,
                 vx: (dx / dist) * def.projectileSpeed,
@@ -7556,7 +7613,8 @@
                 color: def.projectileColor,
                 type: tower.type,
                 alive: true,
-                chainCount: upgrades.chains || def.chainCount || 0,
+                // V1_476: Chain Power (+N chain bounce) was never read — add it for chain-type shots only
+                chainCount: (upgrades.chains || def.chainCount || 0) + (def.chainCount ? (permUpgrades.chainBonus || 0) : 0),
                 chainRange: def.chainRange || 0,
                 hitEnemies: [],
                 splashMult: upgrades.splash || 1,
@@ -7564,7 +7622,22 @@
                 slowMult: upgrades.slow || 1,
                 trail: [{x: tower.x, y: tower.y}],
                 intendedTarget: target // Track target for incoming damage cleanup
-            });
+            };
+            projectiles.push(shot);
+
+            // V1_476: Multi-Shot (+X% double shot) was never read — X% chance to fire a second,
+            // identical bolt at the same target, offset 5px sideways so both read on screen.
+            if (permUpgrades.multishot > 0 && Math.random() < permUpgrades.multishot) {
+                const ox = (-dy / dist) * 5;
+                const oy = (dx / dist) * 5;
+                target.incomingDamage += projDamage;
+                projectiles.push(Object.assign({}, shot, {
+                    x: tower.x + ox,
+                    y: tower.y + oy,
+                    hitEnemies: [],
+                    trail: [{x: tower.x + ox, y: tower.y + oy}]
+                }));
+            }
             
             // Create railgun line visual for piercing weapons
             if (def.isPiercing) {
@@ -8038,7 +8111,7 @@
                 
                 // Boulders going out of bounds should still create their AOE at target
                 if (proj.isBoulder) {
-                    const now = performance.now();
+                    const now = gameClock; // V1_476: game clock
                     infernoZones.push({
                         x: proj.targetX,
                         y: proj.targetY,
@@ -8083,7 +8156,7 @@
                     // Impact! Create inferno zone at target location
                     proj.alive = false;
                     
-                    const now = performance.now();
+                    const now = gameClock; // V1_476: game clock
                     infernoZones.push({
                         x: proj.targetX,
                         y: proj.targetY,
@@ -8220,14 +8293,15 @@
                             // +20% slow power means enemies move 20% slower
                             const slowStrength = baseSlowStrength * (1 - permUpgrades.slowBonus);
                             enemy.slowAmount = Math.max(0.15, Math.min(enemy.slowAmount, slowStrength));
-                            enemy.slowUntil = performance.now() + towerDef.slowDuration;
+                            enemy.slowUntil = gameClock + towerDef.slowDuration; // V1_476: game clock
                         }
                         
                         // Apply poison if poison tower (use upgrade multiplier)
                         if (towerDef.poisonDamage) {
                             const poisonMult = proj.poisonMult || 1;
-                            enemy.poisonDamage = towerDef.poisonDamage * poisonMult * (1 + permUpgrades.damageBonus);
-                            enemy.poisonUntil = performance.now() + towerDef.poisonDuration;
+                            // V1_476: Toxic (+X% poison damage) was never read — apply it here
+                            enemy.poisonDamage = towerDef.poisonDamage * poisonMult * (1 + permUpgrades.damageBonus) * (1 + (permUpgrades.poisonBonus || 0));
+                            enemy.poisonUntil = gameClock + towerDef.poisonDuration; // V1_476: game clock
                         }
                     }
                     break;
@@ -8426,6 +8500,7 @@
             // Wave 1 completion bonus (both modes)
             if (wave === 1) {
                 gold += 32;
+                updateHUD(); // V1_476: DOM gold stayed stale (+32 not shown) until the next HUD refresh
             }
             
             // Campaign mode: check for stage completion (every 5 waves)
@@ -8466,7 +8541,9 @@
             overlay.classList.add('active');
             
             // After transition animation, complete the stage change
+            const token = runToken; // V1_476
             setTimeout(() => {
+                if (token !== runToken) return; // V1_476: run was restarted/exited meanwhile
                 completeCampaignStageTransition();
                 overlay.classList.remove('active');
                 showUpgradeSelector();
@@ -8604,6 +8681,13 @@
         let slotRollIntervals = [];
         
         function showUpgradeSelector() {
+            // V1_476: a pick is already on screen (leprechaun reward + wave-clear reward landing
+            // together) — queue this one. Before, the second call re-rolled the live cards and the
+            // player only got ONE upgrade for the two rewards.
+            if (upgradeOverlay.classList.contains('active')) {
+                queuedUpgradeSelections++;
+                return;
+            }
             gamePaused = true;
             upgradeSelectionActive = false;
             upgradeOverlay.classList.add('active');
@@ -8638,7 +8722,7 @@
                 
                 // Start cycling through random upgrades
                 const cycleUpgrades = () => {
-                    const randomBase = UPGRADE_BASES[Math.floor(Math.random() * UPGRADE_BASES.length)];
+                    const randomBase = OFFERABLE_UPGRADES[Math.floor(Math.random() * OFFERABLE_UPGRADES.length)];
                     const iconEl = slot.querySelector('.upgrade-icon');
                     const nameEl = slot.querySelector('.upgrade-name');
                     const descEl = slot.querySelector('.upgrade-desc');
@@ -8667,7 +8751,7 @@
                     if (!upgrade) {
                         console.error('Missing upgrade at index', i, 'choices:', currentUpgradeChoices);
                         // Still show something - pick a random one
-                        const fallback = generateUpgrade(UPGRADE_BASES[Math.floor(Math.random() * UPGRADE_BASES.length)]);
+                        const fallback = generateUpgrade(OFFERABLE_UPGRADES[Math.floor(Math.random() * OFFERABLE_UPGRADES.length)]);
                         currentUpgradeChoices[i] = fallback;
                     }
                     const finalUpgrade = currentUpgradeChoices[i];
@@ -8702,12 +8786,12 @@
             // Always generate exactly 'count' upgrades
             while (selected.length < count) {
                 // Pick a random upgrade type that hasn't been used yet this selection
-                let pool = UPGRADE_BASES.filter(b => !usedIds.has(b.id));
+                let pool = OFFERABLE_UPGRADES.filter(b => !usedIds.has(b.id));
                 
                 // Safety check - if pool is somehow empty, reset usedIds
                 if (pool.length === 0) {
                     usedIds.clear();
-                    pool = [...UPGRADE_BASES];
+                    pool = [...OFFERABLE_UPGRADES];
                 }
                 
                 // Weight by "not seen recently"
@@ -8761,7 +8845,7 @@
                 slot.style.transform = 'translateY(0) scale(1)';
                 
                 const cycleUpgrades = () => {
-                    const randomBase = UPGRADE_BASES[Math.floor(Math.random() * UPGRADE_BASES.length)];
+                    const randomBase = OFFERABLE_UPGRADES[Math.floor(Math.random() * OFFERABLE_UPGRADES.length)];
                     const iconEl = slot.querySelector('.upgrade-icon');
                     const nameEl = slot.querySelector('.upgrade-name');
                     const descEl = slot.querySelector('.upgrade-desc');
@@ -8784,7 +8868,7 @@
                     
                     const upgrade = currentUpgradeChoices[i];
                     if (!upgrade) {
-                        const fallback = generateUpgrade(UPGRADE_BASES[Math.floor(Math.random() * UPGRADE_BASES.length)]);
+                        const fallback = generateUpgrade(OFFERABLE_UPGRADES[Math.floor(Math.random() * OFFERABLE_UPGRADES.length)]);
                         currentUpgradeChoices[i] = fallback;
                     }
                     const finalUpgrade = currentUpgradeChoices[i];
@@ -8851,6 +8935,11 @@
                     slot.classList.remove('selected', 'revealed', 'rolling');
                 });
                 gamePaused = false;
+                // V1_476: show the next queued pick, if any
+                if (queuedUpgradeSelections > 0 && gameRunning) {
+                    queuedUpgradeSelections--;
+                    showUpgradeSelector();
+                }
             }, 600);
         }
         
@@ -8891,6 +8980,7 @@
 
         // ========== GAME OVER ==========
         function gameOver() {
+            if (!gameRunning) return; // V1_476: two leaks in one frame called this twice (double sting + two score modals)
             gameRunning = false;
             SFX.gameover();
             if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music — Last Stand sting, then the title theme
@@ -9007,6 +9097,7 @@
         }
         
         async function submitScore() {
+            if (submitScoreBtn.disabled) return; // V1_476: re-entry guard (Enter / touchend+click while saving => duplicate rows)
             const rawName = usernameInput.value;
             const username = sanitizeUsername(rawName);
             
@@ -9057,7 +9148,7 @@
         
         function saveLocalScore(name, waveNum, killCount, mode) {
             try {
-                const scores = JSON.parse(localStorage.getItem('towerdefense_scores') || '[]');
+                const scores = getLocalScores(); // V1_476: shared array-validated read
                 scores.push({ name, wave: waveNum, kills: killCount, mode: mode, timestamp: Date.now() });
                 scores.sort((a, b) => b.wave - a.wave || b.kills - a.kills);
                 localStorage.setItem('towerdefense_scores', JSON.stringify(scores.slice(0, 100)));
@@ -9068,7 +9159,10 @@
         
         function getLocalScores() {
             try {
-                return JSON.parse(localStorage.getItem('towerdefense_scores') || '[]');
+                const parsed = JSON.parse(localStorage.getItem('towerdefense_scores') || '[]');
+                // V1_476: a non-array value (corrupt/foreign data) threw inside the leaderboard's catch
+                // block and left it stuck on "Loading scores..."
+                return Array.isArray(parsed) ? parsed.filter(s => s && typeof s === 'object') : [];
             } catch (e) {
                 return [];
             }
@@ -9154,7 +9248,7 @@
         
         function renderLeaderboard() {
             // Filter scores by current mode (treat missing mode as 'classic' for legacy)
-            const filteredScores = cachedScores.filter(s => (s.mode || 'classic') === currentLeaderboardMode);
+            const filteredScores = cachedScores.filter(s => s && (s.mode || 'classic') === currentLeaderboardMode); // V1_476: skip null docs
             
             if (filteredScores.length === 0) {
                 leaderboardList.innerHTML = '<div class="leaderboard-empty">No scores yet. Be the first!</div>';
@@ -9162,7 +9256,7 @@
             }
             
             // Sort and limit to top 100
-            filteredScores.sort((a, b) => b.wave - a.wave || b.kills - a.kills);
+            filteredScores.sort((a, b) => (Number(b.wave) || 0) - (Number(a.wave) || 0) || (Number(b.kills) || 0) - (Number(a.kills) || 0)); // V1_476: NaN-safe for malformed docs
             const topScores = filteredScores.slice(0, 100);
             
             let html = '';
@@ -9360,19 +9454,17 @@
                 { key: 'costReduction', name: '🏷️ Cost Reduction', suffix: '%' },
                 { key: 'poisonBonus', name: '☠️ Poison', suffix: '%' },
                 { key: 'critChance', name: '💢 Crit Chance', suffix: '%' },
-                { key: 'armorShred', name: '🛡️ Armor Shred', suffix: '%' },
                 { key: 'interest', name: '📈 Interest', suffix: '%' },
                 { key: 'multishot', name: '🎯 Multi-Shot', suffix: '%' },
-                { key: 'chainBonus', name: '⚡ Chain Bonus', suffix: '', isFlat: true }
+                { key: 'chainBonus', name: '⚡️ Chain Bonus', suffix: '', isFlat: true }
             ];
             
             for (const stat of statDefs) {
                 let value = permUpgrades[stat.key] || 0;
                 // Convert decimal to percentage for display
-                if (!stat.isFlat && value > 0 && value < 1) {
+                // V1_476: always scale percent stats — the old `value < 1` branch showed +104% as "+1%"
+                if (!stat.isFlat) {
                     value = Math.round(value * 100);
-                } else if (!stat.isFlat) {
-                    value = Math.round(value);
                 }
                 
                 const row = document.createElement('div');
@@ -9429,7 +9521,9 @@
         const tutorialPrev = document.getElementById('tutorialPrev');
         const tutorialNext = document.getElementById('tutorialNext');
         const tutorialDots = document.getElementById('tutorialDots');
-        const tutorialSteps = document.querySelectorAll('.tutorial-step');
+        // V1_476: skip steps hidden inline (the parked Champions card) — it was still counted, so
+        // page 6 of HOW TO PLAY was blank (it got .active but its inline display:none won)
+        const tutorialSteps = Array.from(document.querySelectorAll('.tutorial-step')).filter(s => s.style.display !== 'none');
         const totalSteps = tutorialSteps.length;
         let currentStep = 0;
         
@@ -9613,9 +9707,9 @@
             // Matches: .hud { gap: 20px, font-size: 18px, color: #fff, text-shadow: 0 0 10px #0ff, font-weight: bold }
             // Matches: .hud-item span { color: #0ff }
             const items = [
-                { icon: '❤️', value: lives },
+                { icon: '❤️', value: Math.max(0, lives) }, // V1_476: match DOM HUD (no negative lives)
                 { icon: '💰', value: gold },
-                { icon: '🌊', value: wave },
+                { icon: '🌊', value: getWaveLabel() }, // V1_476: was raw `wave` (0 before wave 1, no stage in campaign)
                 { icon: '💀', value: kills }
             ];
             
@@ -9716,6 +9810,14 @@
             canvasButtons.exit = { x: exitBtnX, y: exitBtnY, w: exitBtnW, h: exitBtnH, visible: true };
         }
         
+        // V1_476: side-effect-free hit test for the canvas HUD buttons
+        function isOnCanvasButton(x, y) {
+            for (const b of [canvasButtons.speed, canvasButtons.exit]) {
+                if (b.visible && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return true;
+            }
+            return false;
+        }
+
         // Check if a canvas UI button was clicked
         function checkCanvasButtonClick(x, y) {
             // Speed button
@@ -9727,7 +9829,9 @@
                 const domSpeedBtn = document.getElementById('speedBtn');
                 if (domSpeedBtn) {
                     domSpeedBtn.textContent = '▶▶ ' + gameSpeed + 'x';
+                    domSpeedBtn.classList.toggle('active', gameSpeed > 1); // V1_476: keep the pink state in sync
                 }
+                SFX.uiClick(); // V1_476: canvas buttons were the only silent buttons
                 return true;
             }
             
@@ -9736,6 +9840,7 @@
             if (exitBtn.visible && x >= exitBtn.x && x <= exitBtn.x + exitBtn.w && y >= exitBtn.y && y <= exitBtn.y + exitBtn.h) {
                 // Show exit confirmation overlay (same as DOM button)
                 document.getElementById('exitConfirmOverlay').classList.add('active');
+                SFX.uiClick(); // V1_476
                 return true;
             }
             
@@ -11412,8 +11517,8 @@
             for (const enemy of enemies) {
                 if (!enemy.alive) continue;
                 
-                const isSlowed = now < enemy.slowUntil;
-                const isPoisoned = now < enemy.poisonUntil;
+                const isSlowed = gameClock < enemy.slowUntil; // V1_476: game clock
+                const isPoisoned = gameClock < enemy.poisonUntil;
                 const isMegaboss = enemy.type === 'megaboss';
                 const isBoss = enemy.type === 'boss';
                 const isTank = enemy.type === 'tank';
@@ -11974,8 +12079,16 @@
             // Check if it's a champion or tower
             const isChamp = !!CHAMPIONS[towerType];
             const def = isChamp ? CHAMPIONS[towerType] : TOWERS[towerType];
-            const range = def.range * (1 + permUpgrades.rangeBonus);
-            
+            // V1_476: include the tower-shop range level (and buff radius level) so the preview ring
+            // matches the ring shown once the tower is placed/inspected; it used the level-0 range.
+            let range = def.range * (1 + permUpgrades.rangeBonus);
+            if (!isChamp && TOWER_SHOP[towerType]) {
+                const lvl = getTowerUpgrades(towerType);
+                range = def.buffRange
+                    ? def.buffRange * (lvl.buffRange || 1) * (1 + permUpgrades.rangeBonus)
+                    : def.range * (lvl.range || 1) * (1 + permUpgrades.rangeBonus);
+            }
+
             // For move mode, temporarily remove tower from check
             let valid;
             if (movingTower) {
@@ -12456,7 +12569,9 @@
         function updateRailgunLines(dt) {
             for (let i = railgunLines.length - 1; i >= 0; i--) {
                 const line = railgunLines[i];
-                line.life -= dt * 1000;
+                // V1_476: dt is in 60fps FRAMES, not seconds — `dt * 1000` burned the 400ms life in one
+                // frame, so the streak was a single-frame flicker. Convert frames -> ms.
+                line.life -= dt * FRAME_TIME;
                 line.alpha = line.life / line.maxLife;
                 if (line.life <= 0) {
                     railgunLines.splice(i, 1);
@@ -12516,7 +12631,9 @@
         function updateSplashRings(dt) {
             for (let i = splashRings.length - 1; i >= 0; i--) {
                 const ring = splashRings[i];
-                ring.radius += dt * 150;
+                // V1_476: dt is in 60fps FRAMES — `dt * 150` grew the ring 150px per frame, so every splash /
+                // impact ring vanished after one frame (flicker). Now 150px per second, as the number intends.
+                ring.radius += dt * FRAME_TIME * 0.15;
                 ring.alpha = 1 - (ring.radius / ring.maxRadius);
                 if (ring.radius >= ring.maxRadius) {
                     splashRings.splice(i, 1);
@@ -12547,7 +12664,7 @@
         }
         
         function updateInfernoZones(dt) {
-            const now = performance.now();
+            const now = gameClock; // V1_476: game clock (lifetime + 200ms ticks scale with game speed)
             
             for (let i = infernoZones.length - 1; i >= 0; i--) {
                 const zone = infernoZones[i];
@@ -12586,7 +12703,7 @@
             const now = performance.now();
 
             for (const zone of infernoZones) {
-                const elapsed = now - zone.startTime;
+                const elapsed = gameClock - zone.startTime; // V1_476: zone age on the game clock; flicker stays wall-clock
                 const remaining = zone.duration - elapsed;
                 const fade = Math.min(1, remaining / 600);          // fade out over last 600ms
                 const grow = Math.min(1, elapsed / 220);            // grow in over first 220ms
@@ -12697,10 +12814,17 @@
         }
 
         // ========== UTILITIES ==========
+        // V1_476: one wave label for the DOM + canvas HUDs. Campaign shows "stage-wave" (as startWave()
+        // sets it); updateHUD() used to overwrite it with the raw wave number on the first kill.
+        function getWaveLabel() {
+            if (gameMode === 'campaign' && wave > 0) return campaignStage + '-' + campaignStageWave;
+            return String(wave || 1);
+        }
+
         function updateHUD() {
-            livesDisplay.textContent = lives;
+            livesDisplay.textContent = Math.max(0, lives); // V1_476: a multi-life leak showed e.g. "-2"
             goldDisplay.textContent = gold;
-            waveDisplay.textContent = wave || 1;
+            waveDisplay.textContent = getWaveLabel(); // V1_476
             killsDisplay.textContent = kills;
         }
 
