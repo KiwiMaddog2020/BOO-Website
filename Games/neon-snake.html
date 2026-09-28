@@ -2060,7 +2060,11 @@
         let enemies = [];
         const ENEMY_SPAWN_DURATION = 3000; // 3 seconds spawn animation
         const ENEMY_RESPAWN_DELAY = 10000; // 10 seconds after death
-        const ENEMY_SPEED = 171; // 5% faster than before
+        // V1_485: enemies now run on their own clock instead of riding the player tick. The old
+        // 171ms setting only ever took effect as "every 2nd player tick" = 333.3ms at base speed
+        // (measured), so that is the interval — base-speed feel is unchanged, but Speed Boost /
+        // food speed-ups no longer drag the enemies along. 1000/3 = exactly 20 frames at 60Hz.
+        const ENEMY_SPEED = 1000 / 3;
         const MAX_ENEMIES = 2;
         
         // Enemy color schemes (neon palette)
@@ -2471,7 +2475,7 @@
         
         function getEffectiveEnemySpeed() {
             if (activePowerups.freezeTime) return Infinity; // Enemies don't move
-            if (activePowerups.slowEnemies) return ENEMY_SPEED * 2; // Half speed
+            if (activePowerups.slowEnemies) return ENEMY_SPEED * 2; // Half speed (V1_485: now a true 2x — was 3 ticks vs 2 = 1.5x)
             return ENEMY_SPEED;
         }
         
@@ -2684,7 +2688,10 @@
             }
             
             // Update enemy movement
-            if (enemy.alive && currentTime - enemy.lastUpdateTime >= getEffectiveEnemySpeed()) {
+            // V1_485: half-frame tolerance — enemy times are performance.now() reads, which jitter
+            // by a few ms inside the rAF callback; the accumulator below keeps the mean exact
+            const enemyStep = getEffectiveEnemySpeed();
+            if (enemy.alive && currentTime - enemy.lastUpdateTime >= enemyStep - FRAME_60 / 2) {
                 updateEnemyAI(enemy);
                 
                 const head = {
@@ -2720,12 +2727,33 @@
                     enemy.segments.pop();
                 }
                 
-                enemy.lastUpdateTime = currentTime;
+                // V1_485: accumulate like the player tick (no drift at any refresh rate); resync
+                // after a stall or when coming off Time Freeze (Infinity step)
+                enemy.lastUpdateTime += enemyStep;
+                if (!(currentTime - enemy.lastUpdateTime < enemyStep)) enemy.lastUpdateTime = currentTime;
             }
         }
         
         function updateAllEnemies(currentTime) {
             enemies.forEach(enemy => updateEnemy(enemy, currentTime));
+        }
+
+        // V1_485: enemy-only step for frames where the player did not tick. Same gates as
+        // update() (picker pause, kill animation), then the same collision resolution.
+        function updateEnemiesOnly(currentTime) {
+            if (!gameRunning || powerupPaused || killAnimationActive) return;
+            const before = enemies.map(e => e.alive + '|' + e.spawning + '|' + (e.segments[0] ? e.segments[0].x + ',' + e.segments[0].y : ''));
+            updateAllEnemies(currentTime);
+            if (!enemies.some((e, i) => before[i] !== e.alive + '|' + e.spawning + '|' + (e.segments[0] ? e.segments[0].x + ',' + e.segments[0].y : ''))) return;
+            const collision = checkEnemyCollisions();
+            if (collision.result === 'player_dies') {
+                gameOver();
+                return;
+            } else if (collision.result === 'enemy_dies') {
+                SFX.kill();
+                startKillAnimation(collision.enemy, currentTime);
+            }
+            draw();
         }
         
         // Simple kill for wall/self collision (no animation)
@@ -3099,7 +3127,11 @@
             if (head.y >= GRID_COUNT) head.y = 0;
 
             // Self collision
-            if (snake.some(seg => seg.x === head.x && seg.y === head.y)) {
+            // V1_485: the tail tip moves out of its cell this tick unless the snake is growing
+            // (eating food), so that cell is free — chasing your own tail is legal (standard snake).
+            const growing = head.x === food.x && head.y === food.y;
+            const tailLimit = growing ? snake.length : snake.length - 1;
+            if (snake.some((seg, i) => i < tailLimit && seg.x === head.x && seg.y === head.y)) {
                 gameOver();
                 return;
             }
@@ -3293,6 +3325,8 @@
                     update();
                     lastUpdateTime += interval;
                     if (currentTime - lastUpdateTime >= interval) lastUpdateTime = currentTime; // resync after a stall (tab hidden)
+                } else {
+                    updateEnemiesOnly(performance.now()); // V1_485: enemies step on their own clock between player ticks
                 }
                 
                 requestAnimationFrame(gameLoopFn);
