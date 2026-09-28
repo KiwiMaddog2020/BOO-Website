@@ -355,6 +355,24 @@
             box-shadow: 0 0 8px #0ff;
         }
         
+        /* V1_472: on narrow fullscreen/iframe layouts the centred timer pill sat on top of
+           (and hid) both SCORE and HIGH values. Float it just above the controls row instead. */
+        @media (max-width: 700px) {
+            .game-container.fullscreen-mode .powerup-timer {
+                top: auto;
+                bottom: calc(100% + 6px);
+                transform: translateX(-50%);
+            }
+        }
+        /* V1_472: small standalone layout (controls sit under the canvas) — drop the pill
+           over the "Swipe to move" hint line instead of over the scores or the board. */
+        @media (max-width: 500px) {
+            .game-container:not(.fullscreen-mode) .powerup-timer {
+                top: calc(100% + 2px);
+                transform: translateX(-50%);
+            }
+        }
+
         @media (max-width: 500px) {
             .powerup-timer-bar {
                 width: 120px;
@@ -1167,7 +1185,7 @@
             width: 100%;
             height: 100%;
             background: rgba(0, 0, 0, 0.95);
-            z-index: 700;
+            z-index: 2100; /* V1_472: was 700 — rendered BEHIND the 2000 menu, so HOW TO PLAY opened invisibly */
             justify-content: center;
             align-items: center;
             padding: 20px;
@@ -1656,6 +1674,7 @@
         const MUSIC = createBooMusic({
             audioCtx: SFX.audioCtx,
             isPaused: function () { return powerupPaused; },
+            startMuted: SFX.muted, // V1_472: a persisted mute used to leave the music playing after reload
             tracks: BOO_TRACKS,
             playlist: ['throttle', 'apex']
         });
@@ -1963,8 +1982,11 @@
                 // Update CSS custom properties
                 const uiScale = displaySize / BASE_CANVAS_SIZE;
                 const root = document.documentElement;
-                const isMobile = window.innerWidth <= 768;
-                const hudFontBase = isMobile ? 20 : 22;
+                // V1_472: was `const isMobile` — it shadowed the outer isMobile for this whole
+                // block, so the `if (isMobile)` above threw a TDZ ReferenceError and killed the
+                // game at boot on any small standalone window (both sides <= 736px, e.g. iPhone SE).
+                const isMobileUI = window.innerWidth <= 768;
+                const hudFontBase = isMobileUI ? 20 : 22;
                 root.style.setProperty('--scale', uiScale);
                 root.style.setProperty('--canvas-size', displaySize + 'px');
                 root.style.setProperty('--hud-font', Math.round(hudFontBase * uiScale) + 'px');
@@ -1982,9 +2004,9 @@
             
             ctx.imageSmoothingEnabled = false; // Keep crisp pixels for snake game
             
-            if (!gameRunning) {
-                draw();
-            }
+            // V1_472: resizing the canvas clears it; mid-run this left the board blank until
+            // the next tick (up to ~170ms flicker on mobile URL-bar resizes). Redraw always.
+            draw();
         }
         
         function handleFullscreenChange() {
@@ -2268,7 +2290,8 @@
                 food.y = Math.floor(Math.random() * GRID_COUNT);
             } while (
                 snake.some(seg => seg.x === food.x && seg.y === food.y) ||
-                enemies.some(enemy => enemy.segments.some(seg => seg.x === food.x && seg.y === food.y))
+                enemies.some(enemy => enemy.segments.some(seg => seg.x === food.x && seg.y === food.y)) ||
+                ((powerupFood.active || powerupFood.spawning) && powerupFood.x === food.x && powerupFood.y === food.y) // V1_472: food could land on (and hide) the orb
             );
         }
         
@@ -2296,8 +2319,11 @@
             }
         }
         
+        let powerupPauseStart = 0; // V1_472
+
         function showPowerupSelector() {
             powerupPaused = true;
+            powerupPauseStart = performance.now();
             powerupSelectionActive = false;
             powerupOverlay.classList.add('active');
             
@@ -2353,6 +2379,27 @@
             });
         }
         
+        // V1_472: the game is frozen while picking, but every wall-clock timer kept running —
+        // an active power-up burned 2-3s of its duration during the pick, the one just chosen
+        // lost the 600ms close animation, and enemy respawns landed the moment play resumed.
+        // Push pre-pause timers forward by the pause length; timers started DURING the pause
+        // (the chosen power-up) start counting at resume.
+        function shiftTimersForPause(pauseStart, now) {
+            const paused = now - pauseStart;
+            if (!(paused > 0)) return;
+            ['slowEnemies', 'freezeTime', 'ghostMode', 'doublePoints', 'speedBoost'].forEach(id => {
+                if (!activePowerups[id]) return;
+                const k = id + 'Timer';
+                activePowerups[k] = activePowerups[k] < pauseStart ? activePowerups[k] + paused : now;
+            });
+            enemies.forEach(enemy => {
+                if (enemy.spawning) enemy.spawnTimer += paused;
+                else if (enemy.alive) enemy.lastUpdateTime += paused;
+                else if (enemy.respawnTimer - ENEMY_RESPAWN_DELAY < pauseStart) enemy.respawnTimer += paused;
+            });
+            if (killAnimationActive) killAnimationStartTime += paused;
+        }
+
         function selectPowerup(index) {
             if (!powerupSelectionActive) return;
             powerupSelectionActive = false;
@@ -2382,6 +2429,7 @@
                     slot.style.pointerEvents = '';
                     slot.classList.remove('selected', 'revealed', 'rolling');
                 });
+                shiftTimersForPause(powerupPauseStart, performance.now());
                 powerupPaused = false;
                 // Reset spawn timer AFTER selection is complete
                 powerupSpawnTimer = performance.now();
@@ -2430,6 +2478,13 @@
         function getEffectivePlayerSpeed() {
             if (activePowerups.speedBoost) return speed * 0.6; // 40% faster
             return speed;
+        }
+
+        // V1_472: the effective tick length, rounded up to whole 60Hz frames — the exact
+        // cadence the game has always had on a 60Hz display (e.g. speed 158 -> 166.7ms).
+        const FRAME_60 = 1000 / 60;
+        function getTickInterval() {
+            return Math.ceil(getEffectivePlayerSpeed() / FRAME_60 - 0.01) * FRAME_60;
         }
         
         // Powerup icons for timer display
@@ -3090,8 +3145,19 @@
             draw();
         }
 
+        let menuReturnTimer = null; // V1_472: tracked so a fast restart can cancel it
+
         function gameOver() {
             SFX.gameover();
+            // V1_472: eating the orb and dying in the same tick left the power-up picker
+            // open over the menu (and its pick could still add score post-mortem).
+            if (powerupOverlay.classList.contains('active') || powerupPaused) {
+                slotRollIntervals.forEach(id => clearInterval(id));
+                slotRollIntervals = [];
+                powerupOverlay.classList.remove('active');
+                powerupSelectionActive = false;
+                powerupPaused = false;
+            }
             if (window.MUSIC) MUSIC.setState('gameover'); // V1_389: music
             gameRunning = false;
             controlsButtons.style.display = 'flex';
@@ -3116,7 +3182,10 @@
             showScoreModal(score, snake.length);
             
             // Show menu after a delay
-            setTimeout(() => {
+            clearTimeout(menuReturnTimer);
+            menuReturnTimer = setTimeout(() => {
+                menuReturnTimer = null;
+                if (gameRunning) return; // V1_472: never drop the menu over a new run
                 gameOverEl.classList.remove('active');
                 showMenu(true);
             }, 2000);
@@ -3199,21 +3268,31 @@
         function startGame() {
             if (gameRunning) return;
 
+            clearTimeout(menuReturnTimer); menuReturnTimer = null; // V1_472
             initGame();
             gameRunning = true;
             if (window.MUSIC) MUSIC.setState('game'); // V1_389: music
             controlsButtons.style.display = 'none';
             lastUpdateTime = performance.now();
+            let alignTick = true; // V1_472: anchor the tick clock to the first rAF timestamp
             
             // Game loop using requestAnimationFrame for consistent timing
+            // V1_472: frame-rate independence. The old `elapsed >= speed` check was quantised
+            // to the display's frame length, so 60Hz ticked every 166.7ms (10 frames) at the
+            // base speed while 120/144Hz ticked at ~158-160ms (~5% faster game). The tick
+            // interval is now the 60Hz-quantised value on every display (exactly what 60Hz
+            // always played), with an accumulator so odd rates (75/165Hz) average correctly.
             function gameLoopFn(currentTime) {
                 if (!gameRunning) return;
+                if (alignTick) { alignTick = false; lastUpdateTime = currentTime; }
                 
+                const interval = getTickInterval();
                 const elapsed = currentTime - lastUpdateTime;
                 
-                if (elapsed >= getEffectivePlayerSpeed()) {
+                if (elapsed >= interval - 1) {
                     update();
-                    lastUpdateTime = currentTime;
+                    lastUpdateTime += interval;
+                    if (currentTime - lastUpdateTime >= interval) lastUpdateTime = currentTime; // resync after a stall (tab hidden)
                 }
                 
                 requestAnimationFrame(gameLoopFn);
@@ -3224,7 +3303,21 @@
 
         // Keyboard controls
         document.addEventListener('keydown', (e) => {
+            // V1_472: Escape closes the tutorial / leaderboard overlays
+            if (e.key === 'Escape') {
+                if (tutorialOverlay.classList.contains('active')) hideTutorial();
+                if (leaderboardOverlay.classList.contains('active')) hideLeaderboard();
+            }
             if (!gameRunning && (e.key === ' ' || e.key === 'Enter')) {
+                // V1_472: Enter/Space used to start a run from ANYWHERE — typing a name and
+                // pressing Enter to submit launched a game hidden under the menu. Only start
+                // from the menu itself, never while typing or with an overlay open.
+                const t = e.target;
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+                if (scoreModal.classList.contains('active') || leaderboardOverlay.classList.contains('active') ||
+                    tutorialOverlay.classList.contains('active') || menuOverlay.classList.contains('hidden')) return;
+                e.preventDefault(); // don't also "click" a focused menu button
+                hideMenu();
                 startGame();
                 return;
             }
@@ -3567,6 +3660,7 @@
         
         let pendingScore = 0;
         let pendingLength = 3;
+        let submitToken = 0; // V1_472
         
         async function showScoreModal(finalScore, finalLength) {
             pendingScore = finalScore;
@@ -3577,9 +3671,12 @@
             scoreErrorMsg.textContent = '';
             usernameInput.classList.remove('error');
             submitScoreBtn.disabled = false;
+            submitScoreBtn.textContent = 'Submit'; // V1_472: a hung earlier save could leave 'Saving...'
+            submitToken++; // V1_472: invalidate any still-pending earlier save
             
             // Check rank against existing scores
             let rank = await getScoreRank(finalScore);
+            if (gameRunning) return; // V1_472: a new run started while the rank lookup was pending
             
             // Update title based on rank
             if (rank === 1) {
@@ -3603,17 +3700,18 @@
                 
                 if (firebaseReady && db) {
                     // Fetch from Firebase
-                    const snapshot = await db.collection(COLLECTION_NAME)
-                        .orderBy('score', 'desc')
-                        .limit(100)
-                        .get();
+                    // V1_472: capped at 3s — a stalled connection held the modal back indefinitely
+                    const snapshot = await Promise.race([
+                        db.collection(COLLECTION_NAME).orderBy('score', 'desc').limit(100).get(),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('rank lookup timed out')), 3000))
+                    ]);
                     snapshot.forEach(doc => {
-                        scores.push(doc.data().score);
+                        scores.push(Number(doc.data().score) || 0); // V1_472: malformed docs
                     });
                 } else {
                     // Use local scores
                     const localScores = getLocalScores();
-                    scores = localScores.map(s => s.score);
+                    scores = localScores.map(s => Number(s && s.score) || 0);
                 }
                 
                 // Find where this score would rank
@@ -3667,6 +3765,7 @@
             
             submitScoreBtn.disabled = true;
             submitScoreBtn.textContent = 'Saving...';
+            const myToken = submitToken; // V1_472
             
             try {
                 if (firebaseReady && db) {
@@ -3682,11 +3781,13 @@
                     saveLocalScore(username, pendingScore, pendingLength);
                 }
 
+                if (myToken !== submitToken) return; // V1_472: a newer modal owns the UI now
                 SFX.submit();
                 hideScoreModal();
 
             } catch (e) {
                 console.warn('Score submission failed:', e);
+                if (myToken !== submitToken) return; // V1_472
                 // Fallback to local storage
                 saveLocalScore(username, pendingScore, pendingLength);
                 hideScoreModal();
@@ -3699,7 +3800,7 @@
         // Local storage fallback
         function saveLocalScore(name, score, length) {
             try {
-                const scores = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+                const scores = getLocalScores(); // V1_472: shares the array guard below
                 scores.push({ name, score, length, timestamp: Date.now() });
                 scores.sort((a, b) => b.score - a.score);
                 localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(scores.slice(0, 100)));
@@ -3710,7 +3811,8 @@
         
         function getLocalScores() {
             try {
-                return JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+                const parsed = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+                return Array.isArray(parsed) ? parsed.filter(x => x && typeof x === 'object') : []; // V1_472: corrupt storage crashed the leaderboard
             } catch (e) {
                 return [];
             }
