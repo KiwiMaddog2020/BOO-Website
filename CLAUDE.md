@@ -290,7 +290,7 @@ firebase deploy
 - **Kept on purpose:** the Chrome/Mac `animation: none` anti-flicker freezes (they are stability fixes). Where a freeze killed a one-shot `overlayFadeIn`/`oilSlickFadeIn`, the end state is now stated explicitly instead of leaving the layer at `opacity: 0` — that bug had `.color-splotches` invisible in Chrome and Safari and `.liquid-overlay` at 0.18 in Chrome.
 - **Do not re-fork the grading per browser.** Firefox's values live on each layer's base rule: `section` saturate(.9), `section::before` saturate(.85) contrast(1.02), `.color-mist` saturate(.8) brightness(.95), `.liquid-overlay`/`.oil-slick` saturate(.85) brightness(.95), `.color-splotches` saturate(.8), `.darken-overlay` rgba(10,10,14,.82). `.oil-slick` is `color-dodge` everywhere. Mobile/iPad layouts and the sacred timings are untouched.
 
-**V1_470 → V1_482 (glow-up audit, branch `claude/website-glowup-opus-9y3o2y`):** full audit + polish of the site and all 7 games under Kevin's interview scope (polish + small elevations, clear balance bugs only, perf/a11y/SEO/tests/docs). Full report + ranked decisions list: `docs/POLISH_2026-09-28_glowup.md`. Rules learned that apply to future work:
+**V1_470 → V1_490 (glow-up audit + Kevin's decisions, merged to main):** full audit + polish of the site and all 7 games under Kevin's interview scope (polish + small elevations, clear balance bugs only, perf/a11y/SEO/tests/docs). Full report + ranked decisions list: `docs/POLISH_2026-09-28_glowup.md`. Rules learned that apply to future work:
 
 - **Saved mute must reach the music.** `createBooMusic` now falls back to `window.SFX.muted` when `startMuted` is omitted (V1_474), and every game passes `startMuted: SFX.muted` explicitly — keep both when adding a game.
 - **Frame-rate independence is the default.** Space Shooter is fully dt-scaled (V1_475, `dt = 1` at 60Hz, 50ms clamp); Snake ticks on the 60Hz-quantised interval with an accumulator (V1_472); Dig invulnerability, Clyde decays, Brickbreaker drag and Survivors knockback friction use `Math.pow(f, dt)`. New per-frame increments must scale with dt and stay bit-identical at 60Hz.
@@ -298,6 +298,8 @@ firebase deploy
 - **Every game guards against double game-over and duplicate leaderboard submits** (re-entry guard + `submitBtn.disabled` / submit token), and never lets Space/Enter/letter hotkeys fire while an `INPUT` has focus. Keep these guards when touching score flows.
 - **Survivors level-up offers go through `requestUpgradeSelection()`** (queue, V1_478) — never call `showUpgradeSelection()` directly from a reward path. Only the pause menu may un-pause; reward screens own the pause.
 - **Site nav: a click during a section transition is ignored** (V1_479; the 2s safety reset still recovers), and exactly one section may carry `.section-active`. On touch landscape (<=834px tall) the `body::before` bottom bar is hidden while the arcade is active.
+
+- **Decisions round (V1_483–V1_489):** Survivors analog joystick skips the keyboard x0.707; TD fire cooldowns carry the remainder on `gameClock` (max 4 shots/frame, idle towers don't bank), Discount capped 75%, Armor Pierce = +X% vs tank/boss/megaboss; Snake enemies step on their own 333.3ms clock (not player ticks); Brickbreaker has pause (P/Esc/button/tab-hide); Dig particle glows are baked sprites through the capped `pushParticle()`; gallery tiles load `Images/Thumbs/` WebPs (lightbox opens originals); icons are PNGs in `Images/Favicon/` (the 1.8MB `favicon.svg` is unlinked).
 
 ---
 

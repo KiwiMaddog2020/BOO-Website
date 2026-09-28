@@ -1,4 +1,4 @@
-# Glow-up Audit — 2026-09-28 (V1_470 → V1_482)
+# Glow-up Audit — 2026-09-28 (V1_470 → V1_490)
 
 Full self-directed audit + polish of the main site and all 7 arcade games, done overnight on branch
 `claude/website-glowup-opus-9y3o2y` (NOT pushed to `main` — review, then merge).
@@ -33,8 +33,16 @@ projects incl. WebKit iPhone/iPad).
 | V1_480 | review fixes | Regressions caught by the adversarial review pass (see bottom) |
 | V1_481 | docs | This report + CLAUDE.md truth pass |
 | V1_482 | Snake | Review follow-up: a focused menu button handles its own Enter/Space |
+| V1_483 | Survivors | Decisions: full-speed joystick, Refund All trims bans, menu title reset, 120Hz pellets |
+| V1_484 | Tower Defense | Decisions: fire-rate carry-over, doomed-target retarget, Discount cap 75%, Armor Pierce, leprechaun speed, tutorial, Towers Built |
+| V1_485 | Snake | Decisions: enemies on their own clock (same base speed), true 2x Slow Motion, tail-tip move |
+| V1_486 | Brickbreaker | Decisions: pause (P/Esc/button/tab-hide), boss count levels 10-18, How to Play copy |
+| V1_487 | Neon Dig | Decisions: baked particle glows + capped bursts, standalone 16:9 HUD |
+| V1_488 | Space Shooter | Decisions: phone health bar above the touch controls |
+| V1_489 | Main site | Decisions: iPad arcade un-dimmed, monitor-drag zoom fix, thumbnails, PNG icons, keyboard seek, Stripe copy |
+| V1_490 | docs | Decisions record + CLAUDE.md |
 
-## Decisions for Kevin (ranked — nothing here was changed)
+## Decisions for Kevin (ranked) — RESOLVED in V1_483–V1_489, see "Decisions implemented" at the bottom
 
 1. **Survivors touch movement is ~71% speed** at nearly every joystick angle (keyboard diagonal ×0.707 is
    applied to the analog stick). Also lets Cinder Wisp bolts outrun a phone player, breaking the
@@ -598,3 +606,33 @@ by the deep-link section instead of stacking with it.
 
 CI: the GitHub Actions E2E suite (all 5 projects incl. WebKit iPhone + iPad) passed on V1_479 via manual
 dispatch on the branch.
+
+# Decisions implemented (V1_483 → V1_489)
+
+Kevin: "I'll take your recommendation on each and let's implement." Outcome per item above:
+
+1. Survivors joystick — **fixed** (V1_483): analog magnitude kept, keyboard diagonal only.
+2. Survivors level-up queue — **kept**.
+3. TD game clock — **kept**.
+4. TD — **all fixed** (V1_484): fire cooldowns carry the remainder on `gameClock` (max 4 shots/frame, no
+   idle banking; Minigun 120ms now 120ms at every speed, ~+11% DPS at 1x — feel test), doomed targets fall
+   through to the next-best, Discount cap 75%, Armor Pierce = +X% vs tank/boss/megaboss, leprechaun restores
+   the player's chosen speed, tutorial copy, whole-run Towers Built.
+5. Snake — **fixed** (V1_485): enemies on their own 333.3ms clock (today's effective base speed, so the
+   feel is unchanged; Speed Boost is player-only), Slow Motion true 2x, tail-tip move allowed when not growing.
+6. Cannon tracer — **kept** at 400ms.
+7. Site — **fixed** (V1_489): iPad landscape arcade keeps only the top fade band; monitor-drag DPR change
+   re-baselines instead of reading as zoom; 250ms poll replaced by a matchMedia listener.
+8. Assets — **fixed** (V1_489): 5 gallery tiles use 540px WebP thumbnails (−1.01MB); LiquidLight1–6 +
+   Curiosity cover stay on originals (already downloaded by the wallpapers/hero). PNG icon set + manifest
+   any/maskable entries; the 1.8MB `favicon.svg` is no longer linked (kept in the repo).
+9. Brickbreaker — **fixed** (V1_486): pause added, `maxBossesPerRow` 9 (levels 10–18 were a boss short),
+   How to Play copy; Slower Ball cap stays −80%.
+10. Space Shooter — health bar **lifted** (V1_488); viewport-dependent difficulty **left** (hidden legacy game).
+11. Dig — **fixed** (V1_487): baked particle glows (−40% particle draw), capped bursts, standalone 16:9 HUD.
+12. Survivors misc — **fixed** (V1_483): Refund All trims bans, quit resets the menu title, pellets
+    min(dt/16.667,1)-scaled; standalone landscape windows **left** (site iframe unaffected, sizing sacred).
+13. `success.html` — Stripe copy made generic (V1_489). Bonus: keyboard-operable music seek slider.
+
+Feel tests worth doing: TD DPS at 1x (+11%), Survivors on the phone (joystick now full speed), Snake
+enemies with Speed Boost.
