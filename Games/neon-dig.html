@@ -2012,6 +2012,14 @@
             border: 2px solid #888;
             color: #fff;
         }
+
+        /* V1_477: pause/confirm controls are real <button>s now (keyboard reachable); give
+           them the same neon focus ring as a hover so Tab users can see where they are. */
+        .pause-menu-btn:focus-visible,
+        .confirm-btn:focus-visible {
+            outline: 2px solid #0ff;
+            outline-offset: 3px;
+        }
         
         .hud-value.points {
             color: #ffffff;
@@ -2429,9 +2437,9 @@
     <div class="pause-overlay" id="pauseOverlay">
         <div class="pause-title">Paused</div>
         <div class="pause-menu-buttons">
-            <div class="pause-menu-btn btn-resume" id="resumeBtn">Resume</div>
-            <div class="pause-menu-btn btn-leaderboard" id="pauseLeaderboardBtn">Leaderboard</div>
-            <div class="pause-menu-btn btn-exit" id="exitGameBtn">Exit Game</div>
+            <button type="button" class="pause-menu-btn btn-resume" id="resumeBtn">Resume</button>
+            <button type="button" class="pause-menu-btn btn-leaderboard" id="pauseLeaderboardBtn">Leaderboard</button>
+            <button type="button" class="pause-menu-btn btn-exit" id="exitGameBtn">Exit Game</button>
         </div>
     </div>
     
@@ -2440,8 +2448,8 @@
         <div class="confirm-box">
             <div class="confirm-text">Are you sure?</div>
             <div class="confirm-buttons">
-                <div class="confirm-btn btn-yes" id="confirmYes">Yes</div>
-                <div class="confirm-btn btn-no" id="confirmNo">No</div>
+                <button type="button" class="confirm-btn btn-yes" id="confirmYes">Yes</button>
+                <button type="button" class="confirm-btn btn-no" id="confirmNo">No</button>
             </div>
         </div>
     </div>
@@ -2676,6 +2684,7 @@
         // site's media player (#audio-player in the parent page) is playing.
         const MUSIC = createBooMusic({
             audioCtx: SFX.audioCtx,
+            startMuted: SFX.muted, // V1_477: a persisted mute used to leave the music playing after reload
             isPaused: function () { return gamePaused || upgradeSelectionActive; },
             tracks: BOO_TRACKS,
             playlist: ['deepvein', 'motherlode']
@@ -2899,6 +2908,10 @@
         const skipScoreBtn = document.getElementById('skipScoreBtn');
         const scoreError = document.getElementById('scoreError');
         const gameContainer = document.querySelector('.game-container');
+        const bossIntroOverlayEl = document.getElementById('bossIntroOverlay'); // V1_477
+        const bossVictoryOverlayEl = document.getElementById('bossVictoryOverlay'); // V1_477
+        let runToken = 0; // V1_477: bumped on start/exit so stale boss timeouts can't fire into another run
+        let gameOverPhase = 0; // V1_477: 1 = "GAME OVER" card, 2 = stats card (canvas frozen while set)
         
         // Tutorial elements
         const tutorialOverlay = document.getElementById('tutorialOverlay');
@@ -3045,6 +3058,16 @@
             
             spentScore += cost;
             shopUpgrades[upgradeId] = currentLevel + 1;
+            // V1_477: Fuel Tank / Hull Plating never touched maxFuel/maxHull (Fuel Tank only
+            // counted after a later boss Fuel Tank pick; Hull Plating was read nowhere). Recompute
+            // with the same formula the boss upgrades use; refilling to the new cap is the
+            // surface station's job (the shop is only open at the surface).
+            if (upgradeId === 'fuelCap' || upgradeId === 'hullCap') {
+                maxFuel = 100 * (1 + getShopBonus('fuelCap') / 100) * (1 + permanentUpgrades.fuelCapacity / 100);
+                maxHull = 100 * (1 + getShopBonus('hullCap') / 100);
+                updateFuelBar();
+                updateHullBar();
+            }
             updatePointsDisplay();
             SFX.buy();
             return true;
@@ -5774,7 +5797,7 @@
             // ===== UNSTABLE ROCK =====
             if (tile === TILE.UNSTABLE) {
                 // Breaking unstable rock always damages player
-                const shopArmor = getShopBonus('armor');
+                const shopArmor = Math.min(getShopBonus('armor'), 90 - getEffectiveUpgrade('armor', 90)); // V1_477: total reduction capped at 90% (stacked Titanium Hull + shop went past 100% and hazards healed)
                 const damage = 15 * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
                 hull -= damage;
                 comboCount = 0;
@@ -5800,7 +5823,7 @@
             if (tile === TILE.LAVA || tile === TILE.GAS) {
                 SFX.hazard();
                 const baseDamage = tile === TILE.LAVA ? 30 : 20; // Lava damage reduced
-                const shopArmor = getShopBonus('armor');
+                const shopArmor = Math.min(getShopBonus('armor'), 90 - getEffectiveUpgrade('armor', 90)); // V1_477: total reduction capped at 90% (stacked Titanium Hull + shop went past 100% and hazards healed)
                 const damage = baseDamage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
                 hull -= damage;
                 comboCount = 0; // Break combo on damage
@@ -5997,7 +6020,9 @@
             else SFX.digDirt();
 
             // When drilling DOWN, snap player horizontally and slide vertically
-            if (lastDigDirection === 'down') {
+            // V1_477: not for Gem Magnet pickups — those yanked the player sideways into the
+            // gem's column (through rock) and slid them into its hole
+            if (lastDigDirection === 'down' && !fromMagnet) {
                 // Snap X immediately to stay in the same column (funnel behavior)
                 const targetX = tx * TILE_SIZE + TILE_SIZE/2 - player.width/2;
                 player.x = targetX;
@@ -6013,7 +6038,7 @@
             }
             
             // When drilling LEFT or RIGHT, slide player vertically to align with tile row
-            if (lastDigDirection === 'left' || lastDigDirection === 'right') {
+            if ((lastDigDirection === 'left' || lastDigDirection === 'right') && !fromMagnet) { // V1_477: see above
                 // Target Y: center player vertically on the tile being drilled
                 const targetY = absoluteTy * TILE_SIZE + TILE_SIZE/2 - player.height/2;
                 const targetX = lastDigDirection === 'left' ? 
@@ -6609,7 +6634,7 @@
                     
                     // Take damage from enemy
                     SFX.damage();
-                    const shopArmor = getShopBonus('armor');
+                    const shopArmor = Math.min(getShopBonus('armor'), 90 - getEffectiveUpgrade('armor', 90)); // V1_477: total reduction capped at 90% (stacked Titanium Hull + shop went past 100% and hazards healed)
                     const damage = enemy.damage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
                     hull -= damage;
                     comboCount = 0;
@@ -6949,6 +6974,7 @@
         }
         
         function startBossBattle() {
+            if (bossArenaActive || !gameRunning) return; // V1_477: ignore a double tap / stale overlay
             SFX.bossIntro();
             const portalDepth = parseInt(document.getElementById('bossIntroOverlay').dataset.portalDepth);
             hideBossIntro();
@@ -6990,6 +7016,12 @@
         
         function leaveBossPortal() {
             hideBossIntro();
+            // V1_477: end the teleport phase + arm the portal cooldown (walk 3 tiles away to
+            // re-arm). update() kept the phase at 'teleporting' and re-opened the intro on the
+            // very next frame, so LEAVE never worked.
+            bossTransitionPhase = 'none';
+            bossTransitionTimer = 0;
+            portalCooldown[currentBossDepth] = true;
             // Player just walks away - no penalty
             createFloatingText('Retreated from portal...', player.x + player.width/2, player.y - 20, '#888888');
         }
@@ -7062,7 +7094,7 @@
             
             // Handle transitions
             if (bossTransitionPhase === 'entering') {
-                bossTransitionTimer--;
+                bossTransitionTimer -= deltaMultiplier; // V1_477: frame-time, not per frame
                 if (bossTransitionTimer <= 0) {
                     bossTransitionPhase = 'active';
                 }
@@ -7076,7 +7108,7 @@
             }
             
             if (bossTransitionPhase === 'victory') {
-                bossTransitionTimer--;
+                bossTransitionTimer -= deltaMultiplier; // V1_477: frame-time, not per frame
                 if (bossTransitionTimer <= 0) {
                     exitBossArena(true);
                 }
@@ -7084,7 +7116,7 @@
             }
             
             if (bossTransitionPhase === 'exiting') {
-                bossTransitionTimer--;
+                bossTransitionTimer -= deltaMultiplier; // V1_477: frame-time, not per frame
                 if (bossTransitionTimer <= 0) {
                     bossArenaActive = false;
                     bossTransitionPhase = 'none';
@@ -7097,14 +7129,16 @@
             updateBossArenaPlayer();
             
             // Decrement invulnerability timers
+            // V1_477: i-frames tick by frame-time (were per-frame, so a 120 Hz screen halved
+            // the player's post-hit invulnerability and the boss's hit cooldown)
             if (playerInvulnerable > 0) {
-                playerInvulnerable--;
+                playerInvulnerable -= deltaMultiplier;
             }
             if (bossInvulnerable > 0) {
-                bossInvulnerable--;
+                bossInvulnerable -= deltaMultiplier;
             }
             if (boss2Invulnerable > 0) {
-                boss2Invulnerable--;
+                boss2Invulnerable -= deltaMultiplier;
             }
             
             // Boss AI
@@ -8407,7 +8441,7 @@
                 const dy = proj.y - (player.y + player.height / 2);
                 if (Math.sqrt(dx * dx + dy * dy) < proj.radius + 10) {
                     // Hit player
-                    const shopArmor = getShopBonus('armor');
+                    const shopArmor = Math.min(getShopBonus('armor'), 90 - getEffectiveUpgrade('armor', 90)); // V1_477: total reduction capped at 90% (stacked Titanium Hull + shop went past 100% and hazards healed)
                     const damage = proj.damage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
                     hull -= damage;
                     updateHullBar();
@@ -8551,7 +8585,7 @@
             // Check invulnerability
             if (playerInvulnerable > 0) return;
             
-            const shopArmor = getShopBonus('armor');
+            const shopArmor = Math.min(getShopBonus('armor'), 90 - getEffectiveUpgrade('armor', 90)); // V1_477: total reduction capped at 90% (stacked Titanium Hull + shop went past 100% and hazards healed)
             const damage = baseDamage * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
             hull -= damage;
             updateHullBar();
@@ -8746,7 +8780,9 @@
             }
             
             // Show victory overlay after a brief delay
+            const token = runToken; // V1_477: skip if the player exited to the menu meanwhile
             setTimeout(() => {
+                if (token !== runToken || !gameRunning) return;
                 showBossVictory();
             }, 1500);
         }
@@ -8763,12 +8799,16 @@
         }
         
         function teleportFromBoss() {
+            // V1_477: one teleport per victory (a double tap queued two upgrade selectors)
+            if (bossTransitionPhase !== 'victory_screen') return;
             SFX.teleport();
             hideBossVictory();
             exitBossArena(true);
             
             // Show upgrade selection after exiting boss arena (delay for transition)
+            const token = runToken;
             setTimeout(() => {
+                if (token !== runToken || !gameRunning) return; // V1_477: run ended/exited meanwhile
                 // Legendary upgrade every 5th boss (250m intervals)
                 const isLegendary = currentBossDepth % 250 === 0;
                 showUpgradeSelector(isLegendary);
@@ -9615,6 +9655,13 @@
         }
         
         // ==================== UPDATE ====================
+        // V1_477: true only while update() actually advances the main `particles` pool. The
+        // boss arena runs its own pool, so main-pool pushes made there were never aged/drawn
+        // and dumped as a stale burst on exit.
+        function simRunning() {
+            return gameRunning && !gamePaused && !upgradeSelectionActive && !bossArenaActive;
+        }
+
         function update() {
             if (!gameRunning || upgradeSelectionActive || gamePaused) return;
             
@@ -9649,8 +9696,9 @@
                 updateParticles();
                 processFloatingTextQueue();
                 
-                if (bossTransitionTimer <= 0) {
+                if (bossTransitionTimer <= 0 && !bossIntroOverlayEl.classList.contains('active')) {
                     // Teleport complete - enter boss arena
+                    // V1_477: open the intro once (was rewriting its DOM every frame)
                     enterBossArena(currentBossDepth);
                 }
                 return;
@@ -9886,7 +9934,7 @@
                         const dist = Math.sqrt(Math.pow(tileCX - playerCX, 2) + Math.pow(tileCY - playerCY, 2));
                         
                         if (dist < TILE_SIZE * 2) {
-                            const shopArmor = getShopBonus('armor');
+                            const shopArmor = Math.min(getShopBonus('armor'), 90 - getEffectiveUpgrade('armor', 90)); // V1_477: total reduction capped at 90% (stacked Titanium Hull + shop went past 100% and hazards healed)
                             const damage = 15 * (1 - (getEffectiveUpgrade('armor', 90) + shopArmor) / 100);
                             hull -= damage;
                             comboCount = 0;
@@ -10420,8 +10468,14 @@
                             
                             if (dist < magnetRange) {
                                 // BUG FIX: Pass true to indicate magnet collection (no fuel cost)
+                                // V1_477: keep the dig in progress — borrowing digTarget for the
+                                // pickup used to cancel it and restart its progress from zero
+                                const keepDigging = player.digging, keepTarget = player.digTarget, keepProgress = player.digProgress;
                                 player.digTarget = { x: tx, y: absoluteTy, time: 0 };
                                 completeDig(true);
+                                player.digging = keepDigging;
+                                player.digTarget = keepTarget;
+                                player.digProgress = keepProgress;
                             }
                         }
                     }
@@ -12840,7 +12894,10 @@
             if (fuelPercent < 0.25 && !deathAnimationActive) {
                 // Spawn smoke puffs more frequently as fuel gets lower
                 const smokeChance = (0.25 - fuelPercent) * 0.4; // Max 10% per frame at 0 fuel
-                if (Math.random() < smokeChance) {
+                // V1_477: draw-time spawns only while the sim runs (they piled up unbounded while
+                // paused / on the upgrade screen / behind the menu) and scaled per frame-time so
+                // 120 Hz screens don't emit twice as much.
+                if (simRunning() && Math.random() < smokeChance * deltaMultiplier) {
                     // Calculate velocity based on player movement
                     const isMoving = keys.up || keys.down || keys.left || keys.right || player.digging;
                     if (isMoving || Math.random() < 0.3) { // Always some smoke, more when moving
@@ -12865,7 +12922,7 @@
                 
                 // Spawn smoke/dust puff particles (initial burst then occasional wisps)
                 const particleChance = progress < 0.3 ? 0.5 : 0.15;
-                if (Math.random() < particleChance) {
+                if (simRunning() && Math.random() < particleChance * deltaMultiplier) { // V1_477: see low-fuel smoke
                     // Mix of smoke (grey) and sparks (orange/cyan depending on death type)
                     const isSmoke = Math.random() < 0.7;
                     let color;
@@ -13112,7 +13169,7 @@
                     ctx.stroke();
                     
                     // Sparking effect at very low hull
-                    if (Math.random() < 0.15) {
+                    if (simRunning() && Math.random() < 0.15 * deltaMultiplier) { // V1_477: see low-fuel smoke
                         const sparkX = player.x + 4 + Math.random() * (player.width - 8);
                         const sparkY = screenY + 6 + Math.random() * 12;
                         particles.push({
@@ -13701,7 +13758,9 @@
             isLegendaryUpgrade = legendary;
             
             const definitions = legendary ? legendaryUpgradeDefinitions : upgradeDefinitions;
-            currentUpgradeChoices = legendary ? [...definitions] : weightedRandomSelect(definitions, 3);
+            // V1_477: legendary offered all 4 defs into 3 slots, so the 4th (Cryo Drill) could
+            // never appear; draw 3 of 4 with the same anti-repeat weighting as regular picks.
+            currentUpgradeChoices = weightedRandomSelect(definitions, legendary ? slots.length : 3);
             
             upgradeOverlay.classList.toggle('legendary', legendary);
             
@@ -13868,24 +13927,43 @@
             
             controlInstructions.classList.remove('visible');
             
-            // Phase 1: Show dramatic "GAME OVER" text
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
-            ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
-            
-            // Big "GAME OVER" text with glow effect
-            ctx.save();
-            ctx.shadowColor = '#ff0066';
-            ctx.shadowBlur = 30;
-            ctx.font = '800 52px Oxanium, monospace';
-            ctx.fillStyle = '#ff0066';
-            ctx.textAlign = 'center';
-            ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2);
-            ctx.shadowBlur = 15;
-            ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2);
-            ctx.restore();
+            // V1_477: freeze the canvas on the game-over card. The game loop kept calling draw()
+            // after this, so "GAME OVER" lasted one frame and the (un-tilted) live scene showed
+            // until the score modal. gameLoop now skips draw() while gameOverPhase is set.
+            runToken++;
+            gameOverPhase = 1;
+            paintGameOverLayer(1);
             
             // After a moment, show the detailed death screen
             setTimeout(() => {
+                if (gameOverPhase !== 1) return;
+                gameOverPhase = 2;
+                paintGameOverLayer(2);
+
+                setTimeout(showScoreModal, 1200);
+            }, 1000);
+        }
+
+        // V1_477: the two game-over layers, painted over whatever is on the canvas (unchanged
+        // drawing, moved here so a resize can repaint them).
+        function paintGameOverLayer(phase) {
+            ctx.save();
+            ctx.textBaseline = 'alphabetic';
+            if (phase === 1) {
+                // Phase 1: Show dramatic "GAME OVER" text
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+                ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+
+                // Big "GAME OVER" text with glow effect
+                ctx.shadowColor = '#ff0066';
+                ctx.shadowBlur = 30;
+                ctx.font = '800 52px Oxanium, monospace';
+                ctx.fillStyle = '#ff0066';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2);
+                ctx.shadowBlur = 15;
+                ctx.fillText('GAME OVER', BASE_WIDTH / 2, BASE_HEIGHT / 2);
+            } else {
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
                 ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
                 
@@ -13900,9 +13978,15 @@
                 ctx.fillText(`Max Depth: ${maxDepthThisRun}m`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 5);
                 ctx.fillStyle = '#ff9500';
                 ctx.fillText(`Score: ${score}`, BASE_WIDTH / 2, BASE_HEIGHT / 2 + 35);
+            }
+            ctx.restore();
+        }
                 
-                setTimeout(showScoreModal, 1200);
-            }, 1000);
+        // V1_477: a resize reallocates the canvas (wiping the frozen card) — rebuild it.
+        function repaintGameOver() {
+            draw();
+            paintGameOverLayer(1);
+            if (gameOverPhase === 2) paintGameOverLayer(2);
         }
         
         // ==================== SCORE SYSTEM ====================
@@ -13922,6 +14006,7 @@
         }
         
         function showGameOverButtons() {
+            gameOverPhase = 0; // V1_477: menu backdrop goes back to the live scene, as before
             startBtn.textContent = 'DIG AGAIN';
             menuOverlay.classList.remove('hidden');
         }
@@ -14287,12 +14372,20 @@
             }
         }, { passive: false });
         
+        // V1_477: interactive layers inside .game-container that must receive normal taps/scrolls
+        const OVERLAY_TOUCH_PASSTHROUGH = '.shop-overlay, .surface-upgrade-btn, .leaderboard-overlay, .score-modal, ' +
+            '.tutorial-overlay, .boss-intro-overlay, .boss-victory-overlay, .upgrade-overlay, #pauseBtn, #muteBtn';
+
         // Game container touch handling - allows swiping anywhere in the game area
         gameContainer.addEventListener('touchstart', (e) => {
             if (upgradeSelectionActive || !gameRunning) return;
             // Don't interfere with control zone or canvas handling
             if (e.target === controlZone || controlZone.contains(e.target)) return;
             if (e.target === canvas) return;
+            // V1_477: let taps reach the in-container overlays/buttons. preventDefault here
+            // cancelled their synthesized click, so on touch devices shop items could not be
+            // bought and the pause-menu leaderboard could not be closed.
+            if (e.target.closest && e.target.closest(OVERLAY_TOUCH_PASSTHROUGH)) return;
             e.preventDefault();
             canvasTouchStartX = e.touches[0].clientX;
             canvasTouchStartY = e.touches[0].clientY;
@@ -14304,6 +14397,7 @@
             if (upgradeSelectionActive || !gameRunning || !canvasTouchActive) return;
             if (e.target === controlZone || controlZone.contains(e.target)) return;
             if (e.target === canvas) return;
+            if (e.target.closest && e.target.closest(OVERLAY_TOUCH_PASSTHROUGH)) return; // V1_477: lets the shop / leaderboard lists scroll
             e.preventDefault();
             updateCanvasTouchKeys(e.touches[0].clientX, e.touches[0].clientY);
         }, { passive: false });
@@ -14324,7 +14418,11 @@
             if (e.target.closest('.menu-overlay') || e.target.closest('.upgrade-overlay') || 
                 e.target.closest('.leaderboard-overlay') || e.target.closest('.score-modal') ||
                 e.target.closest('.surface-upgrade-btn') || e.target.closest('.shop-overlay') ||
-                e.target.closest('.touch-tutorial')) return;
+                e.target.closest('.touch-tutorial') ||
+                // V1_477: tapping pause/confirm/boss-card buttons or the corner buttons flashed the joystick ring on top of them
+                e.target.closest('.pause-overlay') || e.target.closest('.confirm-overlay') ||
+                e.target.closest('.boss-intro-overlay') || e.target.closest('.boss-victory-overlay') ||
+                e.target.closest('#pauseBtn') || e.target.closest('#muteBtn')) return;
             
             canvasTouchStartX = e.touches[0].clientX;
             canvasTouchStartY = e.touches[0].clientY;
@@ -14400,7 +14498,13 @@
         });
         
         leaderboardBtn.addEventListener('click', showLeaderboard);
-        leaderboardClose.addEventListener('click', () => leaderboardOverlay.classList.remove('active'));
+        leaderboardClose.addEventListener('click', () => {
+            leaderboardOverlay.classList.remove('active');
+            // V1_477: opened from the pause menu — bring the pause menu back. Without this the
+            // run stayed paused with no overlay and (in canvas-UI/iframe mode) no pause button,
+            // soft-locking touch players.
+            if (gameRunning && gamePaused) pauseOverlay.classList.add('active');
+        });
         
         // ==================== TUTORIAL SYSTEM ====================
         // Create dots
@@ -14543,6 +14647,11 @@
             isLegendaryUpgrade = false;
             isChestUpgrade = false;
             upgradeOverlay.classList.remove('active', 'legendary', 'chest');
+            // V1_477: boss overlays left open by an exit-to-menu no longer leak into the new run
+            runToken++;
+            gameOverPhase = 0;
+            bossIntroOverlayEl.classList.remove('active');
+            bossVictoryOverlayEl.classList.remove('active');
             
             // Reset upgrades
             Object.keys(permanentUpgrades).forEach(k => permanentUpgrades[k] = 0);
@@ -14678,6 +14787,9 @@
         
         function togglePause() {
             if (!gameRunning || upgradeSelectionActive || shopOverlay.classList.contains('active')) return;
+            // V1_477: the boss intro/victory cards sit above the pause menu (z 600 vs 550), so a
+            // pause there was invisible; treat them like the upgrade/shop screens.
+            if (bossIntroOverlayEl.classList.contains('active') || bossVictoryOverlayEl.classList.contains('active')) return;
             
             gamePaused = !gamePaused;
             pauseBtn.textContent = gamePaused ? '▶' : '⏸';
@@ -14685,6 +14797,7 @@
             
             if (gamePaused) {
                 pauseOverlay.classList.add('active');
+                touchTutorial.classList.remove('active', 'fading'); // V1_477: its z-index (2000) drew over the pause menu
             } else {
                 pauseOverlay.classList.remove('active');
                 confirmOverlay.classList.remove('active');
@@ -14712,6 +14825,9 @@
             gameRunning = false;
             gamePaused = false;
             if (window.MUSIC) MUSIC.setState('menu'); // V1_389: music — back to the title theme
+            runToken++; // V1_477: cancel pending boss victory/upgrade timeouts
+            bossIntroOverlayEl.classList.remove('active');
+            bossVictoryOverlayEl.classList.remove('active');
             pauseOverlay.classList.remove('active');
             confirmOverlay.classList.remove('active');
             pauseBtn.textContent = '⏸';
@@ -14863,6 +14979,8 @@
         
         // P key to pause
         document.addEventListener('keydown', (e) => {
+            // V1_477: typing a leaderboard name ("SAM", "PIP"...) toggled mute/pause
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
             if (e.key === 'p' || e.key === 'P') {
                 togglePause();
             }
@@ -14883,7 +15001,7 @@
             lastFrameTime = timestamp;
             
             update();
-            draw();
+            if (!gameOverPhase) draw(); // V1_477: hold the game-over card
             
             requestAnimationFrame(gameLoop);
         }
@@ -15029,6 +15147,22 @@
                 canvas.style.width = displayGameWidth + 'px';
                 canvas.style.height = displayTotalHeight + 'px';
                 
+                // V1_477: the DOM mute button stayed at a fixed 36px in the container's corner
+                // while the pause button became canvas-drawn and scaled — it floated off the
+                // playfield on wide windows and out-sized pause on phones. Seat it beside the
+                // canvas pause button (logical x 40 = 6 + 28 + 6 gap) at the same scale.
+                const muteElFs = document.getElementById('muteBtn');
+                if (muteElFs) {
+                    const uiScale = displayGameWidth / BASE_WIDTH;
+                    muteElFs.style.left = (canvas.offsetLeft + 40 * uiScale) + 'px';
+                    muteElFs.style.top = (canvas.offsetTop + 6 * uiScale) + 'px';
+                    // never below 28px so it stays a usable touch target on phone-width iframes
+                    muteElFs.style.width = muteElFs.style.height = Math.max(28, 28 * uiScale) + 'px';
+                    muteElFs.style.fontSize = Math.max(14, 14 * uiScale) + 'px';
+                    muteElFs.style.borderRadius = Math.max(5, 5 * uiScale) + 'px';
+                    muteElFs.style.borderWidth = Math.max(1, 1.5 * uiScale) + 'px';
+                }
+
                 renderScale = bufferScale;
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(bufferScale, bufferScale);
@@ -15067,6 +15201,17 @@
                 if (upgradeBtnEl) upgradeBtnEl.style.display = '';
                 if (upgradeArrowEl) upgradeArrowEl.style.display = '';
                 
+                // V1_477: windowed mode — back to the original corner slot next to the DOM pause button
+                const muteElWin = document.getElementById('muteBtn');
+                if (muteElWin) {
+                    muteElWin.style.left = '48px';
+                    muteElWin.style.top = '6px';
+                    muteElWin.style.width = muteElWin.style.height = '36px';
+                    muteElWin.style.fontSize = '18px';
+                    muteElWin.style.borderRadius = '6px';
+                    muteElWin.style.borderWidth = '2px';
+                }
+
                 const hudHeight = hudEl ? hudEl.offsetHeight : 50;
                 
                 // Scale internal resolution based on display size
@@ -15115,12 +15260,14 @@
                 // Hide debug in non-fullscreen
                 GameDebug.hide();
             }
+
+            if (gameOverPhase) repaintGameOver(); // V1_477: canvas realloc wiped the frozen card
         }
         
         function handleFullscreenChange() {
             handleResize();
             
-            if (!gameRunning) {
+            if (!gameRunning && !gameOverPhase) { // V1_477: handleResize already repainted the game-over card
                 draw();
             }
         }
