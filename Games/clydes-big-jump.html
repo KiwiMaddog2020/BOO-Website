@@ -1078,6 +1078,73 @@
             .leaderboard-name { font-size: 13px; }
             .leaderboard-score { font-size: 14px; min-width: 50px; }
         }
+
+        /* V1_493: identical game frame — in the site's iframe the canvas IS the whole viewport
+           (inset 0): no outer border / padding ring; the playfield sits max-fit inside the canvas
+           with the side space painted as sky (grid) by JS. html.in-iframe is set by resizeCanvas(). */
+        html.in-iframe .game-container,
+        html.in-iframe .game-container.fullscreen-mode {
+            border: none;
+            border-radius: 0;
+            box-shadow: none;
+            padding: 0;
+        }
+        html.in-iframe #gameCanvas {
+            border-radius: 0;
+            flex-shrink: 0;
+        }
+
+        /* V1_493: DOM UI scales with the frame. --ui-zoom = max(1, min(W/640, H/718)) is set by
+           resizeCanvas(): 640x718 = the reference look, bigger frames zoom every HTML screen (and
+           the score HUD + mute button) so it stays the same picture as the canvas. Below 640 the UI
+           keeps its px size (plus the compact rules below) so text never drops under ~10px. vh
+           limits inside a zoomed box are zoomed too, so they are divided back out. */
+        html.in-iframe .overlay,
+        html.in-iframe .score-modal,
+        html.in-iframe .leaderboard-overlay,
+        html.in-iframe .hud,
+        html.in-iframe #muteBtn { zoom: var(--ui-zoom, 1); }
+        html.in-iframe .leaderboard-container { max-height: calc(80vh / var(--ui-zoom, 1)); }
+
+        /* V1_493: the iframe can be as small as ~250x280 — compact every HTML screen so nothing
+           clips (iframe only; standalone untouched). The long intro story scrolls inside a
+           bounded box with the LET'S JUMP button pinned below it (viewport-cutoff law). */
+        @media (max-width: 360px), (max-height: 400px) {
+            html.in-iframe #introScreen { padding: 8px 6px; overflow: hidden; justify-content: center; }
+            html.in-iframe .intro-content-wrapper { max-height: 100%; margin: 0; flex-shrink: 1; min-height: 0; }
+            html.in-iframe .intro-title { font-size: 18px; letter-spacing: 1px; margin-bottom: 6px; }
+            html.in-iframe .intro-story { font-size: 11px; line-height: 1.4; margin-bottom: 8px; padding: 0 4px;
+                flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+            html.in-iframe #introScreen .btn { font-size: 15px; padding: 7px 20px; margin-top: 0; flex-shrink: 0; }
+
+            html.in-iframe .overlay { padding: 6px; justify-content: safe center; overflow-y: auto; }
+            /* keep titles clear of the (inline-styled) top-left mute button */
+            html.in-iframe #muteBtn { top: 5px !important; left: 5px !important; width: 30px !important; height: 30px !important; font-size: 14px !important; }
+            html.in-iframe #startScreen, html.in-iframe #gameOverScreen { padding-top: 38px; }
+            html.in-iframe .title { font-size: 22px; letter-spacing: 1px; margin-bottom: 4px; }
+            html.in-iframe .subtitle { font-size: 13px; margin-top: 4px; }
+            html.in-iframe .score-display { font-size: 20px; margin-bottom: 4px; }
+            html.in-iframe .high-score { font-size: 14px; margin-bottom: 6px; }
+            html.in-iframe .menu-buttons { gap: 9px; margin-top: 8px; }
+            html.in-iframe .menu-btn { padding: 8px 14px; width: 150px; font-size: 12px; }
+            html.in-iframe .loading-title { font-size: 22px; }
+            html.in-iframe .hud { top: 8px; font-size: 26px; }
+
+            html.in-iframe .score-modal { gap: 6px; padding: 8px; justify-content: safe center; overflow-y: auto; }
+            html.in-iframe .score-modal-title { font-size: 22px; }
+            html.in-iframe .score-modal-score { font-size: 17px; margin-top: 0; }
+            html.in-iframe .score-input-container { gap: 5px; margin-top: 0; }
+            html.in-iframe .score-input-label { font-size: 11px; text-align: center; }
+            html.in-iframe .score-input { width: 160px; padding: 7px 10px; font-size: 14px; }
+            html.in-iframe .score-error-msg { min-height: 12px; font-size: 10px; }
+            html.in-iframe .score-buttons { margin-top: 2px; gap: 10px; }
+            html.in-iframe .score-btn { padding: 7px 14px; font-size: 12px; letter-spacing: 1px; }
+
+            html.in-iframe .leaderboard-overlay { padding: 8px; }
+            html.in-iframe .leaderboard-container { gap: 8px; max-height: 100%; }
+            html.in-iframe .leaderboard-title { font-size: 18px; }
+            html.in-iframe .leaderboard-close { width: 34px; height: 34px; font-size: 18px; flex-shrink: 0; }
+        }
     </style>
 </head>
 <body>
@@ -1442,6 +1509,58 @@
 
         let dprScale = 1;
 
+        // V1_493: identical game frame. In an iframe the canvas fills the whole viewport; the
+        // 400x600 field keeps its logical size and is max-fit (uniform) + centred inside it.
+        // s = field scale (logical -> backing px), ox/oy = field offset in backing px,
+        // bg = cached full-canvas sky (grid + ground line) used to paint the side space.
+        const FIELD = { on: false, s: 1, ox: 0, oy: 0, w: 0, h: 0, bg: null, menuPainted: false };
+
+        function buildFrameBg() {
+            const W = canvas.width, H = canvas.height, s = FIELD.s;
+            const bg = FIELD.bg || document.createElement('canvas');
+            bg.width = W; bg.height = H;
+            const g = bg.getContext('2d');
+            g.fillStyle = '#0a0a0a';
+            g.fillRect(0, 0, W, H);
+            // Same faint cyan grid as bgGridCanvas, phase-locked to the field so it runs on unbroken.
+            if (!isVeryLowPerf) {
+                const sp = (isLowPerf ? 40 : 30) * s;
+                g.strokeStyle = 'rgba(0, 255, 255, 0.04)';
+                g.lineWidth = Math.max(1, s);
+                g.beginPath();
+                for (let x = FIELD.ox - Math.ceil(FIELD.ox / sp) * sp; x < W; x += sp) { g.moveTo(x, 0); g.lineTo(x, H); }
+                for (let y = FIELD.oy; y < H; y += sp) { g.moveTo(0, y); g.lineTo(W, y); }
+                g.stroke();
+            }
+            // Subtle neon edge so mushrooms visibly enter/leave the field instead of popping mid-sky.
+            g.strokeStyle = 'rgba(0, 255, 255, 0.18)';
+            g.lineWidth = Math.max(1, s);
+            g.beginPath();
+            g.moveTo(FIELD.ox, 0); g.lineTo(FIELD.ox, H);
+            g.moveTo(FIELD.ox + FIELD.w, 0); g.lineTo(FIELD.ox + FIELD.w, H);
+            g.stroke();
+            // Ground line continues across the whole frame (same 3px magenta as draw()).
+            g.strokeStyle = '#ff00ff';
+            g.lineWidth = 3 * s;
+            g.beginPath(); g.moveTo(0, FIELD.oy + baseHeight * s); g.lineTo(W, FIELD.oy + baseHeight * s); g.stroke();
+            FIELD.bg = bg;
+            FIELD.menuPainted = false;
+        }
+
+        // Paint the side (or top/bottom) space outside the field from the cached sky.
+        function drawFrameBands() {
+            const bg = FIELD.bg;
+            if (!bg) return;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            const W = canvas.width, H = canvas.height;
+            const x0 = FIELD.ox, x1 = Math.min(W, FIELD.ox + FIELD.w);
+            const y0 = FIELD.oy, y1 = Math.min(H, FIELD.oy + FIELD.h);
+            if (x0 > 0) ctx.drawImage(bg, 0, 0, x0 + 1, H, 0, 0, x0 + 1, H);
+            if (x1 < W) ctx.drawImage(bg, x1 - 1, 0, W - x1 + 1, H, x1 - 1, 0, W - x1 + 1, H);
+            if (y0 > 0) ctx.drawImage(bg, 0, 0, W, y0 + 1, 0, 0, W, y0 + 1);
+            if (y1 < H) ctx.drawImage(bg, 0, y1 - 1, W, H - y1 + 1, 0, y1 - 1, W, H - y1 + 1);
+        }
+
         // Math constants (cached)
         const PI = Math.PI;
         const PI2 = PI * 2;
@@ -1505,8 +1624,53 @@
             }
             
             let displayWidth, displayHeight;
+            
+            FIELD.on = false; // V1_493
+            document.documentElement.classList.toggle('in-iframe', isInIframe); // V1_493
 
-            if (isFullscreen) {
+            if (isInIframe) {
+                // V1_493: identical game frame — canvas = the entire iframe viewport (inset 0, no
+                // border/safetyPadding), backing store = CSS size x min(DPR, 2) (MAX_CANVAS_PIXELS
+                // cap). The 400x600 field is max-fit (by height at the site's 640:718 frame) and the
+                // side space is painted with the game's own sky grid (drawFrameBands).
+                gameContainer.classList.add('fullscreen-mode');
+                document.body.classList.add('fullscreen-active');
+                
+                const frameW = document.documentElement.clientWidth || Math.floor(viewW);
+                const frameH = document.documentElement.clientHeight || Math.floor(viewH);
+                document.documentElement.style.setProperty('--ui-zoom', Math.max(1, Math.min(frameW / 640, frameH / 718)).toFixed(4)); // V1_493: DOM UI scale
+                let devPerCss = Math.min(rawDPR, 2); // V1_493: DPR capped at 2 in the iframe (GPU cost)
+                let bufferWidth = Math.round(frameW * devPerCss);
+                let bufferHeight = Math.round(frameH * devPerCss);
+                if (bufferWidth * bufferHeight > MAX_CANVAS_PIXELS) {
+                    devPerCss *= Math.sqrt(MAX_CANVAS_PIXELS / (bufferWidth * bufferHeight));
+                    bufferWidth = Math.floor(frameW * devPerCss);
+                    bufferHeight = Math.floor(frameH * devPerCss);
+                }
+                canvas.width = bufferWidth;
+                canvas.height = bufferHeight;
+                canvas.style.width = frameW + 'px';
+                canvas.style.height = frameH + 'px';
+                
+                const fit = Math.min(bufferWidth / baseWidth, bufferHeight / baseHeight);
+                FIELD.on = true;
+                FIELD.s = fit;
+                FIELD.w = Math.round(baseWidth * fit);
+                FIELD.h = Math.round(baseHeight * fit);
+                FIELD.ox = Math.round((bufferWidth - FIELD.w) / 2);
+                FIELD.oy = Math.round((bufferHeight - FIELD.h) / 2);
+                dprScale = devPerCss;
+                buildFrameBg();
+                
+                GameDebug.show({
+                    viewport: `${viewW}×${viewH}`,
+                    avail: `${frameW}×${frameH}`,
+                    display: `field ${Math.round(FIELD.w / devPerCss)}×${Math.round(FIELD.h / devPerCss)} @${Math.round(FIELD.ox / devPerCss)},${Math.round(FIELD.oy / devPerCss)}`,
+                    buffer: `${bufferWidth}×${bufferHeight}`,
+                    dpr: `${rawDPR.toFixed(2)} → ${devPerCss.toFixed(2)}`,
+                    device: 'iframe'
+                });
+            } else if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
@@ -1640,7 +1804,9 @@
         const MIN_LOADING_TIME = 1500; // 1.5 seconds minimum
         
         // Scale factor for responsive game (canvas pixels to game coords, includes DPR)
-        const getScale = () => canvas.width / baseWidth;
+        // V1_493: in the iframe frame-fill the canvas is wider than the field, so the field scale
+        // (and its centring offset) come from resizeCanvas(); standalone keeps the original formula.
+        const getScale = () => (FIELD.on ? FIELD.s : canvas.width / baseWidth);
 
         // Bird
         const bird = {
@@ -2621,7 +2787,9 @@
             
             // Use setTransform instead of save/scale/restore (faster) — V1_190: + death screen-shake offset
             const __shk = deathShake > 0.5 ? deathShake : 0;
-            ctx.setTransform(s, 0, 0, s, __shk ? (Math.random() - 0.5) * __shk : 0, __shk ? (Math.random() - 0.5) * __shk : 0);
+            if (FIELD.on) { drawFrameBands(); FIELD.menuPainted = false; } // V1_493: side space = sky, then the field is clipped below
+            ctx.setTransform(s, 0, 0, s, (FIELD.on ? FIELD.ox : 0) + (__shk ? (Math.random() - 0.5) * __shk : 0), (FIELD.on ? FIELD.oy : 0) + (__shk ? (Math.random() - 0.5) * __shk : 0)); // V1_493: + field offset
+            if (FIELD.on) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, baseWidth, baseHeight); ctx.clip(); } // V1_493
             if (deathShake > 0.01) deathShake *= Math.pow(0.86, frameScale60); // V1_473: frame-rate independent (same at 60Hz)
 
             // Use cached background with grid and static stars (offset for buffer)
@@ -2856,6 +3024,7 @@
                 ctx.globalAlpha = 1;
             }
 
+            if (FIELD.on) ctx.restore(); // V1_493: drop the field clip
             // Reset transform for next frame
             ctx.setTransform(1, 0, 0, 1, 0, 0);
         }
@@ -2887,6 +3056,15 @@
         // Lightweight background for menu screens
         function drawMenuBackground() {
             const s = getScale();
+            if (FIELD.on) { // V1_493: full-frame sky (the cached frame bg already carries the field grid)
+                // Static, so blit it once per resize / after gameplay instead of every menu frame.
+                if (FIELD.bg && !FIELD.menuPainted) {
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    ctx.drawImage(FIELD.bg, 0, 0);
+                    FIELD.menuPainted = true;
+                }
+                return;
+            }
             ctx.setTransform(s, 0, 0, s, 0, 0);
             ctx.drawImage(bgGridCanvas, -10, 0);
             ctx.setTransform(1, 0, 0, 1, 0, 0);
