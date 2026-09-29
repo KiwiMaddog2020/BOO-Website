@@ -2152,6 +2152,72 @@
             .tutorial-joystick-thumb { animation: none !important; }
             .tutorial-finger { animation: none !important; }
         }
+
+        /* V1_495: DOM UI scales with the frame (--ui-zoom = stage scale, never below 1; set by
+           handleResize). Viewport-unit caps are divided back out because zoom multiplies vh. */
+        html.in-iframe .menu-overlay,
+        html.in-iframe .upgrade-overlay,
+        html.in-iframe .boss-intro-overlay,
+        html.in-iframe .boss-victory-overlay,
+        html.in-iframe .leaderboard-overlay,
+        html.in-iframe .score-modal,
+        html.in-iframe .tutorial-overlay,
+        html.in-iframe .shop-overlay,
+        html.in-iframe .pause-overlay,
+        html.in-iframe .confirm-overlay,
+        html.in-iframe .touch-tutorial,
+        html.in-iframe .keys-display {
+            zoom: var(--ui-zoom, 1);
+        }
+        html.in-iframe .leaderboard-container { max-height: calc(80vh / var(--ui-zoom, 1)); }
+        html.in-iframe .shop-container { max-height: calc(85vh / var(--ui-zoom, 1)); }
+
+        /* V1_495: small end of the identical game frame (~250x280 up to ~340px wide or ~380px
+           tall). Upgrade slots, score modal, tutorial, pause, leaderboard and shop headers are
+           tightened so nothing clips; cards scroll as a last resort (V1_422 viewport-cutoff law). */
+        @media (max-width: 340px), (max-height: 380px) {
+            html.in-iframe .game-title { font-size: 26px; }
+            html.in-iframe .game-subtitle { font-size: 11px; margin-bottom: 18px; }
+            html.in-iframe .upgrade-header { margin-bottom: 10px; }
+            html.in-iframe .upgrade-title { font-size: 18px; letter-spacing: 3px; }
+            html.in-iframe .upgrade-subtitle { font-size: 9px; margin-top: 6px; letter-spacing: 2px; }
+            html.in-iframe .upgrade-slots { gap: 6px; }
+            html.in-iframe .upgrade-slot { width: 74px; height: 118px; border-radius: 10px; }
+            html.in-iframe .upgrade-content { padding: 8px 4px; }
+            html.in-iframe .upgrade-icon { font-size: 22px; margin-bottom: 5px; }
+            html.in-iframe .upgrade-name { font-size: 9px; margin-bottom: 4px; }
+            html.in-iframe .upgrade-desc { font-size: 8px; line-height: 1.25; }
+
+            html.in-iframe .score-modal { justify-content: safe center; overflow-y: auto; padding: 8px 0; }
+            html.in-iframe .score-modal-content { padding: 12px 14px; }
+            html.in-iframe .score-modal-title { font-size: 17px; margin-bottom: 8px; letter-spacing: 1px; }
+            html.in-iframe .score-stats { font-size: 13px; margin-bottom: 8px; line-height: 1.5; }
+            html.in-iframe .score-input-label { font-size: 11px; margin-bottom: 6px; }
+            html.in-iframe .score-input { padding: 7px; font-size: 14px; margin-bottom: 6px; }
+            html.in-iframe .score-btn { padding: 8px 14px; font-size: 12px; }
+
+            html.in-iframe .tutorial-overlay { justify-content: safe center; overflow-y: auto; padding: 8px 0; }
+            html.in-iframe .tutorial-container { padding: 10px 12px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; }
+            html.in-iframe .tutorial-close { top: 6px; right: 6px; width: 24px; height: 24px; font-size: 12px; }
+            html.in-iframe .tutorial-title { font-size: 15px; margin-bottom: 8px; letter-spacing: 1px; }
+            html.in-iframe .tutorial-icon { font-size: 26px; margin-bottom: 6px; }
+            html.in-iframe .tutorial-heading { font-size: 13px; margin-bottom: 4px; }
+            html.in-iframe .tutorial-text { font-size: 11px; margin-bottom: 8px; }
+            html.in-iframe .tutorial-nav { margin-top: 6px; padding-top: 6px; }
+            html.in-iframe .tutorial-nav-btn { padding: 6px 8px; font-size: 10px; }
+            html.in-iframe .tutorial-dots { gap: 3px; }
+            html.in-iframe .tutorial-dot { width: 6px; height: 6px; }
+
+            html.in-iframe .pause-title { font-size: 26px; margin-bottom: 18px; letter-spacing: 2px; }
+            html.in-iframe .pause-menu-btn { width: 140px; font-size: 11px; padding: 8px 12px; }
+            html.in-iframe .pause-menu-buttons { gap: 10px; }
+            html.in-iframe .leaderboard-container { padding: 12px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+            html.in-iframe .leaderboard-title { font-size: 17px; letter-spacing: 1px; }
+            html.in-iframe .shop-container { padding: 12px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+            html.in-iframe .shop-title { font-size: 16px; }
+            html.in-iframe .shop-score { font-size: 13px; }
+            html.in-iframe .shop-close { top: 10px; right: 10px; }
+        }
     </style>
 </head>
 <body>
@@ -15107,13 +15173,27 @@
                 if (upgradeArrowEl) upgradeArrowEl.style.display = 'none';
                 
                 // Universal margin system: border + safety padding (matches Brickbreaker)
+                // V1_495: identical game frame — inside the site iframe the shared inset is 0 on
+                // every device (was 5px phone / 20px tablet), so the composition reaches every edge.
                 const borderWidth = isInIframe ? 0 : 3;
-                const safetyPadding = (isTablet || isIPad) ? 20 : (isInIframe ? 5 : 0);
+                const safetyPadding = isInIframe ? 0 : ((isTablet || isIPad) ? 20 : 0);
                 const totalMargin = (borderWidth + safetyPadding) * 2;
                 
                 const availWidth = viewW - totalMargin;
                 const availHeight = viewH - totalMargin;
                 const screenAspect = availWidth / availHeight;
+                // V1_495: frame at least as tall as the 540x500 playfield (the site's 640:718 frame
+                // always is). The playfield max-fits the full width at a uniform scale (no floor, so
+                // canvas CSS aspect == backing-store aspect) and the HUD + trackpad bands split ALL
+                // of the leftover height, so the canvas covers the iframe edge to edge.
+                const fillFrame = isInIframe && screenAspect <= gameAspect;
+                // V1_495: DOM UI scales with the frame. 640x718 = the look it always had; bigger
+                // frames zoom the menus/overlays by the stage scale so the game reads as the same
+                // picture at any size. Smaller frames keep zoom 1 plus the responsive and
+                // small-frame rules (text stays >= ~10px instead of shrinking with the stage).
+                if (isInIframe) {
+                    document.documentElement.style.setProperty('--ui-zoom', Math.max(1, Math.min(viewW / 640, viewH / 718)).toFixed(4));
+                }
                 
                 // First, calculate game display dimensions preserving aspect ratio
                 let displayGameWidth, displayGameHeight;
@@ -15132,6 +15212,10 @@
                         displayGameHeight = Math.floor(availHeight - reserveHud);
                         displayGameWidth = Math.floor(displayGameHeight * gameAspect);
                     }
+                } else if (fillFrame) {
+                    // V1_495: exact (unfloored) max-fit so the scale stays uniform.
+                    displayGameWidth = availWidth;
+                    displayGameHeight = availWidth / gameAspect;
                 } else {
                     // Screen taller than game: width-constrained  
                     displayGameWidth = Math.floor(availWidth);
@@ -15160,22 +15244,36 @@
                     displayTrackpadHeight = 0;
                 }
                 
-                const displayTotalHeight = displayGameHeight + displayHudHeight + displayTrackpadHeight;
+                let displayTotalHeight = displayGameHeight + displayHudHeight + displayTrackpadHeight;
                 
                 // Convert display heights to logical coordinates (matching BASE_WIDTH/BASE_HEIGHT scale)
                 const displayToLogical = BASE_HEIGHT / displayGameHeight;
                 
                 LAYOUT.gameWidth = BASE_WIDTH;
                 LAYOUT.gameHeight = BASE_HEIGHT;
+                if (fillFrame) {
+                    // V1_495: the bands take the whole leftover (in logical units, so the backing
+                    // store keeps the canvas CSS aspect: the old path forced trackpad = HUD even when
+                    // only a HUD fitted, which stretched phone iframes by ~18%).
+                    const extraLogical = Math.max(0, extraDisplayHeight * displayToLogical);
+                    LAYOUT.hudHeight = extraLogical >= 90 ? extraLogical / 2 : extraLogical;
+                    LAYOUT.trackpadHeight = extraLogical - LAYOUT.hudHeight;
+                    displayTotalHeight = availHeight;
+                } else {
                 LAYOUT.hudHeight = Math.round(displayHudHeight * displayToLogical);
                 LAYOUT.trackpadHeight = LAYOUT.hudHeight; // Force equal heights with HUD
+                }
                 LAYOUT.totalHeight = BASE_HEIGHT + LAYOUT.hudHeight + LAYOUT.trackpadHeight;
                 LAYOUT.hudTop = BASE_HEIGHT;
                 LAYOUT.trackpadTop = BASE_HEIGHT + LAYOUT.hudHeight;
                 
                 // Determine optimal buffer scale based on device (matches Brickbreaker)
                 let bufferScale;
-                if (isTablet || isIPad) {
+                if (fillFrame) {
+                    // V1_495: sharp — backing store = canvas CSS size x devicePixelRatio, DPR capped
+                    // at 2 for mobile GPUs (MAX_CANVAS_PIXELS cap below still applies).
+                    bufferScale = (displayGameWidth / BASE_WIDTH) * Math.min(2, window.devicePixelRatio || rawDPR || 1);
+                } else if (isTablet || isIPad) {
                     bufferScale = 2; // Fixed 2x for tablets
                 } else {
                     // Desktop: scale based on CSS size vs base size, capped by DPR
