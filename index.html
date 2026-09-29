@@ -6068,6 +6068,9 @@
             left: 15px !important;
             z-index: 100000 !important;
         }
+        /* V1_509: generic bridge — the pause slot shows only for a game that has reported pause
+           support (.pane-pause, set from boo-arcade-state); mute-only games get just slot 1. */
+        .game-container:not(.pane-pause) #panePauseBtn { display: none !important; }
 
         /* Hide music player in pseudo-fullscreen (all devices) */
         body.pseudo-fullscreen-active .music-player,
@@ -10000,9 +10003,11 @@
                  the viewport's top-LEFT pane (mirroring the close button top-right) so they clear
                  the playfield. They postMessage the active game iframe; the game's own in-iframe
                  buttons handle windowed mode and hide while fullscreen. -->
+            <!-- V1_509: corner-button standard — MUTE is slot 1, PAUSE slot 2 (same order as in-game).
+                 The pause slot only shows once the active game reports pause support. -->
             <div class="game-pane-controls">
-                <button class="game-pane-btn" id="panePauseBtn" type="button" aria-label="Pause game" title="Pause">⏸</button>
                 <button class="game-pane-btn" id="paneMuteBtn" type="button" aria-label="Toggle sound" title="Sound">🔊</button>
+                <button class="game-pane-btn" id="panePauseBtn" type="button" aria-label="Pause game" title="Pause">⏸</button>
             </div>
         </div>
     </section>
@@ -12604,7 +12609,7 @@
                         arcadeFrame.removeEventListener('load', focusSwappedGame);
                         try { arcadeFrame.focus(); if (arcadeFrame.contentWindow) arcadeFrame.contentWindow.focus(); } catch (e) {}
                     }, { once: true });
-                    arcadeGameContainer.classList.remove('pane-ready'); // V1_276: new game must re-handshake before pane controls show
+                    arcadeGameContainer.classList.remove('pane-ready', 'pane-pause'); // V1_276: new game must re-handshake before pane controls show (V1_509: incl. pause support)
                     if (typeof resyncPaneFs === 'function') resyncPaneFs(true); // V1_424: re-hand fullscreen state to the incoming game (kills duplicate pause/mute)
                     
                     // Recalculate size (desktop only)
@@ -13172,12 +13177,34 @@
                 // V1_275: game reports pause/mute state -> sync the fullscreen pane buttons.
                 // Receiving this is also our proof the active game ships the bridge, so the
                 // pane controls only ever appear for games that can use them (V1_276 fix).
+                // V1_509: generic — any game that answers the bridge gets the pane (no game names).
+                // Pause support: an explicit `canPause` boolean wins; otherwise a boolean `paused`
+                // field means the game can pause (Survivors/Dig send {paused, muted}). Sticky per
+                // loaded game: once reported it stays until a pill switch swaps the game (which
+                // clears it), so the slot never flickers while a menu is up. A game can drop it
+                // explicitly with canPause:false.
+                // Ignore the OUTGOING game: after a pill swap sets the new src, the old document
+                // lives on until the navigation commits and answers resyncPaneFs's immediate
+                // fs-enter, which marked a bridge-less incoming game pane-ready (stale pane).
+                // Games are same-origin, so compare the reporting document's path to the
+                // current src (skipped if the check can't run).
+                try {
+                    const af = document.getElementById('arcadeFrame');
+                    if (af && af.src && e.source && e.source.location &&
+                        e.source.location.pathname !== new URL(af.src, location.href).pathname) return;
+                } catch (err) {}
                 const gc = document.querySelector('.game-container');
-                if (gc) gc.classList.add('pane-ready');
+                const d = e.data;
+                const canPause = (typeof d.canPause === 'boolean') ? d.canPause : (typeof d.paused === 'boolean');
+                if (gc) {
+                    gc.classList.add('pane-ready');
+                    if (canPause) gc.classList.add('pane-pause');
+                    else if (d.canPause === false) gc.classList.remove('pane-pause');
+                }
                 const pp = document.getElementById('panePauseBtn');
                 const pm = document.getElementById('paneMuteBtn');
-                if (pp) pp.classList.toggle('paused', !!e.data.paused);
-                if (pm) pm.textContent = e.data.muted ? '🔇' : '🔊';
+                if (pp) pp.classList.toggle('paused', !!d.paused);
+                if (pm && typeof d.muted === 'boolean') pm.textContent = d.muted ? '🔇' : '🔊';
             }
         });
         
