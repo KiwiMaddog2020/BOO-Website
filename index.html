@@ -5908,6 +5908,9 @@
             left: 0 !important;
             width: 100vw !important;
             height: 100vh !important;
+            /* V1_491: dynamic viewport (100vh is the LARGE viewport on iOS = taller than the
+               visible area while the toolbar shows). JS then pins it to visualViewport px. */
+            height: 100dvh !important;
             max-width: none !important;
             max-height: none !important;
             border-radius: 0 !important;
@@ -5923,6 +5926,41 @@
             overflow: hidden !important;
         }
         
+        /* V1_491: `#game .game-container { margin-top:-10px !important }` (400-768px coarse,
+           specificity 1-1-0) beat the 0-2-0 rule above and shifted pseudo-fullscreen up 10px;
+           the ID lifts this one above it. transform:none so the container never becomes an
+           offset/containing block for its own children. */
+        #game .game-container.pseudo-fullscreen {
+            margin: 0 !important;
+            -webkit-transform: none !important;
+            transform: none !important;
+        }
+        /* V1_491: containing-block trap — #game (section: transform + filter + contain) and its
+           ancestors would make the position:fixed pseudo container fixed to THEM, not to the
+           viewport (it only lined up because the section happened to sit at 0,0). Neutralise
+           every containing-block trigger while pseudo-fullscreen; all other sections are hidden
+           then, so nothing visible changes. */
+        body.pseudo-fullscreen-active #game,
+        body.pseudo-fullscreen-active #main-content,
+        body.pseudo-fullscreen-active .scroll-container {
+            -webkit-transform: none !important;
+            transform: none !important;
+            -webkit-filter: none !important;
+            filter: none !important;
+            contain: none !important;
+            will-change: auto !important;
+            perspective: none !important;
+            -webkit-backdrop-filter: none !important;
+            backdrop-filter: none !important;
+        }
+        /* V1_491: the iOS global fade layer (.scroll-container::before, z 50, top 10% / bottom
+           12% black bands) and the Safari bottom-gap bar (body::before, z 9990) painted over the
+           game in pseudo-fullscreen (landscape = the game spans the full height). */
+        body.pseudo-fullscreen-active .scroll-container::before,
+        body.pseudo-fullscreen-active::before {
+            display: none !important;
+        }
+
         /* Hide all UI elements when in pseudo-fullscreen mode */
         body.pseudo-fullscreen-active nav,
         body.pseudo-fullscreen-active .card-indicators,
@@ -6082,9 +6120,11 @@
         }
         
         /* Mobile pseudo-fullscreen close button positioning */
+        /* V1_491: JS (applyFullscreenLayout) places the ✕ inside the letterbox bar; this is
+           only the pre-JS fallback. 48px put it over the game on iPhone portrait. */
         @media (max-width: 768px) {
             .game-container.pseudo-fullscreen .game-fullscreen-btn {
-                top: 48px !important;
+                top: calc(env(safe-area-inset-top, 0px) + 8px) !important;
                 right: 12px !important;
             }
         }
@@ -6275,6 +6315,41 @@
             margin: 0 !important;
         }
         
+        /* V1_491: the grouped :fullscreen/:-webkit-/:-moz-/:-ms- rule above is dropped whole by
+           the parser (V1_180 gotcha), so the container's 2px border survived into fullscreen
+           and pushed the iframe 2px down/right (bottom 2px clipped on desktop). Ungrouped. */
+        .game-container:fullscreen {
+            border: none !important;
+            border-radius: 0 !important;
+        }
+        .game-container:-webkit-full-screen {
+            border: none !important;
+            border-radius: 0 !important;
+        }
+
+        /* V1_491: inline ⛶ parked outside the game box (placeInlineFullscreenButton). The
+           container must not clip it; the iframe keeps the rounded corner itself (8px outer
+           radius - 2px border). .fs-slot reserves a 7th, pill-sized slot at the right end of
+           the pill row; the gap only tightens where 7 x 44px + margins would not fit. */
+        .game-container.fs-btn-outside:not(.pseudo-fullscreen) {
+            overflow: visible !important;
+        }
+        .game-container.fs-btn-outside:not(.pseudo-fullscreen) iframe {
+            border-radius: 6px;
+        }
+        #game .arcade-selector.fs-slot {
+            --fs-slot-gap: clamp(4px, calc((100vw - 7 * 44px - 16px) / 6), 10px);
+            gap: var(--fs-slot-gap) !important;
+            padding-right: calc(44px + var(--fs-slot-gap)) !important;
+            box-sizing: content-box !important;
+            /* the selector (z-index 100 on mobile) stacks above the container, so let taps on
+               the reserved slot fall through to the ⛶ beneath; the pills stay clickable. */
+            pointer-events: none !important;
+        }
+        #game .arcade-selector.fs-slot .arcade-pill {
+            pointer-events: auto !important;
+        }
+
         /* V1_180: the fullscreen background MUST be in its own rule per vendor
            prefix. Grouping :-webkit-full-screen with :-moz-/:-ms- invalidates the
            ENTIRE rule (verified: the CSS parser drops it), which is why the neon
@@ -9053,6 +9128,18 @@
                 flex: 0 0 auto !important;
             }
 
+            /* V1_491: the ⛶ is back on iPad (pseudo-fullscreen). Park it in the gutter just
+               outside the game's top-right corner instead of over the game (the narrowest
+               gutter, iPad mini portrait, is ~50px: 44px button + 4px gap fits). */
+            body.is-ipad #game .game-container:not(.pseudo-fullscreen) {
+                overflow: visible !important;
+            }
+            body.is-ipad #game .game-container:not(.pseudo-fullscreen) .game-fullscreen-btn {
+                top: 0 !important;
+                right: auto !important;
+                left: calc(100% + 4px) !important;
+            }
+
             body.is-ipad.game-section-active .music-player,
             body.is-ipad.game-section-active .music-toggle {
                 display: none !important;
@@ -9102,6 +9189,40 @@
                 margin-top: 0 !important;
                 margin-bottom: 4px !important;
                 gap: 5px !important;
+            }
+
+            /* V1_491: phone landscape "use the full height". The pills move into a column
+               BESIDE the game and the ⛶ into the mirrored gutter on the other side, so the
+               game (640:718, real-size iframe — no more transform:scale) spans everything
+               under the fixed nav. enforceGameAspectRatio() reads this padding + the pill
+               column width. Safe-area insets keep the notch / home indicator clear. */
+            body.is-mobile:not(.is-ipad) #game {
+                flex-direction: row !important;
+                justify-content: center !important;
+                align-items: center !important;
+                gap: 0 !important;
+                padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)) !important;
+                padding-left: max(12px, env(safe-area-inset-left, 0px)) !important;
+                padding-right: max(12px, env(safe-area-inset-right, 0px)) !important;
+            }
+            body.is-mobile:not(.is-ipad) #game .arcade-selector {
+                display: grid !important;
+                grid-template-columns: repeat(2, 44px) !important;
+                grid-auto-rows: 44px !important;
+                gap: 8px !important;
+                margin: 0 12px 0 0 !important;
+                flex: 0 0 auto !important;
+                align-self: center !important;
+            }
+            body.is-mobile:not(.is-ipad) #game .game-container:not(.pseudo-fullscreen) {
+                margin: 0 108px 0 0 !important;   /* = pill column (2x44 + 8) + 12: centres the game */
+                overflow: visible !important;       /* lets the ⛶ sit outside the game box */
+                flex: 0 0 auto !important;
+            }
+            body.is-mobile:not(.is-ipad) #game .game-container:not(.pseudo-fullscreen) .game-fullscreen-btn {
+                top: 0 !important;
+                right: auto !important;
+                left: calc(100% + 12px) !important;
             }
 
             body.is-mobile:not(.is-ipad) #events {
@@ -9160,6 +9281,19 @@
 
             body.is-mobile:not(.is-ipad) #events .event-location {
                 font-size: 0.44rem !important;
+            }
+        }
+
+        /* V1_491: landscape phones with room for all six 44px pills stacked (>= 360px tall:
+           68 nav + 6x44 + 5x4 + 8 = 360) get a true single column; shorter ones keep 2x3.
+           The container's right margin mirrors the column width so the game stays centred. */
+        @media (max-height: 500px) and (min-height: 360px) and (orientation: landscape) and (pointer: coarse) {
+            body.is-mobile:not(.is-ipad) #game .arcade-selector {
+                grid-template-columns: 44px !important;
+                gap: 4px !important;
+            }
+            body.is-mobile:not(.is-ipad) #game .game-container:not(.pseudo-fullscreen) {
+                margin-right: 56px !important;   /* = 44 + 12 */
             }
         }
         
@@ -11961,10 +12095,25 @@
                 return Number.isFinite(parsed) ? parsed : 0;
             };
             
-            if (isMobile) {
+            if (isShortPhoneLandscape) {
+                // V1_491: phone landscape — the pills sit in a column BESIDE the game (CSS, V1_491
+                // block in the V1_160 phone-landscape guard) and the ⛶ sits in the mirrored gutter
+                // on the other side, so the game takes the full height under the fixed nav: the
+                // section's own padding (68px top clears the nav, 8px bottom) is the only overhead.
+                // Replaces the old 128px overhead + 640x718 transform:scale(0.26-0.35) iframe.
+                const sectionStyle = gameSection ? window.getComputedStyle(gameSection) : null;
+                const selectorStyle = selector ? window.getComputedStyle(selector) : null;
+                const padY = sectionStyle ? px(sectionStyle.paddingTop) + px(sectionStyle.paddingBottom) : 76;
+                const padX = sectionStyle ? px(sectionStyle.paddingLeft) + px(sectionStyle.paddingRight) : 0;
+                const gutter = selector
+                    ? selector.getBoundingClientRect().width + (selectorStyle ? px(selectorStyle.marginLeft) + px(selectorStyle.marginRight) : 0)
+                    : 0;
+                availableWidth = viewportWidth - padX - 2 * gutter;
+                availableHeight = viewportHeight - padY;
+            } else if (isMobile) {
                 // Mobile: fill width with small margin, respect viewport height
                 const widthMargin = 0.95;
-                const overhead = isShortPhoneLandscape ? 128 : 155; // Space for nav, title, game selector (tightened)
+                const overhead = 155; // Space for nav, title, game selector (tightened)
                 availableWidth = viewportWidth * widthMargin;
                 availableHeight = viewportHeight - overhead;
             } else if (isTablet) {
@@ -12059,6 +12208,19 @@
                 finalHeight = availableHeight;
                 finalWidth = availableHeight * gameRatio;
             }
+
+            // V1_491: the iframe fills the container's CONTENT box, so with the 2px border the
+            // iframe was (W-4)x(H-4) — 0.1-0.25% off 640:718. Keep the constrained side exactly
+            // as computed and derive the other from the content box, so the iframe itself is
+            // exactly the game's aspect (inline size moves by < 1px).
+            const containerStyle0 = window.getComputedStyle(container);
+            const borderX = px(containerStyle0.borderLeftWidth) + px(containerStyle0.borderRightWidth);
+            const borderY = px(containerStyle0.borderTopWidth) + px(containerStyle0.borderBottomWidth);
+            if (availableWidth / gameRatio <= availableHeight) {
+                finalHeight = (finalWidth - borderX) / gameRatio + borderY;
+            } else {
+                finalWidth = (finalHeight - borderY) * gameRatio + borderX;
+            }
             
             // Apply dimensions with !important to override CSS
             container.style.setProperty('width', finalWidth + 'px', 'important');
@@ -12067,37 +12229,86 @@
             container.style.setProperty('max-height', finalHeight + 'px', 'important');
             container.style.setProperty('aspect-ratio', cssAspectStr, 'important');
 
+            // V1_491: the iframe always renders at its REAL size (it fills the container via CSS).
+            // The old short-phone-landscape path drew a 640x718 iframe and transform:scale()d it
+            // down to 0.26-0.35 (1/3-size text, 2px overhang past the border); the games now lay
+            // out cleanly at small sizes. Clearing here also wipes any fullscreen inline sizing.
             const iframe = container.querySelector('iframe');
             if (iframe) {
-                if (isShortPhoneLandscape) {
-                    const iframeScale = Math.min(finalWidth / aspectWidth, finalHeight / aspectHeight);
-                    iframe.style.setProperty('width', aspectWidth + 'px', 'important');
-                    iframe.style.setProperty('height', aspectHeight + 'px', 'important');
-                    iframe.style.setProperty('max-width', 'none', 'important');
-                    iframe.style.setProperty('max-height', 'none', 'important');
-                    iframe.style.setProperty('position', 'absolute', 'important');
-                    iframe.style.setProperty('top', '0', 'important');
-                    iframe.style.setProperty('left', '0', 'important');
-                    iframe.style.setProperty('-webkit-transform', 'scale(' + iframeScale + ')', 'important');
-                    iframe.style.setProperty('transform', 'scale(' + iframeScale + ')', 'important');
-                    iframe.style.setProperty('-webkit-transform-origin', 'top left', 'important');
-                    iframe.style.setProperty('transform-origin', 'top left', 'important');
-                } else {
-                    iframe.style.removeProperty('width');
-                    iframe.style.removeProperty('height');
-                    iframe.style.removeProperty('max-width');
-                    iframe.style.removeProperty('max-height');
-                    iframe.style.removeProperty('position');
-                    iframe.style.removeProperty('top');
-                    iframe.style.removeProperty('left');
-                    iframe.style.removeProperty('-webkit-transform');
-                    iframe.style.removeProperty('transform');
-                    iframe.style.removeProperty('-webkit-transform-origin');
-                    iframe.style.removeProperty('transform-origin');
-                }
+                ['width', 'height', 'max-width', 'max-height', 'position', 'top', 'left', 'right', 'bottom',
+                 'margin', '-webkit-transform', 'transform', '-webkit-transform-origin', 'transform-origin', 'border']
+                    .forEach(function (prop) { iframe.style.removeProperty(prop); });
             }
+            placeInlineFullscreenButton(container, selector, viewportWidth);
+        }
+
+        // V1_491: nothing may sit over the game inline either. The ⛶ used to live in the game's
+        // top-right corner. Order of preference:
+        //   1. CSS already parks it outside the box (phone landscape gutter, iPad gutter) -> keep.
+        //   2. Enough side gutter (desktop, wide windows) -> just outside the top-right corner.
+        //   3. Otherwise (portrait phones) -> a 7th slot at the right end of the pill row: the
+        //      selector gets .fs-slot (reserves the slot; pill gap tightens only where 7 x 44px
+        //      would not fit, i.e. < ~390px wide) and the button is aligned into it. The game
+        //      box itself is untouched.
+        function placeInlineFullscreenButton(container, selector, viewportWidth) {
+            const btn = container.querySelector('.game-fullscreen-btn');
+            if (!btn) return;
+            ['top', 'left', 'right', 'bottom'].forEach(function (p) { btn.style.removeProperty(p); });
+            container.classList.remove('fs-btn-outside');
+            if (selector) selector.classList.remove('fs-slot');
+            if (window.getComputedStyle(btn).display === 'none') return;
+            const overlaps = function () {
+                const b = btn.getBoundingClientRect(), c = container.getBoundingClientRect();
+                return b.right > c.left && b.left < c.right && b.bottom > c.top && b.top < c.bottom;
+            };
+            if (!overlaps()) return;                                   // 1. CSS handled it
+            const gap = 8;
+            const bw = btn.offsetWidth || 44;
+            const cRect = container.getBoundingClientRect();
+            container.classList.add('fs-btn-outside');                  // overflow visible (CSS)
+            if (viewportWidth - cRect.right >= bw + gap + 4) {          // 2. beside the corner
+                btn.style.setProperty('top', '0px', 'important');
+                btn.style.setProperty('right', 'auto', 'important');
+                btn.style.setProperty('left', 'calc(100% + ' + gap + 'px)', 'important');
+                return;
+            }
+            if (!selector || window.getComputedStyle(selector).display === 'none') {
+                container.classList.remove('fs-btn-outside');
+                return;
+            }
+            selector.classList.add('fs-slot');                          // 3. pill-row slot
+            let dx, dy;
+            if (selector.offsetParent && selector.offsetParent === container.offsetParent) {
+                // Layout offsets ignore the section slide-in transform.
+                dx = selector.offsetLeft + selector.offsetWidth - bw - container.offsetLeft - container.clientLeft;
+                dy = selector.offsetTop + (selector.offsetHeight - btn.offsetHeight) / 2 - container.offsetTop - container.clientTop;
+            } else {
+                const sr = selector.getBoundingClientRect(), cr = container.getBoundingClientRect();
+                dx = sr.right - bw - cr.left - container.clientLeft;
+                dy = sr.top + (sr.height - btn.offsetHeight) / 2 - cr.top - container.clientTop;
+            }
+            // Never let it dip into the game: where the pill row overlaps the box top (the -10px
+            // nudge on 400-768px phones) the button rides up the few px needed.
+            dy = Math.min(dy, -btn.offsetHeight);
+            btn.style.setProperty('top', dy + 'px', 'important');
+            btn.style.setProperty('left', dx + 'px', 'important');
+            btn.style.setProperty('right', 'auto', 'important');
         }
         
+        // V1_491: re-place the inline ⛶ once the page has fully laid out and whenever the arcade
+        // section becomes active (the pill-row slot is measured from live layout).
+        window.addEventListener('load', function () { setTimeout(enforceGameAspectRatio, 0); });
+        (function () {
+            const sec = document.getElementById('game');
+            if (!sec || !window.MutationObserver) return;
+            let wasActive = sec.classList.contains('section-active');
+            new MutationObserver(function () {
+                const active = sec.classList.contains('section-active');
+                if (active && !wasActive) setTimeout(enforceGameAspectRatio, 0);
+                wasActive = active;
+            }).observe(sec, { attributes: true, attributeFilter: ['class'] });
+        })();
+
         // Run on resize (debounced for performance) - ALL devices now
         let resizeTimeout;
         window.addEventListener('resize', function() {
@@ -12394,9 +12605,6 @@
         const arcadeGameContainerFS = document.querySelector('.game-container');
         const arcadeFrameFS = document.getElementById('arcadeFrame');
         
-        // Store iframe's natural size before fullscreen
-        let iframeNaturalWidth = 640;
-        let iframeNaturalHeight = 800;
 
         // ========== V1_275: FULLSCREEN PANE PAUSE/MUTE CONTROLS ==========
         // Parent-rendered controls that mirror the close button into the left pane while
@@ -12444,51 +12652,168 @@
         })();
 
         if (fullscreenBtn && arcadeGameContainerFS) {
-            // Update button icon and scale game based on fullscreen state
-            // V1_80: Compute iframe width/height so the active game's native aspect
-            // ratio is preserved in fullscreen (letterbox the viewport). Returns
-            // the largest rect that fits inside the viewport at the game's aspect.
-            // Fixes Brickbreaker/Dig (stuck at top) and Snake/Tower Defense
-            // (vertically stretched) — root cause was iframe filling 100% x 100%
-            // regardless of game ratio; internal canvases reacted differently.
-            function computeFullscreenIframeSize() {
-                const activePill = document.querySelector('.arcade-pill.active');
-                // V1_81: Prefer data-fullscreen-aspect when present — some games
-                // (e.g. Neon Survivors) have internal resize logic that stretches
-                // UI (trackpad) to fill whatever vertical space the iframe gives
-                // them. Their natural canvas aspect differs from the normal-view
-                // data-aspect, so fullscreen needs its own value.
-                const aspectStr = (activePill && (activePill.dataset.fullscreenAspect || activePill.dataset.aspect)) || '640/718';
-                const parts = aspectStr.split('/');
-                const w = parseFloat(parts[0]) || 640;
-                const h = parseFloat(parts[1]) || 718;
-                const gameRatio = w / h;
-                const vw = window.innerWidth;
-                const vh = window.innerHeight;
-                if (vw <= 0 || vh <= 0) return { width: w, height: h };
-                // V1_97: Cap letterbox/pillarbox to ~8% per side. With strict
-                // aspect-fit, square-ish games on a phone leave 30-50% black
-                // bars top + bottom. If a side bar exceeds MAX_LETTERBOX_RATIO
-                // of the viewport, stretch the game's other dimension to clamp
-                // the bar to that ratio. Trade: a bit of distortion for much
-                // better screen usage.
-                const MAX_LETTERBOX_RATIO = 0.08;
-                // Viewport wider than game → fit height, pillarbox L/R
-                // Viewport taller than game → fit width, letterbox T/B
-                if (vw / vh > gameRatio) {
-                    let gameW = vh * gameRatio;
-                    const pillarRatio = (vw - gameW) / 2 / vw;
-                    if (pillarRatio > MAX_LETTERBOX_RATIO) {
-                        gameW = vw * (1 - 2 * MAX_LETTERBOX_RATIO);
+            // ========== V1_491: FULLSCREEN = TRUE 640:718 SHAPE, CENTERED, EVERYWHERE ==========
+            // One layout for every fullscreen path (Android native Fullscreen API, iPhone + iPad
+            // pseudo-fullscreen, desktop native): the iframe is the largest 640:718 box that fits
+            // the VISIBLE viewport (visualViewport, minus env(safe-area-inset-*) so notches and the
+            // home indicator never cover the game), centred on the neon backdrop. Every game fills
+            // whatever 640:718 iframe it gets edge-to-edge, so the shape is the contract — the old
+            // V1_97 8%-letterbox cap stretched the iframe 0.58-2.3x off the game's aspect, and the
+            // V1_81 data-fullscreen-aspect (Survivors 800/820) is deliberately ignored now.
+            // Controls (✕ + the V1_275 pause/mute pane) live in the bars: portrait -> top bar,
+            // landscape -> side bars. If a bar is thinner than FS_BAR_MIN the box shrinks (still
+            // 640:718) just enough to make room. Desktop uses the same direct-size path instead of
+            // the old transform:scale() upscale (blurry) — the games re-render their backing store
+            // on resize, so a directly-sized iframe is sharp.
+            const FS_STAGE_W = 640, FS_STAGE_H = 718;
+            const FS_CTRL_SIZE = 44;     // ✕ button (px)
+            const FS_CTRL_MARGIN = 8;    // gap between a control and the bar edges
+            const FS_BAR_MIN = FS_CTRL_SIZE + 2 * FS_CTRL_MARGIN;   // thinnest bar that holds the controls
+
+            let _fsSafeProbe = null;
+            function readSafeAreaInsets() {
+                const zero = { top: 0, right: 0, bottom: 0, left: 0 };
+                try {
+                    if (!_fsSafeProbe) {
+                        _fsSafeProbe = document.createElement('div');
+                        _fsSafeProbe.setAttribute('aria-hidden', 'true');
+                        _fsSafeProbe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;' +
+                            'padding-top:env(safe-area-inset-top,0px);padding-right:env(safe-area-inset-right,0px);' +
+                            'padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);';
+                        document.body.appendChild(_fsSafeProbe);
                     }
-                    return { width: gameW, height: vh };
+                    const cs = window.getComputedStyle(_fsSafeProbe);
+                    return {
+                        top: parseFloat(cs.paddingTop) || 0, right: parseFloat(cs.paddingRight) || 0,
+                        bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0
+                    };
+                } catch (e) { return zero; }
+            }
+
+            function getFsViewport() {
+                const vv = window.visualViewport;
+                // visualViewport = what is actually visible (iOS toolbar, Android URL bar). Under a
+                // pinch-zoom it is only a slice of the layout viewport, so fall back to inner* then.
+                if (vv && vv.width > 0 && vv.height > 0 && Math.abs((vv.scale || 1) - 1) < 0.01) {
+                    return { w: vv.width, h: vv.height };
                 }
-                let gameH = vw / gameRatio;
-                const letterRatio = (vh - gameH) / 2 / vh;
-                if (letterRatio > MAX_LETTERBOX_RATIO) {
-                    gameH = vh * (1 - 2 * MAX_LETTERBOX_RATIO);
+                return { w: window.innerWidth, h: window.innerHeight };
+            }
+
+            // Returns { width, height } (the iframe size, always 640:718) plus the box position and
+            // the bar orientation used for the controls. Exposed on window for the E2E suite.
+            function computeFullscreenIframeSize() {
+                const ratio = FS_STAGE_W / FS_STAGE_H;
+                const vp = getFsViewport();
+                const safe = readSafeAreaInsets();
+                if (!(vp.w > 0) || !(vp.h > 0)) return { width: FS_STAGE_W, height: FS_STAGE_H, left: 0, top: 0, bars: 'tb', vw: 0, vh: 0, safe: safe };
+                const aw = Math.max(1, vp.w - safe.left - safe.right);
+                const ah = Math.max(1, vp.h - safe.top - safe.bottom);
+                let w, h, bars;
+                if (aw / ah < ratio) {
+                    // Taller than the stage: letterbox top/bottom, controls in the top bar.
+                    bars = 'tb';
+                    w = aw; h = w / ratio;
+                    if ((ah - h) / 2 < FS_BAR_MIN) { h = Math.max(1, ah - 2 * FS_BAR_MIN); w = h * ratio; }
+                } else {
+                    // Wider than the stage: pillarbox left/right, controls in the side bars.
+                    bars = 'lr';
+                    h = ah; w = h * ratio;
+                    if ((aw - w) / 2 < FS_BAR_MIN) { w = Math.max(1, aw - 2 * FS_BAR_MIN); h = w / ratio; }
                 }
-                return { width: vw, height: gameH };
+                // Whole CSS pixels (crisper canvases): the constrained side is floored, the other
+                // rounded (aspect error <= 0.5px / side, well under 0.5%). Bars are >= FS_BAR_MIN,
+                // so rounding up can never touch the viewport edge.
+                if (bars === 'lr') { h = Math.max(1, Math.floor(h + 1e-6)); w = Math.max(1, Math.round(h * ratio)); }
+                else { w = Math.max(1, Math.floor(w + 1e-6)); h = Math.max(1, Math.round(w / ratio)); }
+                return {
+                    width: w, height: h,
+                    left: Math.round(safe.left + (aw - w) / 2),
+                    top: Math.round(safe.top + (ah - h) / 2),
+                    bars: bars, vw: vp.w, vh: vp.h, safe: safe
+                };
+            }
+            window.computeFullscreenIframeSize = computeFullscreenIframeSize;
+
+            const FS_IFRAME_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'width', 'height', 'max-width', 'max-height',
+                                     'margin', 'transform', '-webkit-transform', 'transform-origin', '-webkit-transform-origin', 'border'];
+            const FS_BTN_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'width', 'height', 'font-size'];
+            const FS_PANE_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'flex-direction'];
+            const FS_CONTAINER_PROPS = ['width', 'height', 'max-width', 'max-height', 'aspect-ratio', 'top', 'left'];
+            const setImp = function (el, prop, val) { if (el) el.style.setProperty(prop, val, 'important'); };
+
+            // Size + place the iframe and the controls for the current fullscreen state.
+            function applyFullscreenLayout() {
+                if (!arcadeFrameFS) return;
+                const container = arcadeGameContainerFS;
+                const pane = container.querySelector('.game-pane-controls');
+                const fs = computeFullscreenIframeSize();
+
+                // enforceGameAspectRatio's inline !important sizing would fight the fullscreen box.
+                FS_CONTAINER_PROPS.forEach(function (p) { container.style.removeProperty(p); });
+                if (pseudoFullscreen) {
+                    // Pin the pseudo container to the visible viewport exactly (100dvh in CSS is the
+                    // pre-JS fallback) and cancel any offset a transformed/filtered/contained
+                    // ancestor would add to position:fixed (the V1_491 CSS neutralises the known
+                    // ones; this measures and corrects whatever is left).
+                    setImp(container, 'width', fs.vw + 'px');
+                    setImp(container, 'height', fs.vh + 'px');
+                    setImp(container, 'top', '0px');
+                    setImp(container, 'left', '0px');
+                    const r0 = container.getBoundingClientRect();
+                    if (Math.abs(r0.top) > 0.5 || Math.abs(r0.left) > 0.5) {
+                        setImp(container, 'top', (-r0.top) + 'px');
+                        setImp(container, 'left', (-r0.left) + 'px');
+                    }
+                }
+                // Children are positioned against the container's padding box, in viewport px.
+                const cr = container.getBoundingClientRect();
+                const ox = cr.left + container.clientLeft;
+                const oy = cr.top + container.clientTop;
+
+                setImp(arcadeFrameFS, 'position', 'absolute');
+                setImp(arcadeFrameFS, 'left', (fs.left - ox) + 'px');
+                setImp(arcadeFrameFS, 'top', (fs.top - oy) + 'px');
+                setImp(arcadeFrameFS, 'right', 'auto');
+                setImp(arcadeFrameFS, 'bottom', 'auto');
+                setImp(arcadeFrameFS, 'width', fs.width + 'px');
+                setImp(arcadeFrameFS, 'height', fs.height + 'px');
+                setImp(arcadeFrameFS, 'max-width', 'none');
+                setImp(arcadeFrameFS, 'max-height', 'none');
+                setImp(arcadeFrameFS, 'margin', '0');
+                setImp(arcadeFrameFS, 'transform', 'none');
+                setImp(arcadeFrameFS, '-webkit-transform', 'none');
+                setImp(arcadeFrameFS, 'border', 'none');
+
+                // ✕ in the top-right corner of the bar (top bar in portrait, right bar in landscape).
+                const ctrlTop = fs.safe.top + FS_CTRL_MARGIN;
+                setImp(fullscreenBtn, 'position', 'absolute');
+                setImp(fullscreenBtn, 'top', (ctrlTop - oy) + 'px');
+                setImp(fullscreenBtn, 'left', (fs.vw - fs.safe.right - FS_CTRL_MARGIN - FS_CTRL_SIZE - ox) + 'px');
+                setImp(fullscreenBtn, 'right', 'auto');
+                setImp(fullscreenBtn, 'bottom', 'auto');
+                setImp(fullscreenBtn, 'width', FS_CTRL_SIZE + 'px');
+                setImp(fullscreenBtn, 'height', FS_CTRL_SIZE + 'px');
+                setImp(fullscreenBtn, 'font-size', '22px');
+                // Pause/mute mirror it top-left: a row in the top bar, a column in the left bar.
+                if (pane) {
+                    setImp(pane, 'position', 'absolute');
+                    setImp(pane, 'top', (ctrlTop - oy) + 'px');
+                    setImp(pane, 'left', (fs.safe.left + FS_CTRL_MARGIN - ox) + 'px');
+                    setImp(pane, 'right', 'auto');
+                    setImp(pane, 'bottom', 'auto');
+                    setImp(pane, 'flex-direction', fs.bars === 'lr' ? 'column' : 'row');
+                }
+            }
+
+            // Undo applyFullscreenLayout and restore the exact inline size.
+            function clearFullscreenLayout() {
+                const pane = arcadeGameContainerFS.querySelector('.game-pane-controls');
+                if (arcadeFrameFS) FS_IFRAME_PROPS.forEach(function (p) { arcadeFrameFS.style.removeProperty(p); });
+                FS_BTN_PROPS.forEach(function (p) { fullscreenBtn.style.removeProperty(p); });
+                if (pane) FS_PANE_PROPS.forEach(function (p) { pane.style.removeProperty(p); });
+                FS_CONTAINER_PROPS.forEach(function (p) { arcadeGameContainerFS.style.removeProperty(p); });
+                enforceGameAspectRatio();
             }
 
             function updateFullscreenState() {
@@ -12500,86 +12825,18 @@
                 fullscreenBtn.setAttribute('aria-label', isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen');
                 notifyGameFullscreen(!!isFullscreen);   // V1_275: hand pause/mute to the left-pane controls + sync
                 
-                // Scale the iframe to fill more of the screen in fullscreen mode
                 if (arcadeFrameFS) {
                     if (isFullscreen) {
-                        // Detect mobile/tablet properly (iPadOS 13+ reports as Macintosh)
-                        const isIPadFS = /iPad/.test(navigator.userAgent) || 
-                                        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
-                                        (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
-                        const isMobile = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-                        const isTabletFS = isIPadFS || (('ontouchstart' in window) && Math.min(window.screen.width, window.screen.height) >= 600);
-                        
-                        const screenW = window.innerWidth;
-                        const screenH = window.innerHeight;
-                        
-                        if (isMobile || isTabletFS) {
-                            // MOBILE/TABLET: V1_80 — size iframe to match the game's own
-                            // data-aspect so per-game native ratio is preserved; letterbox
-                            // the viewport. Previously iframe was 100% x 100% of the fullscreen
-                            // container which stretched some games (Snake, Tower Defense)
-                            // and left others stuck at the top (Brickbreaker, Dig) because
-                            // internal canvas CSS varied between games. Aspect-correct iframe
-                            // gives all seven games consistent centered sizing.
-                            //
-                            // V1_71 preamble: clear enforceGameAspectRatio's inline !important
-                            // sizing on .game-container so the fullscreen element can fill.
-                            arcadeGameContainerFS.style.removeProperty('width');
-                            arcadeGameContainerFS.style.removeProperty('height');
-                            arcadeGameContainerFS.style.removeProperty('max-width');
-                            arcadeGameContainerFS.style.removeProperty('max-height');
-                            arcadeGameContainerFS.style.removeProperty('aspect-ratio');
-
-                            const fs = computeFullscreenIframeSize();
-                            arcadeFrameFS.style.setProperty('position', 'absolute', 'important');
-                            arcadeFrameFS.style.setProperty('top', '50%', 'important');
-                            arcadeFrameFS.style.setProperty('left', '50%', 'important');
-                            arcadeFrameFS.style.setProperty('width', fs.width + 'px', 'important');
-                            arcadeFrameFS.style.setProperty('height', fs.height + 'px', 'important');
-                            arcadeFrameFS.style.setProperty('max-width', 'none', 'important');
-                            arcadeFrameFS.style.setProperty('max-height', 'none', 'important');
-                            arcadeFrameFS.style.setProperty('transform', 'translate(-50%, -50%)', 'important');
-                            arcadeFrameFS.style.setProperty('border', 'none', 'important');
-                        } else {
-                            // DESKTOP: Use transform scaling
-                            requestAnimationFrame(() => {
-                                const screenW = window.innerWidth;
-                                const screenH = window.innerHeight;
-                                
-                                const scaleX = screenW / iframeNaturalWidth;
-                                const scaleY = screenH / iframeNaturalHeight;
-                                const scale = Math.min(scaleX, scaleY, 5.0);
-                                
-                                const scaledW = iframeNaturalWidth * scale;
-                                const scaledH = iframeNaturalHeight * scale;
-                                const leftPos = (screenW - scaledW) / 2;
-                                const topPos = (screenH - scaledH) / 2;
-                                
-                                arcadeFrameFS.style.position = 'absolute';
-                                arcadeFrameFS.style.width = iframeNaturalWidth + 'px';
-                                arcadeFrameFS.style.height = iframeNaturalHeight + 'px';
-                                arcadeFrameFS.style.top = topPos + 'px';
-                                arcadeFrameFS.style.left = leftPos + 'px';
-                                arcadeFrameFS.style.transform = `scale(${scale})`;
-                                arcadeFrameFS.style.transformOrigin = 'top left';
-                                arcadeFrameFS.style.border = 'none';
-                            });
-                        }
-                    } else {
-                        // Reset to normal styling when exiting fullscreen
-                        arcadeFrameFS.style.position = '';
-                        arcadeFrameFS.style.width = '';
-                        arcadeFrameFS.style.height = '';
-                        arcadeFrameFS.style.top = '';
-                        arcadeFrameFS.style.left = '';
-                        arcadeFrameFS.style.transform = '';
-                        arcadeFrameFS.style.transformOrigin = '';
-                        arcadeFrameFS.style.border = '';
-                        arcadeFrameFS.style.maxWidth = '';
-                        arcadeFrameFS.style.maxHeight = '';
-                        
-                        // Restore container sizing (desktop only)
-                        enforceGameAspectRatio();
+                        // V1_491: same true-shape layout on every device (see applyFullscreenLayout).
+                        // Re-run after a frame and once the URL bar / visualViewport settles.
+                        applyFullscreenLayout();
+                        requestAnimationFrame(applyFullscreenLayout);
+                        setTimeout(function () {
+                            if (document.fullscreenElement || document.webkitFullscreenElement) applyFullscreenLayout();
+                        }, 250);
+                    } else if (!pseudoFullscreen) {
+                        // Reset to normal styling when exiting fullscreen + restore the inline size
+                        clearFullscreenLayout();
                     }
                 }
             }
@@ -12592,27 +12849,18 @@
                           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
                           (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
             
-            // Hide fullscreen button entirely on iPad
-            if (isIPad && fullscreenBtn) {
-                fullscreenBtn.style.display = 'none';
-            }
-            
-            // Only iPhone uses pseudo-fullscreen
-            // Native fullscreen on iPhone has an unblockable swipe-down-to-exit system gesture
-            const isIOS = isIPhone;
+            // V1_491: iPad gets the fullscreen button back and uses the pseudo-fullscreen path
+            // (native fullscreen on iPadOS adds its own swipe-to-exit gesture + system ✕ overlay).
+            // Native fullscreen on iPhone has an unblockable swipe-down-to-exit system gesture.
+            const isIOS = isIPhone || isIPad;
             let pseudoFullscreen = false;
             
             function enterPseudoFullscreen() {
                 pseudoFullscreen = true;
                 arcadeGameContainerFS.classList.add('pseudo-fullscreen');
                 document.body.classList.add('pseudo-fullscreen-active');
-                // Clear enforceGameAspectRatio's inline !important sizing so the
-                // .game-container.pseudo-fullscreen CSS (100vw x 100vh) can apply.
-                arcadeGameContainerFS.style.removeProperty('width');
-                arcadeGameContainerFS.style.removeProperty('height');
-                arcadeGameContainerFS.style.removeProperty('max-width');
-                arcadeGameContainerFS.style.removeProperty('max-height');
-                arcadeGameContainerFS.style.removeProperty('aspect-ratio');
+                // (V1_491: applyFullscreenLayout, via resizePseudoFullscreen below, clears
+                // enforceGameAspectRatio's inline sizing and pins the container to the viewport.)
                 document.body.style.overflow = 'hidden';
                 document.body.style.touchAction = 'none';
                 document.documentElement.style.overflow = 'hidden';
@@ -12634,20 +12882,8 @@
             
             function resizePseudoFullscreen() {
                 if (!pseudoFullscreen) return;
-
-                // V1_80: Size iframe to the active game's aspect ratio and center
-                // with translate(-50%, -50%). Matches the native-fullscreen path
-                // so per-game aspect is preserved on iPhone pseudo-fullscreen too.
-                const fs = computeFullscreenIframeSize();
-                arcadeFrameFS.style.setProperty('position', 'absolute', 'important');
-                arcadeFrameFS.style.setProperty('top', '50%', 'important');
-                arcadeFrameFS.style.setProperty('left', '50%', 'important');
-                arcadeFrameFS.style.setProperty('width', fs.width + 'px', 'important');
-                arcadeFrameFS.style.setProperty('height', fs.height + 'px', 'important');
-                arcadeFrameFS.style.setProperty('max-width', 'none', 'important');
-                arcadeFrameFS.style.setProperty('max-height', 'none', 'important');
-                arcadeFrameFS.style.setProperty('transform', 'translate(-50%, -50%)', 'important');
-                arcadeFrameFS.style.setProperty('border', 'none', 'important');
+                // V1_491: same true-shape 640:718 layout as native fullscreen.
+                applyFullscreenLayout();
             }
             
             function exitPseudoFullscreen() {
@@ -12668,16 +12904,10 @@
                     musicPlayer.style.pointerEvents = '';
                 }
                 
-                // Reset iframe styles
-                arcadeFrameFS.style.position = '';
-                arcadeFrameFS.style.width = '';
-                arcadeFrameFS.style.height = '';
-                arcadeFrameFS.style.top = '';
-                arcadeFrameFS.style.left = '';
-                arcadeFrameFS.style.transform = '';
-                arcadeFrameFS.style.border = '';
-                arcadeFrameFS.style.maxWidth = '';
-                arcadeFrameFS.style.maxHeight = '';
+                // V1_491: reset the iframe/controls/container inline styles AND re-run
+                // enforceGameAspectRatio() — the exit used to leave the container on its CSS
+                // fallback size (off by 1-7px portrait, 560x244-285 in landscape until a resize).
+                clearFullscreenLayout();
                 notifyGameFullscreen(false);   // V1_275: restore the game's in-iframe buttons
             }
             
@@ -12712,13 +12942,6 @@
                         document.msExitFullscreen();
                     }
                 } else {
-                    // Capture reference size BEFORE going fullscreen
-                    if (arcadeFrameFS) {
-                        const rect = arcadeFrameFS.getBoundingClientRect();
-                        iframeNaturalWidth = rect.width || 640;
-                        iframeNaturalHeight = rect.height || 800;
-                    }
-                    
                     // Enter fullscreen on game container
                     if (arcadeGameContainerFS.requestFullscreen) {
                         arcadeGameContainerFS.requestFullscreen();
@@ -12757,6 +12980,15 @@
                     resizePseudoFullscreen();
                 }
             });
+
+            // V1_491: the visible viewport can change without a window resize (iOS toolbar
+            // collapse, Android URL bar) — keep the fullscreen box fitted to it.
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', function () {
+                    if (pseudoFullscreen) resizePseudoFullscreen();
+                    else if (document.fullscreenElement || document.webkitFullscreenElement) applyFullscreenLayout();
+                });
+            }
             
             // Handle orientation changes for tablets/phones
             window.addEventListener('orientationchange', function() {
