@@ -127,6 +127,7 @@ Seven HTML5 games, iframe-embedded into main site. All use Oxanium font (unified
   560; MacBook 16" 593; 1440p 881; 4K clamps at 1000.
 - Mobile game overhead: `155px` (reduced from earlier value)
 - Per-game aspect ratios coordinated between CSS and JS — aspect ratio consistency is the #1 priority here
+- **One stage shape everywhere (V1_491):** every game gets a 640:718 iframe inline on every device AND in fullscreen. Fullscreen (Android native, iPhone + iPad pseudo, desktop) = the largest 640:718 box that fits the visible viewport minus safe-area insets, centered on black — no stretching (the old 8% letterbox cap and Survivors' 800/820 FS aspect are gone). `window.computeFullscreenIframeSize()` is exposed. Close + pause/mute pane live in the bars (mute first). iPad has fullscreen via the pseudo path. Landscape phones: pills in a column beside a full-height game at real size. The inline ⛶ never sits on the game (7th pill slot on portrait phones).
 
 ---
 
@@ -269,7 +270,7 @@ firebase deploy
 - **Goldmine combat sounds (V1_241):** gated boss-hit / boss-attack / boss-surface / enemy-spawn / enemy-death cues (SFX only, no logic change).
 - **Tower Defense UX (V1_244):** tower-button emoji nudged down 2px; title screen contained to its window (`justify-content: safe center` + `overflow-y: auto`) so the START → mode-select screen no longer clips on short / landscape windows.
 - **Fonts unified to Oxanium (V1_245):** all 7 games now load + use Oxanium for both CSS and canvas-drawn text (was a mix of Orbitron / Arial / monospace / Tilt Neon / Bebas Neue). Fixed Survivors (declared Orbitron) and Space Shooter (declared Oxanium) silently falling back to monospace because the font was never loaded.
-- **Font pass finished (V1_247, V1_248):** V1_245 had skipped TD + Goldmine (only their upgrade overlays were Oxanium). TD's `.game-title` was still inheriting `'Segoe UI'` from its body — the "wrong title font." Converted both games' body + remaining canvas `Arial`/bare-`sans-serif` strings, then removed Goldmine's last `Exo 2` (body + stat-panel labels + font link). All 7 games are now **100% Oxanium** (CSS + canvas); titles already uniform at 42px / 4px letter-spacing (32px mobile). Exo 2 remains the site's secondary-UI font on the main page only.
+- **Font pass finished (V1_247, V1_248):** V1_245 had skipped TD + Goldmine (only their upgrade overlays were Oxanium). TD's `.game-title` was still inheriting `'Segoe UI'` from its body — the "wrong title font." Converted both games' body + remaining canvas `Arial`/bare-`sans-serif` strings, then removed Goldmine's last `Exo 2` (body + stat-panel labels + font link). All 7 games are now **100% Oxanium** (CSS + canvas); titles uniform at 40px / 4px letter-spacing (30px phone, 26px compact — V1_511 truth pass; the old "42px" note was wrong). Exo 2 remains the site's secondary-UI font on the main page only.
 
 **V1_458 → V1_467 (site redesign pass):**
 
@@ -300,6 +301,12 @@ firebase deploy
 - **Site nav: a click during a section transition is ignored** (V1_479; the 2s safety reset still recovers), and exactly one section may carry `.section-active`. On touch landscape (<=834px tall) the `body::before` bottom bar is hidden while the arcade is active.
 
 - **Decisions round (V1_483–V1_489):** Survivors analog joystick skips the keyboard x0.707; TD fire cooldowns carry the remainder on `gameClock` (max 4 shots/frame, idle towers don't bank), Discount capped 75%, Armor Pierce = +X% vs tank/boss/megaboss; Snake enemies step on their own 333.3ms clock (not player ticks); Brickbreaker has pause (P/Esc/button/tab-hide); Dig particle glows are baked sprites through the capped `pushParticle()`; gallery tiles load `Images/Thumbs/` WebPs (lightbox opens originals); icons are PNGs in `Images/Favicon/` (the 1.8MB `favicon.svg` is unlinked).
+
+**V1_491 → V1_511 (arcade mobile presentation + cross-game consistency):**
+
+- **Frame contract:** each game fills its 640:718 iframe edge to edge with uniform scale (playfield max-fits, leftover space painted in the game's own background), backing store = CSS × min(DPR, 2), DOM UI zoomed by `--ui-zoom = max(1, min(W/640, H/718))` on `html.in-iframe`, and a compact tier for frames ≤420px tall so every main screen fits 207x232..321x360 frames without scrolling. Standalone (not in an iframe) layouts are unchanged. Keep all of this when touching a game's resize code.
+- **Canonical UI standard:** `docs/ARCADE_UI_SPEC.md` — start menu (START GAME / HOW TO PLAY / LEADER BOARD, 164x39, gap 15), DOM corner buttons (mute slot 1 always visible incl. menus, pause slot 2 in play; no canvas-drawn corner buttons), a pause menu in every game (P / Esc / ⏸ / tab-hide; RESUME / LEADERBOARD / EXIT GAME + YES/NO confirm), open score modal (SUBMIT then SKIP) → start menu with PLAY AGAIN, "🏆 TOP 100" leaderboard, how-to-play with ← PREV / dots / NEXT → and GOT IT, 40px circular ✕. Per-game title glow colour is the one kept identity accent. Exceptions: Clyde (intro/THE STORY/own GAME OVER/TOP DOGS), Survivors (extra menu items, level select, RESULTS, STATS, gear), TD mode tabs. New games or screens must follow the spec.
+- **Fullscreen bridge:** games post `{type:'boo-arcade-state', paused, muted, canPause:true}` and handle `{type:'boo-arcade', cmd: 'fs-enter'|'fs-exit'|'toggle-pause'|'toggle-mute'|'request-state'}`; own corner buttons hide under `body.parent-fs`. The parent pane is generic (no game names).
 
 ---
 
