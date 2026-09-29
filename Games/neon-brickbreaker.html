@@ -162,11 +162,20 @@
             border: none !important;
             border-radius: 0 !important;
             box-shadow: none !important;
-            padding: 4px !important;
-            gap: 2px !important;
+            padding: 0 !important; /* V1_492: identical game frame — shared inset 0 (was 4px) */
+            gap: 0 !important;     /* V1_492: was 2px */
             /* V1_140: vertically center content so canvas + HUD + trackpad fill the iframe
                instead of hugging the top with empty black below. */
             justify-content: center !important;
+        }
+
+        /* V1_492: the canvas IS the whole iframe viewport (JS sizes it); no rounded corners
+           or max-width clamp in the way of an edge-to-edge frame. */
+        html.in-iframe #gameCanvas {
+            display: block;
+            border-radius: 0;
+            max-width: none;
+            flex-shrink: 0;
         }
         
         /* In iframe: compact HUD */
@@ -1553,6 +1562,70 @@
             .leaderboard-score { font-size: 14px; min-width: 60px; }
             .leaderboard-level { font-size: 11px; min-width: 40px; }
         }
+
+        /* V1_492: DOM UI scales with the frame. --ui-zoom = max(1, min(W/640, H/718)) is set by
+           calculateScale(): 640x718 = the reference look, bigger frames zoom every HTML screen so
+           it stays the same picture as the canvas. Below 640 the UI keeps its px size (plus the
+           compact rules below) so text never drops under ~10px. vh limits inside a zoomed box are
+           zoomed too, so they are divided back out. */
+        html.in-iframe .menu-overlay,
+        html.in-iframe .upgrade-overlay,
+        html.in-iframe .pause-overlay,
+        html.in-iframe .score-modal,
+        html.in-iframe .leaderboard-overlay,
+        html.in-iframe .tutorial-overlay { zoom: var(--ui-zoom, 1); }
+        html.in-iframe .leaderboard-container { max-height: calc(80vh / var(--ui-zoom, 1)); }
+        html.in-iframe .tutorial-container { max-height: calc(85vh / var(--ui-zoom, 1)); }
+
+        /* V1_492: identical game frame — the site's iframe can be as small as ~250x280. Compact
+           every HTML screen so nothing clips at the small end (iframe only; standalone untouched). */
+        @media (max-width: 360px), (max-height: 400px) {
+            html.in-iframe .menu-overlay { padding: 8px 0; }
+            html.in-iframe .game-title { font-size: 24px; letter-spacing: 2px; margin-bottom: 4px; }
+            html.in-iframe .game-subtitle { font-size: 13px; margin-bottom: 14px; }
+            html.in-iframe .menu-buttons { gap: 9px; margin-top: 4px; }
+            html.in-iframe .menu-btn { padding: 8px 14px; width: 150px; font-size: 12px; }
+
+            html.in-iframe .upgrade-header { margin-bottom: 10px; }
+            html.in-iframe .upgrade-title { font-size: 18px; letter-spacing: 3px; }
+            html.in-iframe .upgrade-subtitle { font-size: 9px; letter-spacing: 2px; margin-top: 5px; }
+            html.in-iframe .legendary-title { font-size: 10px; letter-spacing: 1px; }
+            html.in-iframe .upgrade-slots { gap: 5px; padding: 0 6px; max-width: 100%; }
+            html.in-iframe .upgrade-slot { width: calc((100vw - 22px) / 3); max-width: 100px; height: 128px; border-radius: 10px; }
+            html.in-iframe .upgrade-content { padding: 6px 3px; }
+            html.in-iframe .upgrade-icon { font-size: 24px; margin-bottom: 4px; }
+            html.in-iframe .upgrade-name { font-size: 10px; margin-bottom: 3px; }
+            html.in-iframe .upgrade-desc { font-size: 9px; line-height: 1.3; }
+
+            html.in-iframe .score-modal { gap: 6px; padding: 8px; }
+            html.in-iframe .score-modal-title { font-size: 22px; }
+            html.in-iframe .score-modal-score { font-size: 17px; margin-top: 0; }
+            html.in-iframe .score-modal-level { font-size: 12px; margin-top: -4px; }
+            html.in-iframe .score-input-container { gap: 5px; margin-top: 0; }
+            html.in-iframe .score-input-label { font-size: 11px; text-align: center; }
+            html.in-iframe .score-input { width: 160px; padding: 7px 10px; font-size: 14px; }
+            html.in-iframe .score-error-msg { min-height: 12px; font-size: 10px; }
+            html.in-iframe .score-buttons { margin-top: 2px; gap: 10px; }
+            html.in-iframe .score-btn { padding: 7px 14px; font-size: 12px; }
+
+            html.in-iframe .leaderboard-overlay { padding: 8px; }
+            html.in-iframe .leaderboard-container { gap: 8px; max-height: 100%; }
+            html.in-iframe .leaderboard-title { font-size: 20px; }
+            html.in-iframe .leaderboard-close { width: 34px; height: 34px; font-size: 18px; }
+
+            html.in-iframe .tutorial-overlay { padding: 6px; }
+            html.in-iframe .tutorial-container { padding: 10px; max-height: 100%; border-radius: 10px; }
+            html.in-iframe .tutorial-header { margin-bottom: 6px; padding-bottom: 6px; }
+            html.in-iframe .tutorial-title { font-size: 15px; letter-spacing: 1px; }
+            html.in-iframe .tutorial-close { width: 28px; height: 28px; font-size: 14px; flex-shrink: 0; }
+            html.in-iframe .tutorial-step-title { font-size: 14px; margin-bottom: 6px; }
+            html.in-iframe .tutorial-step-content { font-size: 11px; line-height: 1.45; }
+            html.in-iframe .tutorial-nav { margin-top: 6px; padding-top: 6px; }
+            html.in-iframe .tutorial-nav-btn { padding: 6px 9px; font-size: 11px; letter-spacing: 0; }
+            html.in-iframe .tutorial-dots { gap: 4px; }
+            html.in-iframe .tutorial-dot { width: 8px; height: 8px; }
+            html.in-iframe .pause-title { font-size: 28px; }
+        }
     </style>
 </head>
 <body>
@@ -1930,12 +2003,19 @@
 
         // Canvas-drawn mute toggle: rect (logical 653x700 coords) is set in drawHUD().
         let muteBtnRect = { x: 0, y: 0, w: 30, h: 26 };
-        function eventToGameCoords(e) {
+        // V1_492: client point -> logical 653x700 coords. Standalone (fitW === 0) is the original
+        // whole-canvas mapping; in the iframe frame-fill the centred composition offset is removed.
+        function clientToLogical(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
             if (!rect.width || !rect.height) return null;
+            if (!fitW) return { x: (clientX - rect.left) / rect.width * 653, y: (clientY - rect.top) / rect.height * 700 };
+            const sx = cssWidth / rect.width, sy = cssHeight / rect.height;
+            return { x: ((clientX - rect.left) * sx - fitOffX) / fitW * 653, y: ((clientY - rect.top) * sy - fitOffY) / fitH * 700 };
+        }
+        function eventToGameCoords(e) {
             const src = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
             if (src.clientX == null) return null;
-            return { x: (src.clientX - rect.left) / rect.width * 653, y: (src.clientY - rect.top) / rect.height * 700 };
+            return clientToLogical(src.clientX, src.clientY); // V1_492
         }
         function hitMute(e) {
             const p = eventToGameCoords(e);
@@ -2073,6 +2153,13 @@
         let canvasHeight = BASE_HEIGHT;    // Full canvas height (700)
         let cssWidth = BASE_WIDTH;         // CSS display size
         let cssHeight = BASE_HEIGHT;       // Full canvas CSS height
+        // V1_492: identical game frame. In an iframe the canvas fills the whole viewport and the
+        // 653x700 composition (HUD + playfield + trackpad) is max-fit (uniform scale) and centred
+        // inside it; the leftover band is painted with the game's own #0a0a0a background.
+        // fitW === 0 means "no frame-fill" (standalone): the composition IS the canvas.
+        let fitOffX = 0, fitOffY = 0;       // composition offset inside the canvas, CSS px
+        let fitOffXDev = 0, fitOffYDev = 0; // same offset, backing-store px (used by setTransform)
+        let fitW = 0, fitH = 0;             // composition size, CSS px
         
         // Get accurate viewport size (works better in iframes)
         function getViewportSize() {
@@ -2108,7 +2195,54 @@
             
             const gameAspect = BASE_WIDTH / BASE_HEIGHT;  // Full canvas aspect ratio
             
-            if (isFullscreen) {
+            fitOffX = fitOffY = fitOffXDev = fitOffYDev = 0; fitW = fitH = 0; // V1_492
+            
+            if (isFullscreen && isInIframe) {
+                // V1_492: identical game frame — canvas = the entire iframe viewport (inset 0, no
+                // safetyPadding), backing store = CSS size x min(DPR, 2) (MAX_CANVAS_PIXELS cap).
+                // The logical 653x700 composition keeps its size/aspect and is uniformly max-fit.
+                gameContainer.classList.add('fullscreen-mode');
+                document.body.classList.add('fullscreen-active');
+                
+                const frameW = document.documentElement.clientWidth || Math.floor(viewW);
+                const frameH = document.documentElement.clientHeight || Math.floor(viewH);
+                cssWidth = frameW;
+                cssHeight = frameH;
+                const fitScale = Math.min(frameW / BASE_WIDTH, frameH / BASE_HEIGHT);
+                fitW = BASE_WIDTH * fitScale;
+                fitH = BASE_HEIGHT * fitScale;
+                fitOffX = (frameW - fitW) / 2;
+                fitOffY = (frameH - fitH) / 2;
+                document.documentElement.style.setProperty('--ui-zoom', Math.max(1, Math.min(frameW / 640, frameH / 718)).toFixed(4)); // V1_492: DOM UI scale
+                
+                let devPerCss = Math.min(rawDPR, 2); // V1_492: DPR capped at 2 in the iframe (shadowBlur cost on mobile GPUs)
+                let bufferWidth = Math.round(frameW * devPerCss);
+                let bufferHeight = Math.round(frameH * devPerCss);
+                if (bufferWidth * bufferHeight > MAX_CANVAS_PIXELS) {
+                    devPerCss *= Math.sqrt(MAX_CANVAS_PIXELS / (bufferWidth * bufferHeight));
+                    bufferWidth = Math.floor(frameW * devPerCss);
+                    bufferHeight = Math.floor(frameH * devPerCss);
+                }
+                
+                canvas.width = bufferWidth;
+                canvas.height = bufferHeight;
+                canvas.style.width = frameW + 'px';
+                canvas.style.height = frameH + 'px';
+                
+                fitOffXDev = Math.round(fitOffX * devPerCss);
+                fitOffYDev = Math.round(fitOffY * devPerCss);
+                dprScale = fitScale * devPerCss;
+                ctx.setTransform(dprScale, 0, 0, dprScale, fitOffXDev, fitOffYDev);
+                
+                GameDebug.show({
+                    viewport: `${viewW}×${viewH}`,
+                    avail: `${frameW}×${frameH}`,
+                    css: `${Math.round(fitW)}×${Math.round(fitH)} @${Math.round(fitOffX)},${Math.round(fitOffY)}`,
+                    buffer: `${bufferWidth}×${bufferHeight}`,
+                    iframe: 'YES',
+                    device: isTablet ? 'tablet' : (isIPad ? 'iPad' : 'desktop')
+                });
+            } else if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
@@ -3248,10 +3382,10 @@
                     ctx.fillStyle = p.color;
                     
                     // Manual transform instead of save/restore (faster)
-                    ctx.setTransform(dprScale, 0, 0, dprScale, p.x * dprScale, p.y * dprScale);
+                    ctx.setTransform(dprScale, 0, 0, dprScale, fitOffXDev + p.x * dprScale, fitOffYDev + p.y * dprScale); // V1_492: + frame-fill offset
                     ctx.rotate(p.rotation);
                     ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-                    ctx.setTransform(dprScale, 0, 0, dprScale, 0, LAYOUT.gameTop * dprScale); // Restore scale + gameTop translate (fixes paddle/ball jumping up on boss death)
+                    ctx.setTransform(dprScale, 0, 0, dprScale, fitOffXDev, fitOffYDev + LAYOUT.gameTop * dprScale); // V1_492: + frame-fill offset. Restore scale + gameTop translate (fixes paddle/ball jumping up on boss death)
                     ctx.shadowBlur = 0;
                 }
             }
@@ -5203,6 +5337,21 @@
         function draw() {
             // Clear entire canvas
             ctx.fillStyle = '#0a0a0a';
+            if (fitW) {
+                // V1_492: paint the leftover frame-fill bands (outside the 653x700 composition)
+                // with the same background, so the iframe is game edge to edge.
+                ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                if (fitOffYDev > 0) {
+                    ctx.fillRect(0, 0, canvas.width, fitOffYDev + 1);
+                    ctx.fillRect(0, canvas.height - fitOffYDev - 1, canvas.width, fitOffYDev + 1);
+                }
+                if (fitOffXDev > 0) {
+                    ctx.fillRect(0, 0, fitOffXDev + 1, canvas.height);
+                    ctx.fillRect(canvas.width - fitOffXDev - 1, 0, fitOffXDev + 1, canvas.height);
+                }
+                ctx.restore();
+            }
             ctx.fillRect(0, 0, gameWidth, BASE_HEIGHT);
             
             // Draw HUD at top
@@ -5684,9 +5833,9 @@
         // Track mouse on document when control is active
         document.addEventListener('mousemove', (e) => {
             if (!mouseControlActive) return;
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = gameWidth / rect.width;
-            const mouseX = (e.clientX - rect.left) * scaleX;
+            const lp = clientToLogical(e.clientX, e.clientY); // V1_492: frame-fill aware
+            if (!lp) return;
+            const mouseX = lp.x;
             paddle.targetX = mouseX - paddle.width / 2;
             if (paddle.targetX < 0) paddle.targetX = 0;
             if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
@@ -5712,10 +5861,10 @@
             
             if (e.touches.length === 0) return;
             e.preventDefault();
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = gameWidth / rect.width;
             const touch = e.touches[0];
-            const touchX = (touch.clientX - rect.left) * scaleX;
+            const lp = clientToLogical(touch.clientX, touch.clientY); // V1_492: frame-fill aware
+            if (!lp) return;
+            const touchX = lp.x;
             paddle.targetX = touchX - paddle.width / 2;
             if (paddle.targetX < 0) paddle.targetX = 0;
             if (paddle.targetX + paddle.width > gameWidth) paddle.targetX = gameWidth - paddle.width;
