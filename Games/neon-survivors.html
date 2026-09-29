@@ -173,6 +173,40 @@
             border-radius: 0;
         }
 
+        /* V1_496: identical game frame — the HTML overlays + DOM HUD chrome are sized in fixed
+           CSS px (today's look = a 640x718 frame). calculateScale() sets --ui-zoom =
+           max(1, min(W/640, H/718)) on <html>, so in bigger frames (iPad / desktop fullscreen)
+           they scale up with the canvas instead of shrinking to a corner; frames below 640 keep
+           today's px. Percent sizes (100% overlays, max-height:100% bounds) are not affected by
+           zoom, so every V1_422 bounded box still fits the frame. Top-level elements only (zoom
+           compounds on nesting). Standalone: var unset -> zoom 1. */
+        html.in-iframe #upgradeOverlay, html.in-iframe #shrineOverlay, html.in-iframe #chestModal,
+        html.in-iframe #shopModal, html.in-iframe #tombstoneModal, html.in-iframe #skullStatueModal,
+        html.in-iframe #menuOverlay, html.in-iframe #resultsOverlay, html.in-iframe #settingsOverlay,
+        html.in-iframe #weaponSelectOverlay, html.in-iframe #tomeEditorOverlay,
+        html.in-iframe #achievementsOverlay, html.in-iframe #shopOverlay,
+        html.in-iframe #mastercodeOverlay, html.in-iframe #levelSelectOverlay,
+        html.in-iframe #victoryOverlay, html.in-iframe #victoryCountdown, html.in-iframe #unlockToast,
+        html.in-iframe #pauseOverlay, html.in-iframe #pauseStatsOverlay, html.in-iframe #confirmOverlay,
+        html.in-iframe #tutorialOverlay, html.in-iframe #scoreModal, html.in-iframe #leaderboardOverlay,
+        html.in-iframe #pauseBtn, html.in-iframe #muteBtn, html.in-iframe #jumpBtn,
+        html.in-iframe #riftTimer, html.in-iframe #controlsSplash {
+            zoom: var(--ui-zoom, 1);
+        }
+        /* V1_496: zoom also scales vh inside a zoomed box, so vh-bounded panels divide by it
+           (only while zoomed; the <=500px 90vh tutorial tier can't match then). */
+        html.in-iframe.ui-zoomed .pause-loadout { max-height: calc(58vh / var(--ui-zoom, 1)); }
+        html.in-iframe.ui-zoomed #skullStatueModal { max-height: calc(100vh / var(--ui-zoom, 1) - 16px); }
+        html.in-iframe.ui-zoomed .leaderboard-container { max-height: calc(80vh / var(--ui-zoom, 1)); }
+        html.in-iframe.ui-zoomed .tutorial-container { max-height: calc(85vh / var(--ui-zoom, 1)); }
+        /* V1_496: the touch zone is sized by JS to the canvas-rendered trackpad; the generic
+           180-280px clamp cut it short in big frames (>~900px wide), which also dropped the
+           BOOST button onto the DEFENSE panel. */
+        html.in-iframe .game-container.fullscreen-mode .trackpad-zone {
+            min-height: 0;
+            max-height: none;
+        }
+
         #gameCanvas {
             border-radius: 3px;
             max-width: 100%;
@@ -1681,6 +1715,15 @@
             }
         }
         
+        /* V1_496 (iframe): the <=420px tier's 4x68px grid (300px) and 2x110px footer buttons are
+           wider than a ~250px frame, so edge cards and BACK/CONFIRM were cut off; drop to 3
+           columns and slimmer footer buttons there. */
+        @media (max-width: 320px) {
+            html.in-iframe .weapon-select-grid { grid-template-columns: repeat(3, 1fr); max-width: 100%; }
+            html.in-iframe .weapon-select-buttons { gap: 8px; }
+            html.in-iframe .weapon-select-btn { width: 80px !important; padding: 8px 4px !important; }
+        }
+
         .weapon-select-card {
             width: 130px; /* V1_375: a touch larger (was 120) with the subtitle's space reclaimed */
             padding: 13px 8px;
@@ -2947,6 +2990,14 @@
             .level-select-grid { gap: 8px; margin-bottom: 12px; }
             .level-select-back { padding: 8px 16px; font-size: 12px; }
         }
+        /* V1_496 (V1_422 recipe, iframe only): bound the panel to the frame, scroll the level
+           grid inside it and keep the title + BACK pinned, so BACK can never scroll out of a
+           short frame (was clipped 36-44px). The 6px pad (cancelled by a -6px margin) keeps the
+           card hover glow from being cut by the grid's scroll clip. */
+        html.in-iframe .level-select-content { display: flex; flex-direction: column; max-height: 100%; min-height: 0; }
+        html.in-iframe .level-select-title, html.in-iframe .level-select-subtitle { flex-shrink: 0; }
+        html.in-iframe .level-select-grid { min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 6px; margin-left: -6px; margin-right: -6px; margin-top: -6px; }
+        html.in-iframe .level-select-back { flex-shrink: 0; align-self: center; }
 
         .victory-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -3644,6 +3695,10 @@
             letter-spacing: 4px;
             text-transform: uppercase;
         }
+
+        /* V1_496 (iframe): when the letter-spaced subtitle wraps in a narrow frame it hugged the
+           left edge; centre it (single-line widths are unaffected). */
+        html.in-iframe .upgrade-subtitle { text-align: center; }
 
         .upgrade-slot-machine {
             display: flex;
@@ -7570,6 +7625,14 @@
             gap: 8px;
         }
         
+        /* V1_496 (iframe): in narrow frames (~250px) PREV + 10 dots + NEXT overflowed and NEXT was
+           clipped off the card; there the dots get their own centred row above the buttons.
+           Wider frames are unchanged. */
+        @media (max-width: 380px) {
+            html.in-iframe .tutorial-nav { flex-wrap: wrap; row-gap: 10px; }
+            html.in-iframe .tutorial-dots { order: -1; flex-basis: 100%; justify-content: center; flex-wrap: wrap; }
+        }
+
         .tutorial-dot {
             width: 10px;
             height: 10px;
@@ -11512,6 +11575,60 @@
             };
         }
         
+        // V1_496: re-evaluate the page's own width/height @media rules against a virtual viewport
+        // (iframe only). CSS zoom does not change what media queries see, so without this a
+        // 1250px frame would use the wide-desktop tiers inside a zoomed 640px-equivalent layout.
+        // Each rule's original text is kept; size features are resolved to true/false here and
+        // any other features (hover, prefers-reduced-motion, ...) are left for the browser.
+        let _stageMediaRules = null;
+        let _stageMediaKey = '';
+        function syncStageMedia(vw, vh) {
+            const key = vw === null ? 'native' : Math.round(vw) + 'x' + Math.round(vh);
+            if (key === _stageMediaKey) return;
+            if (vw === null && !_stageMediaRules) { _stageMediaKey = key; return; } // never rewritten
+            _stageMediaKey = key;
+            if (!_stageMediaRules) {
+                _stageMediaRules = [];
+                const collect = (rules) => {
+                    for (const r of rules) {
+                        if (r.media && r.cssRules && /(width|height)/.test(r.media.mediaText)) {
+                            _stageMediaRules.push({ rule: r, text: r.media.mediaText });
+                        }
+                        if (r.cssRules) { try { collect(r.cssRules); } catch (e) {} }
+                    }
+                };
+                for (const sh of document.styleSheets) {
+                    let rules = null;
+                    try { rules = sh.cssRules; } catch (e) { rules = null; } // cross-origin (fonts)
+                    if (rules) collect(rules);
+                }
+            }
+            const sizeRe = /^\(\s*(min|max)-(width|height)\s*:\s*([\d.]+)px\s*\)$/i;
+            for (const entry of _stageMediaRules) {
+                if (vw === null) { // zoom back to 1: hand the original queries back to the browser
+                    try { if (entry.rule.media.mediaText !== entry.text) entry.rule.media.mediaText = entry.text; } catch (e) {}
+                    continue;
+                }
+                const out = [];
+                for (const q of entry.text.split(',')) {
+                    const query = q.trim();
+                    if (/^not\b/i.test(query)) { out.push(query); continue; }
+                    let ok = true;
+                    const rest = [];
+                    for (const tok of query.split(/\s+and\s+/i)) {
+                        const m = tok.trim().match(sizeRe);
+                        if (!m) { rest.push(tok.trim()); continue; }
+                        const v = m[2].toLowerCase() === 'width' ? vw : vh;
+                        const lim = parseFloat(m[3]);
+                        if (m[1].toLowerCase() === 'max' ? !(v <= lim) : !(v >= lim)) ok = false;
+                    }
+                    if (ok) out.push(rest.length ? rest.join(' and ') : 'all');
+                }
+                const txt = out.length ? out.join(', ') : 'not all';
+                try { if (entry.rule.media.mediaText !== txt) entry.rule.media.mediaText = txt; } catch (e) {}
+            }
+        }
+
         function calculateScale() {
             const isNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             const isInIframe = window.self !== window.top;
@@ -11531,8 +11648,113 @@
             // Game logic uses game area dimensions only
             gameWidth = BASE_WIDTH;
             gameHeight = BASE_GAME_HEIGHT;
-            
-            if (isFullscreen) {
+
+            if (isFullscreen && isInIframe) {
+                // V1_496: IDENTICAL GAME FRAME. The site now always hands every game a 640:718
+                // iframe (inline on every device AND fullscreen), ~250x280 up to ~1250x1402 CSS px.
+                // The composition (canvas incl. its 2px frame + HUD + trackpad) fills that frame
+                // edge to edge with inset 0 on every device (tablets used a 20px inset), at ONE
+                // uniform scale = min(fit-by-width, fit-by-height incl. the trackpad minimum) —
+                // the old width-only scale let short frames overflow the iframe top/bottom
+                // (menu Achievements/Upgrades clipped 25-93px, level-select BACK 36-44px).
+                // The layout depends ONLY on the frame's aspect (the old viewW<=600 phone switch is
+                // gone), so a 640:718 frame shows the SAME world view (game 800x~610 logical,
+                // trackpad ~287) at every size: fullscreen changes scale, never visibility.
+                gameContainer.classList.add('fullscreen-mode');
+                document.body.classList.add('fullscreen-active');
+
+                // The canvas keeps its subtle 2px frame (border-box): lay the drawing surface out
+                // inside it so content box and backing store share one aspect (no 0.2% stretch).
+                const canvasBorder = parseFloat(getComputedStyle(canvas).borderLeftWidth) || 0;
+                const availWidth = Math.max(1, viewW - canvasBorder * 2);
+                const availHeight = Math.max(1, viewH - canvasBorder * 2);
+
+                const minTrackpad = 120;             // floor for short (landscape-ish) frames
+                let scale = availWidth / BASE_WIDTH; // fit by width ...
+                const availLogicalHeight = availHeight / scale;
+                // Portrait-fill (the V1_170/V1_254 phone layout, now used at every size):
+                // trackpad ~32% of the frame clamped to its content range, game gets the rest.
+                let trackpadLogical = Math.max(240, Math.min(335, availLogicalHeight * 0.32));
+                let gameLogicalHeight = availLogicalHeight - trackpadLogical;
+                if (gameLogicalHeight < BASE_GAME_HEIGHT) {
+                    // Frame wider than the fill layout wants: keep the base arena, shrink the pad,
+                    // and if even the minimum pad doesn't fit ... fit by height instead.
+                    gameLogicalHeight = BASE_GAME_HEIGHT;
+                    trackpadLogical = Math.max(minTrackpad, availLogicalHeight - BASE_GAME_HEIGHT);
+                    scale = Math.min(scale, availHeight / (BASE_GAME_HEIGHT + trackpadLogical));
+                } else if (gameLogicalHeight > BASE_GAME_HEIGHT * 2.2) {
+                    // Sanity bound for extreme aspects: width-bound, centered vertically.
+                    gameLogicalHeight = BASE_GAME_HEIGHT * 2.2;
+                }
+                const totalLogicalHeight = gameLogicalHeight + trackpadLogical;
+
+                gameHeight = gameLogicalHeight;
+                LAYOUT.gameHeight = gameLogicalHeight;
+                LAYOUT.trackpadTop = gameLogicalHeight;
+                LAYOUT.trackpadHeight = trackpadLogical;
+
+                // Content-box size, capped to the available box (never taller/wider than the frame).
+                cssWidth = Math.min(availWidth, BASE_WIDTH * scale);
+                cssHeight = Math.min(availHeight, totalLogicalHeight * scale);
+                fullscreenLogicalWidth = BASE_WIDTH;
+                fullscreenLogicalHeight = totalLogicalHeight;
+
+                // Backing store = CSS x DPR within the existing per-device caps, with the DPR
+                // factor itself capped at 2 in the frame (a 1250px frame at DPR 3 was 3750px wide).
+                const frameDPR = Math.min(rawDPR, 2);
+                let bufferScale;
+                if (isIPad) {
+                    bufferScale = Math.min(scale * frameDPR, 2.5);
+                } else if (isTablet) {
+                    bufferScale = Math.min(scale * frameDPR * 0.85, 2.5);
+                } else if (is4K) {
+                    bufferScale = Math.min(scale * frameDPR, 3);
+                } else {
+                    bufferScale = Math.min(scale * frameDPR, maxFullscreenDPR);
+                }
+                // (no Math.max(1, ...) floor here: it pushed small frames past CSS x 2, e.g. 3.25x
+                // at 250px; the standalone mobile path already runs dprScale < 1 safely)
+                let bufferWidth = Math.round(BASE_WIDTH * bufferScale);
+                let bufferHeight = Math.round(totalLogicalHeight * bufferScale);
+                if (bufferWidth * bufferHeight > MAX_CANVAS_PIXELS) {
+                    bufferScale *= Math.sqrt(MAX_CANVAS_PIXELS / (bufferWidth * bufferHeight));
+                    bufferWidth = Math.round(BASE_WIDTH * bufferScale);
+                    bufferHeight = Math.round(totalLogicalHeight * bufferScale);
+                }
+                // V1_478 rule kept: only touch the backing store when its size changes.
+                if (canvas.width !== bufferWidth) canvas.width = bufferWidth;
+                if (canvas.height !== bufferHeight) canvas.height = bufferHeight;
+                canvas.style.width = (cssWidth + canvasBorder * 2) + 'px';
+                canvas.style.height = (cssHeight + canvasBorder * 2) + 'px';
+
+                // Touch zone over the rendered trackpad (canvas is centered in the frame).
+                const trackpadEl = document.getElementById('trackpadZone');
+                if (trackpadEl) {
+                    const letterboxBottom = Math.max(0, (viewH - cssHeight - canvasBorder * 2) / 2) + canvasBorder;
+                    trackpadEl.style.position = 'absolute';
+                    trackpadEl.style.width = cssWidth + 'px';
+                    trackpadEl.style.height = (trackpadLogical * scale) + 'px';
+                    trackpadEl.style.bottom = letterboxBottom + 'px';
+                    trackpadEl.style.left = '50%';
+                    trackpadEl.style.transform = 'translateX(-50%)';
+                }
+
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.scale(bufferScale, bufferScale);
+                dprScale = bufferScale;
+
+                document.documentElement.style.setProperty('--scale', cssWidth / BASE_WIDTH);
+                // DOM UI scales UP with the frame (arcade-wide rule): --ui-zoom = max(1, min(W/640,
+                // H/718)) on <html>. A 640x718 frame is today's look; smaller frames keep today's
+                // px + responsive rules + the V1_422 bounded-scroll recipe (readability floor wins).
+                // When zoomed, every width/height @media rule is re-evaluated against the VIRTUAL
+                // viewport (W/z x H/z = the 640x718 stage), so a big frame is the same picture as a
+                // 640x718 one, just larger — not the wide-desktop tiers inside a zoomed box.
+                const uiZoom = Math.max(1, Math.min(viewW / 640, viewH / 718));
+                document.documentElement.style.setProperty('--ui-zoom', uiZoom.toFixed(4));
+                document.documentElement.classList.toggle('ui-zoomed', uiZoom > 1);
+                syncStageMedia(uiZoom > 1 ? viewW / uiZoom : null, viewH / uiZoom);
+            } else if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
@@ -11790,14 +12012,17 @@
                 const contRect = gameContainer.getBoundingClientRect();
                 const canvRect = canvas.getBoundingClientRect();
                 const insetX = canvRect.width <= 480 ? 14 : 18;
-                jumpBtnEl.style.right = (Math.max(0, contRect.right - canvRect.right) + insetX) + 'px';
+                // V1_496: the button may be CSS-zoomed (--ui-zoom, frames > 640x718); its right/bottom
+                // are then in zoomed px, so convert the measured real-px gaps (zoom 1 = unchanged).
+                const hudZoom = parseFloat(getComputedStyle(jumpBtnEl).zoom) || 1;
+                jumpBtnEl.style.right = (Math.max(0, contRect.right - canvRect.right) / hudZoom + insetX) + 'px';
                 const tpRect = tpEl ? tpEl.getBoundingClientRect() : null;
-                const aboveTrackpad = tpRect ? (contRect.bottom - tpRect.top) : (canvRect.width <= 480 ? 16 : 20);
+                const aboveTrackpad = tpRect ? (contRect.bottom - tpRect.top) / hudZoom : (canvRect.width <= 480 ? 16 : 20);
                 jumpBtnEl.style.bottom = (aboveTrackpad + 18) + 'px'; // V1_255: nudged up ~8px
                 // V1_340: mirror the rift despawn timer to the playfield's bottom-LEFT, same height.
                 const riftEl = document.getElementById('riftTimer');
                 if (riftEl) {
-                    riftEl.style.left = (Math.max(0, canvRect.left - contRect.left) + insetX) + 'px';
+                    riftEl.style.left = (Math.max(0, canvRect.left - contRect.left) / hudZoom + insetX) + 'px';
                     riftEl.style.bottom = (aboveTrackpad + 18) + 'px';
                 }
             }
