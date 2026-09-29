@@ -7605,6 +7605,21 @@
             }
         }
 
+        /* V1_498: with the -10px nudge above, the pill row's box sat 5px into the game box (3px
+           into the iframe) on 400-768px portrait phones. Lift the row by exactly that overlap
+           (relative offset = no layout change, the game stays where it is), and stack the game
+           above the row on every portrait phone so a pill's glow can never paint on it. */
+        @media (min-width: 400px) and (max-width: 768px) and (pointer: coarse) and (orientation: portrait) {
+            body.is-mobile:not(.is-ipad) #game .arcade-selector {
+                top: -5px !important;
+            }
+        }
+        @media (orientation: portrait) and (pointer: coarse) {
+            body.is-mobile:not(.is-ipad) #game .game-container:not(.pseudo-fullscreen) {
+                z-index: 101 !important;
+            }
+        }
+
         /* iPhone 13 Pro and smaller (390px width) */
         @media (max-width: 390px) and (pointer: coarse) {
             /* Larger nav for smallest screens */
@@ -12253,6 +12268,14 @@
         function placeInlineFullscreenButton(container, selector, viewportWidth) {
             const btn = container.querySelector('.game-fullscreen-btn');
             if (!btn) return;
+            // V1_498: the button's `transition: all 0.2s` animated top/left while we measured, so
+            // the rect was mid-flight (e.g. still in the old slot -> "doesn't overlap" -> bail)
+            // and the button then slid back over the game after a game switch / fs exit. Freeze
+            // transitions for the whole placement so every rect below is the layout TARGET, and
+            // hand them back only after the final values have been committed.
+            btn.style.setProperty('transition', 'none', 'important');
+            clearTimeout(btn._fsTransitionTimer);
+            btn._fsTransitionTimer = setTimeout(function () { btn.style.removeProperty('transition'); }, 50);
             ['top', 'left', 'right', 'bottom'].forEach(function (p) { btn.style.removeProperty(p); });
             container.classList.remove('fs-btn-outside');
             if (selector) selector.classList.remove('fs-slot');
@@ -12737,7 +12760,7 @@
 
             const FS_IFRAME_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'width', 'height', 'max-width', 'max-height',
                                      'margin', 'transform', '-webkit-transform', 'transform-origin', '-webkit-transform-origin', 'border'];
-            const FS_BTN_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'width', 'height', 'font-size'];
+            const FS_BTN_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'width', 'height', 'font-size', 'transition'];   // V1_498: transition last
             const FS_PANE_PROPS = ['position', 'top', 'left', 'right', 'bottom', 'flex-direction'];
             const FS_CONTAINER_PROPS = ['width', 'height', 'max-width', 'max-height', 'aspect-ratio', 'top', 'left'];
             const setImp = function (el, prop, val) { if (el) el.style.setProperty(prop, val, 'important'); };
@@ -12787,6 +12810,7 @@
 
                 // ✕ in the top-right corner of the bar (top bar in portrait, right bar in landscape).
                 const ctrlTop = fs.safe.top + FS_CTRL_MARGIN;
+                setImp(fullscreenBtn, 'transition', 'none');   // V1_498: no slide from the inline spot
                 setImp(fullscreenBtn, 'position', 'absolute');
                 setImp(fullscreenBtn, 'top', (ctrlTop - oy) + 'px');
                 setImp(fullscreenBtn, 'left', (fs.vw - fs.safe.right - FS_CTRL_MARGIN - FS_CTRL_SIZE - ox) + 'px');
@@ -12866,6 +12890,7 @@
                 document.documentElement.style.overflow = 'hidden';
                 document.documentElement.style.touchAction = 'none';
                 fullscreenBtn.textContent = '✕';
+                fullscreenBtn.setAttribute('aria-label', 'Exit fullscreen');   // V1_498: keep a11y label in sync
                 
                 // Hide music player
                 const musicPlayer = document.getElementById('music-player');
@@ -12895,6 +12920,7 @@
                 document.documentElement.style.overflow = '';
                 document.documentElement.style.touchAction = '';
                 fullscreenBtn.textContent = '⛶';
+                fullscreenBtn.setAttribute('aria-label', 'Enter fullscreen');  // V1_498
                 
                 // Show music player
                 const musicPlayer = document.getElementById('music-player');
@@ -12979,6 +13005,35 @@
                 if (pseudoFullscreen) {
                     resizePseudoFullscreen();
                 }
+            });
+
+            // V1_498: Escape exits pseudo-fullscreen (iPad with a keyboard, desktop-class iPadOS),
+            // matching native fullscreen. The game iframe usually has focus, so listen on its
+            // (same-origin) document too — re-attached on every load. Text fields are left alone.
+            function onPseudoFsKey(e) {
+                if (!pseudoFullscreen || (e.key !== 'Escape' && e.key !== 'Esc')) return;
+                const t = e.target;
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+                exitPseudoFullscreen();
+            }
+            document.addEventListener('keydown', onPseudoFsKey);
+            if (arcadeFrameFS) {
+                const hookFrameKeys = function () {
+                    try { arcadeFrameFS.contentWindow.document.addEventListener('keydown', onPseudoFsKey); } catch (e) {}
+                };
+                arcadeFrameFS.addEventListener('load', function () {
+                    hookFrameKeys();
+                    // V1_498: a freshly loaded game (switch inline OR inside fullscreen) — re-place
+                    // the inline ⛶ once the new document has laid out (no-op while fullscreen).
+                    enforceGameAspectRatio();
+                });
+                hookFrameKeys();
+            }
+            // V1_498: re-place once any residual button transition settles (belt and braces).
+            fullscreenBtn.addEventListener('transitionend', function (e) {
+                if (e.propertyName !== 'top' && e.propertyName !== 'left') return;
+                const inFs = pseudoFullscreen || document.fullscreenElement || document.webkitFullscreenElement;
+                if (!inFs) enforceGameAspectRatio();
             });
 
             // V1_491: the visible viewport can change without a window resize (iOS toolbar
