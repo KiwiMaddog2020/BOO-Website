@@ -193,6 +193,75 @@
             border-radius: 0;
         }
 
+        /* V1_497: identical game frame — bar sits flush on the frame border (no 2px dark strip) */
+        html.in-iframe .control-bar {
+            margin-bottom: 0;
+        }
+
+        /* V1_497: the bar is scaled up to absorb the frame's spare height, which narrows the tower
+           columns a touch — keep the locked "Wave 25" label inside its button */
+        html.in-iframe .tower-btn.locked .tower-cost {
+            font-size: calc(8.5px * var(--scale, 1));
+            letter-spacing: -0.03em;
+        }
+
+        /* V1_497: DOM UI scales with the frame (iframe only) so TD is the same picture at any frame
+           size. calculateScale() sets --ui-zoom = max(1, min(innerWidth/640, innerHeight/718)) —
+           up with larger frames, never below today's px (compact rules below 640) — and
+           --ui-inner-scale (= map scale / zoom, so var(--scale) sizes inside a zoomed overlay are
+           not scaled twice). A 640x718 frame = today's look. */
+        html.in-iframe .menu-overlay,
+        html.in-iframe .map-transition-overlay,
+        html.in-iframe .tutorial-overlay,
+        html.in-iframe .gameover-overlay,
+        html.in-iframe .confirm-overlay,
+        html.in-iframe .placement-preview-overlay,
+        html.in-iframe .upgrade-overlay,
+        html.in-iframe .exit-confirm-overlay,
+        html.in-iframe .score-modal,
+        html.in-iframe .leaderboard-overlay,
+        html.in-iframe .shop-overlay,
+        html.in-iframe #muteBtn {
+            zoom: var(--ui-zoom, 1);
+            --scale: var(--ui-inner-scale, 1);
+        }
+        /* JS-positioned hints above the bar: `scale` (not zoom) so their px left/bottom stay exact */
+        html.in-iframe .placement-tooltip,
+        html.in-iframe .rotation-controls {
+            scale: var(--ui-zoom, 1);
+            transform-origin: 50% 100%;
+        }
+        /* Viewport-cutoff law (V1_422) at the small end of the frame range (~250x280): bound the
+           remaining fixed-size boxes to the frame and scroll inside instead of clipping */
+        html.in-iframe .score-modal-content,
+        html.in-iframe .exit-confirm-box,
+        html.in-iframe .confirm-container {
+            max-width: calc(100% - 16px);
+            max-height: calc(100% - 16px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+        html.in-iframe .placement-tooltip {
+            max-width: calc((100% - 8px) / var(--ui-zoom, 1)); /* divided by zoom: it is scaled after layout */
+            white-space: normal;
+        }
+        /* zoom multiplies vh units inside a zoomed box — divide vh-based max-heights by the zoom */
+        html.in-iframe .leaderboard-container {
+            max-height: calc(80vh / var(--ui-zoom, 1));
+        }
+        @media (max-width: 600px) {
+            html.in-iframe .leaderboard-container {
+                max-height: calc(85vh / var(--ui-zoom, 1));
+            }
+        }
+
+        /* V1_497: calculateScale() measures the control bar synchronously while it tries bar scales —
+           the tower/wave buttons' `transition: all` would otherwise report the pre-change height */
+        .control-bar.v1497-measuring,
+        .control-bar.v1497-measuring * {
+            transition: none !important;
+        }
+
         #gameCanvas {
             border-radius: 0;
             display: block;
@@ -3743,7 +3812,13 @@
             gameWidth: BASE_WIDTH,
             gameHeight: BASE_HEIGHT
         };
-        
+
+        // V1_497: identical game frame (iframe only). The canvas is the full frame width x
+        // (frame height - control bar); the 648x576 map is drawn into it with ONE uniform scale
+        // `k` and a centring offset (ox, oy) in canvas CSS px. getCanvasCoords() inverts it.
+        const MAP_VIEW = { active: false, k: 1, ox: 0, oy: 0 };
+        let uiZoom = 1; // V1_497: DOM UI zoom (iframe only, mirrors --ui-zoom); 1 = standalone
+
         // Canvas HUD colors (matching DOM CSS exactly)
         const UI_COLORS = {
             cyan: '#00f0ff',
@@ -3905,8 +3980,96 @@
             const TOTAL_GAME_WIDTH = BASE_WIDTH;
             
             const gameAspect = BASE_WIDTH / BASE_HEIGHT;
-            
-            if (isFullscreen) {
+            MAP_VIEW.active = false; // V1_497: only the iframe branch below uses the map transform
+
+            // V1_497: identical game frame. The site always hands TD a 640:718 iframe (inline and
+            // fullscreen, ~250x280 .. 1250x1402). Fill it edge to edge with inset 0 on every device:
+            // the control bar spans the full width at the bottom and the canvas takes the rest.
+            // The backing store is DISPLAY x DPR and the map is drawn with one uniform scale +
+            // centring offset (MAP_VIEW), so it can never be stretched. (Before: a fixed 648x576
+            // buffer under a W x (H - bar) CSS box = non-uniform stretch, 0.96 inline on phones.)
+            if (isFullscreen && isInIframe) {
+                gameContainer.classList.add('fullscreen-mode');
+                document.body.classList.add('fullscreen-active');
+                const root = document.documentElement;
+                const cbEl = document.querySelector('.control-bar');
+                const innerW = document.body.clientWidth;   // inside the 2px #0ff frame border
+                const innerH = document.body.clientHeight;
+                const kW = innerW / BASE_WIDTH;             // map scale when width-bound
+                root.style.setProperty('--canvas-width', innerW + 'px'); // bar = full frame width
+                canvas.style.height = '0px'; // measure the bar's natural height (a tall canvas flex-shrinks it)
+                cbEl.classList.add('v1497-measuring');
+                const barHeightAt = (s) => {
+                    cbEl.style.setProperty('--scale', s);   // bar subtree only; root --scale = map scale
+                    return Math.ceil(cbEl.getBoundingClientRect().height); // margin-bottom is 0 in-iframe (V1_497)
+                };
+                // The map fills the frame width; the bar gets exactly the remaining height, which is the
+                // same fraction of every 640:718 frame. Its contents scale uniformly via --scale: find the
+                // largest bar scale whose height fits (bisection, capped at 1.5x the map scale) so the
+                // bar's share of the frame is smooth across sizes and map + bar meet with no gap.
+                const barScaleMin = Math.min(kW, innerH / TOTAL_GAME_HEIGHT);
+                const barTarget = innerH - BASE_HEIGHT * kW;
+                let barScale = barScaleMin;
+                let barH = barHeightAt(barScale);
+                if (barH < barTarget) {
+                    let lo = barScaleMin, hi = kW * 1.5;
+                    const hHi = barHeightAt(hi);
+                    if (hHi <= barTarget) { lo = hi; barH = hHi; }
+                    else {
+                        for (let i = 0; i < 12; i++) {
+                            const mid = (lo + hi) / 2;
+                            const h = barHeightAt(mid);
+                            if (h <= barTarget) { lo = mid; barH = h; } else { hi = mid; }
+                        }
+                    }
+                    barScale = lo;
+                    barH = barHeightAt(barScale);
+                }
+                cbEl.classList.remove('v1497-measuring');
+                const mapH = innerH - barH;
+                const k = Math.min(kW, mapH / BASE_HEIGHT);
+
+                displayWidth = innerW;
+                displayHeight = mapH;
+                CANVAS_WIDTH = displayWidth;
+                CANVAS_HEIGHT = displayHeight;
+
+                // Sharp backing store: display size x min(DPR, 2) (perf cap), within the iOS pixel cap
+                let bufferScale = Math.min(rawDPR, 2);
+                const px = innerW * mapH * bufferScale * bufferScale;
+                if (px > MAX_CANVAS_PIXELS) bufferScale *= Math.sqrt(MAX_CANVAS_PIXELS / px);
+                const bufferWidth = Math.round(innerW * bufferScale);
+                const bufferHeight = Math.round(mapH * bufferScale);
+                canvas.width = bufferWidth;
+                canvas.height = bufferHeight;
+                canvas.style.width = innerW + 'px';
+                canvas.style.height = mapH + 'px';
+
+                MAP_VIEW.active = true;
+                MAP_VIEW.k = k;
+                MAP_VIEW.ox = (innerW - BASE_WIDTH * k) / 2;
+                MAP_VIEW.oy = (mapH - BASE_HEIGHT * k) / 2;
+                ctx.setTransform(bufferScale * k, 0, 0, bufferScale * k, bufferScale * MAP_VIEW.ox, bufferScale * MAP_VIEW.oy);
+                dprScale = bufferScale;
+
+                currentScale = k;
+                root.style.setProperty('--scale', k);
+                root.style.setProperty('--canvas-height', mapH + 'px');
+
+                // DOM UI zoom (uniform rule across the arcade): scale UP with the frame, never below
+                // today's px sizes — below 640x718 the current px + compact rules stay (readability floor).
+                uiZoom = Math.max(1, Math.min(window.innerWidth / 640, window.innerHeight / 718));
+                root.style.setProperty('--ui-zoom', uiZoom);
+                root.style.setProperty('--ui-inner-scale', k / uiZoom);
+
+                GameDebug.show({
+                    viewport: `${viewW}×${viewH}`,
+                    display: `${displayWidth}×${displayHeight} map×${k.toFixed(3)} bar×${barScale.toFixed(3)}`,
+                    buffer: `${bufferWidth}×${bufferHeight}`,
+                    dpr: `${rawDPR.toFixed(2)}→${bufferScale.toFixed(2)}`,
+                    device: is4K ? '4K' : (isTablet ? 'tablet' : (isPhone ? 'phone' : 'desktop'))
+                });
+            } else if (isFullscreen) {
                 gameContainer.classList.add('fullscreen-mode');
                 document.body.classList.add('fullscreen-active');
                 
@@ -3925,15 +4088,9 @@
                 // Always use min to ensure everything fits
                 const scaleFactor = Math.min(scaleByWidth, scaleByHeight);
                 
-                // Iframe stretch mode: fill available space (may distort aspect ratio)
-                if (isInIframe) {
-                    const controlBarScaled = CONTROL_BAR_HEIGHT * scaleByWidth;
-                    displayWidth = Math.floor(availWidth);
-                    displayHeight = Math.floor(availHeight - controlBarScaled);
-                } else {
-                    displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
-                    displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
-                }
+                // V1_497: the iframe stretch mode (may distort aspect ratio) moved to the branch above
+                displayWidth = Math.floor(BASE_WIDTH * scaleFactor);
+                displayHeight = Math.floor(BASE_HEIGHT * scaleFactor);
                 
                 CANVAS_WIDTH = displayWidth;
                 CANVAS_HEIGHT = displayHeight;
@@ -3971,27 +4128,7 @@
                 root.style.setProperty('--canvas-width', displayWidth + 'px');
                 root.style.setProperty('--canvas-height', displayHeight + 'px');
 
-                // V1_213: In iframe the flat 155px control-bar estimate leaves the canvas
-                // short, so the centered container shows a vertical gap and the playfield's
-                // top/bottom bounds peek out. Measure the REAL control bar and stretch the
-                // canvas to fill the remaining height. Safe: getCanvasCoords() maps via the
-                // live canvas rect and render() fills logical 648x576 to the display size,
-                // so a taller display just stretches the field a touch. Grow-only -> can
-                // never overflow the frame.
-                if (isInIframe) {
-                    const cbEl = document.querySelector('.control-bar');
-                    if (cbEl) {
-                        const cbH = Math.ceil(cbEl.getBoundingClientRect().height) + 2; // +2 = .control-bar margin-bottom
-                        const innerH = document.body.clientHeight; // body content height, excludes the #0ff border
-                        const filledH = Math.floor(innerH - cbH);
-                        if (filledH > displayHeight + 1) {
-                            displayHeight = filledH;
-                            CANVAS_HEIGHT = displayHeight;
-                            canvas.style.height = displayHeight + 'px';
-                            root.style.setProperty('--canvas-height', displayHeight + 'px');
-                        }
-                    }
-                }
+                // V1_497: the V1_213 iframe grow-to-fill block is superseded by the iframe branch above
 
                 // Debug overlay
                 GameDebug.show({
@@ -5404,7 +5541,13 @@
             const tooltipHeight = placementTooltip.offsetHeight;
             
             // Calculate center of tower bar relative to game container
-            const barCenterX = barRect.left + barRect.width / 2 - containerRect.left;
+            let barCenterX = barRect.left + barRect.width / 2 - containerRect.left;
+            // V1_497: identical-frame iframe — keep the (uiZoom-scaled) tooltip inside the frame on
+            // small frames, where centring over the tower bar pushed it off the left edge
+            if (MAP_VIEW.active) {
+                const half = tooltipWidth * uiZoom / 2 + 4;
+                barCenterX = Math.max(half, Math.min(containerRect.width - half, barCenterX));
+            }
             const tooltipLeft = barCenterX - tooltipWidth / 2;
             
             // Position tooltip directly above tower bar (0px gap)
@@ -5418,7 +5561,7 @@
             if (rotationControls.classList.contains('active')) {
                 const rotationWidth = rotationControls.offsetWidth;
                 const rotationLeft = barCenterX - rotationWidth / 2;
-                const rotationBottom = tooltipBottom + tooltipHeight + 2; // 2px gap above tooltip
+                const rotationBottom = tooltipBottom + tooltipHeight * uiZoom + 2; // 2px gap above tooltip (V1_497: tooltip is scaled by uiZoom in-iframe)
                 
                 rotationControls.style.left = rotationLeft + 'px';
                 rotationControls.style.bottom = rotationBottom + 'px';
@@ -5660,6 +5803,16 @@
         // Get canvas coordinates accounting for scaling
         function getCanvasCoords(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
+            // V1_497: identical-frame iframe path — invert the uniform map transform (scale k +
+            // centring offset). Taps in the spare band land outside 0..648 / 0..576 and are rejected.
+            if (MAP_VIEW.active) {
+                const cssX = (clientX - rect.left) * (CANVAS_WIDTH / rect.width);
+                const cssY = (clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
+                return {
+                    x: (cssX - MAP_VIEW.ox) / MAP_VIEW.k,
+                    y: (cssY - MAP_VIEW.oy) / MAP_VIEW.k
+                };
+            }
             // Always return coordinates in base dimensions (game logic space)
             const scaleX = BASE_WIDTH / rect.width;
             const scaleY = BASE_HEIGHT / rect.height;
@@ -9802,6 +9955,21 @@
 
         // ========== RENDERING ==========
         function render() {
+            // V1_497: identical-frame iframe path — paint any spare band around the uniformly
+            // scaled map with the map colour, and clip drawing to the map (the canvas edge used to)
+            if (MAP_VIEW.active) {
+                if (MAP_VIEW.ox > 0.25 || MAP_VIEW.oy > 0.25) {
+                    ctx.save();
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    ctx.fillStyle = '#0a0a0a';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.restore();
+                }
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, 0, BASE_WIDTH, BASE_HEIGHT);
+                ctx.clip();
+            }
             ctx.fillStyle = '#0a0a0a';
             ctx.fillRect(0, 0, BASE_WIDTH, BASE_HEIGHT);
             
@@ -9844,6 +10012,7 @@
             if (LAYOUT.isFullscreen) {
                 drawCanvasHUD();
             }
+            if (MAP_VIEW.active) ctx.restore(); // V1_497: pairs with the map clip above
         }
         
         // ========== CANVAS HUD DRAWING ==========
