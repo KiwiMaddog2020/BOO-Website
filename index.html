@@ -9178,6 +9178,52 @@
                 gap: clamp(7px, 1.1vw, 12px) !important;
                 margin-bottom: clamp(8px, 1.8dvh, 16px) !important;
             }
+
+            /* V1_513: iPad landscape "use the full height" — the V1_491 phone-landscape layout.
+               The pills stack in a column BESIDE the game and the ⛶ sits in the mirrored gutter
+               on the other side, so the game (still exactly 640:718, real-size iframe) spans
+               everything under the nav instead of losing ~75px to the pill row.
+               enforceGameAspectRatio() detects this layout (#game flex-direction: row) and reads
+               this padding + the column width.
+               - top: max(72px, 10dvh + 4px) clears the 61px nav AND the V1_489 fade layer's top
+                 band (black -> clear over 0-10% of 100dvh), so the game is never dimmed;
+               - bottom: V1_489 already dropped the fade layer's bottom bands here; the safe-area
+                 inset keeps the home indicator clear.
+               The pills keep their exact row styling (58x52: 52px min-width + 12px padding
+               around the icon) — restyling them here would animate through their
+               `transition: all` on every rotation and the ⛶ placement would measure mid-flight.
+               The column box is pinned at 58px (pills centre in it) so the container's mirrored
+               right margin (58 + 16) is a known width. */
+            body.is-ipad #game {
+                flex-direction: row !important;
+                justify-content: center !important;
+                align-items: center !important;
+                gap: 0 !important;
+                padding-top: max(72px, calc(10dvh + 4px)) !important;
+                padding-bottom: max(clamp(10px, 1.6dvh, 18px), env(safe-area-inset-bottom, 0px)) !important;
+            }
+            body.is-ipad #game .arcade-selector {
+                flex-direction: column !important;
+                flex: 0 0 58px !important;
+                width: 58px !important;
+                gap: clamp(8px, 1.4dvh, 14px) !important;
+                margin: 0 16px 0 0 !important;
+                padding: 0 !important;
+                align-self: center !important;
+            }
+            body.is-ipad #game .game-container:not(.pseudo-fullscreen) {
+                margin: 0 74px 0 0 !important;   /* = pill column (58) + 16: centres the game */
+            }
+            body.is-ipad #game .game-container:not(.pseudo-fullscreen) .game-fullscreen-btn {
+                left: calc(100% + 16px) !important;   /* mirrors the pill column's 16px gap */
+            }
+            /* The V1_479 fix drops the fixed 80px black body::before bar only up to 834px tall;
+               iPad Pro 13" landscape (1024 / ~954 tall) kept it, and it painted over the bottom
+               ~30px of the game. The music player it backs is already hidden while the arcade is
+               active on iPad (V1_159), so drop the bar here too. */
+            body.is-ipad.game-section-active::before {
+                display: none !important;
+            }
         }
 
         @media (min-width: 700px) and (max-width: 1400px) and (orientation: portrait) {
@@ -12088,6 +12134,12 @@
                             ('ontouchstart' in window || navigator.maxTouchPoints > 0));
             const isLandscape = viewportWidth > viewportHeight;
             const isShortPhoneLandscape = isPhone && isLandscape && viewportHeight <= 500;
+            // V1_513: iPad landscape uses the same pills-in-a-column layout (CSS, V1_513 block in
+            // the V1_159 iPad landscape rules). Keyed off the live layout, not a second copy of
+            // the media query, so JS and CSS can never disagree about which sizing applies.
+            const gameSectionEl = document.getElementById('game');
+            const isIPadPillColumn = isIPad && isLandscape && !!gameSectionEl &&
+                window.getComputedStyle(gameSectionEl).flexDirection === 'row';
 
             // Aspect source: per-game on mobile, fixed brickbreaker ratio on desktop/tablet
             let cssAspectStr, gameRatio;
@@ -12115,7 +12167,8 @@
                 return Number.isFinite(parsed) ? parsed : 0;
             };
             
-            if (isShortPhoneLandscape) {
+            if (isShortPhoneLandscape || isIPadPillColumn) {
+                // V1_513: iPad landscape shares this branch (pill column beside the game).
                 // V1_491: phone landscape — the pills sit in a column BESIDE the game (CSS, V1_491
                 // block in the V1_160 phone-landscape guard) and the ⛶ sits in the mirrored gutter
                 // on the other side, so the game takes the full height under the fixed nav: the
