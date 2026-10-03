@@ -2147,7 +2147,11 @@
         const BASE_GAME_HEIGHT = 515;  // Just the game play area
         const BASE_HEIGHT = 700;       // Full canvas including HUD and trackpad
         
-        // Canvas layout areas (all rendering is offset by these)
+        // Canvas layout areas (all rendering is offset by these).
+        // V1_515: hudHeight / gameTop / trackpadTop / trackpadHeight are RECOMPUTED every
+        // calculateScale() by syncHudToCornerButtons() — the top band has to contain the DOM
+        // corner buttons, and those two do not scale together (see that function). The values
+        // here are the 28-unit floor and the windowed defaults.
         const LAYOUT = {
             hudTop: 0,
             hudHeight: 28,
@@ -2156,6 +2160,10 @@
             trackpadTop: 543,         // 28 + 515
             trackpadHeight: 157       // Remaining space (700 - 543)
         };
+        const HUD_MIN = 28;           // V1_515: the original band height, never go below it
+        const HUD_MAX = 125;          // keeps the trackpad >= TRACKPAD_MIN (700 - 515 - 60)
+        const TRACKPAD_MIN = 60;      // V1_515: floor for the bottom touch strip
+        const PLAYFIELD_H = 515;      // V1_515: preserved at every frame size
         
         // Canvas-rendered UI state (replaces DOM elements)
         const uiState = {
@@ -2441,8 +2449,47 @@
             
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
+            syncHudToCornerButtons();
         }
-        
+
+        // V1_515 (Kevin: "the buttons still overlap a touch... make the top horizontal bar a bit
+        // taller to accommodate"). The band and the buttons do NOT scale together:
+        //   - the band is LAYOUT.hudHeight logical units, drawn through the canvas scale
+        //     (canvas CSS height / BASE_HEIGHT), which on a small frame falls to ~0.37;
+        //   - the corner buttons are DOM px at `zoom: var(--ui-zoom)`, and --ui-zoom is
+        //     max(1, ...) so it never goes BELOW 1 — a 36px button stays 36 CSS px.
+        // So a fixed logical height cannot fit them at every frame: measured overlap was 15px
+        // on a MacBook and up to 25px on a landscape phone. Derive the band from the buttons'
+        // real rendered box instead, with the button's own top inset mirrored underneath so it
+        // sits visually centred. The playfield keeps its 515 units everywhere; the slack comes
+        // out of the trackpad strip, floored so it cannot collapse.
+        function syncHudToCornerButtons() {
+            try {
+                const cv = canvas, btn = document.getElementById('muteBtn');
+                if (!cv || !btn) return;
+                const cr = cv.getBoundingClientRect();
+                if (!cr.height) return;
+                const scale = cr.height / BASE_HEIGHT;
+                if (!(scale > 0)) return;
+                const br = btn.getBoundingClientRect();
+                let hud;
+                if (!br.height) {
+                    // Hidden under body.parent-fs: the parent pane owns the controls in
+                    // fullscreen, so there is nothing to clear — give the band its floor back.
+                    hud = HUD_MIN;
+                } else {
+                    const inset = Math.max(0, br.top - cr.top);  // the button's own top gap
+                    const neededCss = inset + br.height + inset; // mirror it below => centred
+                    hud = Math.min(HUD_MAX, Math.max(HUD_MIN, Math.ceil(neededCss / scale)));
+                }
+                if (hud === LAYOUT.hudHeight) return;        // nothing to do; avoids churn
+                LAYOUT.hudHeight = hud;
+                LAYOUT.gameTop = hud;
+                LAYOUT.trackpadTop = hud + PLAYFIELD_H;
+                LAYOUT.trackpadHeight = Math.max(TRACKPAD_MIN, BASE_HEIGHT - LAYOUT.trackpadTop);
+            } catch (e) {}
+        }
+
         function handleFullscreenChange() {
             calculateScale();
         }
