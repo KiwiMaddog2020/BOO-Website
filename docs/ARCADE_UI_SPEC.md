@@ -32,7 +32,9 @@ Hidden Space Shooter: out of scope.
   shop), corner buttons must not overlap its header (inset headers or hide the pause button).
 - In parent fullscreen (body.parent-fs) the game's own pause/mute hide and the parent pane
   (index.html) takes over — pane order is mute first, pause second, same as in-game.
-- Top-right corner is reserved (parent ⛶ / game-specific canvas controls like TD speed/EXIT stay).
+- Top-right corner is reserved for the parent ⛶, which since V1_514 sits INSIDE the frame
+  there (36x36, inset 8px desktop / 6px phone; was parked outside the box by V1_491).
+  Game-specific canvas controls like TD speed/EXIT stay — they sit inboard of the corner.
 
 ## 3. Pause menu (P, Escape, or the ⏸ button; auto-pause on tab hide)
 - Backdrop rgba(0,0,0,.92). Game fully frozen (timers too). Music ducks via isPaused.
