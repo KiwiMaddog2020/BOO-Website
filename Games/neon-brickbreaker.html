@@ -1871,8 +1871,42 @@
             window.addEventListener(ev, function () { MUSIC.unlock(); }, { once: true, passive: true });
         });
 
-        // Canvas-drawn mute toggle: rect (logical 653x700 coords) is set in drawHUD().
-        let muteBtnRect = { x: 0, y: 0, w: 30, h: 26 };
+        // Canvas-drawn header controls: rects (logical 653x700 coords) are set in drawHUD().
+        // V1_470: both standardised to 32x32 and both fit inside the 40px HUD strip. Mute sits
+        // top-LEFT, fullscreen top-RIGHT -- same pattern the DOM-header games use.
+        const HDR_BTN = 32;
+        let muteBtnRect = { x: 0, y: 0, w: HDR_BTN, h: HDR_BTN };
+        let fsBtnRect = { x: 0, y: 0, w: HDR_BTN, h: HDR_BTN };
+        // Only draw the fullscreen control when the embedding page really is the BOO arcade, so
+        // standalone play and the Capacitor app never get a dead button. The probe result is
+        // CACHED because fsAvailable() runs every frame from drawHUD -- a parent-document query
+        // per frame would break the perf law. It is re-probed whenever the arcade messages us
+        // (it sends fs-exit on every iframe load), which also closes any boot-time race with
+        // the arcade page's own device detection. parentIsFullscreen hides the control while
+        // the PARENT is fullscreen -- the parent's button is the exit affordance there.
+        let fsHostChecked = false, fsHostOk = false, parentIsFullscreen = false;
+        function probeFsHost() {
+            try {
+                if (window.parent === window) return false;              // standalone play
+                const pdoc = window.parent.document;                      // same-origin only
+                if (!pdoc.querySelector('.game-fullscreen-btn')) return false;  // not the BOO arcade
+                // iPad: the arcade page deliberately ships no fullscreen there.
+                if (pdoc.body && pdoc.body.classList.contains('is-ipad')) return false;
+                return true;
+            } catch (e) { return false; }
+        }
+        function fsAvailable() {
+            if (!fsHostChecked) { fsHostOk = probeFsHost(); fsHostChecked = true; }
+            return fsHostOk && !parentIsFullscreen;
+        }
+        window.addEventListener('message', function (e) {
+            var d = e.data;
+            if (!d || d.type !== 'boo-arcade') return;
+            if (d.cmd === 'fs-enter') parentIsFullscreen = true;
+            else if (d.cmd === 'fs-exit') parentIsFullscreen = false;
+            fsHostOk = probeFsHost();
+            fsHostChecked = true;
+        });
         function eventToGameCoords(e) {
             const rect = canvas.getBoundingClientRect();
             if (!rect.width || !rect.height) return null;
@@ -1880,15 +1914,22 @@
             if (src.clientX == null) return null;
             return { x: (src.clientX - rect.left) / rect.width * 653, y: (src.clientY - rect.top) / rect.height * 700 };
         }
-        function hitMute(e) {
+        function hitRect(e, r) {
             const p = eventToGameCoords(e);
-            return !!p && p.x >= muteBtnRect.x - 6 && p.x <= muteBtnRect.x + muteBtnRect.w + 6 &&
-                   p.y >= muteBtnRect.y - 6 && p.y <= muteBtnRect.y + muteBtnRect.h + 6;
+            return !!p && p.x >= r.x - 6 && p.x <= r.x + r.w + 6 &&
+                   p.y >= r.y - 6 && p.y <= r.y + r.h + 6;
+        }
+        function hitMute(e) { return hitRect(e, muteBtnRect); }
+        function hitFs(e) { return fsAvailable() && hitRect(e, fsBtnRect); }
+        function requestParentFullscreen() {
+            try { window.parent.postMessage({ type: 'boo-arcade-fullscreen' }, '*'); } catch (err) {}
         }
         canvas.addEventListener('click', function (e) {
+            if (hitFs(e)) { e.stopImmediatePropagation(); requestParentFullscreen(); return; }
             if (hitMute(e)) { e.stopImmediatePropagation(); SFX.unlock(); SFX.toggle(); }
         });
         canvas.addEventListener('touchend', function (e) {
+            if (hitFs(e)) { e.preventDefault(); e.stopImmediatePropagation(); requestParentFullscreen(); return; }
             if (hitMute(e)) { e.preventDefault(); e.stopImmediatePropagation(); SFX.unlock(); SFX.toggle(); }
         }, { passive: false });
 
@@ -1907,13 +1948,18 @@
         const BASE_HEIGHT = 700;       // Full canvas including HUD and trackpad
         
         // Canvas layout areas (all rendering is offset by these)
+        // V1_470: hudHeight 28 -> 40 so the 32x32 header controls (mute, fullscreen) fit
+        // fully INSIDE the HUD strip instead of overflowing into the playfield. The 12px comes
+        // out of the trackpad, NOT the play area: BASE_HEIGHT (700), the canvas aspect and
+        // gameHeight (515) are all unchanged, so nothing resizes. Trackpad content tops out at
+        // trackpadTop+134 (4 power-up timer rows, the desktop max), still inside 145.
         const LAYOUT = {
             hudTop: 0,
-            hudHeight: 28,
-            gameTop: 28,              // Game area starts after HUD
+            hudHeight: 40,
+            gameTop: 40,              // Game area starts after HUD
             gameHeight: 515,          // Original game height preserved
-            trackpadTop: 543,         // 28 + 515
-            trackpadHeight: 157       // Remaining space (700 - 543)
+            trackpadTop: 555,         // 40 + 515
+            trackpadHeight: 145       // Remaining space (700 - 555)
         };
         
         // Canvas-rendered UI state (replaces DOM elements)
@@ -2136,7 +2182,8 @@
                 canvas.height = bufferHeight;
                 canvas.style.width = cssWidth + 'px';
                 canvas.style.height = cssHeight + 'px';
-                
+
+
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
                 ctx.scale(dprScale, dprScale);
                 
@@ -2146,6 +2193,27 @@
             
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
+            syncMenuOverlayOffset();
+        }
+
+        // V1_470: keep the canvas HUD strip (mute + fullscreen) clickable while the menu is up.
+        // .menu-overlay is a near-opaque position:fixed layer over the whole viewport, so it
+        // swallowed every click on the HUD and fullscreen was unreachable from the menu screen
+        // (the parent page's floating button used to cover that case before V1_470 moved the
+        // control in-game). It is viewport-relative while the canvas is centred in the iframe,
+        // so the offset is measured from the canvas's real position, not the HUD height alone.
+        function syncMenuOverlayOffset() {
+            try {
+                var mo = document.getElementById('menuOverlay');
+                if (!mo || !canvas) return;
+                var r = canvas.getBoundingClientRect();
+                if (!r.height) return;
+                var hudCss = LAYOUT.hudHeight * (r.height / BASE_HEIGHT);
+                var off = Math.max(0, Math.round(r.top + hudCss));
+                mo.style.top = off + 'px';
+                mo.style.height = 'calc(100% - ' + off + 'px)';
+            } catch (e) {}
+            drawMenuHeader();   // V1_470: the strip is exposed — make sure it is also painted
         }
         
         function handleFullscreenChange() {
@@ -4896,10 +4964,71 @@
         function showGameOverButtons() {
             startBtn.textContent = 'PLAY AGAIN';
             menuOverlay.classList.remove('hidden');
+            syncMenuOverlayOffset();   // V1_470: keep the HUD strip exposed
         }
         
         // ========== CANVAS UI DRAWING FUNCTIONS ==========
         
+        // V1_470: header control chrome (hoisted out of drawHUD so it isn't re-created per
+        // frame). Mirrors the DOM-header games: rounded box, 2px cyan border, black fill.
+        function drawHeaderBtn(r, glyph, accent, fontPx) {
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath();
+            ctx.roundRect(r.x, r.y, r.w, r.h, 6);
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.55)';
+            ctx.stroke();
+            ctx.textAlign = 'center';
+            ctx.font = fontPx + 'px Oxanium, monospace';
+            ctx.shadowColor = accent;
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = accent;
+            ctx.fillText(glyph, r.x + r.w / 2, r.y + r.h / 2 + 1);
+            ctx.shadowBlur = 0;
+        }
+
+        // V1_470: header controls — mute top-LEFT, fullscreen top-RIGHT, both 32x32 and both
+        // fully inside the 40px HUD strip (y = 4..36). Matches the DOM-header games' look:
+        // rounded box, 2px cyan border, translucent black fill. Also (re)publishes the hit
+        // rects the pointer handlers test against, so it must run whenever the strip is drawn.
+        function drawHeaderControls() {
+            const hdrPad = (LAYOUT.hudHeight - HDR_BTN) / 2;   // 4
+            muteBtnRect = { x: hdrPad, y: hdrPad, w: HDR_BTN, h: HDR_BTN };
+            fsBtnRect = { x: gameWidth - hdrPad - HDR_BTN, y: hdrPad, w: HDR_BTN, h: HDR_BTN };
+
+            drawHeaderBtn(muteBtnRect, SFX.muted ? '🔇' : '🔊',
+                          SFX.muted ? 'rgba(255,90,130,0.95)' : '#0ff', 18);
+            if (fsAvailable()) drawHeaderBtn(fsBtnRect, '⛶', '#0ff', 18);
+        }
+
+        // V1_470: the other six games keep a DOM fullscreen button on screen at all times, but
+        // this game's controls are canvas-drawn and the render loop does not run while the menu
+        // overlay is up — so the strip was blank on the menu / game-over screens even though
+        // syncMenuOverlayOffset() had already exposed it to clicks (an invisible hotspot).
+        // Paint the band itself here whenever the menu is showing.
+        function drawMenuHeader() {
+            try {
+                const mo = document.getElementById('menuOverlay');
+                if (!mo || mo.classList.contains('hidden')) return;
+                if (!ctx || !LAYOUT.hudHeight) return;
+                ctx.save();
+                ctx.fillStyle = '#0a0a0a';
+                ctx.fillRect(0, 0, gameWidth, LAYOUT.hudHeight);
+                drawHeaderControls();
+                ctx.shadowColor = '#0ff';
+                ctx.shadowBlur = 4;
+                ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, LAYOUT.hudHeight - 1);
+                ctx.lineTo(gameWidth, LAYOUT.hudHeight - 1);
+                ctx.stroke();
+                ctx.restore();
+            } catch (e) {}
+        }
+
         function drawHUD() {
             ctx.save();
             
@@ -4954,16 +5083,10 @@
                 }
             });
             
-            // V1_210: mute moved to top-LEFT — parent page's fullscreen button owns the top-right corner
-            muteBtnRect = { x: 12, y: (LAYOUT.hudHeight - 26) / 2, w: 30, h: 26 };
-            ctx.textAlign = 'center';
-            ctx.font = '20px Oxanium, monospace';
-            ctx.shadowColor = SFX.muted ? '#f06' : '#0ff';
-            ctx.shadowBlur = 8;
-            ctx.fillStyle = SFX.muted ? 'rgba(255,90,130,0.95)' : '#0ff';
-            ctx.fillText(SFX.muted ? '🔇' : '🔊', muteBtnRect.x + muteBtnRect.w / 2, hudY);
+            drawHeaderControls();
 
             // HUD bottom border
+            ctx.shadowColor = '#0ff';   // V1_470: restore after the header controls' accent
             ctx.shadowBlur = 4;
             ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
             ctx.lineWidth = 1;

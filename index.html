@@ -5582,7 +5582,12 @@
 
         .game-container { 
             width: 100%;
-            max-width: 560px; /* V1_285: matches the JS desktop cap (was 580) so there's no load flash */
+            /* V1_470: V1_469 made the JS desktop cap display-scaled
+               — min(1000, max(560, (screen.height - 452) * gameRatio)) — so the old hard 560px
+               here no longer matched it and every display above 1080p flashed narrow before JS
+               ran. Track the current JS ceiling instead; JS still writes the exact per-display
+               value on top of this. Mobile is unaffected (JS owns sizing there too). */
+            max-width: 1000px;
             max-height: 75vh; /* Constrain height for smaller viewports */
             aspect-ratio: 640/718; /* Standard iframe ratio */
             border-radius: 8px; 
@@ -5830,7 +5835,13 @@
         .game-touch-blocker { display: none; }
         
         /* ========== FULLSCREEN BUTTON FOR GAME ========== */
+        /* V1_470: hidden in WINDOWED mode — each game now renders its own fullscreen control
+           inside its own header strip (top-right), which is the only place that can align to
+           the game's frame. This button stays alive as the EXIT affordance once we're in
+           native or pseudo fullscreen (re-shown by the :fullscreen / :-webkit-full-screen /
+           .pseudo-fullscreen rules below), where the game's own header control hides itself. */
         .game-fullscreen-btn {
+            display: none;
             position: absolute;
             top: 8px;
             right: 8px;
@@ -5843,7 +5854,6 @@
             font-size: 18px;
             cursor: pointer;
             z-index: 1000;
-            display: flex;
             align-items: center;
             justify-content: center;
             transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -5868,9 +5878,19 @@
             transform: scale(0.95);
         }
         
-        /* Fullscreen mode - button becomes exit button */
-        .game-container:fullscreen .game-fullscreen-btn,
+        /* Fullscreen mode - button becomes exit button.
+           V1_470: split per vendor prefix — a single unsupported selector in a comma group
+           invalidates the WHOLE rule (the V1_180 gotcha), so Safari, which historically only
+           knows :-webkit-full-screen, was dropping these outright. Declarations unchanged.
+           display:flex also re-shows the button, which is now hidden in windowed mode. */
+        .game-container:fullscreen .game-fullscreen-btn {
+            display: flex;
+            position: fixed;
+            top: 10px;
+            right: 10px;
+        }
         .game-container:-webkit-full-screen .game-fullscreen-btn {
+            display: flex;
             position: fixed;
             top: 10px;
             right: 10px;
@@ -5948,6 +5968,7 @@
         }
         
         .game-container.pseudo-fullscreen .game-fullscreen-btn {
+            display: flex !important;   /* V1_470: re-show (hidden in windowed mode) */
             position: fixed !important;
             top: 15px !important;
             right: 15px !important;
@@ -6003,7 +6024,14 @@
         /* Show only in fullscreen AND only once the active game has handshaked (.pane-ready),
            so the 5 games without the bridge never show dead buttons. Fixed to the viewport
            top-LEFT (mirror of the close btn top-right). */
-        .game-container.pane-ready:fullscreen .game-pane-controls,
+        /* V1_470: ungrouped per the V1_180 vendor-prefix gotcha — grouping an unsupported
+           pseudo-class drops the whole rule, so Safari was losing these pane controls. */
+        .game-container.pane-ready:fullscreen .game-pane-controls {
+            display: flex;
+            position: fixed;
+            top: 10px;
+            left: 10px;
+        }
         .game-container.pane-ready:-webkit-full-screen .game-pane-controls {
             display: flex;
             position: fixed;
@@ -6318,24 +6346,48 @@
             50%      { transform: translateY(-2%) scale(1.07); }
         }
 
-        /* In fullscreen, let iframe be centered by flexbox */
-        .game-container:fullscreen iframe,
-        .game-container:-webkit-full-screen iframe,
-        .game-container:-moz-full-screen iframe,
+        /* In fullscreen, let iframe be centered by flexbox.
+           V1_470: ungrouped per the V1_180 vendor-prefix gotcha. */
+        .game-container:fullscreen iframe {
+            max-width: none !important;
+            max-height: none !important;
+        }
+        .game-container:-webkit-full-screen iframe {
+            max-width: none !important;
+            max-height: none !important;
+        }
+        .game-container:-moz-full-screen iframe {
+            max-width: none !important;
+            max-height: none !important;
+        }
         .game-container:-ms-fullscreen iframe {
             max-width: none !important;
             max-height: none !important;
         }
         
-        /* Hide touch blockers in fullscreen */
-        .game-container:fullscreen .game-touch-blocker,
+        /* Hide touch blockers in fullscreen. V1_470: ungrouped per the V1_180 gotcha. */
+        .game-container:fullscreen .game-touch-blocker {
+            display: none !important;
+        }
         .game-container:-webkit-full-screen .game-touch-blocker {
             display: none !important;
         }
         
-        /* Fullscreen button styling */
-        .game-container:fullscreen .game-fullscreen-btn,
+        /* Fullscreen button styling. V1_470: ungrouped per the V1_180 gotcha; display:flex
+           re-shows it (hidden in windowed mode). Declarations otherwise unchanged. */
+        .game-container:fullscreen .game-fullscreen-btn {
+            display: flex !important;
+            position: fixed !important;
+            top: 15px !important;
+            right: 15px !important;
+            width: 44px !important;
+            height: 44px !important;
+            font-size: 22px !important;
+            z-index: 9999 !important;
+            opacity: 0.5 !important;
+        }
         .game-container:-webkit-full-screen .game-fullscreen-btn {
+            display: flex !important;
             position: fixed !important;
             top: 15px !important;
             right: 15px !important;
@@ -6346,7 +6398,9 @@
             opacity: 0.5 !important;
         }
         
-        .game-container:fullscreen .game-fullscreen-btn:hover,
+        .game-container:fullscreen .game-fullscreen-btn:hover {
+            opacity: 1 !important;
+        }
         .game-container:-webkit-full-screen .game-fullscreen-btn:hover {
             opacity: 1 !important;
         }
@@ -12147,6 +12201,12 @@
         let iframeNaturalWidth = 640;
         let iframeNaturalHeight = 800;
 
+        // V1_470: the games now render their OWN fullscreen control inside their own header
+        // and postMessage {type:'boo-arcade-fullscreen'} here. This handle is assigned inside
+        // the fullscreen block below so the message listener can run the exact same toggle as
+        // the parent button (one code path, no duplicated logic).
+        let booToggleGameFullscreen = null;
+
         // ========== V1_275: FULLSCREEN PANE PAUSE/MUTE CONTROLS ==========
         // Parent-rendered controls that mirror the close button into the left pane while
         // fullscreen. They postMessage the active game iframe; the game clicks its own
@@ -12430,55 +12490,86 @@
                 notifyGameFullscreen(false);   // V1_275: restore the game's in-iframe buttons
             }
             
+            function nativeFullscreenElement() {
+                return document.fullscreenElement ||
+                       document.webkitFullscreenElement ||
+                       document.mozFullScreenElement ||
+                       document.msFullscreenElement;
+            }
+
+            // V1_470: ONE toggle, shared by the parent button's click handler and by the
+            // {type:'boo-arcade-fullscreen'} message the games' own header controls send.
+            //
+            // The fallback matters: requestFullscreen() needs transient user activation, and a
+            // click inside the iframe does not reliably carry activation into THIS document
+            // (cross-origin embeds never do; same-origin propagation is engine-dependent and
+            // can be lost behind a postMessage hop). So we try native, and on a throw OR a
+            // rejected promise OR a legacy prefixed call that silently does nothing, we fall
+            // back to the pseudo-fullscreen path — a plain CSS class, which needs no
+            // activation at all. Exit works by the same route: whichever mode we're actually
+            // in is the one we leave.
+            function toggleGameFullscreen() {
+                // iPhone: pseudo-fullscreen only (native has an unblockable swipe-to-exit).
+                if (isIOS) {
+                    if (pseudoFullscreen) exitPseudoFullscreen();
+                    else enterPseudoFullscreen();
+                    return;
+                }
+
+                if (nativeFullscreenElement()) {
+                    try {
+                        if (document.exitFullscreen) {
+                            const ep = document.exitFullscreen();
+                            if (ep && typeof ep.catch === 'function') ep.catch(function () {});
+                        } else if (document.webkitExitFullscreen) {
+                            document.webkitExitFullscreen();
+                        } else if (document.mozCancelFullScreen) {
+                            document.mozCancelFullScreen();
+                        } else if (document.msExitFullscreen) {
+                            document.msExitFullscreen();
+                        }
+                    } catch (err) {}
+                    return;
+                }
+
+                // Already in the CSS fallback -> leave it.
+                if (pseudoFullscreen) { exitPseudoFullscreen(); return; }
+
+                // Capture reference size BEFORE going fullscreen
+                if (arcadeFrameFS) {
+                    const rect = arcadeFrameFS.getBoundingClientRect();
+                    iframeNaturalWidth = rect.width || 640;
+                    iframeNaturalHeight = rect.height || 800;
+                }
+
+                const el = arcadeGameContainerFS;
+                const req = el.requestFullscreen || el.webkitRequestFullscreen ||
+                            el.mozRequestFullScreen || el.msRequestFullscreen;
+
+                function fallbackIfNotFullscreen() {
+                    if (!nativeFullscreenElement() && !pseudoFullscreen) enterPseudoFullscreen();
+                }
+
+                if (!req) { enterPseudoFullscreen(); return; }   // no native API at all
+
+                try {
+                    const pr = req.call(el);
+                    if (pr && typeof pr.then === 'function') {
+                        pr.catch(function () { fallbackIfNotFullscreen(); });
+                    } else {
+                        // Legacy prefixed APIs return undefined and fail silently — verify.
+                        setTimeout(fallbackIfNotFullscreen, 250);
+                    }
+                } catch (err) {
+                    fallbackIfNotFullscreen();
+                }
+            }
+            booToggleGameFullscreen = toggleGameFullscreen;
+
             fullscreenBtn.addEventListener('click', function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                
-                // For iOS, use pseudo-fullscreen
-                if (isIOS) {
-                    if (pseudoFullscreen) {
-                        exitPseudoFullscreen();
-                    } else {
-                        enterPseudoFullscreen();
-                    }
-                    return;
-                }
-                
-                const isFullscreen = document.fullscreenElement || 
-                                    document.webkitFullscreenElement || 
-                                    document.mozFullScreenElement ||
-                                    document.msFullscreenElement;
-                
-                if (isFullscreen) {
-                    // Exit fullscreen
-                    if (document.exitFullscreen) {
-                        document.exitFullscreen();
-                    } else if (document.webkitExitFullscreen) {
-                        document.webkitExitFullscreen();
-                    } else if (document.mozCancelFullScreen) {
-                        document.mozCancelFullScreen();
-                    } else if (document.msExitFullscreen) {
-                        document.msExitFullscreen();
-                    }
-                } else {
-                    // Capture reference size BEFORE going fullscreen
-                    if (arcadeFrameFS) {
-                        const rect = arcadeFrameFS.getBoundingClientRect();
-                        iframeNaturalWidth = rect.width || 640;
-                        iframeNaturalHeight = rect.height || 800;
-                    }
-                    
-                    // Enter fullscreen on game container
-                    if (arcadeGameContainerFS.requestFullscreen) {
-                        arcadeGameContainerFS.requestFullscreen();
-                    } else if (arcadeGameContainerFS.webkitRequestFullscreen) {
-                        arcadeGameContainerFS.webkitRequestFullscreen();
-                    } else if (arcadeGameContainerFS.mozRequestFullScreen) {
-                        arcadeGameContainerFS.mozRequestFullScreen();
-                    } else if (arcadeGameContainerFS.msRequestFullscreen) {
-                        arcadeGameContainerFS.msRequestFullscreen();
-                    }
-                }
+                toggleGameFullscreen();
             });
             
             // Touch handler for mobile
@@ -12629,6 +12720,12 @@
                         }
                     }, 150);
                 }
+            } else if (e.data && e.data.type === 'boo-arcade-fullscreen') {
+                // V1_470: the active game's own header fullscreen control was activated.
+                // Runs the identical toggle as this page's button, including the
+                // pseudo-fullscreen fallback for when the iframe click can't carry user
+                // activation across into this document.
+                if (typeof booToggleGameFullscreen === 'function') booToggleGameFullscreen();
             } else if (e.data && e.data.type === 'boo-arcade-state') {
                 // V1_275: game reports pause/mute state -> sync the fullscreen pane buttons.
                 // Receiving this is also our proof the active game ships the bridge, so the

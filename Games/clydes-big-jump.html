@@ -1076,6 +1076,15 @@
     </style>
 </head>
 <body>
+    <!-- V1_470: direct child of <body>. Inside .game-container it was trapped in that
+         element's transform-created stacking context (z-index:auto), so the z:2000 menu
+         overlay painted over it and fullscreen was unreachable from the menu screen.
+         Inset is 11px, not the 8px #muteBtn declares: mute is position:fixed INSIDE
+         .game-container, whose transform makes it the containing block, so mute resolves
+         against that element's padding box and its 3px border pushes it to an effective
+         11px. From <body> this button is viewport-relative, so it needs the 3px added
+         back to sit level with the mute. -->
+    <button id="fsBtn" type="button" aria-label="Toggle fullscreen" title="Toggle fullscreen" style="position:fixed;top:11px;right:11px;z-index:2100;width:32px;height:32px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">⛶</button>
     <!-- Intro Screen (visible initially) -->
     <div class="overlay" id="introScreen">
         <div class="intro-content-wrapper">
@@ -1095,8 +1104,8 @@
         <!-- HUD -->
         <div class="hud" id="hud">0</div>
         <!-- V1_189: sound mute toggle (top-left; score HUD is centered so no collision) -->
-        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:fixed;top:8px;left:8px;z-index:60;width:38px;height:38px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
-        
+        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:fixed;top:8px;left:8px;z-index:60;width:32px;height:32px;border-radius:8px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.5);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;">🔊</button>
+        <!-- V1_470: fullscreen (peer of mute; top-right of this game's header) -->
         <!-- Loading Screen -->
         <div class="overlay hidden" id="loadingScreen">
             <div class="loading-content">
@@ -3272,6 +3281,52 @@
                 hideLeaderboard();
             }
         }, { passive: false });
+    </script>
+    <!-- V1_470: in-game fullscreen control. Lives in THIS game's own header (top-right) as a
+         peer of its mute/pause buttons, so it aligns with the game frame instead of floating on
+         the parent page's container. Clicking posts to the arcade page, which runs the same
+         toggle as its own button (native fullscreen, with a pseudo-fullscreen fallback for when
+         the iframe click can't carry user activation into the parent document). Hidden unless
+         the embedding page really is the BOO arcade (same-origin probe for its
+         .game-fullscreen-btn) so standalone play and the Capacitor app never show a dead
+         control. Also hides itself while the parent IS fullscreen -- the parent's own button
+         becomes the exit affordance there. -->
+    <script>
+    (function () {
+        var fs = document.getElementById('fsBtn');
+        if (!fs) return;
+        var parentFs = false;
+        function hostOffersFullscreen() {
+            try {
+                if (window.parent === window) return false;              // standalone play
+                var pdoc = window.parent.document;                        // same-origin only
+                if (!pdoc.querySelector('.game-fullscreen-btn')) return false;  // not the BOO arcade
+                // iPad: the arcade page deliberately ships no fullscreen there (its isIPad
+                // branch hides the parent button), so we must not offer one either.
+                if (pdoc.body && pdoc.body.classList.contains('is-ipad')) return false;
+                return true;
+            } catch (e) { return false; }
+        }
+        function sync() {
+            fs.style.display = (!parentFs && hostOffersFullscreen()) ? 'flex' : 'none';
+        }
+        sync();
+        function toggleFs(e) {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            try { window.parent.postMessage({ type: 'boo-arcade-fullscreen' }, '*'); } catch (err) {}
+        }
+        fs.addEventListener('click', toggleFs);
+        fs.addEventListener('touchend', toggleFs, { passive: false });
+        window.addEventListener('message', function (e) {
+            var d = e.data;
+            if (!d || d.type !== 'boo-arcade') return;
+            if (d.cmd === 'fs-enter') parentFs = true;
+            else if (d.cmd === 'fs-exit') parentFs = false;
+            // Re-probes the host too, which closes any boot-time race with the arcade page's
+            // own device detection (it sends fs-exit on every iframe load).
+            sync();
+        });
+    })();
     </script>
 </body>
 </html>

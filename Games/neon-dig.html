@@ -1812,8 +1812,9 @@
             position: absolute;
             top: 6px;
             left: 6px;
-            width: 36px;
-            height: 36px;
+            /* V1_470: header controls standardised to 32x32 (pause / mute / fullscreen) */
+            width: 32px;
+            height: 32px;
             background: rgba(0, 0, 0, 0.7);
             border: 2px solid rgba(0, 255, 255, 0.5);
             border-radius: 6px;
@@ -1847,6 +1848,7 @@
         /* V1_275: in fullscreen the parent page provides pause/mute in the left pane, so hide
            this game's own corner buttons to free up the playfield. */
         body.parent-fs #pauseBtn,
+        body.parent-fs #fsBtn,
         body.parent-fs #muteBtn { display: none !important; }
         
         /* Pause Menu Overlay */
@@ -2209,7 +2211,9 @@
         <!-- Pause Button -->
         <button class="pause-btn" id="pauseBtn" type="button" aria-label="Pause" title="Pause (P)">⏸</button>
         <!-- Mute Button (sibling to pause, offset right so it never overlaps) -->
-        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:6px;left:48px;z-index:100;width:36px;height:36px;border-radius:6px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.7);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;opacity:0.7;">🔊</button>
+        <button id="muteBtn" type="button" aria-label="Toggle sound" title="Toggle sound" style="position:absolute;top:6px;left:48px;z-index:100;width:32px;height:32px;border-radius:6px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.7);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;opacity:0.7;">🔊</button>
+        <!-- V1_470: fullscreen (peer of mute; top-right of this game's header) -->
+        <button id="fsBtn" type="button" aria-label="Toggle fullscreen" title="Toggle fullscreen" style="position:absolute;top:6px;right:6px;z-index:2100;width:32px;height:32px;border-radius:6px;border:2px solid rgba(0,255,255,0.55);background:rgba(0,0,0,0.7);color:#0ff;font-size:18px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;-webkit-tap-highlight-color:transparent;opacity:0.7;">⛶</button>
         
         <div class="upgrade-arrow" id="upgradeArrow">
             <div class="upgrade-arrow-tail"></div>
@@ -2761,6 +2765,10 @@
         // Layout state (updated during resize) - all values in logical coordinates
         const LAYOUT = {
             isFullscreen: false,
+            // V1_470: logical -> CSS px scale of the game area. The canvas-drawn pause button is
+            // the live header control inside the arcade iframe, and it has to come out the same
+            // 32x32 CSS size as the DOM mute/fullscreen buttons beside it.
+            cssScale: 1,
             gameWidth: BASE_WIDTH,
             gameHeight: BASE_HEIGHT,
             hudHeight: 0,           // 0 in windowed mode, calculated in fullscreen
@@ -11412,29 +11420,34 @@
                 return;
             }
             
-            // Position: top: 6px, left: 6px from game area
-            // Size: smaller than original 36px to account for canvas scaling
-            const btnSize = 28;
-            const btnX = 6;
-            const btnY = 6;
+            // V1_470: sized in LOGICAL units that land on exactly 32x32 CSS px, so this
+            // canvas control matches the DOM mute/fullscreen buttons sitting next to it (it was
+            // a flat 28 logical = ~45 CSS px on desktop, visibly larger, and it overlapped the
+            // mute). 6 CSS px inset, same as its DOM peers.
+            const s = LAYOUT.cssScale || 1;
+            const btnSize = 32 / s;
+            const btnX = 6 / s;
+            const btnY = 6 / s;
+            const btnFont = 16 / s;
+            const btnRadius = 6 / s;
             
             // Background: rgba(0, 0, 0, 0.7)
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.beginPath();
-            ctx.roundRect(btnX, btnY, btnSize, btnSize, 5);
+            ctx.roundRect(btnX, btnY, btnSize, btnSize, btnRadius);
             ctx.fill();
             
             // Border: 2px solid rgba(0, 255, 255, 0.5)
             ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 2 / s;
             ctx.stroke();
             
-            // Icon: font-size 14px (scaled down), color rgba(0, 255, 255, 0.9)
-            ctx.font = '14px Oxanium, monospace';
+            // Icon: 16 CSS px, color rgba(0, 255, 255, 0.9)
+            ctx.font = btnFont + 'px Oxanium, monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = 'rgba(0, 255, 255, 0.9)';
-            ctx.fillText('⏸', btnX + btnSize / 2, btnY + btnSize / 2 + 1);
+            ctx.fillText('⏸', btnX + btnSize / 2, btnY + btnSize / 2 + 1 / s);
             
             canvasButtons.pause = { x: btnX, y: btnY, w: btnSize, h: btnSize, visible: true };
         }
@@ -14994,6 +15007,7 @@
                 
                 LAYOUT.gameWidth = BASE_WIDTH;
                 LAYOUT.gameHeight = BASE_HEIGHT;
+                LAYOUT.cssScale = displayGameWidth / BASE_WIDTH;   // V1_470
                 LAYOUT.hudHeight = Math.round(displayHudHeight * displayToLogical);
                 LAYOUT.trackpadHeight = LAYOUT.hudHeight; // Force equal heights with HUD
                 LAYOUT.totalHeight = BASE_HEIGHT + LAYOUT.hudHeight + LAYOUT.trackpadHeight;
@@ -15056,6 +15070,7 @@
                 LAYOUT.isFullscreen = false;
                 
                 // Reset LAYOUT for windowed mode
+                LAYOUT.cssScale = 1;   // V1_470
                 LAYOUT.hudHeight = 0;
                 LAYOUT.trackpadHeight = 0;
                 LAYOUT.totalHeight = BASE_HEIGHT;
@@ -15209,6 +15224,52 @@
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);
         else attach();
+    })();
+    </script>
+    <!-- V1_470: in-game fullscreen control. Lives in THIS game's own header (top-right) as a
+         peer of its mute/pause buttons, so it aligns with the game frame instead of floating on
+         the parent page's container. Clicking posts to the arcade page, which runs the same
+         toggle as its own button (native fullscreen, with a pseudo-fullscreen fallback for when
+         the iframe click can't carry user activation into the parent document). Hidden unless
+         the embedding page really is the BOO arcade (same-origin probe for its
+         .game-fullscreen-btn) so standalone play and the Capacitor app never show a dead
+         control. Also hides itself while the parent IS fullscreen -- the parent's own button
+         becomes the exit affordance there. -->
+    <script>
+    (function () {
+        var fs = document.getElementById('fsBtn');
+        if (!fs) return;
+        var parentFs = false;
+        function hostOffersFullscreen() {
+            try {
+                if (window.parent === window) return false;              // standalone play
+                var pdoc = window.parent.document;                        // same-origin only
+                if (!pdoc.querySelector('.game-fullscreen-btn')) return false;  // not the BOO arcade
+                // iPad: the arcade page deliberately ships no fullscreen there (its isIPad
+                // branch hides the parent button), so we must not offer one either.
+                if (pdoc.body && pdoc.body.classList.contains('is-ipad')) return false;
+                return true;
+            } catch (e) { return false; }
+        }
+        function sync() {
+            fs.style.display = (!parentFs && hostOffersFullscreen()) ? 'flex' : 'none';
+        }
+        sync();
+        function toggleFs(e) {
+            if (e) { e.preventDefault(); e.stopPropagation(); }
+            try { window.parent.postMessage({ type: 'boo-arcade-fullscreen' }, '*'); } catch (err) {}
+        }
+        fs.addEventListener('click', toggleFs);
+        fs.addEventListener('touchend', toggleFs, { passive: false });
+        window.addEventListener('message', function (e) {
+            var d = e.data;
+            if (!d || d.type !== 'boo-arcade') return;
+            if (d.cmd === 'fs-enter') parentFs = true;
+            else if (d.cmd === 'fs-exit') parentFs = false;
+            // Re-probes the host too, which closes any boot-time race with the arcade page's
+            // own device detection (it sends fs-exit on every iframe load).
+            sync();
+        });
     })();
     </script>
 </body>
